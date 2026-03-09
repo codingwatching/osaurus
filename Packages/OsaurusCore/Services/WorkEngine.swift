@@ -529,7 +529,7 @@ public actor WorkEngine {
 
         case .iterationLimitReached(let totalIterations, let totalToolCalls, let lastResponseContent):
             let summary =
-                "Reached iteration limit after \(totalIterations) iterations and \(totalToolCalls) tool calls."
+                "Budget exhausted after \(totalIterations) iterations and \(totalToolCalls) tool calls."
 
             // Build continuation context so the next execution can pick up where we left off
             let progress = String(lastResponseContent.prefix(2000))
@@ -556,9 +556,9 @@ public actor WorkEngine {
 
             let closeResult =
                 if let contIssue = continuationIssue {
-                    "Continued in \(contIssue.id): \(summary)"
+                    "Budget handoff created in \(contIssue.id): \(summary)"
                 } else {
-                    "Partial: \(summary)"
+                    "Partial handoff: \(summary)"
                 }
 
             _ = await IssueManager.shared.closeIssueSafe(issue.id, result: closeResult)

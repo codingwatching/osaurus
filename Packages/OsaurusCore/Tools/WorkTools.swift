@@ -13,7 +13,7 @@ import Foundation
 public struct CompleteTaskTool: OsaurusTool {
     public let name = "complete_task"
     public let description =
-        "Mark the current task as complete with a detailed artifact summarizing the results. The artifact is required and should be a comprehensive markdown document."
+        "Mark the current task as complete with a summary of the verified result. Optional artifact content may be included when it adds value."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -29,7 +29,7 @@ public struct CompleteTaskTool: OsaurusTool {
             "artifact": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Final artifact in markdown format. Must include: a title, summary of work done, key findings or results, any code snippets or examples, and next steps if applicable. This will be displayed to the user as the final output."
+                    "Optional final artifact in markdown format. Include this when a richer report or formatted result would help the user."
                 ),
             ]),
             "remaining_work": .object([
@@ -37,7 +37,7 @@ public struct CompleteTaskTool: OsaurusTool {
                 "description": .string("Any remaining work that wasn't completed (optional)"),
             ]),
         ]),
-        "required": .array([.string("summary"), .string("success"), .string("artifact")]),
+        "required": .array([.string("summary"), .string("success")]),
     ])
 
     public init() {}
@@ -47,22 +47,20 @@ public struct CompleteTaskTool: OsaurusTool {
         guard let data = argumentsJSON.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let summary = json["summary"] as? String,
-            let success = json["success"] as? Bool,
-            let rawArtifact = json["artifact"] as? String
+            let success = json["success"] as? Bool
         else {
             throw NSError(
                 domain: "WorkTools",
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Invalid completion format. Required: summary (string), success (boolean), artifact (string)"
+                        "Invalid completion format. Required: summary (string), success (boolean)"
                 ]
             )
         }
 
-        // Unescape literal \n and \t sequences that models sometimes send
         let artifact =
-            rawArtifact
+            (json["artifact"] as? String)?
             .replacingOccurrences(of: "\\n", with: "\n")
             .replacingOccurrences(of: "\\t", with: "\t")
 
@@ -73,15 +71,20 @@ public struct CompleteTaskTool: OsaurusTool {
             Task completion reported:
             - Status: \(success ? "SUCCESS" : "PARTIAL")
             - Summary: \(summary)
-            - Artifact Length: \(artifact.count) characters
             """
+
+        if let artifact, !artifact.isEmpty {
+            result += "\n- Artifact Length: \(artifact.count) characters"
+        }
 
         if let remaining = remainingWork, !remaining.isEmpty {
             result += "\n- Remaining work: \(remaining)"
         }
 
         // Append artifact in a structured format for extraction
-        result += "\n\n---ARTIFACT_START---\n\(artifact)\n---ARTIFACT_END---"
+        if let artifact, !artifact.isEmpty {
+            result += "\n\n---ARTIFACT_START---\n\(artifact)\n---ARTIFACT_END---"
+        }
 
         return result
     }

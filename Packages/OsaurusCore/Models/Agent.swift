@@ -174,14 +174,14 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     public var pluginCreate: Bool
 
     public static let `default` = AutonomousExecConfig(
-        enabled: true,
+        enabled: false,
         maxCommandsPerTurn: 10,
         commandTimeout: 30,
         pluginCreate: true
     )
 
     public init(
-        enabled: Bool = true,
+        enabled: Bool = false,
         maxCommandsPerTurn: Int = 10,
         commandTimeout: Int = 30,
         pluginCreate: Bool = true

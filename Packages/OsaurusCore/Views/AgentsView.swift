@@ -37,6 +37,7 @@ struct AgentsView: View {
     @State private var isCreating = false
     @State private var hasAppeared = false
     @State private var successMessage: String?
+    @State private var sandboxCleanupNotice: SandboxCleanupNotice?
 
     // Import/Export
     @State private var showImportPicker = false
@@ -73,8 +74,7 @@ struct AgentsView: View {
                             selectedAgent = nil
                         }
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                            agentManager.delete(id: p.id)
-                            showSuccess("Deleted \"\(p.name)\"")
+                            deleteAgent(p)
                         }
                     },
                     showSuccess: { msg in
@@ -127,6 +127,17 @@ struct AgentsView: View {
             ),
             message: importError,
             primaryButton: .primary("OK") { importError = nil }
+        )
+        .themedAlert(
+            sandboxCleanupNotice?.title ?? "Sandbox Cleanup",
+            isPresented: Binding(
+                get: { sandboxCleanupNotice != nil },
+                set: { newValue in
+                    if !newValue { sandboxCleanupNotice = nil }
+                }
+            ),
+            message: sandboxCleanupNotice?.message,
+            primaryButton: .primary("OK") { sandboxCleanupNotice = nil }
         )
         .onAppear {
             agentManager.refresh()
@@ -192,8 +203,7 @@ struct AgentsView: View {
                                     exportAgent(agent)
                                 },
                                 onDelete: {
-                                    agentManager.delete(id: agent.id)
-                                    showSuccess("Deleted \"\(agent.name)\"")
+                                    deleteAgent(agent)
                                 }
                             )
                         }
@@ -239,6 +249,18 @@ struct AgentsView: View {
     }
 
     // MARK: - Actions
+
+    private func deleteAgent(_ agent: Agent) {
+        Task { @MainActor in
+            let result = await agentManager.delete(id: agent.id)
+            guard result.deleted else {
+                ToastManager.shared.error("Failed to delete agent", message: "Please try again.")
+                return
+            }
+            showSuccess("Deleted \"\(agent.name)\"")
+            sandboxCleanupNotice = result.sandboxCleanupNotice
+        }
+    }
 
     private func duplicateAgent(_ agent: Agent) {
         // Generate unique copy name
@@ -510,7 +532,8 @@ private struct AgentCard: View {
         .themedAlert(
             "Delete Agent",
             isPresented: $showDeleteConfirm,
-            message: "Are you sure you want to delete \"\(agent.name)\"? This action cannot be undone.",
+            message:
+                "Are you sure you want to delete \"\(agent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed.",
             primaryButton: .destructive("Delete", action: onDelete),
             secondaryButton: .cancel("Cancel")
         )
@@ -743,7 +766,8 @@ struct AgentDetailView: View {
         .themedAlert(
             "Delete Agent",
             isPresented: $showDeleteConfirm,
-            message: "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone.",
+            message:
+                "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed.",
             primaryButton: .destructive("Delete") { onDelete(currentAgent) },
             secondaryButton: .cancel("Cancel")
         )
@@ -1166,7 +1190,16 @@ struct AgentDetailView: View {
         let updateExecConfig: ((inout AutonomousExecConfig) -> Void) -> Void = { update in
             var config = execConfig ?? .default
             update(&config)
-            agentManager.updateAutonomousExec(config, for: agent.id)
+            Task { @MainActor in
+                do {
+                    try await agentManager.updateAutonomousExec(config, for: agent.id)
+                } catch {
+                    ToastManager.shared.error(
+                        "Failed to update sandbox access",
+                        message: error.localizedDescription
+                    )
+                }
+            }
         }
 
         let sandboxSubtitle: String = {

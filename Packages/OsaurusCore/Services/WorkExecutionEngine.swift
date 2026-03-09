@@ -104,13 +104,49 @@ public actor WorkExecutionEngine {
     /// Internal visibility for testability via `@testable import`.
     func truncateToolResult(_ result: String) -> String {
         guard result.count > Self.maxToolResultLength else { return result }
-        let headSize = Self.maxToolResultLength * 3 / 4
-        let tailSize = Self.maxToolResultLength / 4
+        if let structured = truncateStructuredToolResult(result) {
+            return structured
+        }
+        return truncatePlainTextToolResult(result)
+    }
+
+    private func truncateStructuredToolResult(_ result: String) -> String? {
+        guard let data = result.data(using: .utf8),
+            var payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+
+        let preferredKeys = ["stdout", "stderr", "output", "content", "entries", "matches", "processes"]
+        let presentKeys = preferredKeys.filter { (payload[$0] as? String)?.isEmpty == false }
+        guard !presentKeys.isEmpty else { return nil }
+
+        let perFieldLimit = max(600, (Self.maxToolResultLength - 1200) / max(presentKeys.count, 1))
+        var truncatedAny = false
+        for key in presentKeys {
+            guard let value = payload[key] as? String, value.count > perFieldLimit else { continue }
+            payload[key] = truncatePlainTextToolResult(value, limit: perFieldLimit)
+            payload["\(key)_truncated"] = true
+            payload["\(key)_original_length"] = value.count
+            truncatedAny = true
+        }
+
+        guard truncatedAny,
+            let encoded = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+            let text = String(data: encoded, encoding: .utf8),
+            text.count <= Self.maxToolResultLength
+        else { return nil }
+
+        return text
+    }
+
+    private func truncatePlainTextToolResult(_ result: String, limit: Int = maxToolResultLength) -> String {
+        guard result.count > limit else { return result }
+        let headSize = limit * 3 / 4
+        let tailSize = limit / 4
         let head = String(result.prefix(headSize))
         let tail = String(result.suffix(tailSize))
         let omitted = result.count - headSize - tailSize
         return
-            "\(head)\n\n[... \(omitted) characters omitted — use sandbox_read_file or file_read to access full content ...]\n\n\(tail)"
+            "\(head)\n\n[... \(omitted) characters omitted — use sandbox_read_file (with start_line, line_count, or tail_lines) or file_read to inspect the full output ...]\n\n\(tail)"
     }
 
     // MARK: - Folder Context
@@ -162,6 +198,21 @@ public actor WorkExecutionEngine {
         multi-line scripts (python, bash, node). For single shell commands use
         `sandbox_exec`. For background processes use `sandbox_exec_background`.
         Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
+
+        For build/test tasks, follow this pattern:
+        1. Inspect the workspace and choose a stack.
+        2. Install missing runtimes or dependencies before running code.
+        3. Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files.
+        4. Run tests or verification commands with `sandbox_exec`.
+        5. If verification fails, read the error carefully, fix the cause, and rerun.
+        6. When everything passes, call `complete_task` with a concise summary.
+
+        Runtime hints:
+        - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
+        - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
+        - Toolchains like Go, Node, or build tools can be installed with `sandbox_install`.
+        - Use `sandbox_whoami` to inspect the current environment and available runtimes.
+        - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
 
         The sandbox is disposable — experiment freely.
 
@@ -255,9 +306,13 @@ public actor WorkExecutionEngine {
             iteration += 1
             try Task.checkCancellation()
 
+            await onIterationStart(iteration)
+            await onStatusUpdate("Iteration \(iteration)")
+
             // Budget awareness — inject every 10 iterations and at the 5-remaining mark
             if iteration > 1 && iteration % 10 == 0 {
                 let remaining = maxIterations - iteration
+                await onStatusUpdate("Budget: \(remaining) of \(maxIterations) iterations remaining")
                 messages.append(
                     ChatMessage(
                         role: "system",
@@ -268,6 +323,7 @@ public actor WorkExecutionEngine {
             }
 
             if iteration == maxIterations - 5 {
+                await onStatusUpdate("Warning: 5 iterations remaining")
                 messages.append(
                     ChatMessage(
                         role: "system",
@@ -276,10 +332,6 @@ public actor WorkExecutionEngine {
                     )
                 )
             }
-
-            await onIterationStart(iteration)
-
-            await onStatusUpdate("Iteration \(iteration)")
 
             // Trim messages to fit context budget (no-op if within budget or no limit known)
             let effectiveMessages: [ChatMessage]
@@ -333,15 +385,9 @@ public actor WorkExecutionEngine {
             let estimatedOutputTokens = max(1, outputChars / 4)
             await onTokensConsumed(estimatedInputTokens, estimatedOutputTokens)
 
-            // If pure text response (no tool call) - check if model signals completion
+            // If pure text response (no tool call), keep nudging tool-capable progress.
             if toolInvoked == nil {
                 messages.append(ChatMessage(role: "assistant", content: responseContent))
-
-                // Check for completion signals in the response
-                if isCompletionSignal(responseContent) {
-                    let summary = extractCompletionSummary(from: responseContent)
-                    return .completed(summary: summary, artifact: nil)
-                }
 
                 // Track consecutive text-only responses to detect models that can't use tools
                 consecutiveTextOnly += 1
@@ -360,7 +406,13 @@ public actor WorkExecutionEngine {
 
                 // Model is reasoning but hasn't called a tool yet - prompt to continue
                 // This helps models that reason out loud before acting
-                messages.append(ChatMessage(role: "user", content: "Continue with the next action."))
+                messages.append(
+                    ChatMessage(
+                        role: "user",
+                        content:
+                            "Continue with the next action. Use the available tools to do the work, verify the result, and call complete_task only after verification."
+                    )
+                )
                 continue
             }
 
@@ -532,13 +584,15 @@ public actor WorkExecutionEngine {
             - Work step by step. After each tool call, assess what you learned and decide the next action.
             - You do NOT need to plan everything upfront. Explore, read, understand, then act.
             - If you discover additional work needed, use `create_issue` to track it.
-            - When the task is complete, use `complete_task` with a summary of what you accomplished.
+            - Use `complete_task` as the normal way to finish work once the task is actually verified.
             - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
 
             ## Important Guidelines
 
             - Always read/explore before modifying. Don't guess at file contents or project structure.
-            - For coding tasks: write code, then verify it works if possible.
+            - For coding tasks: install missing dependencies, write code efficiently, then verify it works.
+            - Prefer bulk file generation or editing approaches over many tiny write calls when the tools support it.
+            - After failed tests/builds, inspect the error output, fix the cause, and rerun verification.
             - If something fails, analyze the error and try a different approach. Don't repeat the same action.
             - Keep the user's original request in mind at all times. Every action should serve the goal.
             - When creating follow-up issues, write detailed descriptions with full context about what you learned.
@@ -554,7 +608,8 @@ public actor WorkExecutionEngine {
 
             When the goal is fully achieved, call `complete_task` with:
             - A summary of what was accomplished
-            - Any artifacts produced (optional)
+            - `success: true`
+            - Any artifact content if it is genuinely useful to show the user
 
             Do NOT call complete_task until you have actually done the work and verified it.
 
@@ -575,22 +630,6 @@ public actor WorkExecutionEngine {
         }
 
         return prompt
-    }
-
-    /// Checks if the response signals task completion (without using complete_task tool)
-    private func isCompletionSignal(_ content: String) -> Bool {
-        let upperContent = content.uppercased()
-        // Look for explicit completion markers
-        let completionPhrases = [
-            "TASK_COMPLETE",
-            "TASK COMPLETE",
-            "I HAVE COMPLETED",
-            "THE TASK IS COMPLETE",
-            "THE TASK HAS BEEN COMPLETED",
-            "ALL DONE",
-            "FINISHED SUCCESSFULLY",
-        ]
-        return completionPhrases.contains { upperContent.contains($0) }
     }
 
     /// Extracts a completion summary from a text response
@@ -649,7 +688,12 @@ public actor WorkExecutionEngine {
             )
         }
 
-        return (args.summary, artifact)
+        var summary = args.summary
+        if args.success == false, let remaining = args.remaining_work, !remaining.isEmpty {
+            summary += "\nRemaining work: \(remaining)"
+        }
+
+        return (summary, artifact)
     }
 
     /// Parses request_clarification tool arguments

@@ -29,7 +29,7 @@ public final class SandboxToolRegistrar {
                 forName: .activeAgentChanged,
                 object: nil,
                 queue: .main
-            ) { [weak self] _ in Task { @MainActor in self?.handleAgentChanged() } }
+            ) { [weak self] _ in Task { @MainActor in await self?.handleAgentChanged() } }
         )
 
         observers.append(
@@ -40,7 +40,7 @@ public final class SandboxToolRegistrar {
             ) { [weak self] note in
                 let pluginId = note.userInfo?["pluginId"] as? String
                 let agentId = note.userInfo?["agentId"] as? String
-                Task { @MainActor in self?.handlePluginInstalled(pluginId: pluginId, agentId: agentId) }
+                Task { @MainActor in await self?.handlePluginInstalled(pluginId: pluginId, agentId: agentId) }
             }
         )
 
@@ -51,14 +51,14 @@ public final class SandboxToolRegistrar {
                 queue: .main
             ) { [weak self] note in
                 let pluginId = note.userInfo?["pluginId"] as? String
-                Task { @MainActor in self?.handlePluginUninstalled(pluginId: pluginId) }
+                Task { @MainActor in await self?.handlePluginUninstalled(pluginId: pluginId) }
             }
         )
 
         statusCancellable = SandboxManager.State.shared.$status
             .removeDuplicates()
             .sink { [weak self] newStatus in
-                Task { @MainActor in self?.handleContainerStatusChanged(newStatus) }
+                Task { @MainActor in await self?.handleContainerStatusChanged(newStatus) }
             }
 
         observers.append(
@@ -68,11 +68,13 @@ public final class SandboxToolRegistrar {
                 queue: .main
             ) { [weak self] note in
                 let agentId = note.object as? UUID
-                Task { @MainActor in self?.handleAgentUpdated(agentId: agentId) }
+                Task { @MainActor in await self?.handleAgentUpdated(agentId: agentId) }
             }
         )
 
-        registerToolsForCurrentAgent()
+        Task { @MainActor in
+            await self.registerToolsForCurrentAgent()
+        }
     }
 
     // MARK: - Registration
@@ -81,15 +83,26 @@ public final class SandboxToolRegistrar {
     /// tools for the current active agent only when the container is running.
     /// This ensures sandbox tools are never exposed in the LLM context when
     /// the sandbox is unavailable.
-    public func registerToolsForCurrentAgent() {
+    public func registerToolsForCurrentAgent() async {
         ToolRegistry.shared.unregisterAllSandboxTools()
 
         guard SandboxManager.State.shared.status == .running else { return }
 
         let agent = AgentManager.shared.activeAgent
         let agentId = agent.id.uuidString
-        let agentName = linuxName(for: agentId)
         let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
+        let plugins = SandboxPluginManager.shared.plugins(for: agentId)
+        let needsProvisioning = (execConfig?.enabled == true) || plugins.contains { $0.status == .ready }
+
+        if needsProvisioning {
+            do {
+                try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agent.id)
+            } catch {
+                NSLog("[SandboxToolRegistrar] Failed to provision agent sandbox: \(error.localizedDescription)")
+                return
+            }
+        }
 
         BuiltinSandboxTools.register(
             agentId: agentId,
@@ -97,7 +110,6 @@ public final class SandboxToolRegistrar {
             config: execConfig
         )
 
-        let plugins = SandboxPluginManager.shared.plugins(for: agentId)
         for installed in plugins where installed.status == .ready {
             ToolRegistry.shared.registerSandboxPluginTools(
                 plugin: installed.plugin,
@@ -109,16 +121,16 @@ public final class SandboxToolRegistrar {
 
     // MARK: - Event Handlers
 
-    private func handleAgentChanged() {
-        registerToolsForCurrentAgent()
+    private func handleAgentChanged() async {
+        await registerToolsForCurrentAgent()
     }
 
-    private func handleAgentUpdated(agentId: UUID?) {
+    private func handleAgentUpdated(agentId: UUID?) async {
         guard agentId == nil || agentId == AgentManager.shared.activeAgent.id else { return }
-        registerToolsForCurrentAgent()
+        await registerToolsForCurrentAgent()
     }
 
-    private func handlePluginInstalled(pluginId: String?, agentId: String?) {
+    private func handlePluginInstalled(pluginId: String?, agentId: String?) async {
         let currentAgentId = AgentManager.shared.activeAgent.id.uuidString
         guard let pluginId, let agentId,
             agentId == currentAgentId,
@@ -126,32 +138,26 @@ public final class SandboxToolRegistrar {
             installed.status == .ready
         else { return }
 
+        do {
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+        } catch {
+            NSLog("[SandboxToolRegistrar] Failed to provision agent for plugin install: \(error.localizedDescription)")
+            return
+        }
+
         ToolRegistry.shared.registerSandboxPluginTools(
             plugin: installed.plugin,
             agentId: agentId,
-            agentName: linuxName(for: agentId)
+            agentName: SandboxAgentProvisioner.linuxName(for: agentId)
         )
     }
 
-    private func handlePluginUninstalled(pluginId: String?) {
+    private func handlePluginUninstalled(pluginId: String?) async {
         guard let pluginId else { return }
         ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: pluginId)
     }
 
-    private func handleContainerStatusChanged(_: ContainerStatus) {
-        registerToolsForCurrentAgent()
+    private func handleContainerStatusChanged(_: ContainerStatus) async {
+        await registerToolsForCurrentAgent()
     }
-
-    // MARK: - Helpers
-
-    /// Mirrors `SandboxPluginManager.agentLinuxName(for:)`.
-    private func linuxName(for agentId: String) -> String {
-        let name =
-            agentId
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        return name.isEmpty ? "agent" : name
-    }
-
 }

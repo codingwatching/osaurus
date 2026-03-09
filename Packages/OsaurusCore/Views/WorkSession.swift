@@ -669,7 +669,9 @@ public final class WorkSession: ObservableObject {
         deltaProcessor?.finalize()
         deltaProcessor = nil
         currentStep = 0
-        loopState = LoopState()
+        let configuredMaxIterations =
+            ChatConfigurationStore.load().workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations
+        loopState = LoopState(maxIterations: configuredMaxIterations)
         retryAttempt = 0
         isRetrying = false
         errorMessage = nil

@@ -355,6 +355,32 @@
             )
         }
 
+        public func removeAgentUser(_ agentName: String) async throws -> Bool {
+            let linuxUser = "agent-\(agentName)"
+            let checkResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
+            guard checkResult.succeeded else { return false }
+
+            let homeDir = OsaurusPaths.inContainerAgentHome(agentName)
+            let removeResult = try await execAsRoot(
+                command:
+                    "pkill -u \(linuxUser) >/dev/null 2>&1 || true; deluser \(linuxUser) >/dev/null 2>&1 || true; rm -rf '\(homeDir)'"
+            )
+            guard removeResult.succeeded else {
+                throw SandboxError.removeFailed(
+                    removeResult.stderr.isEmpty
+                        ? "Failed to remove \(linuxUser)"
+                        : removeResult.stderr
+                )
+            }
+
+            let verifyResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
+            guard !verifyResult.succeeded else {
+                throw SandboxError.removeFailed("User \(linuxUser) still exists after cleanup")
+            }
+
+            return true
+        }
+
         // MARK: - Container Info
 
         public struct ContainerInfo: Sendable {
@@ -654,7 +680,11 @@
                 stderr = DataWriter()
             }
 
-            let environ = env.map { "\($0.key)=\($0.value)" } + ["PATH=\(LinuxProcessConfiguration.defaultPath)"]
+            var mergedEnv = env
+            if mergedEnv["PATH"] == nil {
+                mergedEnv["PATH"] = LinuxProcessConfiguration.defaultPath
+            }
+            let environ = mergedEnv.map { "\($0.key)=\($0.value)" }
             let process = try await container.exec(UUID().uuidString) { config in
                 config.arguments = args
                 config.environmentVariables = environ
