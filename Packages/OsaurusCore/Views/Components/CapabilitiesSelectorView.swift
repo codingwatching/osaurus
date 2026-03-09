@@ -99,7 +99,7 @@ struct CapabilitiesSelectorView: View {
 
     private func rebuildToolsCache() {
         let overrides = agentManager.effectiveToolOverrides(for: agentId)
-        let tools = toolRegistry.listCapabilityTools(withOverrides: overrides, excludeInternal: true)
+        let tools = toolRegistry.listSelectableCapabilityTools(withOverrides: overrides)
         cachedTools = tools
 
         var groups: [ToolGroup] = []
@@ -526,7 +526,7 @@ struct CapabilitiesSelectorView: View {
         VStack(spacing: 12) {
             if !isInline {
                 HStack {
-                    Text("Abilities")
+                    Text("Capabilities")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundColor(theme.primaryText)
 

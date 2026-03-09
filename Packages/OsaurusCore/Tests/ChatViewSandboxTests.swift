@@ -66,6 +66,33 @@ struct ChatViewSandboxTests {
     }
 
     @Test
+    func workSpecs_excludeSelectCapabilitiesTool() {
+        let specs = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: .none)
+
+        #expect(specs.contains(where: { $0.function.name == "select_capabilities" }) == false)
+    }
+
+    @Test
+    func selectableCapabilityLists_excludeSelectCapabilitiesTool() {
+        let tools = ToolRegistry.shared.listSelectableCapabilityTools(withOverrides: nil)
+        let catalogEntries = ToolRegistry.shared.enabledCatalogEntries()
+
+        #expect(tools.contains(where: { $0.name == "select_capabilities" }) == false)
+        #expect(catalogEntries.contains(where: { $0.name == "select_capabilities" }) == false)
+    }
+
+    @Test
+    func resolveSelection_rejectsInternalChatTools() async throws {
+        let result = try await CapabilityService.shared.resolveSelection(
+            argumentsJSON: #"{"tools":["select_capabilities"],"skills":[]}"#,
+            agentId: Agent.defaultId
+        )
+
+        #expect(result.selectedTools.isEmpty)
+        #expect(result.errors.contains("Tool 'select_capabilities' not found or not enabled"))
+    }
+
+    @Test
     func prepareChatExecutionMode_usesSessionAgentInsteadOfActiveAgent() async {
         let manager = AgentManager.shared
         let registrar = SandboxToolRegistrar.shared

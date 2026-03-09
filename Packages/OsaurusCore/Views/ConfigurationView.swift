@@ -175,7 +175,7 @@ struct ConfigurationView: View {
                             "Top P",
                             "Max Tool Attempts",
                             "Generation",
-                            "Phased Context Loading"
+                            "Chat Phased Capability Loading"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -242,9 +242,9 @@ struct ConfigurationView: View {
                                     SettingsDivider()
 
                                     SettingsToggle(
-                                        title: "Phased Context Loading",
+                                        title: "Chat Phased Capability Loading",
                                         description:
-                                            "Load tools and skills in two phases to reduce token usage. When disabled, all capabilities are loaded upfront.",
+                                            "ChatView only. Load tools and skills in two phases to reduce token usage. When disabled, chat loads all capabilities upfront.",
                                         isOn: $tempPhasedContextLoading
                                     )
 

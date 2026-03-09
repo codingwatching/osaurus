@@ -8,7 +8,7 @@
 
 import Foundation
 
-/// Service for managing capability (tools + skills) integration with chat
+/// Service for managing ChatView capability (tools + skills) integration.
 @MainActor
 public final class CapabilityService {
     public static let shared = CapabilityService()
@@ -23,12 +23,10 @@ public final class CapabilityService {
         basePrompt: String,
         agentId: UUID?
     ) -> String {
-        let effectiveAgentId = agentId ?? Agent.defaultId
-        let effectivePrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectivePrompt = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Get enabled skills
-        let enabledSkills = SkillManager.shared.skills.filter { $0.enabled }
+        let enabledSkills = enabledSkills(for: agentId)
 
         guard !enabledSkills.isEmpty else {
             return effectivePrompt
@@ -57,24 +55,23 @@ public final class CapabilityService {
         return enhanced.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // MARK: - Two-Phase Loading (Advanced)
+    // MARK: - Chat Two-Phase Loading
 
-    /// Build a capability catalog for the selection phase.
+    /// Build a capability catalog for the ChatView selection phase.
     /// Returns only metadata, not full content.
     public func buildCatalog() -> CapabilityCatalog {
         CapabilityCatalogBuilder.build()
     }
 
-    /// Build system prompt with capability catalog for two-phase loading.
-    /// The model will see metadata only and can call select_capabilities.
+    /// Build a ChatView system prompt with capability catalog for two-phase loading.
+    /// The model will see metadata only and can call `select_capabilities`.
     /// Uses agent-level overrides to filter available capabilities.
     public func buildSystemPromptWithCatalog(
         basePrompt: String,
         agentId: UUID?
     ) -> String {
         let effectiveAgentId = agentId ?? Agent.defaultId
-        let effectivePrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectivePrompt = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Build catalog with agent-level overrides
         let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
@@ -94,47 +91,64 @@ public final class CapabilityService {
         return enhanced.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Load full content for selected capabilities.
-    /// Returns tool schemas and skill instructions for the selected items.
-    func loadSelectedCapabilities(
-        toolNames: [String],
-        skillNames: [String]
-    ) -> (tools: [Tool], skillInstructions: String) {
-        // Load tool specs for selected tools
-        var tools: [Tool] = []
-        for name in toolNames {
-            if ToolRegistry.shared.listTools().contains(where: { $0.name == name && $0.enabled }) {
-                // Get the full tool spec
-                let specs = ToolRegistry.shared.specs()
-                if let spec = specs.first(where: { $0.function.name == name }) {
-                    tools.append(spec)
-                }
+    func resolveSelection(
+        argumentsJSON: String,
+        agentId: UUID?
+    ) async throws -> CapabilitySelectionResult {
+        let request = try SelectCapabilitiesTool.parse(argumentsJSON: argumentsJSON)
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
+        let selectableTools = Set(
+            ToolRegistry.shared.listSelectableCapabilityTools(withOverrides: toolOverrides)
+                .filter(\.enabled)
+                .map(\.name)
+        )
+
+        var selectedTools: [String] = []
+        var selectedSkills: [String] = []
+        var loadedToolSchemas: [String: JSONValue] = [:]
+        var loadedSkillInstructions: [String: String] = [:]
+        var errors: [String] = []
+
+        for toolName in request.tools {
+            if selectableTools.contains(toolName),
+                let params = ToolRegistry.shared.parametersForTool(name: toolName)
+            {
+                selectedTools.append(toolName)
+                loadedToolSchemas[toolName] = params
+            } else {
+                errors.append("Tool '\(toolName)' not found or not enabled")
             }
         }
 
-        // Load skill instructions for selected skills
-        var instructions: [String] = []
-        for name in skillNames {
-            if let skill = SkillManager.shared.skill(named: name), skill.enabled {
-                instructions.append("## \(skill.name)\n\n\(skill.instructions)")
+        let enabledRequestedSkills = request.skills.filter { skillName in
+            isSkillEnabled(skillName, for: effectiveAgentId)
+        }
+        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: enabledRequestedSkills)
+        for skillName in request.skills {
+            if enabledRequestedSkills.contains(skillName), let instructions = skillInstructionsMap[skillName] {
+                selectedSkills.append(skillName)
+                loadedSkillInstructions[skillName] = instructions
+            } else {
+                errors.append("Skill '\(skillName)' not found or not enabled")
             }
         }
 
-        let combinedInstructions =
-            instructions.isEmpty
-            ? ""
-            : "# Activated Skills\n\n" + instructions.joined(separator: "\n\n---\n\n")
-
-        return (tools, combinedInstructions)
+        return CapabilitySelectionResult(
+            selectedTools: selectedTools,
+            selectedSkills: selectedSkills,
+            loadedToolSchemas: loadedToolSchemas,
+            loadedSkillInstructions: loadedSkillInstructions,
+            errors: errors
+        )
     }
 
-    // MARK: - SelectCapabilities Tool
-
-    /// Create a SelectCapabilitiesTool with a callback for handling selection.
-    func createSelectCapabilitiesTool(
-        onSelected: @escaping (CapabilitySelectionResult) -> Void
-    ) -> SelectCapabilitiesTool {
-        SelectCapabilitiesTool(onCapabilitiesSelected: onSelected)
+    func combineSkillInstructions(_ loadedSkillInstructions: [String: String]) -> String {
+        let formatted =
+            loadedSkillInstructions
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+            .map { "## \($0.key)\n\n\($0.value)" }
+        return formatted.joined(separator: "\n\n---\n\n")
     }
 
     // MARK: - Token Estimation
