@@ -95,6 +95,24 @@ public actor WorkExecutionEngine {
         }
     }
 
+    // MARK: - Tool Result Truncation
+
+    /// Maximum characters for a single tool result in the conversation.
+    static let maxToolResultLength = 8000
+
+    /// Truncates a tool result, keeping head and tail with an omission marker.
+    /// Internal visibility for testability via `@testable import`.
+    func truncateToolResult(_ result: String) -> String {
+        guard result.count > Self.maxToolResultLength else { return result }
+        let headSize = Self.maxToolResultLength * 3 / 4
+        let tailSize = Self.maxToolResultLength / 4
+        let head = String(result.prefix(headSize))
+        let tail = String(result.suffix(tailSize))
+        let omitted = result.count - headSize - tailSize
+        return
+            "\(head)\n\n[... \(omitted) characters omitted — use sandbox_read_file or file_read to access full content ...]\n\n\(tail)"
+    }
+
     // MARK: - Folder Context
 
     /// Builds the folder context section for prompts when a folder is selected
@@ -329,6 +347,7 @@ public actor WorkExecutionEngine {
 
             // Execute the tool
             let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
+            let truncatedResult = truncateToolResult(result.result)
             await onToolCall(invocation.toolName, invocation.jsonArguments, result.result)
 
             // Clean response content - strip any leaked function-call JSON patterns
@@ -352,7 +371,7 @@ public actor WorkExecutionEngine {
             messages.append(
                 ChatMessage(
                     role: "tool",
-                    content: result.result,
+                    content: truncatedResult,
                     tool_calls: nil,
                     tool_call_id: result.toolCall.id
                 )
