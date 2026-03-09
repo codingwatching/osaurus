@@ -180,6 +180,11 @@ final class ChatTurn: ObservableObject, Identifiable {
         !attachments.isEmpty
     }
 
+    /// User-visible content. Assistant turns hide Gemini round-trip metadata.
+    var visibleContent: String {
+        role == .assistant ? StringCleaning.stripGeminiDisplayMetadata(content) : content
+    }
+
     /// Whether this turn has any thinking/reasoning content
     var hasThinking: Bool {
         _thinkingLength > 0

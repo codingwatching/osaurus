@@ -140,6 +140,27 @@ final class ToolRegistry: ObservableObject {
         specs(withOverrides: overrides, excluding: excludedToolNames(for: mode))
     }
 
+    /// Tool specs for chat mode, keeping runtime-managed work/folder tools hidden
+    /// while auto-including sandbox built-ins when chat is running in sandbox mode.
+    func chatSpecs(
+        withOverrides overrides: [String: Bool]?,
+        mode: WorkExecutionMode
+    ) -> [Tool] {
+        specs(withOverrides: overrides, excluding: excludedChatToolNames(for: mode))
+    }
+
+    /// Specs for an explicit chat tool list, plus runtime-managed sandbox built-ins
+    /// when sandbox-backed chat execution is active.
+    func chatSpecs(forTools toolNames: [String], mode: WorkExecutionMode) -> [Tool] {
+        var names = toolNames
+        if mode.usesSandboxTools {
+            for sandboxToolName in builtInSandboxToolNames.sorted() where !names.contains(sandboxToolName) {
+                names.append(sandboxToolName)
+            }
+        }
+        return specs(forTools: names)
+    }
+
     /// Get specs for specific tools by name (ignores enabled state)
     func specs(forTools toolNames: [String]) -> [Tool] {
         return toolNames.compactMap { name in
@@ -515,6 +536,15 @@ final class ToolRegistry: ObservableObject {
             return Self.folderToolNames
         case .none:
             return Self.folderToolNames.union(builtInSandboxToolNames)
+        }
+    }
+
+    private func excludedChatToolNames(for mode: WorkExecutionMode) -> Set<String> {
+        switch mode {
+        case .sandbox:
+            return Self.workToolNames.union(Self.folderToolNames)
+        case .hostFolder, .none:
+            return runtimeManagedToolNames
         }
     }
 

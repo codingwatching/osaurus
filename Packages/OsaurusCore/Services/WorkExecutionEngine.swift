@@ -181,8 +181,8 @@ public actor WorkExecutionEngine {
         return section
     }
 
-    /// Builds the sandbox environment section for prompts when sandbox tools are active
-    private func buildSandboxPromptSection() -> String {
+    /// Shared sandbox environment guidance for prompts when sandbox tools are active.
+    static func sandboxPromptSection() -> String {
         """
 
         ## Linux Sandbox Environment
@@ -217,6 +217,11 @@ public actor WorkExecutionEngine {
         The sandbox is disposable — experiment freely.
 
         """
+    }
+
+    /// Builds the sandbox environment section for prompts when sandbox tools are active
+    private func buildSandboxPromptSection() -> String {
+        Self.sandboxPromptSection()
     }
 
     // MARK: - Reasoning Loop

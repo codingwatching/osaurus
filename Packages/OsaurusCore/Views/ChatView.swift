@@ -663,23 +663,41 @@ final class ChatSession: ObservableObject {
         selectedSkillInstructions = ""
     }
 
+    func prepareChatExecutionMode(agentId: UUID, overrides: [String: Bool]?) async -> WorkExecutionMode {
+        guard AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true else {
+            return .none
+        }
+
+        await SandboxToolRegistrar.shared.registerTools(for: agentId)
+        return ToolRegistry.shared.resolveWorkExecutionMode(
+            withOverrides: overrides,
+            folderContext: nil
+        )
+    }
+
     /// Build system prompt based on capability selection state
-    private func buildSystemPrompt(base: String, agentId: UUID, needsSelection: Bool) -> String {
+    func buildSystemPrompt(
+        base: String,
+        agentId: UUID,
+        needsSelection: Bool,
+        executionMode: WorkExecutionMode
+    ) -> String {
+        let prompt: String
         if needsSelection {
             // Phase 1: Include full capability catalog for selection
-            return CapabilityService.shared.buildSystemPromptWithCatalog(
+            prompt = CapabilityService.shared.buildSystemPromptWithCatalog(
                 basePrompt: base,
                 agentId: agentId
             )
         } else if capabilitiesSelected {
             // Phase 2: Include selected skill instructions + available capabilities reminder
-            var prompt = base
+            var selectedPrompt = base
 
             // Add active skill instructions
             if !selectedSkillInstructions.isEmpty {
-                if !prompt.isEmpty { prompt += "\n\n" }
-                prompt += "# Active Skills\n\n"
-                prompt += selectedSkillInstructions
+                if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
+                selectedPrompt += "# Active Skills\n\n"
+                selectedPrompt += selectedSkillInstructions
             }
 
             // Add compact reminder of other available capabilities
@@ -688,39 +706,51 @@ final class ChatSession: ObservableObject {
             let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
 
             if !unselectedTools.isEmpty || !unselectedSkills.isEmpty {
-                if !prompt.isEmpty { prompt += "\n\n" }
-                prompt += "# Additional Capabilities Available\n"
-                prompt += "Call `select_capabilities` to add more:\n"
+                if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
+                selectedPrompt += "# Additional Capabilities Available\n"
+                selectedPrompt += "Call `select_capabilities` to add more:\n"
                 if !unselectedTools.isEmpty {
-                    prompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
+                    selectedPrompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
                 }
                 if !unselectedSkills.isEmpty {
-                    prompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
+                    selectedPrompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
                 }
             }
 
-            return prompt
+            prompt = selectedPrompt
         } else {
             // No capability selection needed, use base prompt
-            return base
+            prompt = base
         }
+
+        guard executionMode.usesSandboxTools else { return prompt }
+        if prompt.isEmpty {
+            return WorkExecutionEngine.sandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return prompt + "\n\n"
+            + WorkExecutionEngine.sandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Build tool specifications based on capability selection state
-    private func buildToolSpecs(needsSelection: Bool, hasCapabilities: Bool, overrides: [String: Bool]?) -> [Tool] {
+    func buildToolSpecs(
+        needsSelection: Bool,
+        hasCapabilities: Bool,
+        overrides: [String: Bool]?,
+        executionMode: WorkExecutionMode
+    ) -> [Tool] {
         if needsSelection {
-            // Phase 1: Only select_capabilities available
-            return ToolRegistry.shared.selectCapabilitiesSpec()
+            // Phase 1: Only capability selection plus runtime chat infrastructure.
+            return ToolRegistry.shared.chatSpecs(forTools: ["select_capabilities"], mode: executionMode)
         } else if capabilitiesSelected && !selectedToolNames.isEmpty {
             // Phase 2: Selected tools + select_capabilities for adding more
             var toolNames = selectedToolNames
             if hasCapabilities && !toolNames.contains("select_capabilities") {
                 toolNames.append("select_capabilities")
             }
-            return ToolRegistry.shared.specs(forTools: toolNames)
+            return ToolRegistry.shared.chatSpecs(forTools: toolNames, mode: executionMode)
         } else {
             // Default: All enabled tools + select_capabilities (if capabilities exist)
-            var specs = ToolRegistry.shared.userSpecs(withOverrides: overrides)
+            var specs = ToolRegistry.shared.chatSpecs(withOverrides: overrides, mode: executionMode)
             if hasCapabilities && !specs.contains(where: { $0.function.name == "select_capabilities" }) {
                 specs.append(contentsOf: ToolRegistry.shared.selectCapabilitiesSpec())
             }
@@ -870,6 +900,10 @@ final class ChatSession: ObservableObject {
                 // MARK: - Two-Phase Capability Selection
                 let effectiveAgentId = agentId ?? Agent.defaultId
                 let effectiveToolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
+                let executionMode = await prepareChatExecutionMode(
+                    agentId: effectiveAgentId,
+                    overrides: effectiveToolOverrides
+                )
 
                 // Check if there are any capabilities to select
                 let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
@@ -892,7 +926,8 @@ final class ChatSession: ObservableObject {
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
-                    needsSelection: needsCapabilitySelection
+                    needsSelection: needsCapabilitySelection,
+                    executionMode: executionMode
                 )
 
                 if !memoryContext.isEmpty {
@@ -901,7 +936,8 @@ final class ChatSession: ObservableObject {
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
                     hasCapabilities: phasedLoading && hasCapabilities,
-                    overrides: effectiveToolOverrides
+                    overrides: effectiveToolOverrides,
+                    executionMode: executionMode
                 )
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
@@ -1053,12 +1089,14 @@ final class ChatSession: ObservableObject {
                                 sys = buildSystemPrompt(
                                     base: baseSystemPrompt,
                                     agentId: effectiveAgentId,
-                                    needsSelection: false
+                                    needsSelection: false,
+                                    executionMode: executionMode
                                 )
                                 toolSpecs = buildToolSpecs(
                                     needsSelection: false,
                                     hasCapabilities: hasCapabilities,
-                                    overrides: effectiveToolOverrides
+                                    overrides: effectiveToolOverrides,
+                                    executionMode: executionMode
                                 )
                             } else {
                                 // Build effective overrides: if capabilities were selected, allow those tools
@@ -1066,6 +1104,10 @@ final class ChatSession: ObservableObject {
                                 if capabilitiesSelected && selectedToolNames.contains(inv.toolName) {
                                     // Tool was explicitly selected via select_capabilities, allow it
                                     executionOverrides[inv.toolName] = true
+                                }
+
+                                if executionMode.usesSandboxTools {
+                                    await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
                                 }
 
                                 resultText = try await ToolRegistry.shared.execute(
@@ -1633,7 +1675,7 @@ struct ChatView: View {
         }
         if !turn.contentIsEmpty {
             if !textToCopy.isEmpty { textToCopy += "\n\n" }
-            textToCopy += turn.content
+            textToCopy += turn.visibleContent
         }
         guard !textToCopy.isEmpty else { return }
         NSPasteboard.general.clearContents()
