@@ -66,6 +66,40 @@ struct ChatViewSandboxTests {
     }
 
     @Test
+    func estimatedContextBreakdown_includesSandboxPromptAndToolsWhenEnabled() {
+        let manager = AgentManager.shared
+        let originalActiveAgentId = manager.activeAgentId
+        let inactiveAgent = Agent(name: "Chat Estimate Off")
+        let sandboxAgent = Agent(
+            name: "Chat Estimate On",
+            autonomousExec: AutonomousExecConfig(enabled: true)
+        )
+        manager.add(inactiveAgent)
+        manager.add(sandboxAgent)
+        defer {
+            manager.setActiveAgent(originalActiveAgentId)
+            Task {
+                _ = await manager.delete(id: inactiveAgent.id)
+                _ = await manager.delete(id: sandboxAgent.id)
+            }
+        }
+
+        let inactiveSession = ChatSession()
+        inactiveSession.agentId = inactiveAgent.id
+        let sandboxSession = ChatSession()
+        sandboxSession.agentId = sandboxAgent.id
+
+        withRegisteredSandboxBuiltins {
+            let inactiveBreakdown = inactiveSession.estimatedContextBreakdown
+            let sandboxBreakdown = sandboxSession.estimatedContextBreakdown
+
+            #expect(sandboxBreakdown.systemPrompt > inactiveBreakdown.systemPrompt)
+            #expect(sandboxBreakdown.tools > inactiveBreakdown.tools)
+            #expect(sandboxBreakdown.tools >= ToolRegistry.shared.estimatedTokens(for: "sandbox_exec"))
+        }
+    }
+
+    @Test
     func workSpecs_excludeSelectCapabilitiesTool() {
         let specs = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: .none)
 
@@ -139,6 +173,40 @@ struct ChatViewSandboxTests {
         manager.setActiveAgent(originalActiveAgentId)
         _ = await manager.delete(id: inactiveAgent.id)
         _ = await manager.delete(id: sandboxAgent.id)
+    }
+
+    @Test
+    func workSessionEstimate_includesSandboxPromptAndToolsWhenEnabled() {
+        let manager = AgentManager.shared
+        let originalActiveAgentId = manager.activeAgentId
+        let inactiveAgent = Agent(name: "Work Estimate Off")
+        let sandboxAgent = Agent(
+            name: "Work Estimate On",
+            autonomousExec: AutonomousExecConfig(enabled: true)
+        )
+        manager.add(inactiveAgent)
+        manager.add(sandboxAgent)
+        defer {
+            manager.setActiveAgent(originalActiveAgentId)
+            Task {
+                _ = await manager.delete(id: inactiveAgent.id)
+                _ = await manager.delete(id: sandboxAgent.id)
+            }
+        }
+
+        let issue = Issue(taskId: "task-1", title: "Verify sandbox budget")
+        let inactiveSession = WorkSession(agentId: inactiveAgent.id)
+        let sandboxSession = WorkSession(agentId: sandboxAgent.id)
+
+        withRegisteredSandboxBuiltins {
+            let inactiveBreakdown = inactiveSession.estimateContextBreakdown(for: issue)
+            let sandboxBreakdown = sandboxSession.estimateContextBreakdown(for: issue)
+            let sandboxTools = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: .sandbox)
+
+            #expect(sandboxBreakdown.systemPrompt > inactiveBreakdown.systemPrompt)
+            #expect(sandboxBreakdown.tools > inactiveBreakdown.tools)
+            #expect(sandboxBreakdown.tools == ToolRegistry.shared.totalEstimatedTokens(for: sandboxTools))
+        }
     }
 }
 

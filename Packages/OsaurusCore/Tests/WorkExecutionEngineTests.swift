@@ -57,10 +57,9 @@ struct WorkExecutionEngineTests {
     }
 
     @Test func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
-        let engine = WorkExecutionEngine()
         let issue = Issue(taskId: "task-1", title: "Build app", description: "Create and test it")
 
-        let prompt = await engine.buildAgentSystemPrompt(
+        let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: "Base prompt",
             issue: issue,
             executionMode: .sandbox

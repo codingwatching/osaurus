@@ -234,9 +234,21 @@ final class ChatSession: ObservableObject {
 
         var breakdown = ContextTokenBreakdown()
         let effectiveId = agentId ?? Agent.defaultId
+        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
+        let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
+        let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
+        let hasCapabilities = !catalog.isEmpty
+        let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
+        let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
         // System prompt
-        let systemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
+        let systemPrompt = buildSystemPrompt(
+            base: AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            agentId: effectiveId,
+            needsSelection: needsCapabilitySelection,
+            executionMode: executionMode
+        )
         if !systemPrompt.isEmpty {
             breakdown.systemPrompt = max(1, systemPrompt.count / 4)
         }
@@ -244,36 +256,22 @@ final class ChatSession: ObservableObject {
         // Memory context (profile, working memory, summaries, graph)
         breakdown.memory = _memoryContextTokens
 
-        // Tool and skill tokens depend on two-phase loading state
-        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
-        let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
-
-        let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
-        let hasCapabilities = !catalog.isEmpty
-        let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
-
-        func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
-            if let override = toolOverrides?[tool.name] { return override }
-            return tool.enabled
-        }
+        let toolSpecs = buildToolSpecs(
+            needsSelection: needsCapabilitySelection,
+            hasCapabilities: phasedLoading && hasCapabilities,
+            overrides: toolOverrides,
+            executionMode: executionMode
+        )
+        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
 
         if phasedLoading && !capabilitiesSelected {
-            breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
-            if hasCapabilities {
-                breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
-            }
             breakdown.skills = CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
         } else if phasedLoading && capabilitiesSelected {
-            breakdown.tools = selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
-            if hasCapabilities {
-                breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
-            }
             if !selectedSkillInstructions.isEmpty {
                 breakdown.skills = max(1, selectedSkillInstructions.count / 4)
             }
         } else {
-            breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.estimatedTokens }
-            breakdown.skills = CapabilityService.shared.estimateSkillTokens()
+            breakdown.skills = CapabilityService.shared.estimateSkillTokens(for: effectiveId)
         }
 
         // All turns
@@ -624,6 +622,10 @@ final class ChatSession: ObservableObject {
     private func beginRun(_ runId: UUID, context: RunContext) {
         activeRunId = runId
         activeRunContext = context
+    }
+
+    private func estimatedChatExecutionMode(agentId: UUID) -> WorkExecutionMode {
+        AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true ? .sandbox : .none
     }
 
     private func completeRunCleanup() {

@@ -156,7 +156,13 @@ public final class CapabilityService {
     /// Estimate the token count for enabled skills (full instructions).
     /// Uses rough heuristic of ~4 characters per token.
     public func estimateSkillTokens() -> Int {
-        let enabledSkills = SkillManager.shared.skills.filter { $0.enabled }
+        estimateSkillTokens(for: nil)
+    }
+
+    /// Estimate the token count for enabled skills for a specific agent.
+    /// Uses rough heuristic of ~4 characters per token.
+    public func estimateSkillTokens(for agentId: UUID?) -> Int {
+        let enabledSkills = enabledSkills(for: agentId)
         let totalChars = enabledSkills.reduce(0) { sum, skill in
             sum + skill.name.count + skill.description.count + skill.instructions.count + 50  // overhead
         }

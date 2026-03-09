@@ -346,6 +346,14 @@ final class ToolRegistry: ObservableObject {
             .reduce(0) { $0 + $1.estimatedTokens }
     }
 
+    /// Total estimated tokens for an explicit set of tool specs.
+    /// Useful when the active tool list is mode- or session-dependent.
+    func totalEstimatedTokens(for tools: [Tool]) -> Int {
+        tools.reduce(0) { total, tool in
+            total + estimatedTokens(for: tool.function.name)
+        }
+    }
+
     // MARK: - Policy / Grants
     func setPolicy(_ policy: ToolPermissionPolicy, for name: String) {
         configuration.setPolicy(policy, for: name)

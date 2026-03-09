@@ -152,7 +152,7 @@ public actor WorkExecutionEngine {
     // MARK: - Folder Context
 
     /// Builds the folder context section for prompts when a folder is selected
-    private func buildFolderContextSection(from folderContext: WorkFolderContext?) -> String {
+    private static func buildFolderContextSection(from folderContext: WorkFolderContext?) -> String {
         guard let folder = folderContext else {
             return ""
         }
@@ -220,7 +220,7 @@ public actor WorkExecutionEngine {
     }
 
     /// Builds the sandbox environment section for prompts when sandbox tools are active
-    private func buildSandboxPromptSection() -> String {
+    private static func buildSandboxPromptSection() -> String {
         Self.sandboxPromptSection()
     }
 
@@ -565,7 +565,7 @@ public actor WorkExecutionEngine {
     ///   - executionMode: Resolved work execution mode
     ///   - skillInstructions: Optional skill-specific instructions
     /// - Returns: Complete system prompt for work mode
-    func buildAgentSystemPrompt(
+    static func buildAgentSystemPrompt(
         base: String,
         issue: Issue,
         executionMode: WorkExecutionMode,
