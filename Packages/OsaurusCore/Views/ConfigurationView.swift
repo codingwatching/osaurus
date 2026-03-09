@@ -1777,7 +1777,7 @@ private struct AgentSettingsSection: View {
                             text: $workMaxIterations,
                             range: 1 ... 100,
                             step: 5,
-                            defaultValue: 30
+                            defaultValue: 50
                         )
                     }
                 }

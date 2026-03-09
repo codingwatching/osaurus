@@ -50,7 +50,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var workMaxTokens: Int?
     /// Work-specific top_p override (nil uses server default)
     public var workTopPOverride: Float?
-    /// Work-specific max reasoning loop iterations (nil uses default 30)
+    /// Work-specific max reasoning loop iterations (nil uses default 50)
     public var workMaxIterations: Int?
 
     public init(
@@ -116,7 +116,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             workTemperature: 0.3,  // Low temperature for reliable tool-calling
             workMaxTokens: 4096,  // Conservative per-iteration limit for work steps
             workTopPOverride: nil,
-            workMaxIterations: 30  // Default reasoning loop iterations
+            workMaxIterations: 50  // Default reasoning loop iterations
         )
     }
 }

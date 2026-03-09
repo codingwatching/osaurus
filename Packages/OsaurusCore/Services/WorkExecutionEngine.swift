@@ -166,7 +166,7 @@ public actor WorkExecutionEngine {
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
 
     /// Default maximum iterations for the reasoning loop
-    public static let defaultMaxIterations = 30
+    public static let defaultMaxIterations = 50
 
     /// Maximum consecutive text-only responses (no tool call) before aborting.
     /// Models that don't support tool calling will describe actions in plain text
@@ -231,6 +231,28 @@ public actor WorkExecutionEngine {
         while iteration < maxIterations {
             iteration += 1
             try Task.checkCancellation()
+
+            // Budget awareness — inject every 10 iterations and at the 5-remaining mark
+            if iteration > 1 && iteration % 10 == 0 {
+                let remaining = maxIterations - iteration
+                messages.append(
+                    ChatMessage(
+                        role: "system",
+                        content:
+                            "[Budget: \(remaining)/\(maxIterations) iterations remaining. Prioritize completing the core task. Use create_issue for non-essential follow-up work.]"
+                    )
+                )
+            }
+
+            if iteration == maxIterations - 5 {
+                messages.append(
+                    ChatMessage(
+                        role: "system",
+                        content:
+                            "[WARNING: 5 iterations remaining. Finish current work and call complete_task with a summary. Create issues for anything unfinished.]"
+                    )
+                )
+            }
 
             await onIterationStart(iteration)
 
