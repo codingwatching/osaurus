@@ -40,7 +40,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var maxToolAttempts: Int?
     /// Default model for new chat sessions (nil uses first available)
     public var defaultModel: String?
-    /// Load capabilities in two phases (catalog, then select_capabilities) to reduce token usage
+    /// ChatView-only phased capability loading (catalog, then `select_capabilities`) to reduce token usage
     public var phasedContextLoading: Bool
 
     // MARK: - Work Generation Settings

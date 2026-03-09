@@ -31,11 +31,16 @@ public struct CapabilitySelectionResult: Codable, Sendable {
     }
 }
 
-/// Tool for selecting capabilities at conversation start
+/// Tool for selecting capabilities at ChatView conversation start.
 final class SelectCapabilitiesTool: OsaurusTool, @unchecked Sendable {
+    struct Request: Sendable {
+        let tools: [String]
+        let skills: [String]
+    }
+
     let name = "select_capabilities"
     let description =
-        "Select which tools and skills to use for this conversation. Call this before starting your response."
+        "ChatView only. Select which tools and skills to use for this conversation before starting your response."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -62,64 +67,31 @@ final class SelectCapabilitiesTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        // Parse arguments
-        guard let data = argumentsJSON.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            throw SelectCapabilitiesError.invalidArguments
-        }
-
-        let requestedTools = (json["tools"] as? [String]) ?? []
-        let requestedSkills = (json["skills"] as? [String]) ?? []
-
-        var loadedToolSchemas: [String: JSONValue] = [:]
-        var loadedSkillInstructions: [String: String] = [:]
-        var errors: [String] = []
-        var selectedTools: [String] = []
-        var selectedSkills: [String] = []
-
-        // Load tool schemas
-        await MainActor.run {
-            let registry = ToolRegistry.shared
-            for toolName in requestedTools {
-                if let params = registry.parametersForTool(name: toolName) {
-                    loadedToolSchemas[toolName] = params
-                    selectedTools.append(toolName)
-                } else {
-                    errors.append("Tool '\(toolName)' not found or not enabled")
-                }
-            }
-        }
-
-        // Load skill instructions
-        await MainActor.run {
-            let manager = SkillManager.shared
-            for skillName in requestedSkills {
-                if let skill = manager.skill(named: skillName), skill.enabled {
-                    loadedSkillInstructions[skillName] = skill.instructions
-                    selectedSkills.append(skillName)
-                } else {
-                    errors.append("Skill '\(skillName)' not found or not enabled")
-                }
-            }
-        }
-
-        let result = CapabilitySelectionResult(
-            selectedTools: selectedTools,
-            selectedSkills: selectedSkills,
-            loadedToolSchemas: loadedToolSchemas,
-            loadedSkillInstructions: loadedSkillInstructions,
-            errors: errors
+        let result = try await CapabilityService.shared.resolveSelection(
+            argumentsJSON: argumentsJSON,
+            agentId: nil
         )
 
         // Notify callback
         onCapabilitiesSelected?(result)
 
         // Build response
-        return buildResponse(result)
+        return Self.buildDetailedResponse(result)
     }
 
-    private func buildResponse(_ result: CapabilitySelectionResult) -> String {
+    static func parse(argumentsJSON: String) throws -> Request {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw SelectCapabilitiesError.invalidArguments
+        }
+        return Request(
+            tools: (json["tools"] as? [String]) ?? [],
+            skills: (json["skills"] as? [String]) ?? []
+        )
+    }
+
+    static func buildDetailedResponse(_ result: CapabilitySelectionResult) -> String {
         var response: [String] = []
 
         response.append("# Capabilities Loaded")
@@ -135,7 +107,7 @@ final class SelectCapabilitiesTool: OsaurusTool, @unchecked Sendable {
         }
 
         if !result.loadedSkillInstructions.isEmpty {
-            response.append("## Activated Skills")
+            response.append("## Selected Skills")
             response.append("The following skill instructions are now active:")
             response.append("")
 
@@ -163,6 +135,31 @@ final class SelectCapabilitiesTool: OsaurusTool, @unchecked Sendable {
 
         return response.joined(separator: "\n")
     }
+
+    static func buildCompactResponse(_ result: CapabilitySelectionResult) -> String {
+        var response: [String] = ["# Capabilities Loaded"]
+
+        if !result.selectedTools.isEmpty {
+            response.append("Tools: \(result.selectedTools.joined(separator: ", "))")
+        }
+
+        if !result.selectedSkills.isEmpty {
+            response.append("Skills: \(result.selectedSkills.joined(separator: ", "))")
+        }
+
+        if !result.errors.isEmpty {
+            response.append("")
+            for error in result.errors {
+                response.append("Warning: \(error)")
+            }
+        }
+
+        if result.selectedTools.isEmpty && result.selectedSkills.isEmpty {
+            response.append("No capabilities loaded.")
+        }
+
+        return response.joined(separator: "\n")
+    }
 }
 
 // MARK: - Errors
@@ -178,45 +175,5 @@ enum SelectCapabilitiesError: Error, LocalizedError {
         case .noCapabilitiesAvailable:
             return "No capabilities available to select"
         }
-    }
-}
-
-// MARK: - Capability Selection State
-
-/// Tracks the state of capability selection for a conversation
-@MainActor
-public class CapabilitySelectionState: ObservableObject {
-    /// Whether capabilities have been selected for this conversation
-    @Published public var hasSelected: Bool = false
-
-    /// The result of the last selection
-    @Published public var lastResult: CapabilitySelectionResult?
-
-    /// Names of currently selected tools
-    public var selectedToolNames: [String] {
-        lastResult?.selectedTools ?? []
-    }
-
-    /// Names of currently selected skills
-    public var selectedSkillNames: [String] {
-        lastResult?.selectedSkills ?? []
-    }
-
-    /// Combined instructions from all selected skills
-    public var combinedSkillInstructions: String {
-        guard let result = lastResult else { return "" }
-        return result.loadedSkillInstructions.values.joined(separator: "\n\n---\n\n")
-    }
-
-    /// Reset selection state for a new conversation
-    public func reset() {
-        hasSelected = false
-        lastResult = nil
-    }
-
-    /// Update state with selection result
-    public func update(with result: CapabilitySelectionResult) {
-        hasSelected = true
-        lastResult = result
     }
 }

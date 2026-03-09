@@ -44,4 +44,42 @@ public enum StringCleaning {
 
         return result
     }
+
+    /// Strips Gemini thought-signature markers from assistant text meant for display.
+    ///
+    /// We keep the raw content intact for Gemini round-tripping, but any UI-facing
+    /// rendering should use this sanitized form instead.
+    public static func stripGeminiDisplayMetadata(_ content: String) -> String {
+        var result = content
+
+        // Normal encoded form: ZWS + ts:SIG + ZWS
+        let zws = "\u{200B}"
+        let prefix = "\(zws)ts:"
+        while let start = result.range(of: prefix) {
+            let markerStart = start.lowerBound
+            let signatureStart = start.upperBound
+            guard let end = result[signatureStart...].range(of: zws) else { break }
+            result.removeSubrange(markerStart ..< end.upperBound)
+        }
+
+        // Defensive cleanup for visible leakage if the zero-width markers are lost or
+        // rendered unexpectedly in the UI.
+        result = result.replacingOccurrences(
+            of: #"(?:(?<=^)|(?<=\s))ts:[A-Za-z0-9+/_=-]{16,}(?=\s|$)"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        return
+            result
+            .replacingOccurrences(of: "\u{200B}", with: "")
+            .replacingOccurrences(of: " \n", with: "\n")
+            .replacingOccurrences(of: "\n ", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Backwards-compatible alias while call sites migrate to the clearer Gemini-specific name.
+    public static func stripDisplayOnlyMetadata(_ content: String) -> String {
+        stripGeminiDisplayMetadata(content)
+    }
 }

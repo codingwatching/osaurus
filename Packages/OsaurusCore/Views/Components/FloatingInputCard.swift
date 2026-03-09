@@ -860,7 +860,7 @@ struct FloatingInputCard: View {
 
     /// Count of enabled tools (with agent overrides applied, excluding work tools)
     private var enabledToolCount: Int {
-        toolRegistry.listCapabilityTools(withOverrides: toolOverrides)
+        toolRegistry.listSelectableCapabilityTools(withOverrides: toolOverrides)
             .filter { $0.enabled }
             .count
     }
@@ -892,7 +892,7 @@ struct FloatingInputCard: View {
         } else if enabledSkillCount > 0 {
             return skillText
         } else {
-            return "Abilities"
+            return "Capabilities"
         }
     }
 

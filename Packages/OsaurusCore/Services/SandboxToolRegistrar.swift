@@ -16,6 +16,7 @@ public final class SandboxToolRegistrar {
 
     private var observers: [NSObjectProtocol] = []
     private var statusCancellable: AnyCancellable?
+    var provisionAgentOverride: ((UUID) async throws -> Void)?
 
     private init() {}
 
@@ -84,11 +85,17 @@ public final class SandboxToolRegistrar {
     /// This ensures sandbox tools are never exposed in the LLM context when
     /// the sandbox is unavailable.
     public func registerToolsForCurrentAgent() async {
+        await registerTools(for: AgentManager.shared.activeAgent.id)
+    }
+
+    /// Re-register sandbox tools for a specific agent. Chat sessions use this to
+    /// avoid depending on whichever agent is globally active.
+    public func registerTools(for agentId: UUID) async {
         ToolRegistry.shared.unregisterAllSandboxTools()
 
         guard SandboxManager.State.shared.status == .running else { return }
 
-        let agent = AgentManager.shared.activeAgent
+        let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
         let agentId = agent.id.uuidString
         let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
@@ -97,7 +104,7 @@ public final class SandboxToolRegistrar {
 
         if needsProvisioning {
             do {
-                try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agent.id)
+                try await ensureProvisioned(agentId: agent.id)
             } catch {
                 NSLog("[SandboxToolRegistrar] Failed to provision agent sandbox: \(error.localizedDescription)")
                 return
@@ -117,6 +124,14 @@ public final class SandboxToolRegistrar {
                 agentName: agentName
             )
         }
+    }
+
+    private func ensureProvisioned(agentId: UUID) async throws {
+        if let provisionAgentOverride {
+            try await provisionAgentOverride(agentId)
+            return
+        }
+        try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
     }
 
     // MARK: - Event Handlers

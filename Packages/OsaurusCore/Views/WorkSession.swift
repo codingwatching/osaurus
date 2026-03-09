@@ -311,14 +311,74 @@ public final class WorkSession: ObservableObject {
         return option.isVLM
     }
 
-    /// Estimated context tokens (synced from chat session for consistency)
+    /// Estimated context tokens for the current work-mode request context.
     var estimatedContextTokens: Int {
-        windowState?.session.estimatedContextTokens ?? 0
+        estimatedContextBreakdown.total
     }
 
-    /// Per-category context token breakdown (synced from chat session)
+    /// Per-category context token breakdown for the current work-mode request context.
     var estimatedContextBreakdown: ContextTokenBreakdown {
-        windowState?.session.estimatedContextBreakdown ?? .zero
+        estimateContextBreakdown(for: activeIssue ?? selectedIssue)
+    }
+
+    func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
+        guard let issue else { return .zero }
+
+        let baseSystemPrompt =
+            windowState?.cachedSystemPrompt
+            ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        let executionMode = estimatedExecutionModeForBudget()
+        let toolOverrides = effectiveToolOverridesForBudget()
+        let toolSpecs = ToolRegistry.shared.workSpecs(withOverrides: toolOverrides, mode: executionMode)
+        let skillNames = buildSkillCatalog().map(\.name)
+        let skillInstructions = CapabilityService.shared.combineSkillInstructions(
+            SkillManager.shared.loadInstructions(for: skillNames)
+        )
+
+        var breakdown = ContextTokenBreakdown()
+        let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
+            base: baseSystemPrompt,
+            issue: issue,
+            executionMode: executionMode,
+            skillInstructions: nil
+        )
+        breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: prompt)
+        breakdown.memory = windowState?.session.estimatedContextBreakdown.memory ?? 0
+        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
+        breakdown.skills = ContextBudgetManager.estimateTokens(for: skillInstructions)
+
+        var conversationTokens = 0
+        for turn in currentTurns {
+            if !turn.contentIsEmpty {
+                conversationTokens += max(1, turn.contentLength / 4)
+            }
+            if let toolCalls = turn.toolCalls {
+                for call in toolCalls {
+                    conversationTokens += max(1, (call.function.name.count + call.function.arguments.count) / 4)
+                }
+            }
+            for (_, result) in turn.toolResults {
+                conversationTokens += max(1, result.count / 4)
+            }
+            if turn.hasThinking {
+                conversationTokens += max(1, turn.thinkingLength / 4)
+            }
+            for attachment in turn.attachments {
+                conversationTokens += attachment.estimatedTokens
+            }
+        }
+        breakdown.conversation = conversationTokens
+
+        var inputTokens = 0
+        if !input.isEmpty {
+            inputTokens += max(1, input.count / 4)
+        }
+        for attachment in pendingAttachments {
+            inputTokens += attachment.estimatedTokens
+        }
+        breakdown.input = inputTokens
+
+        return breakdown
     }
 
     // MARK: - Cumulative Token Usage
@@ -712,16 +772,7 @@ public final class WorkSession: ObservableObject {
                 AgentManager.shared.agent(for: agentId)?.defaultModel ?? "default"
             }
 
-        var toolOverrides = AgentManager.shared.effectiveToolOverrides(for: agentId)
-
-        // Disable plugin tools that duplicate built-in work folder/git tools
-        let conflicting = ToolRegistry.shared.workConflictingToolNames
-        if !conflicting.isEmpty {
-            if toolOverrides == nil { toolOverrides = [:] }
-            for name in conflicting {
-                toolOverrides?[name] = false
-            }
-        }
+        let toolOverrides = effectiveToolOverridesForBudget()
 
         let executionMode = ToolRegistry.shared.resolveWorkExecutionMode(
             withOverrides: toolOverrides,
@@ -729,6 +780,28 @@ public final class WorkSession: ObservableObject {
         )
 
         return (model, systemPrompt, toolOverrides, executionMode)
+    }
+
+    private func effectiveToolOverridesForBudget() -> [String: Bool]? {
+        var toolOverrides = AgentManager.shared.effectiveToolOverrides(for: agentId)
+        let conflicting = ToolRegistry.shared.workConflictingToolNames
+        if !conflicting.isEmpty {
+            if toolOverrides == nil { toolOverrides = [:] }
+            for name in conflicting {
+                toolOverrides?[name] = false
+            }
+        }
+        return toolOverrides
+    }
+
+    private func estimatedExecutionModeForBudget() -> WorkExecutionMode {
+        if let folderContext = WorkFolderContextService.shared.currentContext {
+            return .hostFolder(folderContext)
+        }
+        if AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true {
+            return .sandbox
+        }
+        return .none
     }
 
     /// Handles the result of an execution

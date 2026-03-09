@@ -66,7 +66,7 @@ public struct CapabilityCatalog: Sendable {
         sections.append("# Available Capabilities")
         sections.append("")
         sections.append(
-            "You have access to tools and skills. For tasks requiring tools or specialized guidance, call `select_capabilities` to choose the relevant capabilities. For simple informational queries, respond directly without selection."
+            "You have access to tools and skills. In chat mode, call `select_capabilities` to choose the relevant capabilities before proceeding when tools or specialized guidance are needed. For simple informational queries, respond directly without selection."
         )
         sections.append("")
 
@@ -239,7 +239,7 @@ public struct CapabilityCatalogBuilder {
 extension ToolRegistry {
     /// Get catalog entries for all enabled tools (metadata only)
     public func enabledCatalogEntries() -> [CapabilityEntry] {
-        listUserTools(withOverrides: nil)
+        listSelectableCapabilityTools(withOverrides: nil)
             .filter { $0.enabled }
             .map { tool in
                 CapabilityEntry(
@@ -252,7 +252,7 @@ extension ToolRegistry {
 
     /// Get catalog entries with agent-level overrides applied
     public func enabledCatalogEntries(withOverrides overrides: [String: Bool]?) -> [CapabilityEntry] {
-        listUserTools(withOverrides: overrides)
+        listSelectableCapabilityTools(withOverrides: overrides)
             .filter { tool in
                 // Check override first, then fall back to global state
                 if let overrides = overrides, let override = overrides[tool.name] {

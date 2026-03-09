@@ -61,6 +61,9 @@ final class ChatSession: ObservableObject {
     var onSessionChanged: (() -> Void)?
 
     private var currentTask: Task<Void, Never>?
+    private var activeRunId: UUID?
+    private var activeRunContext: RunContext?
+    var chatEngineFactory: @Sendable () -> ChatEngineProtocol = { ChatEngine(source: .chatUI) }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
@@ -231,9 +234,21 @@ final class ChatSession: ObservableObject {
 
         var breakdown = ContextTokenBreakdown()
         let effectiveId = agentId ?? Agent.defaultId
+        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
+        let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
+        let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
+        let hasCapabilities = !catalog.isEmpty
+        let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
+        let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
         // System prompt
-        let systemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
+        let systemPrompt = buildSystemPrompt(
+            base: AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+            agentId: effectiveId,
+            needsSelection: needsCapabilitySelection,
+            executionMode: executionMode
+        )
         if !systemPrompt.isEmpty {
             breakdown.systemPrompt = max(1, systemPrompt.count / 4)
         }
@@ -241,36 +256,22 @@ final class ChatSession: ObservableObject {
         // Memory context (profile, working memory, summaries, graph)
         breakdown.memory = _memoryContextTokens
 
-        // Tool and skill tokens depend on two-phase loading state
-        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
-        let allTools = ToolRegistry.shared.listTools(withOverrides: toolOverrides)
-
-        let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
-        let hasCapabilities = !catalog.isEmpty
-        let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
-
-        func isEnabled(_ tool: ToolRegistry.ToolEntry) -> Bool {
-            if let override = toolOverrides?[tool.name] { return override }
-            return tool.enabled
-        }
+        let toolSpecs = buildToolSpecs(
+            needsSelection: needsCapabilitySelection,
+            hasCapabilities: phasedLoading && hasCapabilities,
+            overrides: toolOverrides,
+            executionMode: executionMode
+        )
+        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
 
         if phasedLoading && !capabilitiesSelected {
-            breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.catalogEntryTokens }
-            if hasCapabilities {
-                breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
-            }
             breakdown.skills = CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
         } else if phasedLoading && capabilitiesSelected {
-            breakdown.tools = selectedToolNames.reduce(0) { $0 + ToolRegistry.shared.estimatedTokens(for: $1) }
-            if hasCapabilities {
-                breakdown.tools += ToolRegistry.shared.estimatedTokens(for: "select_capabilities")
-            }
             if !selectedSkillInstructions.isEmpty {
                 breakdown.skills = max(1, selectedSkillInstructions.count / 4)
             }
         } else {
-            breakdown.tools = allTools.filter(isEnabled).reduce(0) { $0 + $1.estimatedTokens }
-            breakdown.skills = CapabilityService.shared.estimateSkillTokens()
+            breakdown.skills = CapabilityService.shared.estimateSkillTokens(for: effectiveId)
         }
 
         // All turns
@@ -358,8 +359,13 @@ final class ChatSession: ObservableObject {
     }
 
     func stop() {
-        currentTask?.cancel()
-        currentTask = nil
+        let task = currentTask
+        task?.cancel()
+        if let runId = activeRunId {
+            finalizeRun(runId: runId, persistConversationArtifacts: false)
+        } else {
+            completeRunCleanup()
+        }
     }
 
     func reset() {
@@ -561,98 +567,20 @@ final class ChatSession: ObservableObject {
 
     /// Handle the select_capabilities tool call and update session state
     private func handleSelectCapabilities(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
-        guard let data = argumentsJSON.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            throw NSError(
-                domain: "ChatSession",
-                code: 1,
-                userInfo: [
-                    NSLocalizedDescriptionKey: "Invalid arguments for select_capabilities"
-                ]
-            )
-        }
-
-        let requestedTools = (json["tools"] as? [String]) ?? []
-        let requestedSkills = (json["skills"] as? [String]) ?? []
-
-        // Load selected capabilities
-        var loadedTools: [String] = []
-        var loadedSkillInstructions: [String] = []
-        var errors: [String] = []
-
-        // Get agent-level overrides for validation
         let effectiveAgentId = agentId ?? Agent.defaultId
-        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
-
-        // Validate and collect tools (respecting agent overrides)
-        let enabledToolNames = Set(
-            ToolRegistry.shared.listUserTools(withOverrides: toolOverrides)
-                .filter { tool in
-                    if let override = toolOverrides?[tool.name] { return override }
-                    return tool.enabled
-                }
-                .map { $0.name }
+        let selection = try await CapabilityService.shared.resolveSelection(
+            argumentsJSON: argumentsJSON,
+            agentId: effectiveAgentId
         )
 
-        for toolName in requestedTools {
-            if enabledToolNames.contains(toolName) {
-                loadedTools.append(toolName)
-            } else {
-                errors.append("Tool '\(toolName)' not found or not enabled")
-            }
-        }
-
-        // Validate and collect skills (respecting agent overrides)
-        // Filter requested skills to only those enabled for this agent
-        let enabledRequestedSkills = requestedSkills.filter { skillName in
-            CapabilityService.shared.isSkillEnabled(skillName, for: effectiveAgentId)
-        }
-
-        // Load instructions for enabled skills (includes reference file contents)
-        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: enabledRequestedSkills)
-        for skillName in requestedSkills {
-            if enabledRequestedSkills.contains(skillName), let instructions = skillInstructionsMap[skillName] {
-                loadedSkillInstructions.append("## \(skillName)\n\n\(instructions)")
-            } else {
-                errors.append("Skill '\(skillName)' not found or not enabled")
-            }
-        }
-
-        // Update session state - replace previous selection for context efficiency
         capabilitiesSelected = true
-        selectedToolNames = loadedTools
-        selectedSkillNames = enabledRequestedSkills
-        selectedSkillInstructions =
-            loadedSkillInstructions.isEmpty
-            ? ""
-            : loadedSkillInstructions.joined(separator: "\n\n---\n\n")
+        selectedToolNames = selection.selectedTools
+        selectedSkillNames = selection.selectedSkills
+        selectedSkillInstructions = CapabilityService.shared.combineSkillInstructions(
+            selection.loadedSkillInstructions
+        )
 
-        // Build response (keep it minimal)
-        var response: [String] = []
-        response.append("# Capabilities Loaded")
-
-        if !loadedTools.isEmpty {
-            response.append("Tools: \(loadedTools.joined(separator: ", "))")
-        }
-
-        if !enabledRequestedSkills.isEmpty {
-            response.append("Skills: \(enabledRequestedSkills.joined(separator: ", "))")
-        }
-
-        if !errors.isEmpty {
-            response.append("")
-            for error in errors {
-                response.append("Warning: \(error)")
-            }
-        }
-
-        if loadedTools.isEmpty && enabledRequestedSkills.isEmpty {
-            response.append("No capabilities loaded.")
-        }
-
-        return response.joined(separator: "\n")
+        return SelectCapabilitiesTool.buildCompactResponse(selection)
     }
 
     /// Reset capability selection state (for new conversations)
@@ -663,23 +591,170 @@ final class ChatSession: ObservableObject {
         selectedSkillInstructions = ""
     }
 
+    private struct RunContext {
+        let hasContent: Bool
+        let userContent: String
+        let memoryAgentId: String
+        let memoryConversationId: String
+    }
+
+    private func isRunActive(_ runId: UUID) -> Bool {
+        activeRunId == runId && !Task.isCancelled
+    }
+
+    private func trimTrailingEmptyAssistantTurn() {
+        if let lastTurn = turns.last,
+            lastTurn.role == .assistant,
+            lastTurn.contentIsEmpty,
+            lastTurn.toolCalls == nil,
+            !lastTurn.hasThinking
+        {
+            turns.removeLast()
+        }
+    }
+
+    private func consolidateAssistantTurns() {
+        for turn in turns where turn.role == .assistant {
+            turn.consolidateContent()
+        }
+    }
+
+    private func beginRun(_ runId: UUID, context: RunContext) {
+        activeRunId = runId
+        activeRunContext = context
+    }
+
+    private func estimatedChatExecutionMode(agentId: UUID) -> WorkExecutionMode {
+        AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true ? .sandbox : .none
+    }
+
+    private func completeRunCleanup() {
+        currentTask = nil
+        isStreaming = false
+        ServerController.signalGenerationEnd()
+        trimTrailingEmptyAssistantTurn()
+        consolidateAssistantTurns()
+        save()
+    }
+
+    private func finalizeRun(runId: UUID?, persistConversationArtifacts: Bool) {
+        guard let runId, activeRunId == runId else { return }
+
+        let context = activeRunContext
+        activeRunId = nil
+        activeRunContext = nil
+        completeRunCleanup()
+
+        guard persistConversationArtifacts, let context else { return }
+
+        let assistantContent = turns.last(where: { $0.role == .assistant })?.content
+
+        if context.hasContent, let sid = sessionId {
+            let convId = sid.uuidString
+            let aid = context.memoryAgentId
+            let chunkIdx = turns.count
+            let db = MemoryDatabase.shared
+            do { try db.upsertConversation(id: convId, agentId: aid, title: title) } catch {
+                MemoryLogger.database.warning("Failed to upsert conversation: \(error)")
+            }
+            let userChunkIndex = chunkIdx - 1
+            do {
+                try db.insertChunk(
+                    conversationId: convId,
+                    chunkIndex: userChunkIndex,
+                    role: "user",
+                    content: context.userContent,
+                    tokenCount: max(1, context.userContent.count / 4)
+                )
+            } catch {
+                MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
+            }
+            let userChunk = ConversationChunk(
+                conversationId: convId,
+                chunkIndex: userChunkIndex,
+                role: "user",
+                content: context.userContent,
+                tokenCount: max(1, context.userContent.count / 4)
+            )
+            Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
+            if let assistantContent, !assistantContent.isEmpty {
+                do {
+                    try db.insertChunk(
+                        conversationId: convId,
+                        chunkIndex: chunkIdx,
+                        role: "assistant",
+                        content: assistantContent,
+                        tokenCount: max(1, assistantContent.count / 4)
+                    )
+                } catch {
+                    MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
+                }
+                let assistantChunk = ConversationChunk(
+                    conversationId: convId,
+                    chunkIndex: chunkIdx,
+                    role: "assistant",
+                    content: assistantContent,
+                    tokenCount: max(1, assistantContent.count / 4)
+                )
+                Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
+            }
+        }
+
+        if context.hasContent {
+            let today = ISO8601DateFormatter.string(
+                from: Date(),
+                timeZone: .current,
+                formatOptions: [.withFullDate, .withDashSeparatorInDate]
+            )
+            Task.detached {
+                await MemoryService.shared.recordConversationTurn(
+                    userMessage: context.userContent,
+                    assistantMessage: assistantContent,
+                    agentId: context.memoryAgentId,
+                    conversationId: context.memoryConversationId,
+                    sessionDate: today
+                )
+            }
+        }
+
+        ActivityTracker.shared.recordActivity(agentId: context.memoryAgentId)
+    }
+
+    func prepareChatExecutionMode(agentId: UUID, overrides: [String: Bool]?) async -> WorkExecutionMode {
+        guard AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true else {
+            return .none
+        }
+
+        await SandboxToolRegistrar.shared.registerTools(for: agentId)
+        return ToolRegistry.shared.resolveWorkExecutionMode(
+            withOverrides: overrides,
+            folderContext: nil
+        )
+    }
+
     /// Build system prompt based on capability selection state
-    private func buildSystemPrompt(base: String, agentId: UUID, needsSelection: Bool) -> String {
+    func buildSystemPrompt(
+        base: String,
+        agentId: UUID,
+        needsSelection: Bool,
+        executionMode: WorkExecutionMode
+    ) -> String {
+        let prompt: String
         if needsSelection {
             // Phase 1: Include full capability catalog for selection
-            return CapabilityService.shared.buildSystemPromptWithCatalog(
+            prompt = CapabilityService.shared.buildSystemPromptWithCatalog(
                 basePrompt: base,
                 agentId: agentId
             )
         } else if capabilitiesSelected {
             // Phase 2: Include selected skill instructions + available capabilities reminder
-            var prompt = base
+            var selectedPrompt = base
 
             // Add active skill instructions
             if !selectedSkillInstructions.isEmpty {
-                if !prompt.isEmpty { prompt += "\n\n" }
-                prompt += "# Active Skills\n\n"
-                prompt += selectedSkillInstructions
+                if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
+                selectedPrompt += "# Active Skills\n\n"
+                selectedPrompt += selectedSkillInstructions
             }
 
             // Add compact reminder of other available capabilities
@@ -688,39 +763,51 @@ final class ChatSession: ObservableObject {
             let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
 
             if !unselectedTools.isEmpty || !unselectedSkills.isEmpty {
-                if !prompt.isEmpty { prompt += "\n\n" }
-                prompt += "# Additional Capabilities Available\n"
-                prompt += "Call `select_capabilities` to add more:\n"
+                if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
+                selectedPrompt += "# Additional Capabilities Available\n"
+                selectedPrompt += "Call `select_capabilities` to add more:\n"
                 if !unselectedTools.isEmpty {
-                    prompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
+                    selectedPrompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
                 }
                 if !unselectedSkills.isEmpty {
-                    prompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
+                    selectedPrompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
                 }
             }
 
-            return prompt
+            prompt = selectedPrompt
         } else {
             // No capability selection needed, use base prompt
-            return base
+            prompt = base
         }
+
+        guard executionMode.usesSandboxTools else { return prompt }
+        if prompt.isEmpty {
+            return WorkExecutionEngine.sandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return prompt + "\n\n"
+            + WorkExecutionEngine.sandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Build tool specifications based on capability selection state
-    private func buildToolSpecs(needsSelection: Bool, hasCapabilities: Bool, overrides: [String: Bool]?) -> [Tool] {
+    func buildToolSpecs(
+        needsSelection: Bool,
+        hasCapabilities: Bool,
+        overrides: [String: Bool]?,
+        executionMode: WorkExecutionMode
+    ) -> [Tool] {
         if needsSelection {
-            // Phase 1: Only select_capabilities available
-            return ToolRegistry.shared.selectCapabilitiesSpec()
+            // Phase 1: Only capability selection plus runtime chat infrastructure.
+            return ToolRegistry.shared.chatSpecs(forTools: ["select_capabilities"], mode: executionMode)
         } else if capabilitiesSelected && !selectedToolNames.isEmpty {
             // Phase 2: Selected tools + select_capabilities for adding more
             var toolNames = selectedToolNames
             if hasCapabilities && !toolNames.contains("select_capabilities") {
                 toolNames.append("select_capabilities")
             }
-            return ToolRegistry.shared.specs(forTools: toolNames)
+            return ToolRegistry.shared.chatSpecs(forTools: toolNames, mode: executionMode)
         } else {
             // Default: All enabled tools + select_capabilities (if capabilities exist)
-            var specs = ToolRegistry.shared.userSpecs(withOverrides: overrides)
+            var specs = ToolRegistry.shared.chatSpecs(withOverrides: overrides, mode: executionMode)
             if hasCapabilities && !specs.contains(where: { $0.function.name == "select_capabilities" }) {
                 specs.append(contentsOf: ToolRegistry.shared.selectCapabilitiesSpec())
             }
@@ -759,117 +846,41 @@ final class ChatSession: ObservableObject {
             ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
         }
 
+        let runId = UUID()
+        beginRun(
+            runId,
+            context: RunContext(
+                hasContent: hasContent,
+                userContent: trimmed,
+                memoryAgentId: memoryAgentId,
+                memoryConversationId: memoryConversationId
+            )
+        )
+
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
+            guard self.isRunActive(runId) else { return }
             lastStreamError = nil
             isStreaming = true
             ServerController.signalGenerationStart()
             defer {
-                isStreaming = false
-                ServerController.signalGenerationEnd()
-                // Remove trailing empty assistant turn if present
-                if let lastTurn = turns.last,
-                    lastTurn.role == .assistant,
-                    lastTurn.contentIsEmpty,
-                    lastTurn.toolCalls == nil,
-                    !lastTurn.hasThinking
-                {
-                    turns.removeLast()
-                }
-                // Consolidate chunks and save
-                for turn in turns where turn.role == .assistant {
-                    turn.consolidateContent()
-                }
-                save()
-
-                // Memory: persist conversation chunk and trigger signal processing
-                let assistantContent = turns.last(where: { $0.role == .assistant })?.content
-                let userContent = trimmed
-
-                if hasContent, let sid = sessionId {
-                    let convId = sid.uuidString
-                    let aid = memoryAgentId
-                    let chunkIdx = turns.count
-                    let db = MemoryDatabase.shared
-                    do { try db.upsertConversation(id: convId, agentId: aid, title: title) } catch {
-                        MemoryLogger.database.warning("Failed to upsert conversation: \(error)")
-                    }
-                    let userChunkIndex = chunkIdx - 1
-                    do {
-                        try db.insertChunk(
-                            conversationId: convId,
-                            chunkIndex: userChunkIndex,
-                            role: "user",
-                            content: userContent,
-                            tokenCount: max(1, userContent.count / 4)
-                        )
-                    } catch {
-                        MemoryLogger.database.warning("Failed to insert user chunk: \(error)")
-                    }
-                    let userChunk = ConversationChunk(
-                        conversationId: convId,
-                        chunkIndex: userChunkIndex,
-                        role: "user",
-                        content: userContent,
-                        tokenCount: max(1, userContent.count / 4)
-                    )
-                    Task.detached { await MemorySearchService.shared.indexConversationChunk(userChunk) }
-                    if let ac = assistantContent, !ac.isEmpty {
-                        do {
-                            try db.insertChunk(
-                                conversationId: convId,
-                                chunkIndex: chunkIdx,
-                                role: "assistant",
-                                content: ac,
-                                tokenCount: max(1, ac.count / 4)
-                            )
-                        } catch {
-                            MemoryLogger.database.warning("Failed to insert assistant chunk: \(error)")
-                        }
-                        let assistantChunk = ConversationChunk(
-                            conversationId: convId,
-                            chunkIndex: chunkIdx,
-                            role: "assistant",
-                            content: ac,
-                            tokenCount: max(1, ac.count / 4)
-                        )
-                        Task.detached { await MemorySearchService.shared.indexConversationChunk(assistantChunk) }
-                    }
-                }
-
-                if hasContent {
-                    let userMsg = userContent
-                    let asstMsg = assistantContent
-                    let agentStr = memoryAgentId
-                    let convStr = memoryConversationId
-                    let today = ISO8601DateFormatter.string(
-                        from: Date(),
-                        timeZone: .current,
-                        formatOptions: [.withFullDate, .withDashSeparatorInDate]
-                    )
-                    Task.detached {
-                        await MemoryService.shared.recordConversationTurn(
-                            userMessage: userMsg,
-                            assistantMessage: asstMsg,
-                            agentId: agentStr,
-                            conversationId: convStr,
-                            sessionDate: today
-                        )
-                    }
-                }
-
-                ActivityTracker.shared.recordActivity(agentId: memoryAgentId)
+                finalizeRun(runId: runId, persistConversationArtifacts: true)
             }
 
             var assistantTurn = ChatTurn(role: .assistant, content: "")
             turns.append(assistantTurn)
             do {
-                let engine = ChatEngine(source: .chatUI)
+                let engine = chatEngineFactory()
                 let chatCfg = ChatConfigurationStore.load()
 
                 // MARK: - Two-Phase Capability Selection
                 let effectiveAgentId = agentId ?? Agent.defaultId
                 let effectiveToolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
+                let executionMode = await prepareChatExecutionMode(
+                    agentId: effectiveAgentId,
+                    overrides: effectiveToolOverrides
+                )
+                guard isRunActive(runId) else { return }
 
                 // Check if there are any capabilities to select
                 let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
@@ -886,13 +897,15 @@ final class ChatSession: ObservableObject {
                     agentId: effectiveAgentId.uuidString,
                     config: memoryConfig
                 )
+                guard isRunActive(runId) else { return }
                 updateMemoryTokens(fromContext: memoryContext)
 
                 // Build system prompt and tool specs based on capability selection state
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
-                    needsSelection: needsCapabilitySelection
+                    needsSelection: needsCapabilitySelection,
+                    executionMode: executionMode
                 )
 
                 if !memoryContext.isEmpty {
@@ -901,7 +914,8 @@ final class ChatSession: ObservableObject {
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
                     hasCapabilities: phasedLoading && hasCapabilities,
-                    overrides: effectiveToolOverrides
+                    overrides: effectiveToolOverrides,
+                    executionMode: executionMode
                 )
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
@@ -997,8 +1011,12 @@ final class ChatSession: ObservableObject {
                         }
 
                         let stream = try await engine.streamChat(request: req)
+                        guard isRunActive(runId) else {
+                            processor.finalize()
+                            break outer
+                        }
                         for try await delta in stream {
-                            if Task.isCancelled {
+                            if !isRunActive(runId) {
                                 processor.finalize()
                                 break outer
                             }
@@ -1018,6 +1036,7 @@ final class ChatSession: ObservableObject {
 
                         break  // finished normally
                     } catch let inv as ServiceToolInvocation {
+                        guard isRunActive(runId) else { break outer }
                         // Use preserved tool call ID from stream if available, otherwise generate one
                         let callId: String
                         if let preservedId = inv.toolCallId, !preservedId.isEmpty {
@@ -1047,18 +1066,20 @@ final class ChatSession: ObservableObject {
                             // Handle select_capabilities specially for two-phase loading
                             if inv.toolName == "select_capabilities" {
                                 resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
-                                if Task.isCancelled { break }
+                                if !isRunActive(runId) { break outer }
 
                                 // Rebuild system prompt and tool specs using helper methods
                                 sys = buildSystemPrompt(
                                     base: baseSystemPrompt,
                                     agentId: effectiveAgentId,
-                                    needsSelection: false
+                                    needsSelection: false,
+                                    executionMode: executionMode
                                 )
                                 toolSpecs = buildToolSpecs(
                                     needsSelection: false,
                                     hasCapabilities: hasCapabilities,
-                                    overrides: effectiveToolOverrides
+                                    overrides: effectiveToolOverrides,
+                                    executionMode: executionMode
                                 )
                             } else {
                                 // Build effective overrides: if capabilities were selected, allow those tools
@@ -1068,12 +1089,17 @@ final class ChatSession: ObservableObject {
                                     executionOverrides[inv.toolName] = true
                                 }
 
+                                if executionMode.usesSandboxTools {
+                                    await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
+                                    if !isRunActive(runId) { break outer }
+                                }
+
                                 resultText = try await ToolRegistry.shared.execute(
                                     name: inv.toolName,
                                     argumentsJSON: inv.jsonArguments,
                                     overrides: executionOverrides.isEmpty ? nil : executionOverrides
                                 )
-                                if Task.isCancelled { break }
+                                if !isRunActive(runId) { break outer }
                             }
 
                             // Log tool success (truncated result)
@@ -1090,6 +1116,7 @@ final class ChatSession: ObservableObject {
                             turns.append(toolTurn)
                             break  // Stop tool loop on rejection
                         }
+                        guard isRunActive(runId) else { break }
                         assistantTurn.toolResults[callId] = resultText
                         let toolTurn = ChatTurn(role: .tool, content: resultText)
                         toolTurn.toolCallId = callId
@@ -1633,7 +1660,7 @@ struct ChatView: View {
         }
         if !turn.contentIsEmpty {
             if !textToCopy.isEmpty { textToCopy += "\n\n" }
-            textToCopy += turn.content
+            textToCopy += turn.visibleContent
         }
         guard !textToCopy.isEmpty else { return }
         NSPasteboard.general.clearContents()

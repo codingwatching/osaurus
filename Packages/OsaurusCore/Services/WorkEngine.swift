@@ -344,7 +344,7 @@ public actor WorkEngine {
         let skillInstructions = await buildSkillInstructions(from: skillCatalog)
 
         // Build the work system prompt using the new method
-        let agentSystemPrompt = await executionEngine.buildAgentSystemPrompt(
+        let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             issue: issue,
             executionMode: resolvedExecutionMode,
@@ -375,7 +375,7 @@ public actor WorkEngine {
         }
 
         // Estimate token overhead for tool definitions
-        let toolTokenEstimate = await ToolRegistry.shared.totalEstimatedTokens(withOverrides: toolOverrides)
+        let toolTokenEstimate = await ToolRegistry.shared.totalEstimatedTokens(for: tools)
 
         // Run the reasoning loop
         let loopResult = try await executionEngine.executeLoop(

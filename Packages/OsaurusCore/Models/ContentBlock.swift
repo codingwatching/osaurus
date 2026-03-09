@@ -282,7 +282,7 @@ extension ContentBlock {
                     .paragraph(
                         turnId: turn.id,
                         index: 0,
-                        text: turn.content,
+                        text: turn.visibleContent,
                         isStreaming: isStreaming,
                         role: turn.role,
                         position: .middle

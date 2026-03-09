@@ -129,7 +129,7 @@ final class ToolRegistry: ObservableObject {
     /// Tool specs excluding work-specific and folder tools.
     /// Use this for chat mode where work/folder tools should not be available.
     func userSpecs(withOverrides overrides: [String: Bool]?) -> [Tool] {
-        specs(withOverrides: overrides, excluding: runtimeManagedToolNames)
+        specs(withOverrides: overrides, excluding: runtimeManagedToolNames.union(Self.internalChatToolNames))
     }
 
     /// Tool specs for work mode filtered by the resolved execution mode.
@@ -137,7 +137,31 @@ final class ToolRegistry: ObservableObject {
         withOverrides overrides: [String: Bool]?,
         mode: WorkExecutionMode
     ) -> [Tool] {
-        specs(withOverrides: overrides, excluding: excludedToolNames(for: mode))
+        specs(
+            withOverrides: overrides,
+            excluding: excludedToolNames(for: mode).union(Self.internalChatToolNames)
+        )
+    }
+
+    /// Tool specs for chat mode, keeping runtime-managed work/folder tools hidden
+    /// while auto-including sandbox built-ins when chat is running in sandbox mode.
+    func chatSpecs(
+        withOverrides overrides: [String: Bool]?,
+        mode: WorkExecutionMode
+    ) -> [Tool] {
+        specs(withOverrides: overrides, excluding: excludedChatToolNames(for: mode))
+    }
+
+    /// Specs for an explicit chat tool list, plus runtime-managed sandbox built-ins
+    /// when sandbox-backed chat execution is active.
+    func chatSpecs(forTools toolNames: [String], mode: WorkExecutionMode) -> [Tool] {
+        var names = toolNames
+        if mode.usesSandboxTools {
+            for sandboxToolName in builtInSandboxToolNames.sorted() where !names.contains(sandboxToolName) {
+                names.append(sandboxToolName)
+            }
+        }
+        return specs(forTools: names)
     }
 
     /// Get specs for specific tools by name (ignores enabled state)
@@ -320,6 +344,14 @@ final class ToolRegistry: ObservableObject {
         return listTools(withOverrides: overrides)
             .filter { $0.enabled }
             .reduce(0) { $0 + $1.estimatedTokens }
+    }
+
+    /// Total estimated tokens for an explicit set of tool specs.
+    /// Useful when the active tool list is mode- or session-dependent.
+    func totalEstimatedTokens(for tools: [Tool]) -> Int {
+        tools.reduce(0) { total, tool in
+            total + estimatedTokens(for: tool.function.name)
+        }
     }
 
     // MARK: - Policy / Grants
@@ -507,6 +539,13 @@ final class ToolRegistry: ObservableObject {
             .union(builtInSandboxToolNames)
     }
 
+    /// Internal chat-only tools should not appear in user-facing or work-mode tool assembly.
+    private static let internalChatToolNames: Set<String> = ["select_capabilities"]
+
+    private static func isInternalChatTool(_ name: String) -> Bool {
+        internalChatToolNames.contains(name)
+    }
+
     private func excludedToolNames(for mode: WorkExecutionMode) -> Set<String> {
         switch mode {
         case .hostFolder:
@@ -515,6 +554,15 @@ final class ToolRegistry: ObservableObject {
             return Self.folderToolNames
         case .none:
             return Self.folderToolNames.union(builtInSandboxToolNames)
+        }
+    }
+
+    private func excludedChatToolNames(for mode: WorkExecutionMode) -> Set<String> {
+        switch mode {
+        case .sandbox:
+            return Self.workToolNames.union(Self.folderToolNames)
+        case .hostFolder, .none:
+            return runtimeManagedToolNames
         }
     }
 
@@ -568,6 +616,11 @@ final class ToolRegistry: ObservableObject {
         )
     }
 
+    /// User-selectable capability tools excluding internal chat bootstrap tools.
+    func listSelectableCapabilityTools(withOverrides overrides: [String: Bool]?) -> [ToolEntry] {
+        listCapabilityTools(withOverrides: overrides, excludeInternal: true)
+    }
+
     /// List tools excluding work-specific and optionally internal tools.
     /// Use this for user-facing tool lists and counts.
     ///
@@ -589,7 +642,7 @@ final class ToolRegistry: ObservableObject {
     ) -> [ToolEntry] {
         listTools(withOverrides: overrides)
             .filter { includedNames.contains($0.name) }
-            .filter { !excludeInternal || $0.name != "select_capabilities" }
+            .filter { !excludeInternal || !Self.isInternalChatTool($0.name) }
     }
 
     private func listTools(
@@ -599,6 +652,6 @@ final class ToolRegistry: ObservableObject {
     ) -> [ToolEntry] {
         listTools(withOverrides: overrides)
             .filter { !excludedNames.contains($0.name) }
-            .filter { !excludeInternal || $0.name != "select_capabilities" }
+            .filter { !excludeInternal || !Self.isInternalChatTool($0.name) }
     }
 }
