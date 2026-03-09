@@ -20,39 +20,74 @@ enum BuiltinSandboxTools {
         let home = OsaurusPaths.inContainerAgentHome(agentName)
 
         // Always available (read-only)
-        registry.registerSandboxTool(SandboxReadFileTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxListDirectoryTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxSearchFilesTool(agentName: agentName, home: home))
+        registry.registerSandboxTool(
+            SandboxReadFileTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxListDirectoryTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxSearchFilesTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
 
         // Gated by autonomous_exec.enabled
         guard let config = config, config.enabled else { return }
 
         let maxCmdsPerTurn = config.maxCommandsPerTurn
 
-        registry.registerSandboxTool(SandboxWriteFileTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxMoveTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxDeleteTool(agentName: agentName, home: home))
+        registry.registerSandboxTool(
+            SandboxWriteFileTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(SandboxMoveTool(agentName: agentName, home: home), runtimeManaged: true)
+        registry.registerSandboxTool(
+            SandboxDeleteTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
         registry.registerSandboxTool(
             SandboxExecTool(
                 agentName: agentName,
                 home: home,
                 maxTimeout: config.commandTimeout,
                 maxCommandsPerTurn: maxCmdsPerTurn
-            )
+            ),
+            runtimeManaged: true
         )
         registry.registerSandboxTool(
             SandboxExecBackgroundTool(
                 agentName: agentName,
                 home: home,
                 maxCommandsPerTurn: maxCmdsPerTurn
-            )
+            ),
+            runtimeManaged: true
         )
-        registry.registerSandboxTool(SandboxExecKillTool(agentName: agentName))
-        registry.registerSandboxTool(SandboxInstallTool(agentName: agentName))
-        registry.registerSandboxTool(SandboxPipInstallTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxNpmInstallTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxWhoamiTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName))
+        registry.registerSandboxTool(SandboxExecKillTool(agentName: agentName), runtimeManaged: true)
+        registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
+        registry.registerSandboxTool(
+            SandboxPipInstallTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxNpmInstallTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxRunScriptTool(
+                agentName: agentName,
+                home: home,
+                maxTimeout: config.commandTimeout,
+                maxCommandsPerTurn: maxCmdsPerTurn
+            ),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxWhoamiTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName), runtimeManaged: true)
     }
 
     /// Unregister all built-in sandbox tools.
@@ -63,6 +98,7 @@ enum BuiltinSandboxTools {
             "sandbox_write_file", "sandbox_move", "sandbox_delete",
             "sandbox_exec", "sandbox_exec_background", "sandbox_exec_kill",
             "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
+            "sandbox_run_script",
             "sandbox_whoami", "sandbox_processes",
         ]
         ToolRegistry.shared.unregister(names: names)
@@ -75,6 +111,26 @@ private func validatePath(_ path: String, home: String) -> String? {
     SandboxPathSanitizer.sanitize(path, agentHome: home)
 }
 
+private let sandboxDefaultPATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+private func agentVenvPath(home: String) -> String {
+    "\(home)/.venv"
+}
+
+private func agentShellEnvironment(home: String, cwd: String? = nil) -> [String: String] {
+    let venvPath = agentVenvPath(home: home)
+    var pathEntries: [String] = []
+    if let cwd, !cwd.isEmpty {
+        pathEntries.append("\(cwd)/node_modules/.bin")
+    }
+    pathEntries.append("\(venvPath)/bin")
+    pathEntries.append(sandboxDefaultPATH)
+    return [
+        "VIRTUAL_ENV": venvPath,
+        "PATH": pathEntries.joined(separator: ":"),
+    ]
+}
+
 private func jsonResult(_ dict: [String: Any]) -> String {
     guard let data = try? JSONSerialization.data(withJSONObject: dict),
         let json = String(data: data, encoding: .utf8)
@@ -82,11 +138,177 @@ private func jsonResult(_ dict: [String: Any]) -> String {
     return json
 }
 
+protocol SandboxToolCommandRunning: Sendable {
+    func exec(
+        user: String?,
+        command: String,
+        env: [String: String],
+        cwd: String?,
+        timeout: TimeInterval,
+        streamToLogs: Bool,
+        logSource: String?
+    ) async throws -> ContainerExecResult
+
+    func execAsRoot(
+        command: String,
+        timeout: TimeInterval,
+        streamToLogs: Bool,
+        logSource: String?
+    ) async throws -> ContainerExecResult
+
+    func execAsAgent(
+        _ agentName: String,
+        command: String,
+        pluginName: String?,
+        env: [String: String],
+        timeout: TimeInterval,
+        streamToLogs: Bool,
+        logSource: String?
+    ) async throws -> ContainerExecResult
+}
+
+private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
+    func exec(
+        user: String?,
+        command: String,
+        env: [String: String] = [:],
+        cwd: String? = nil,
+        timeout: TimeInterval = 30,
+        streamToLogs: Bool = false,
+        logSource: String? = nil
+    ) async throws -> ContainerExecResult {
+        try await SandboxManager.shared.exec(
+            user: user,
+            command: command,
+            env: env,
+            cwd: cwd,
+            timeout: timeout,
+            streamToLogs: streamToLogs,
+            logSource: logSource
+        )
+    }
+
+    func execAsRoot(
+        command: String,
+        timeout: TimeInterval = 60,
+        streamToLogs: Bool = false,
+        logSource: String? = nil
+    ) async throws -> ContainerExecResult {
+        try await SandboxManager.shared.execAsRoot(
+            command: command,
+            timeout: timeout,
+            streamToLogs: streamToLogs,
+            logSource: logSource
+        )
+    }
+
+    func execAsAgent(
+        _ agentName: String,
+        command: String,
+        pluginName: String? = nil,
+        env: [String: String] = [:],
+        timeout: TimeInterval = 30,
+        streamToLogs: Bool = false,
+        logSource: String? = nil
+    ) async throws -> ContainerExecResult {
+        try await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: command,
+            pluginName: pluginName,
+            env: env,
+            timeout: timeout,
+            streamToLogs: streamToLogs,
+            logSource: logSource
+        )
+    }
+}
+
+actor SandboxToolCommandRunnerRegistry {
+    static let shared = SandboxToolCommandRunnerRegistry()
+
+    private var runner: any SandboxToolCommandRunning = LiveSandboxToolCommandRunner()
+
+    func setRunner(_ runner: any SandboxToolCommandRunning) {
+        self.runner = runner
+    }
+
+    func reset() {
+        runner = LiveSandboxToolCommandRunner()
+    }
+
+    func exec(
+        user: String? = nil,
+        command: String,
+        env: [String: String] = [:],
+        cwd: String? = nil,
+        timeout: TimeInterval = 30,
+        streamToLogs: Bool = false,
+        logSource: String? = nil
+    ) async throws -> ContainerExecResult {
+        try await runner.exec(
+            user: user,
+            command: command,
+            env: env,
+            cwd: cwd,
+            timeout: timeout,
+            streamToLogs: streamToLogs,
+            logSource: logSource
+        )
+    }
+
+    func execAsRoot(
+        command: String,
+        timeout: TimeInterval = 60,
+        streamToLogs: Bool = false,
+        logSource: String? = nil
+    ) async throws -> ContainerExecResult {
+        try await runner.execAsRoot(
+            command: command,
+            timeout: timeout,
+            streamToLogs: streamToLogs,
+            logSource: logSource
+        )
+    }
+
+    func execAsAgent(
+        _ agentName: String,
+        command: String,
+        pluginName: String? = nil,
+        env: [String: String] = [:],
+        timeout: TimeInterval = 30,
+        streamToLogs: Bool = false,
+        logSource: String? = nil
+    ) async throws -> ContainerExecResult {
+        try await runner.execAsAgent(
+            agentName,
+            command: command,
+            pluginName: pluginName,
+            env: env,
+            timeout: timeout,
+            streamToLogs: streamToLogs,
+            logSource: logSource
+        )
+    }
+}
+
+private func installResultJSON(packages: [String], result: ContainerExecResult) -> String {
+    var payload: [String: Any] = [
+        "exit_code": Int(result.exitCode),
+        "output": result.stdout + result.stderr,
+    ]
+    if result.succeeded {
+        payload["installed"] = packages
+    } else {
+        payload["requested"] = packages
+    }
+    return jsonResult(payload)
+}
+
 // MARK: - sandbox_read_file
 
 private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_read_file"
-    let description = "Read a file's contents from the sandbox environment."
+    let description = "Read a file's contents from the sandbox environment. Supports line ranges and log tails."
     let agentName: String
     let home: String
 
@@ -97,7 +319,23 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
                 "path": .object([
                     "type": .string("string"),
                     "description": .string("File path, relative to agent home or absolute within sandbox"),
-                ])
+                ]),
+                "start_line": .object([
+                    "type": .string("integer"),
+                    "description": .string("1-based starting line to read"),
+                ]),
+                "line_count": .object([
+                    "type": .string("integer"),
+                    "description": .string("Number of lines to read from start_line"),
+                ]),
+                "tail_lines": .object([
+                    "type": .string("integer"),
+                    "description": .string("Read the last N lines, useful for logs"),
+                ]),
+                "max_chars": .object([
+                    "type": .string("integer"),
+                    "description": .string("Cap returned characters after line selection"),
+                ]),
             ]),
             "required": .array([.string("path")]),
         ])
@@ -109,11 +347,48 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
             let resolved = validatePath(path, home: home)
         else { return jsonResult(["error": "Invalid path"]) }
 
-        let result = try await SandboxManager.shared.execAsAgent(agentName, command: "cat '\(resolved)'")
-        return jsonResult([
+        let startLine = max((args["start_line"] as? Int) ?? 0, 0)
+        let lineCount = max((args["line_count"] as? Int) ?? 0, 0)
+        let tailLines = max((args["tail_lines"] as? Int) ?? 0, 0)
+        let maxChars = max((args["max_chars"] as? Int) ?? 0, 0)
+
+        let command: String
+        if tailLines > 0 {
+            command =
+                maxChars > 0
+                ? "tail -n \(tailLines) '\(resolved)' | head -c \(maxChars)"
+                : "tail -n \(tailLines) '\(resolved)'"
+        } else if startLine > 0 {
+            let count = max(lineCount, 1)
+            let endLine = startLine + count - 1
+            command =
+                maxChars > 0
+                ? "sed -n '\(startLine),\(endLine)p' '\(resolved)' | head -c \(maxChars)"
+                : "sed -n '\(startLine),\(endLine)p' '\(resolved)'"
+        } else {
+            command = maxChars > 0 ? "head -c \(maxChars) '\(resolved)'" : "cat '\(resolved)'"
+        }
+
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: command
+        )
+        var payload: [String: Any] = [
+            "path": resolved,
             "content": result.stdout,
             "size": result.stdout.count,
-        ])
+        ]
+        if startLine > 0 {
+            payload["start_line"] = startLine
+            payload["line_count"] = max(lineCount, 1)
+        }
+        if tailLines > 0 {
+            payload["tail_lines"] = tailLines
+        }
+        if maxChars > 0 {
+            payload["max_chars"] = maxChars
+        }
+        return jsonResult(payload)
     }
 }
 
@@ -156,7 +431,7 @@ private struct SandboxListDirectoryTool: OsaurusTool, @unchecked Sendable {
             ? "find '\(resolved)' -maxdepth 3 -printf '%T@ %y %s %p\\n' 2>/dev/null | sort -rn | head -200"
             : "ls -la '\(resolved)' 2>/dev/null"
 
-        let result = try await SandboxManager.shared.execAsAgent(agentName, command: cmd)
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
         return jsonResult(["entries": result.stdout])
     }
 }
@@ -206,7 +481,7 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         }
         cmd += " '\(pattern)' '\(resolved)' 2>/dev/null | head -100"
 
-        let result = try await SandboxManager.shared.execAsAgent(agentName, command: cmd)
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
         return jsonResult(["matches": result.stdout])
     }
 }
@@ -244,10 +519,10 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         else { return jsonResult(["error": "Invalid arguments"]) }
 
         let dir = (resolved as NSString).deletingLastPathComponent
-        _ = try await SandboxManager.shared.execAsAgent(agentName, command: "mkdir -p '\(dir)'")
+        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: "mkdir -p '\(dir)'")
 
         let escaped = content.replacingOccurrences(of: "'", with: "'\\''")
-        let result = try await SandboxManager.shared.execAsAgent(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
             command: "printf '%s' '\(escaped)' > '\(resolved)'"
         )
@@ -285,7 +560,7 @@ private struct SandboxMoveTool: OsaurusTool, @unchecked Sendable {
             let resolvedDst = validatePath(dest, home: home)
         else { return jsonResult(["error": "Invalid arguments"]) }
 
-        let result = try await SandboxManager.shared.execAsAgent(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
             command: "mv '\(resolvedSrc)' '\(resolvedDst)'"
         )
@@ -327,7 +602,7 @@ private struct SandboxDeleteTool: OsaurusTool, @unchecked Sendable {
 
         let recursive = args["recursive"] as? Bool ?? false
         let cmd = recursive ? "rm -rf '\(resolved)'" : "rm -f '\(resolved)'"
-        let result = try await SandboxManager.shared.execAsAgent(agentName, command: cmd)
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
         guard result.succeeded else {
             return jsonResult(["error": result.stderr])
         }
@@ -392,9 +667,10 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             min(maxTimeout, 300)
         )
 
-        let result = try await SandboxManager.shared.exec(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: command,
+            env: agentShellEnvironment(home: home, cwd: cwd),
             cwd: cwd,
             timeout: TimeInterval(timeout),
             streamToLogs: true,
@@ -447,9 +723,10 @@ private struct SandboxExecBackgroundTool: OsaurusTool, @unchecked Sendable {
         let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
         let fullCmd = "cd '\(cwd)' && nohup \(command) > \(logFile) 2>&1 & echo $!"
 
-        let result = try await SandboxManager.shared.exec(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: fullCmd,
+            env: agentShellEnvironment(home: home, cwd: cwd),
             timeout: 10,
             streamToLogs: true,
             logSource: agentName
@@ -481,7 +758,7 @@ private struct SandboxExecKillTool: OsaurusTool, @unchecked Sendable {
             let pid = args["pid"] as? Int
         else { return jsonResult(["error": "PID required"]) }
 
-        let result = try await SandboxManager.shared.exec(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: "kill \(pid) 2>/dev/null"
         )
@@ -516,17 +793,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
         else { return jsonResult(["error": "Packages array required"]) }
 
         let pkgList = packages.joined(separator: " ")
-        let result = try await SandboxManager.shared.execAsRoot(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "apk add --no-cache \(pkgList)",
             timeout: 120,
             streamToLogs: true,
             logSource: "apk"
         )
-        return jsonResult([
-            "installed": packages,
-            "exit_code": Int(result.exitCode),
-            "output": result.stdout,
-        ])
+        return installResultJSON(packages: packages, result: result)
     }
 }
 
@@ -557,19 +830,28 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
             let packages = args["packages"] as? [String], !packages.isEmpty
         else { return jsonResult(["error": "Packages array required"]) }
 
+        let venvPath = agentVenvPath(home: home)
+        let bootstrapResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+            command:
+                "test -x /usr/bin/python3 && /usr/bin/python3 -m venv --help >/dev/null 2>&1 || apk add --no-cache python3 py3-pip",
+            timeout: 120,
+            streamToLogs: true,
+            logSource: "pip-bootstrap"
+        )
+        guard bootstrapResult.succeeded else {
+            return installResultJSON(packages: packages, result: bootstrapResult)
+        }
+
         let pkgList = packages.joined(separator: " ")
-        let result = try await SandboxManager.shared.execAsAgent(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
-            command: "pip install --user \(pkgList)",
+            command:
+                "test -x '\(venvPath)/bin/python3' || /usr/bin/python3 -m venv '\(venvPath)' && '\(venvPath)/bin/python3' -m pip install \(pkgList)",
             timeout: 120,
             streamToLogs: true,
             logSource: "pip"
         )
-        return jsonResult([
-            "installed": packages,
-            "exit_code": Int(result.exitCode),
-            "output": result.stdout,
-        ])
+        return installResultJSON(packages: packages, result: result)
     }
 }
 
@@ -600,18 +882,109 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
             let packages = args["packages"] as? [String], !packages.isEmpty
         else { return jsonResult(["error": "Packages array required"]) }
 
+        let bootstrapResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+            command: "test -x /usr/bin/node && test -x /usr/bin/npm || apk add --no-cache nodejs npm",
+            timeout: 120,
+            streamToLogs: true,
+            logSource: "npm-bootstrap"
+        )
+        guard bootstrapResult.succeeded else {
+            return installResultJSON(packages: packages, result: bootstrapResult)
+        }
+
         let pkgList = packages.joined(separator: " ")
-        let result = try await SandboxManager.shared.execAsAgent(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
             command: "npm install \(pkgList)",
+            env: agentShellEnvironment(home: home, cwd: home),
             timeout: 120,
             streamToLogs: true,
             logSource: "npm"
         )
+        return installResultJSON(packages: packages, result: result)
+    }
+}
+
+// MARK: - sandbox_run_script
+
+private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
+    let name = "sandbox_run_script"
+    let description =
+        "Write and execute a script in the sandbox. Saves to a temp file and runs it. "
+        + "Use for multi-step operations: file analysis, bulk edits, data processing, build scripts."
+    let agentName: String
+    let home: String
+    let maxTimeout: Int
+    let maxCommandsPerTurn: Int
+
+    private static let languageConfig: [String: (ext: String, interpreter: String)] = [
+        "python": (".py", "python3"),
+        "bash": (".sh", "bash"),
+        "node": (".js", "node"),
+    ]
+
+    var parameters: JSONValue? {
+        .object([
+            "type": .string("object"),
+            "properties": .object([
+                "language": .object([
+                    "type": .string("string"),
+                    "description": .string("Script language: python, bash, or node"),
+                    "enum": .array([.string("python"), .string("bash"), .string("node")]),
+                ]),
+                "script": .object([
+                    "type": .string("string"),
+                    "description": .string("The script contents to execute"),
+                ]),
+                "timeout": .object([
+                    "type": .string("integer"),
+                    "description": .string("Timeout in seconds (default: 60, max: 300)"),
+                ]),
+                "cwd": .object([
+                    "type": .string("string"),
+                    "description": .string("Working directory (default: agent home)"),
+                ]),
+            ]),
+            "required": .array([.string("language"), .string("script")]),
+        ])
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        guard SandboxExecLimiter.shared.checkAndIncrement(agentName: agentName, limit: maxCommandsPerTurn)
+        else {
+            return jsonResult(["error": "Command limit (\(maxCommandsPerTurn)) per turn exceeded"])
+        }
+
+        guard let args = parseArguments(argumentsJSON),
+            let language = args["language"] as? String,
+            let script = args["script"] as? String,
+            let config = Self.languageConfig[language]
+        else {
+            return jsonResult(["error": "Required: language (python|bash|node) and script"])
+        }
+
+        let timeout = min((args["timeout"] as? Int) ?? 60, min(maxTimeout, 300))
+        let cwd = (args["cwd"] as? String).flatMap { validatePath($0, home: home) } ?? home
+        let scriptPath = "\(home)/.tmp/script_\(UUID().uuidString.prefix(8))\(config.ext)"
+        let escaped = script.replacingOccurrences(of: "'", with: "'\\''")
+
+        var command = "mkdir -p '\(home)/.tmp' && printf '%s' '\(escaped)' > '\(scriptPath)'"
+        if language == "bash" { command += " && chmod +x '\(scriptPath)'" }
+        command += " && cd '\(cwd)' && \(config.interpreter) '\(scriptPath)' 2>&1"
+        command += "; EXIT=$?; rm -f '\(scriptPath)'; exit $EXIT"
+
+        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
+            user: "agent-\(agentName)",
+            command: command,
+            env: agentShellEnvironment(home: home, cwd: cwd),
+            timeout: TimeInterval(timeout),
+            streamToLogs: true,
+            logSource: agentName
+        )
+
         return jsonResult([
-            "installed": packages,
+            "output": result.stdout + result.stderr,
             "exit_code": Int(result.exitCode),
-            "output": result.stdout,
         ])
     }
 }
@@ -627,13 +1000,16 @@ private struct SandboxWhoamiTool: OsaurusTool, @unchecked Sendable {
     var parameters: JSONValue? { nil }
 
     func execute(argumentsJSON: String) async throws -> String {
+        let venvPath = agentVenvPath(home: home)
         var info: [String: Any] = [
             "agent_name": agentName,
             "linux_user": "agent-\(agentName)",
             "home": home,
+            "workspace": home,
+            "venv_path": venvPath,
         ]
 
-        if let pluginsResult = try? await SandboxManager.shared.execAsAgent(
+        if let pluginsResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
             command: "ls \(home)/plugins 2>/dev/null"
         ), pluginsResult.succeeded {
@@ -641,11 +1017,34 @@ private struct SandboxWhoamiTool: OsaurusTool, @unchecked Sendable {
             info["plugins"] = plugins
         }
 
-        if let diskResult = try? await SandboxManager.shared.execAsAgent(
+        if let diskResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
             command: "du -sh \(home) 2>/dev/null | cut -f1"
         ), diskResult.succeeded {
             info["disk_usage"] = diskResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        if let venvResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "test -x '\(venvPath)/bin/python3' && echo true || echo false"
+        ), venvResult.succeeded {
+            info["venv_exists"] = venvResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+        }
+
+        if let toolsResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command:
+                "for tool in python3 pip node npm go; do if command -v \"$tool\" >/dev/null 2>&1; then printf '%s=%s\\n' \"$tool\" \"$(command -v \"$tool\")\"; fi; done"
+        ), toolsResult.succeeded {
+            let toolMap = toolsResult.stdout
+                .split(separator: "\n")
+                .reduce(into: [String: String]()) { partial, line in
+                    let pieces = line.split(separator: "=", maxSplits: 1).map(String.init)
+                    if pieces.count == 2 {
+                        partial[pieces[0]] = pieces[1]
+                    }
+                }
+            info["available_commands"] = toolMap
         }
 
         return jsonResult(info)
@@ -662,7 +1061,7 @@ private struct SandboxProcessesTool: OsaurusTool, @unchecked Sendable {
     var parameters: JSONValue? { nil }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let result = try await SandboxManager.shared.exec(
+        let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: "ps aux 2>/dev/null"
         )

@@ -16,6 +16,11 @@ extension Notification.Name {
     static let agentUpdated = Notification.Name("agentUpdated")
 }
 
+public struct AgentDeleteResult: Sendable {
+    public let deleted: Bool
+    public let sandboxCleanupNotice: SandboxCleanupNotice?
+}
+
 /// Manages all agents and the currently active agent
 @MainActor
 public final class AgentManager: ObservableObject {
@@ -143,11 +148,10 @@ public final class AgentManager: ObservableObject {
     }
 
     /// Delete an agent by ID
-    /// Returns true if deletion was successful
     @discardableResult
-    public func delete(id: UUID) -> Bool {
+    public func delete(id: UUID) async -> AgentDeleteResult {
         guard AgentStore.delete(id: id) else {
-            return false
+            return AgentDeleteResult(deleted: false, sandboxCleanupNotice: nil)
         }
 
         // If we deleted the active agent, switch to default
@@ -156,7 +160,8 @@ public final class AgentManager: ObservableObject {
         }
 
         refresh()
-        return true
+        let cleanupNotice = await SandboxAgentProvisioner.shared.unprovision(agentId: id).notice
+        return AgentDeleteResult(deleted: true, sandboxCleanupNotice: cleanupNotice)
     }
 
     /// Get an agent by ID
@@ -246,6 +251,41 @@ public final class AgentManager: ObservableObject {
 // MARK: - Agent Configuration Helpers
 
 extension AgentManager {
+    /// Get the effective sandbox execution config for an agent.
+    public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
+        guard let agent = agent(for: agentId) else {
+            return nil
+        }
+
+        if agent.id == Agent.defaultId {
+            return ChatConfigurationStore.load().defaultAutonomousExec
+        }
+
+        return agent.autonomousExec
+    }
+
+    /// Update sandbox execution config for an agent.
+    public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) async throws {
+        let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
+        let willBeEnabled = config?.enabled ?? false
+
+        if willBeEnabled && !wasEnabled {
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+        }
+
+        if agentId == Agent.defaultId {
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.defaultAutonomousExec = config
+            ChatConfigurationStore.save(chatConfig)
+            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+            return
+        }
+
+        guard var agent = agent(for: agentId) else { return }
+        agent.autonomousExec = config
+        update(agent)
+    }
+
     /// Get the effective system prompt for an agent (combining with global if needed)
     public func effectiveSystemPrompt(for agentId: UUID) -> String {
         guard let agent = agent(for: agentId) else {

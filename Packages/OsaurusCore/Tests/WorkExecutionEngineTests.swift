@@ -8,6 +8,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct WorkExecutionEngineTests {
 
     @Test func truncateToolResult_shortResult_unchanged() async {
@@ -32,5 +33,147 @@ struct WorkExecutionEngineTests {
         #expect(result.contains("[... 12000 characters omitted"))
         #expect(result.hasPrefix(String(repeating: "c", count: 6000)))
         #expect(result.hasSuffix(String(repeating: "c", count: 2000)))
+    }
+
+    @Test func truncateToolResult_structuredExecPayload_preservesJsonShape() async throws {
+        let engine = WorkExecutionEngine()
+        let payload = try JSONSerialization.data(
+            withJSONObject: [
+                "stdout": String(repeating: "a", count: 12000),
+                "stderr": String(repeating: "b", count: 12000),
+                "exit_code": 1,
+            ]
+        )
+        let long = try #require(String(data: payload, encoding: .utf8))
+
+        let result = await engine.truncateToolResult(long)
+        let decoded = try #require(try parseEngineJSON(result))
+
+        #expect(decoded["exit_code"] as? Int == 1)
+        #expect(decoded["stdout_truncated"] as? Bool == true)
+        #expect(decoded["stderr_truncated"] as? Bool == true)
+        #expect((decoded["stdout"] as? String)?.contains("characters omitted") == true)
+        #expect((decoded["stderr"] as? String)?.contains("characters omitted") == true)
+    }
+
+    @Test func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
+        let engine = WorkExecutionEngine()
+        let issue = Issue(taskId: "task-1", title: "Build app", description: "Create and test it")
+
+        let prompt = await engine.buildAgentSystemPrompt(
+            base: "Base prompt",
+            issue: issue,
+            executionMode: .sandbox
+        )
+
+        #expect(prompt.contains("Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files"))
+        #expect(prompt.contains("Run tests or verification commands with `sandbox_exec`"))
+        #expect(prompt.contains("call `complete_task` with a concise summary"))
+        #expect(prompt.contains("sandbox_read_file` with `start_line`, `line_count`, or `tail_lines`"))
+    }
+
+    @Test @MainActor
+    func executeLoop_emitsBudgetWarningsBeforeCompletion() async throws {
+        let registry = ToolRegistry.shared
+        registry.register(NoopTestTool())
+        registry.setEnabled(true, for: "noop_test")
+        defer { registry.unregister(names: ["noop_test"]) }
+        let tools = [
+            Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: "noop_test",
+                    description: "No-op test tool.",
+                    parameters: .object(["type": .string("object")])
+                )
+            ),
+            Tool(
+                type: "function",
+                function: ToolFunction(
+                    name: "complete_task",
+                    description: "Complete task",
+                    parameters: .object(["type": .string("object")])
+                )
+            ),
+        ]
+
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(
+                steps: (Array(repeating: .tool("noop_test", "{}"), count: 10)
+                    + [.tool("complete_task", #"{"summary":"done","success":true}"#)])
+            )
+        )
+        let issue = Issue(taskId: "task-2", title: "Long task")
+        var messages: [ChatMessage] = []
+        var statuses: [String] = []
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: tools,
+            toolOverrides: nil,
+            maxIterations: 15,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { statuses.append($0) },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .completed(let summary, _) = result else {
+            Issue.record("Expected loop completion")
+            return
+        }
+        #expect(summary == "done")
+        #expect(statuses.contains("Budget: 5 of 15 iterations remaining"))
+        #expect(statuses.contains("Warning: 5 iterations remaining"))
+    }
+}
+
+private func parseEngineJSON(_ string: String) throws -> [String: Any]? {
+    guard let data = string.data(using: .utf8) else { return nil }
+    return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+}
+
+private struct NoopTestTool: OsaurusTool {
+    let name = "noop_test"
+    let description = "No-op test tool."
+    let parameters: JSONValue? = .object(["type": .string("object")])
+
+    func execute(argumentsJSON _: String) async throws -> String {
+        "{}"
+    }
+}
+
+private actor SequencedWorkChatEngine: ChatEngineProtocol {
+    enum Step {
+        case tool(String, String)
+    }
+
+    private var steps: [Step]
+    private var index = 0
+
+    init(steps: [Step]) {
+        self.steps = steps
+    }
+
+    func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        guard index < steps.count else {
+            return AsyncThrowingStream { continuation in continuation.finish() }
+        }
+        let step = steps[index]
+        index += 1
+
+        switch step {
+        case .tool(let name, let args):
+            throw ServiceToolInvocation(toolName: name, jsonArguments: args)
+        }
+    }
+
+    func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        throw NSError(domain: "WorkExecutionEngineTests", code: 1)
     }
 }

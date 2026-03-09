@@ -25,6 +25,28 @@ public enum SandboxAgentMap {
         save(map)
     }
 
+    @discardableResult
+    public static func unregister(linuxName: String) -> Bool {
+        var map = load()
+        let removed = map.removeValue(forKey: linuxName) != nil
+        if removed {
+            save(map)
+        }
+        return removed
+    }
+
+    @discardableResult
+    public static func unregister(agentId: String) -> Bool {
+        var map = load()
+        let keysToRemove = map.compactMap { $0.value == agentId ? $0.key : nil }
+        guard !keysToRemove.isEmpty else { return false }
+        for key in keysToRemove {
+            map.removeValue(forKey: key)
+        }
+        save(map)
+        return true
+    }
+
     public static func resolve(linuxName: String) -> UUID? {
         let map = load()
         guard let idStr = map[linuxName] else { return nil }

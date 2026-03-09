@@ -484,7 +484,7 @@ public struct LoopState: Sendable {
     public init(
         iteration: Int = 0,
         toolCallCount: Int = 0,
-        maxIterations: Int = 30,
+        maxIterations: Int = WorkExecutionEngine.defaultMaxIterations,
         toolsUsed: [String] = [],
         isGenerating: Bool = false,
         statusMessage: String? = nil

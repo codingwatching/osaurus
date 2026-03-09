@@ -35,7 +35,7 @@ public final class SandboxPluginManager: ObservableObject {
             throw SandboxPluginError.invalidPlugin(errors.joined(separator: "; "))
         }
 
-        let agentName = agentLinuxName(for: agentId)
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
         let key = progressKey(plugin: plugin.id, agent: agentId)
 
         setProgress(
@@ -61,22 +61,11 @@ public final class SandboxPluginManager: ObservableObject {
                 key: key,
                 InstallProgress(
                     pluginName: plugin.name,
-                    phase: "Ensuring container is running...",
+                    phase: "Provisioning agent sandbox...",
                     agentId: agentId
                 )
             )
-            try await SandboxManager.shared.startContainer()
-
-            setProgress(
-                key: key,
-                InstallProgress(
-                    pluginName: plugin.name,
-                    phase: "Creating agent user...",
-                    agentId: agentId
-                )
-            )
-            try await SandboxManager.shared.ensureAgentUser(agentName)
-            SandboxAgentMap.register(linuxName: "agent-\(agentName)", agentId: agentId)
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
 
             if let deps = plugin.dependencies, !deps.isEmpty {
                 setProgress(
@@ -208,7 +197,7 @@ public final class SandboxPluginManager: ObservableObject {
         list[index].status = .uninstalling
         installedPlugins[agentId] = list
 
-        let agentName = agentLinuxName(for: agentId)
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
         let pluginDir = OsaurusPaths.inContainerPluginDir(agentName, pluginId)
 
         if await SandboxManager.shared.status().isRunning {
@@ -282,6 +271,32 @@ public final class SandboxPluginManager: ObservableObject {
         }
     }
 
+    @discardableResult
+    public func removeAgentState(for agentId: String) -> Bool {
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
+        let storeDir = storeDirectory(for: agentId)
+        let hostPluginsDir = OsaurusPaths.containerAgentDir(agentName)
+            .appendingPathComponent("plugins", isDirectory: true)
+
+        let hadInstalledState = installedPlugins.removeValue(forKey: agentId) != nil
+        let progressKeys = installProgress.keys.filter { $0.hasPrefix("\(agentId):") }
+        for key in progressKeys {
+            installProgress.removeValue(forKey: key)
+        }
+
+        let fm = FileManager.default
+        let hadStoreDir = fm.fileExists(atPath: storeDir.path)
+        let hadHostPluginsDir = fm.fileExists(atPath: hostPluginsDir.path)
+        if hadStoreDir {
+            try? fm.removeItem(at: storeDir)
+        }
+        if hadHostPluginsDir {
+            try? fm.removeItem(at: hostPluginsDir)
+        }
+
+        return hadInstalledState || hadStoreDir || hadHostPluginsDir || !progressKeys.isEmpty
+    }
+
     private func storeDirectory(for agentId: String) -> URL {
         OsaurusPaths.agents()
             .appendingPathComponent(agentId, isDirectory: true)
@@ -350,14 +365,6 @@ public final class SandboxPluginManager: ObservableObject {
         installProgress.removeValue(forKey: key)
     }
 
-    private func agentLinuxName(for agentId: String) -> String {
-        let name =
-            agentId
-            .lowercased()
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-        return name.isEmpty ? "agent" : name
-    }
 }
 
 // MARK: - Notifications
