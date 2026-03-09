@@ -52,6 +52,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var workTopPOverride: Float?
     /// Work-specific max reasoning loop iterations (nil uses default 50)
     public var workMaxIterations: Int?
+    /// Global sandbox execution config used by the built-in Default agent.
+    public var defaultAutonomousExec: AutonomousExecConfig?
 
     public init(
         hotkey: Hotkey?,
@@ -66,7 +68,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         workTemperature: Float? = nil,
         workMaxTokens: Int? = nil,
         workTopPOverride: Float? = nil,
-        workMaxIterations: Int? = nil
+        workMaxIterations: Int? = nil,
+        defaultAutonomousExec: AutonomousExecConfig? = nil
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -81,6 +84,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.workMaxTokens = workMaxTokens
         self.workTopPOverride = workTopPOverride
         self.workMaxIterations = workMaxIterations
+        self.defaultAutonomousExec = defaultAutonomousExec
     }
 
     public init(from decoder: Decoder) throws {
@@ -98,6 +102,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         workMaxTokens = try container.decodeIfPresent(Int.self, forKey: .workMaxTokens)
         workTopPOverride = try container.decodeIfPresent(Float.self, forKey: .workTopPOverride)
         workMaxIterations = try container.decodeIfPresent(Int.self, forKey: .workMaxIterations)
+        defaultAutonomousExec = try container.decodeIfPresent(
+            AutonomousExecConfig.self,
+            forKey: .defaultAutonomousExec
+        )
     }
 
     public static var `default`: ChatConfiguration {
@@ -116,7 +124,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             workTemperature: 0.3,  // Low temperature for reliable tool-calling
             workMaxTokens: 4096,  // Conservative per-iteration limit for work steps
             workTopPOverride: nil,
-            workMaxIterations: 50  // Default reasoning loop iterations
+            workMaxIterations: 50,  // Default reasoning loop iterations
+            defaultAutonomousExec: nil
         )
     }
 }

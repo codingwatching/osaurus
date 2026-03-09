@@ -493,8 +493,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         let agentUUID = resolveAgentUUID(callingUser)
         let agentId = agentUUID.uuidString
 
-        let agent = await MainActor.run { AgentStore.load(id: agentUUID) }
-        guard agent?.autonomousExec?.pluginCreate == true else {
+        let execConfig = await MainActor.run { AgentManager.shared.effectiveAutonomousExec(for: agentUUID) }
+        guard execConfig?.pluginCreate == true else {
             return .error(403, "Plugin creation is disabled for this agent")
         }
 

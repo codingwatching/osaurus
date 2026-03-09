@@ -76,6 +76,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
+        executionMode: WorkExecutionMode,
         toolOverrides: [String: Bool]? = nil,
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
@@ -101,6 +102,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
+            executionMode: executionMode,
             toolOverrides: toolOverrides,
             skillCatalog: skillCatalog
         )
@@ -112,6 +114,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
+        executionMode: WorkExecutionMode,
         toolOverrides: [String: Bool]? = nil,
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult {
@@ -128,6 +131,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
+            executionMode: executionMode,
             toolOverrides: toolOverrides,
             skillCatalog: skillCatalog,
             attemptResume: true
@@ -140,6 +144,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
+        executionMode: WorkExecutionMode,
         toolOverrides: [String: Bool]? = nil,
         skillCatalog: [CapabilityEntry] = []
     ) async throws -> ExecutionResult? {
@@ -158,6 +163,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
+            executionMode: executionMode,
             toolOverrides: toolOverrides,
             skillCatalog: skillCatalog
         )
@@ -257,6 +263,7 @@ public actor WorkEngine {
             model: context.model,
             systemPrompt: context.systemPrompt,
             tools: context.tools,
+            executionMode: context.executionMode,
             toolOverrides: context.toolOverrides,
             skillCatalog: context.skillCatalog
         )
@@ -284,6 +291,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
+        executionMode: WorkExecutionMode,
         toolOverrides: [String: Bool]?,
         skillCatalog: [CapabilityEntry] = [],
         images: [Data] = [],
@@ -317,12 +325,18 @@ public actor WorkEngine {
             messages.append(ChatMessage(role: "user", text: userQuery, imageData: images))
         }
 
-        // Refresh folder context to ensure the file tree and git status are current
-        await WorkFolderContextService.shared.refreshContext()
-        let folderContext = await MainActor.run { WorkFolderContextService.shared.currentContext }
+        let resolvedExecutionMode: WorkExecutionMode
+        switch executionMode {
+        case .hostFolder:
+            await WorkFolderContextService.shared.refreshContext()
+            let refreshedContext = await MainActor.run { WorkFolderContextService.shared.currentContext }
+            resolvedExecutionMode = refreshedContext.map(WorkExecutionMode.hostFolder) ?? .none
+        case .sandbox, .none:
+            resolvedExecutionMode = executionMode
+        }
 
-        // Set up file operation log with root path for undo support
-        if let rootPath = folderContext?.rootPath {
+        // Set up file operation log with root path for undo support in host-folder mode.
+        if let rootPath = resolvedExecutionMode.folderContext?.rootPath {
             await WorkFileOperationLog.shared.setRootPath(rootPath)
         }
 
@@ -333,8 +347,7 @@ public actor WorkEngine {
         let agentSystemPrompt = await executionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             issue: issue,
-            tools: tools,
-            folderContext: folderContext,
+            executionMode: resolvedExecutionMode,
             skillInstructions: skillInstructions
         )
 
@@ -486,6 +499,7 @@ public actor WorkEngine {
                 model: model,
                 systemPrompt: systemPrompt,
                 tools: tools,
+                executionMode: resolvedExecutionMode,
                 toolOverrides: toolOverrides,
                 skillCatalog: skillCatalog
             )
@@ -602,6 +616,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
+        executionMode: WorkExecutionMode,
         toolOverrides: [String: Bool]? = nil,
         skillCatalog: [CapabilityEntry] = [],
         images: [Data] = []
@@ -632,6 +647,7 @@ public actor WorkEngine {
                     model: model,
                     systemPrompt: systemPrompt,
                     tools: tools,
+                    executionMode: executionMode,
                     toolOverrides: toolOverrides,
                     skillCatalog: skillCatalog,
                     images: images
@@ -772,6 +788,7 @@ struct PendingExecutionContext {
     let model: String?
     let systemPrompt: String
     let tools: [Tool]
+    let executionMode: WorkExecutionMode
     let toolOverrides: [String: Bool]?
     let skillCatalog: [CapabilityEntry]
 }

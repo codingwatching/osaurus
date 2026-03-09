@@ -1162,7 +1162,12 @@ struct AgentDetailView: View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
         let sandboxPlugins = SandboxPluginManager.shared.plugins(for: agent.id.uuidString)
-        let execConfig = currentAgent.autonomousExec
+        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let updateExecConfig: ((inout AutonomousExecConfig) -> Void) -> Void = { update in
+            var config = execConfig ?? .default
+            update(&config)
+            agentManager.updateAutonomousExec(config, for: agent.id)
+        }
 
         let sandboxSubtitle: String = {
             if sandboxRunning { return "\(sandboxPlugins.count) plugins" }
@@ -1211,12 +1216,7 @@ struct AgentDetailView: View {
                             isOn: Binding(
                                 get: { execConfig?.enabled ?? false },
                                 set: { enabled in
-                                    var agent = currentAgent
-                                    if agent.autonomousExec == nil {
-                                        agent.autonomousExec = .default
-                                    }
-                                    agent.autonomousExec?.enabled = enabled
-                                    agentManager.update(agent)
+                                    updateExecConfig { $0.enabled = enabled }
                                 }
                             )
                         )
@@ -1240,9 +1240,7 @@ struct AgentDetailView: View {
                                 isOn: Binding(
                                     get: { execConfig?.pluginCreate ?? false },
                                     set: { create in
-                                        var agent = currentAgent
-                                        agent.autonomousExec?.pluginCreate = create
-                                        agentManager.update(agent)
+                                        updateExecConfig { $0.pluginCreate = create }
                                     }
                                 )
                             )

@@ -20,39 +20,74 @@ enum BuiltinSandboxTools {
         let home = OsaurusPaths.inContainerAgentHome(agentName)
 
         // Always available (read-only)
-        registry.registerSandboxTool(SandboxReadFileTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxListDirectoryTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxSearchFilesTool(agentName: agentName, home: home))
+        registry.registerSandboxTool(
+            SandboxReadFileTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxListDirectoryTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxSearchFilesTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
 
         // Gated by autonomous_exec.enabled
         guard let config = config, config.enabled else { return }
 
         let maxCmdsPerTurn = config.maxCommandsPerTurn
 
-        registry.registerSandboxTool(SandboxWriteFileTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxMoveTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxDeleteTool(agentName: agentName, home: home))
+        registry.registerSandboxTool(
+            SandboxWriteFileTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(SandboxMoveTool(agentName: agentName, home: home), runtimeManaged: true)
+        registry.registerSandboxTool(
+            SandboxDeleteTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
         registry.registerSandboxTool(
             SandboxExecTool(
                 agentName: agentName,
                 home: home,
                 maxTimeout: config.commandTimeout,
                 maxCommandsPerTurn: maxCmdsPerTurn
-            )
+            ),
+            runtimeManaged: true
         )
         registry.registerSandboxTool(
             SandboxExecBackgroundTool(
                 agentName: agentName,
                 home: home,
                 maxCommandsPerTurn: maxCmdsPerTurn
-            )
+            ),
+            runtimeManaged: true
         )
-        registry.registerSandboxTool(SandboxExecKillTool(agentName: agentName))
-        registry.registerSandboxTool(SandboxInstallTool(agentName: agentName))
-        registry.registerSandboxTool(SandboxPipInstallTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxNpmInstallTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxWhoamiTool(agentName: agentName, home: home))
-        registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName))
+        registry.registerSandboxTool(SandboxExecKillTool(agentName: agentName), runtimeManaged: true)
+        registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
+        registry.registerSandboxTool(
+            SandboxPipInstallTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxNpmInstallTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxRunScriptTool(
+                agentName: agentName,
+                home: home,
+                maxTimeout: config.commandTimeout,
+                maxCommandsPerTurn: maxCmdsPerTurn
+            ),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(
+            SandboxWhoamiTool(agentName: agentName, home: home),
+            runtimeManaged: true
+        )
+        registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName), runtimeManaged: true)
     }
 
     /// Unregister all built-in sandbox tools.
@@ -63,6 +98,7 @@ enum BuiltinSandboxTools {
             "sandbox_write_file", "sandbox_move", "sandbox_delete",
             "sandbox_exec", "sandbox_exec_background", "sandbox_exec_kill",
             "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
+            "sandbox_run_script",
             "sandbox_whoami", "sandbox_processes",
         ]
         ToolRegistry.shared.unregister(names: names)
@@ -612,6 +648,84 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
             "installed": packages,
             "exit_code": Int(result.exitCode),
             "output": result.stdout,
+        ])
+    }
+}
+
+// MARK: - sandbox_run_script
+
+private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
+    let name = "sandbox_run_script"
+    let description =
+        "Write and execute a script in the sandbox. Saves to a temp file and runs it. "
+        + "Use for multi-step operations: file analysis, bulk edits, data processing, build scripts."
+    let agentName: String
+    let home: String
+    let maxTimeout: Int
+    let maxCommandsPerTurn: Int
+
+    private static let languageConfig: [String: (ext: String, interpreter: String)] = [
+        "python": (".py", "python3"),
+        "bash": (".sh", "bash"),
+        "node": (".js", "node"),
+    ]
+
+    var parameters: JSONValue? {
+        .object([
+            "type": .string("object"),
+            "properties": .object([
+                "language": .object([
+                    "type": .string("string"),
+                    "description": .string("Script language: python, bash, or node"),
+                    "enum": .array([.string("python"), .string("bash"), .string("node")]),
+                ]),
+                "script": .object([
+                    "type": .string("string"),
+                    "description": .string("The script contents to execute"),
+                ]),
+                "timeout": .object([
+                    "type": .string("integer"),
+                    "description": .string("Timeout in seconds (default: 60, max: 300)"),
+                ]),
+            ]),
+            "required": .array([.string("language"), .string("script")]),
+        ])
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        guard SandboxExecLimiter.shared.checkAndIncrement(agentName: agentName, limit: maxCommandsPerTurn)
+        else {
+            return jsonResult(["error": "Command limit (\(maxCommandsPerTurn)) per turn exceeded"])
+        }
+
+        guard let args = parseArguments(argumentsJSON),
+            let language = args["language"] as? String,
+            let script = args["script"] as? String,
+            let config = Self.languageConfig[language]
+        else {
+            return jsonResult(["error": "Required: language (python|bash|node) and script"])
+        }
+
+        let timeout = min((args["timeout"] as? Int) ?? 60, min(maxTimeout, 300))
+        let scriptPath = "\(home)/.tmp/script_\(UUID().uuidString.prefix(8))\(config.ext)"
+        let escaped = script.replacingOccurrences(of: "'", with: "'\\''")
+
+        var command = "mkdir -p '\(home)/.tmp' && printf '%s' '\(escaped)' > '\(scriptPath)'"
+        if language == "bash" { command += " && chmod +x '\(scriptPath)'" }
+        command += " && cd '\(home)' && \(config.interpreter) '\(scriptPath)' 2>&1"
+        command += "; EXIT=$?; rm -f '\(scriptPath)'; exit $EXIT"
+
+        let result = try await SandboxManager.shared.exec(
+            user: "agent-\(agentName)",
+            command: command,
+            timeout: TimeInterval(timeout),
+            streamToLogs: true,
+            logSource: agentName
+        )
+
+        return jsonResult([
+            "output": result.stdout + result.stderr,
+            "exit_code": Int(result.exitCode),
         ])
     }
 }

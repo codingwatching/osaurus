@@ -99,7 +99,7 @@ struct CapabilitiesSelectorView: View {
 
     private func rebuildToolsCache() {
         let overrides = agentManager.effectiveToolOverrides(for: agentId)
-        let tools = toolRegistry.listUserTools(withOverrides: overrides, excludeInternal: true)
+        let tools = toolRegistry.listCapabilityTools(withOverrides: overrides, excludeInternal: true)
         cachedTools = tools
 
         var groups: [ToolGroup] = []
@@ -188,14 +188,6 @@ struct CapabilitiesSelectorView: View {
             groups.insert(ToolGroup(source: .memory, tools: memoryTools), at: 0)
             assignedNames.formUnion(memoryTools.map { $0.name })
         }
-
-        // Built-in sandbox tools are managed by AutonomousExecConfig, not the
-        // capabilities selector. Exclude them so they don't appear in any group.
-        // (Sandbox *plugin* tools are already assigned to .sandboxPlugin groups above.)
-        let builtinSandboxTools = tools.filter {
-            toolRegistry.isSandboxTool($0.name) && !assignedNames.contains($0.name)
-        }
-        assignedNames.formUnion(builtinSandboxTools.map { $0.name })
 
         // Remaining tools go to Built-in
         let remaining = tools.filter { !assignedNames.contains($0.name) }

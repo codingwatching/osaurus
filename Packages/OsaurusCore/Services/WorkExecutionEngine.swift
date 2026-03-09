@@ -145,6 +145,29 @@ public actor WorkExecutionEngine {
         return section
     }
 
+    /// Builds the sandbox environment section for prompts when sandbox tools are active
+    private func buildSandboxPromptSection() -> String {
+        """
+
+        ## Linux Sandbox Environment
+
+        You have access to an isolated Linux sandbox (Alpine Linux, ARM64).
+        Your workspace is your home directory inside the sandbox. Files persist across tasks.
+        Use `/output` for files the user should see on the host.
+
+        Pre-installed: sh, curl, jq. Install more with `sandbox_install`, `sandbox_pip_install`, or `sandbox_npm_install`.
+        Internet access is available (curl, wget, git clone all work).
+
+        **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for
+        multi-line scripts (python, bash, node). For single shell commands use
+        `sandbox_exec`. For background processes use `sandbox_exec_background`.
+        Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
+
+        The sandbox is disposable — experiment freely.
+
+        """
+    }
+
     // MARK: - Reasoning Loop
 
     /// Callback type for iteration-based streaming updates
@@ -482,15 +505,13 @@ public actor WorkExecutionEngine {
     /// - Parameters:
     ///   - base: Base system prompt (agent instructions, etc.)
     ///   - issue: The issue being executed
-    ///   - tools: Available tools
-    ///   - folderContext: Optional folder context for file operations
+    ///   - executionMode: Resolved work execution mode
     ///   - skillInstructions: Optional skill-specific instructions
     /// - Returns: Complete system prompt for work mode
     func buildAgentSystemPrompt(
         base: String,
         issue: Issue,
-        tools: [Tool],
-        folderContext: WorkFolderContext? = nil,
+        executionMode: WorkExecutionMode,
         skillInstructions: String? = nil
     ) -> String {
         var prompt = base
@@ -539,9 +560,13 @@ public actor WorkExecutionEngine {
 
             """
 
-        // Add folder context if available
-        if let folder = folderContext {
-            prompt += buildFolderContextSection(from: folder)
+        switch executionMode {
+        case .hostFolder(let folderContext):
+            prompt += buildFolderContextSection(from: folderContext)
+        case .sandbox:
+            prompt += buildSandboxPromptSection()
+        case .none:
+            break
         }
 
         // Add skill instructions if available

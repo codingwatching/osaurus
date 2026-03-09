@@ -17,6 +17,12 @@ final class ToolRegistry: ObservableObject {
 
     /// Tool names that require the sandbox container to be running
     private var sandboxToolNames: Set<String> = []
+    /// Built-in sandbox execution tools that are managed by runtime context,
+    /// not the user-facing capability selector.
+    private var builtInSandboxToolNames: Set<String> = []
+    /// Previous enabled state for sandbox tools so it can be restored when
+    /// sandbox tools are unregistered.
+    private var previousSandboxEnabledState: [String: Bool] = [:]
 
     struct ToolPolicyInfo {
         let isPermissioned: Bool
@@ -110,23 +116,28 @@ final class ToolRegistry: ObservableObject {
     /// - Parameter overrides: Per-session tool enablement. nil = use global config only.
     ///   If provided, keys in the map override global settings for those tools.
     func specs(withOverrides overrides: [String: Bool]?) -> [Tool] {
+        specs(withOverrides: overrides, excluding: [])
+    }
+
+    private func specs(withOverrides overrides: [String: Bool]?, excluding excluded: Set<String>) -> [Tool] {
         return toolsByName.values
-            .filter { tool in
-                // Check per-session override first, fall back to global config
-                if let overrides = overrides, let override = overrides[tool.name] {
-                    return override
-                }
-                return configuration.isEnabled(name: tool.name)
-            }
+            .filter { resolvedEnabledState(for: $0.name, overrides: overrides) }
+            .filter { !excluded.contains($0.name) }
             .map { $0.asOpenAITool() }
     }
 
     /// Tool specs excluding work-specific and folder tools.
     /// Use this for chat mode where work/folder tools should not be available.
     func userSpecs(withOverrides overrides: [String: Bool]?) -> [Tool] {
-        let excluded = Self.workToolNames.union(Self.folderToolNames)
-        return specs(withOverrides: overrides)
-            .filter { !excluded.contains($0.function.name) }
+        specs(withOverrides: overrides, excluding: runtimeManagedToolNames)
+    }
+
+    /// Tool specs for work mode filtered by the resolved execution mode.
+    func workSpecs(
+        withOverrides overrides: [String: Bool]?,
+        mode: WorkExecutionMode
+    ) -> [Tool] {
+        specs(withOverrides: overrides, excluding: excludedToolNames(for: mode))
     }
 
     /// Get specs for specific tools by name (ignores enabled state)
@@ -157,13 +168,7 @@ final class ToolRegistry: ObservableObject {
                 userInfo: [NSLocalizedDescriptionKey: "Unknown tool: \(name)"]
             )
         }
-        // Check per-session override first, fall back to global config
-        let isEnabled: Bool
-        if let overrides = overrides, let override = overrides[name] {
-            isEnabled = override
-        } else {
-            isEnabled = configuration.isEnabled(name: name)
-        }
+        let isEnabled = resolvedEnabledState(for: name, overrides: overrides)
         guard isEnabled else {
             throw NSError(
                 domain: "ToolRegistry",
@@ -276,16 +281,10 @@ final class ToolRegistry: ObservableObject {
         return toolsByName.values
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             .map { t in
-                let enabled: Bool
-                if let overrides = overrides, let override = overrides[t.name] {
-                    enabled = override
-                } else {
-                    enabled = configuration.isEnabled(name: t.name)
-                }
                 return ToolEntry(
                     name: t.name,
                     description: t.description,
-                    enabled: enabled,
+                    enabled: resolvedEnabledState(for: t.name, overrides: overrides),
                     parameters: t.parameters
                 )
             }
@@ -392,9 +391,16 @@ final class ToolRegistry: ObservableObject {
     // MARK: - Sandbox Tool Registration
 
     /// Register a tool that requires the sandbox container.
-    func registerSandboxTool(_ tool: OsaurusTool) {
+    func registerSandboxTool(_ tool: OsaurusTool, runtimeManaged: Bool = false) {
+        previousSandboxEnabledState[tool.name] = isGlobalEnabled(tool.name)
         toolsByName[tool.name] = tool
         sandboxToolNames.insert(tool.name)
+        if runtimeManaged {
+            builtInSandboxToolNames.insert(tool.name)
+        } else {
+            builtInSandboxToolNames.remove(tool.name)
+        }
+        setEnabled(true, for: tool.name)
     }
 
     /// Register all tools from a sandbox plugin for a given agent.
@@ -416,8 +422,7 @@ final class ToolRegistry: ObservableObject {
         let prefix = "\(pluginId)_"
         let names = toolsByName.keys.filter { $0.hasPrefix(prefix) && sandboxToolNames.contains($0) }
         for name in names {
-            toolsByName.removeValue(forKey: name)
-            sandboxToolNames.remove(name)
+            unregisterSandboxTool(named: name)
         }
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()
@@ -427,12 +432,22 @@ final class ToolRegistry: ObservableObject {
     /// Unregister all sandbox tools (e.g., when sandbox becomes unavailable).
     func unregisterAllSandboxTools() {
         for name in sandboxToolNames {
-            toolsByName.removeValue(forKey: name)
+            unregisterSandboxTool(named: name)
         }
         sandboxToolNames.removeAll()
+        previousSandboxEnabledState.removeAll()
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()
         }
+    }
+
+    private func unregisterSandboxTool(named name: String) {
+        let wasEnabled = previousSandboxEnabledState[name] ?? false
+        setEnabled(wasEnabled, for: name)
+        toolsByName.removeValue(forKey: name)
+        sandboxToolNames.remove(name)
+        builtInSandboxToolNames.remove(name)
+        previousSandboxEnabledState.removeValue(forKey: name)
     }
 
     /// Whether a tool requires the sandbox container.
@@ -445,6 +460,8 @@ final class ToolRegistry: ObservableObject {
         for n in names {
             toolsByName.removeValue(forKey: n)
             sandboxToolNames.remove(n)
+            builtInSandboxToolNames.remove(n)
+            previousSandboxEnabledState.removeValue(forKey: n)
         }
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()
@@ -483,6 +500,74 @@ final class ToolRegistry: ObservableObject {
         Set(WorkToolManager.shared.folderToolNames)
     }
 
+    /// Runtime-managed tools are execution infrastructure, not user-selectable capabilities.
+    private var runtimeManagedToolNames: Set<String> {
+        Self.workToolNames
+            .union(Self.folderToolNames)
+            .union(builtInSandboxToolNames)
+    }
+
+    private func excludedToolNames(for mode: WorkExecutionMode) -> Set<String> {
+        switch mode {
+        case .hostFolder:
+            return builtInSandboxToolNames
+        case .sandbox:
+            return Self.folderToolNames
+        case .none:
+            return Self.folderToolNames.union(builtInSandboxToolNames)
+        }
+    }
+
+    /// Runtime-managed tools ignore per-agent capability overrides.
+    private func resolvedEnabledState(for name: String, overrides: [String: Bool]?) -> Bool {
+        if !runtimeManagedToolNames.contains(name),
+            let overrides,
+            let override = overrides[name]
+        {
+            return override
+        }
+
+        return configuration.isEnabled(name: name)
+    }
+
+    /// Resolve the active work execution mode from current context and enabled runtime tools.
+    func resolveWorkExecutionMode(
+        withOverrides overrides: [String: Bool]?,
+        folderContext: WorkFolderContext?
+    ) -> WorkExecutionMode {
+        if let folderContext {
+            return .hostFolder(folderContext)
+        }
+
+        let hasSandboxExec = listRuntimeManagedTools(withOverrides: overrides)
+            .contains { $0.name == "sandbox_exec" && $0.enabled }
+        return hasSandboxExec ? .sandbox : .none
+    }
+
+    /// Runtime-managed tools for diagnostics and work-mode execution decisions.
+    func listRuntimeManagedTools(
+        withOverrides overrides: [String: Bool]?,
+        excludeInternal: Bool = false
+    ) -> [ToolEntry] {
+        listTools(
+            withOverrides: overrides,
+            matching: runtimeManagedToolNames,
+            excludeInternal: excludeInternal
+        )
+    }
+
+    /// User-selectable capability tools only.
+    func listCapabilityTools(
+        withOverrides overrides: [String: Bool]?,
+        excludeInternal: Bool = false
+    ) -> [ToolEntry] {
+        listTools(
+            withOverrides: overrides,
+            excluding: runtimeManagedToolNames,
+            excludeInternal: excludeInternal
+        )
+    }
+
     /// List tools excluding work-specific and optionally internal tools.
     /// Use this for user-facing tool lists and counts.
     ///
@@ -494,15 +579,26 @@ final class ToolRegistry: ObservableObject {
         withOverrides overrides: [String: Bool]?,
         excludeInternal: Bool = false
     ) -> [ToolEntry] {
-        var tools = listTools(withOverrides: overrides)
-        // Always exclude work tools from user-facing lists
-        tools = tools.filter { !Self.workToolNames.contains($0.name) }
-        // Always exclude folder tools from user-facing lists (they're auto-managed)
-        tools = tools.filter { !Self.folderToolNames.contains($0.name) }
-        // Optionally exclude internal tools
-        if excludeInternal {
-            tools = tools.filter { $0.name != "select_capabilities" }
-        }
-        return tools
+        listCapabilityTools(withOverrides: overrides, excludeInternal: excludeInternal)
+    }
+
+    private func listTools(
+        withOverrides overrides: [String: Bool]?,
+        matching includedNames: Set<String>,
+        excludeInternal: Bool
+    ) -> [ToolEntry] {
+        listTools(withOverrides: overrides)
+            .filter { includedNames.contains($0.name) }
+            .filter { !excludeInternal || $0.name != "select_capabilities" }
+    }
+
+    private func listTools(
+        withOverrides overrides: [String: Bool]?,
+        excluding excludedNames: Set<String>,
+        excludeInternal: Bool
+    ) -> [ToolEntry] {
+        listTools(withOverrides: overrides)
+            .filter { !excludedNames.contains($0.name) }
+            .filter { !excludeInternal || $0.name != "select_capabilities" }
     }
 }

@@ -61,6 +61,17 @@ public final class SandboxToolRegistrar {
                 Task { @MainActor in self?.handleContainerStatusChanged(newStatus) }
             }
 
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: .agentUpdated,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                let agentId = note.object as? UUID
+                Task { @MainActor in self?.handleAgentUpdated(agentId: agentId) }
+            }
+        )
+
         registerToolsForCurrentAgent()
     }
 
@@ -78,11 +89,12 @@ public final class SandboxToolRegistrar {
         let agent = AgentManager.shared.activeAgent
         let agentId = agent.id.uuidString
         let agentName = linuxName(for: agentId)
+        let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
 
         BuiltinSandboxTools.register(
             agentId: agentId,
             agentName: agentName,
-            config: agent.autonomousExec
+            config: execConfig
         )
 
         let plugins = SandboxPluginManager.shared.plugins(for: agentId)
@@ -98,6 +110,11 @@ public final class SandboxToolRegistrar {
     // MARK: - Event Handlers
 
     private func handleAgentChanged() {
+        registerToolsForCurrentAgent()
+    }
+
+    private func handleAgentUpdated(agentId: UUID?) {
+        guard agentId == nil || agentId == AgentManager.shared.activeAgent.id else { return }
         registerToolsForCurrentAgent()
     }
 

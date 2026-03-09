@@ -246,6 +246,34 @@ public final class AgentManager: ObservableObject {
 // MARK: - Agent Configuration Helpers
 
 extension AgentManager {
+    /// Get the effective sandbox execution config for an agent.
+    public func effectiveAutonomousExec(for agentId: UUID) -> AutonomousExecConfig? {
+        guard let agent = agent(for: agentId) else {
+            return nil
+        }
+
+        if agent.id == Agent.defaultId {
+            return ChatConfigurationStore.load().defaultAutonomousExec
+        }
+
+        return agent.autonomousExec
+    }
+
+    /// Update sandbox execution config for an agent.
+    public func updateAutonomousExec(_ config: AutonomousExecConfig?, for agentId: UUID) {
+        if agentId == Agent.defaultId {
+            var chatConfig = ChatConfigurationStore.load()
+            chatConfig.defaultAutonomousExec = config
+            ChatConfigurationStore.save(chatConfig)
+            NotificationCenter.default.post(name: .agentUpdated, object: agentId)
+            return
+        }
+
+        guard var agent = agent(for: agentId) else { return }
+        agent.autonomousExec = config
+        update(agent)
+    }
+
     /// Get the effective system prompt for an agent (combining with global if needed)
     public func effectiveSystemPrompt(for agentId: UUID) -> String {
         guard let agent = agent(for: agentId) else {

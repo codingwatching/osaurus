@@ -623,7 +623,10 @@ public final class WorkSession: ObservableObject {
         resetExecutionState(for: issue)
 
         let config = await buildExecutionConfig()
-        let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
+        let tools = ToolRegistry.shared.workSpecs(
+            withOverrides: config.toolOverrides,
+            mode: config.executionMode
+        )
         let skillCatalog = buildSkillCatalog()
 
         executionTask = Task { [weak self, engine] in
@@ -635,6 +638,7 @@ public final class WorkSession: ObservableObject {
                             model: config.model,
                             systemPrompt: config.systemPrompt,
                             tools: tools,
+                            executionMode: config.executionMode,
                             toolOverrides: config.toolOverrides,
                             skillCatalog: skillCatalog,
                             images: images
@@ -645,6 +649,7 @@ public final class WorkSession: ObservableObject {
                             model: config.model,
                             systemPrompt: config.systemPrompt,
                             tools: tools,
+                            executionMode: config.executionMode,
                             toolOverrides: config.toolOverrides,
                             skillCatalog: skillCatalog
                         )
@@ -675,7 +680,12 @@ public final class WorkSession: ObservableObject {
     }
 
     /// Builds execution configuration from current state
-    private func buildExecutionConfig() async -> (model: String, systemPrompt: String, toolOverrides: [String: Bool]?) {
+    private func buildExecutionConfig() async -> (
+        model: String,
+        systemPrompt: String,
+        toolOverrides: [String: Bool]?,
+        executionMode: WorkExecutionMode
+    ) {
         let baseSystemPrompt =
             windowState?.cachedSystemPrompt
             ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
@@ -711,7 +721,12 @@ public final class WorkSession: ObservableObject {
             }
         }
 
-        return (model, systemPrompt, toolOverrides)
+        let executionMode = ToolRegistry.shared.resolveWorkExecutionMode(
+            withOverrides: toolOverrides,
+            folderContext: WorkFolderContextService.shared.currentContext
+        )
+
+        return (model, systemPrompt, toolOverrides, executionMode)
     }
 
     /// Handles the result of an execution
@@ -1040,7 +1055,10 @@ public final class WorkSession: ObservableObject {
 
         resetExecutionState(for: issue)
         let config = await buildExecutionConfig()
-        let tools = ToolRegistry.shared.specs(withOverrides: config.toolOverrides)
+        let tools = ToolRegistry.shared.workSpecs(
+            withOverrides: config.toolOverrides,
+            mode: config.executionMode
+        )
         let skillCatalog = buildSkillCatalog()
 
         executionTask = Task { [weak self, engine] in
@@ -1050,6 +1068,7 @@ public final class WorkSession: ObservableObject {
                     model: config.model,
                     systemPrompt: config.systemPrompt,
                     tools: tools,
+                    executionMode: config.executionMode,
                     toolOverrides: config.toolOverrides,
                     skillCatalog: skillCatalog
                 )
