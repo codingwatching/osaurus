@@ -32,6 +32,7 @@ struct SandboxView: View {
     @State private var refreshTimer: Timer?
 
     @State private var showProvisionSheet = false
+    @State private var secretsCount: Int = 0
 
     private var configIsDirty: Bool { pendingConfig != config }
 
@@ -52,6 +53,8 @@ struct SandboxView: View {
                     } else {
                         SandboxPluginGridView(hasAppeared: hasAppeared)
                     }
+                case .secrets:
+                    SandboxSecretsView(onCountChanged: { secretsCount = $0 })
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -60,6 +63,9 @@ struct SandboxView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, theme)
         .onAppear {
+            secretsCount = AgentManager.shared.agents.reduce(0) {
+                $0 + AgentSecretsKeychain.getAllSecrets(agentId: $1.id).count
+            }
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
@@ -89,7 +95,8 @@ private extension SandboxView {
             HeaderTabsRow(
                 selection: $selectedTab,
                 counts: [
-                    .plugins: pluginLibrary.plugins.count
+                    .plugins: pluginLibrary.plugins.count,
+                    .secrets: secretsCount,
                 ],
                 showSearch: false
             )
@@ -2088,6 +2095,375 @@ private struct SandboxManageInstallsSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Secrets Tab
+
+private struct SandboxSecretsView: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
+
+    var onCountChanged: ((Int) -> Void)?
+
+    private var theme: ThemeProtocol { themeManager.currentTheme }
+
+    @State private var expandedAgents: Set<UUID> = []
+    @State private var agentSecrets: [UUID: [SecretEntry]] = [:]
+    @State private var editingEntry: SecretEntry.ID?
+
+    struct SecretEntry: Identifiable, Equatable {
+        let id = UUID()
+        var key: String
+        var value: String
+        var isNew: Bool
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if agentManager.agents.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(agentManager.agents) { agent in
+                        agentSection(agent)
+                    }
+                }
+            }
+            .padding(24)
+        }
+        .onAppear { loadAllSecrets() }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "key.slash")
+                .font(.system(size: 28, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+            Text("No agents found")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+        }
+        .frame(maxWidth: .infinity, minHeight: 200)
+    }
+
+    // MARK: - Agent Section
+
+    private func agentSection(_ agent: Agent) -> some View {
+        let isExpanded = expandedAgents.contains(agent.id)
+        let entries = agentSecrets[agent.id] ?? []
+
+        return VStack(alignment: .leading, spacing: 0) {
+            agentHeader(agent, isExpanded: isExpanded, count: entries.count)
+
+            if isExpanded {
+                Rectangle().fill(theme.cardBorder).frame(height: 1)
+
+                if entries.isEmpty {
+                    emptyAgentRow
+                } else {
+                    secretsList(entries, agentId: agent.id)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
+        )
+        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+    }
+
+    private func agentHeader(_ agent: Agent, isExpanded: Bool, count: Int) -> some View {
+        Button(action: { toggleAgent(agent.id) }) {
+            HStack(spacing: 10) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .frame(width: 14)
+
+                Text(agent.name)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(theme.tertiaryBackground))
+                }
+
+                Spacer()
+
+                if isExpanded {
+                    addSecretButton(agentId: agent.id)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private func addSecretButton(agentId: UUID) -> some View {
+        Button(action: { addSecret(for: agentId) }) {
+            HStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
+                Text("Add Secret").font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(theme.accentColor)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor.opacity(0.1)))
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+
+    private var emptyAgentRow: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "key.slash").font(.system(size: 12)).foregroundColor(theme.tertiaryText)
+            Text("No secrets configured for this agent").font(.system(size: 12)).foregroundColor(theme.tertiaryText)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func secretsList(_ entries: [SecretEntry], agentId: UUID) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                if index > 0 {
+                    Rectangle().fill(theme.cardBorder.opacity(0.5)).frame(height: 1).padding(.horizontal, 16)
+                }
+                SecretEntryRow(
+                    entry: entry,
+                    isEditing: editingEntry == entry.id,
+                    theme: theme,
+                    onCommit: { commitSecret(entryId: entry.id, agentId: agentId, key: $0, value: $1) },
+                    onDelete: { deleteSecretEntry(entryId: entry.id, agentId: agentId, key: entry.key) },
+                    onStartEditing: { editingEntry = entry.id }
+                )
+            }
+        }
+    }
+
+    // MARK: - Actions
+
+    private func toggleAgent(_ agentId: UUID) {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            if expandedAgents.contains(agentId) {
+                expandedAgents.remove(agentId)
+            } else {
+                expandedAgents.insert(agentId)
+            }
+        }
+    }
+
+    private func loadAllSecrets() {
+        for agent in agentManager.agents {
+            expandedAgents.insert(agent.id)
+            let stored = AgentSecretsKeychain.getAllSecrets(agentId: agent.id)
+            agentSecrets[agent.id] = stored.map { SecretEntry(key: $0.key, value: $0.value, isNew: false) }
+                .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+        }
+        notifyCount()
+    }
+
+    private func addSecret(for agentId: UUID) {
+        let entry = SecretEntry(key: "", value: "", isNew: true)
+        var entries = agentSecrets[agentId] ?? []
+        entries.append(entry)
+        agentSecrets[agentId] = entries
+        editingEntry = entry.id
+    }
+
+    private func commitSecret(entryId: SecretEntry.ID, agentId: UUID, key: String, value: String) {
+        let trimmedKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedKey.isEmpty, !trimmedValue.isEmpty else {
+            agentSecrets[agentId]?.removeAll { $0.id == entryId }
+            notifyCount()
+            return
+        }
+
+        if let existing = agentSecrets[agentId]?.first(where: { $0.id == entryId }),
+            !existing.isNew, existing.key != trimmedKey
+        {
+            AgentSecretsKeychain.deleteSecret(id: existing.key, agentId: agentId)
+        }
+
+        AgentSecretsKeychain.saveSecret(trimmedValue, id: trimmedKey, agentId: agentId)
+
+        if let idx = agentSecrets[agentId]?.firstIndex(where: { $0.id == entryId }) {
+            agentSecrets[agentId]?[idx] = SecretEntry(key: trimmedKey, value: trimmedValue, isNew: false)
+        }
+        editingEntry = nil
+        notifyCount()
+    }
+
+    private func deleteSecretEntry(entryId: SecretEntry.ID, agentId: UUID, key: String) {
+        if !key.isEmpty {
+            AgentSecretsKeychain.deleteSecret(id: key, agentId: agentId)
+        }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            agentSecrets[agentId]?.removeAll { $0.id == entryId }
+        }
+        notifyCount()
+    }
+
+    private func notifyCount() {
+        let count = agentSecrets.values.reduce(0) { $0 + $1.filter { !$0.isNew }.count }
+        onCountChanged?(count)
+    }
+}
+
+// MARK: - Secret Entry Row
+
+private struct SecretEntryRow: View {
+    let entry: SandboxSecretsView.SecretEntry
+    let isEditing: Bool
+    let theme: ThemeProtocol
+    let onCommit: (_ key: String, _ value: String) -> Void
+    let onDelete: () -> Void
+    let onStartEditing: () -> Void
+
+    @State private var editKey: String = ""
+    @State private var editValue: String = ""
+    @State private var showValue = false
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if isEditing || entry.isNew {
+                editableContent
+            } else {
+                readOnlyContent
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(isHovering ? theme.secondaryBackground.opacity(0.3) : Color.clear)
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .onAppear {
+            editKey = entry.key
+            editValue = entry.value
+        }
+    }
+
+    // MARK: - Editable
+
+    private var editableContent: some View {
+        HStack(spacing: 10) {
+            editField("SECRET_NAME", text: $editKey, weight: .medium)
+                .frame(maxWidth: 200)
+
+            valueField(text: $editValue, secure: !showValue)
+
+            visibilityToggle
+            commitButton
+            deleteButton
+        }
+    }
+
+    // MARK: - Read-Only
+
+    private var readOnlyContent: some View {
+        HStack(spacing: 10) {
+            Text(entry.key)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .frame(maxWidth: 200, alignment: .leading)
+
+            if showValue {
+                Text(entry.value)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+            } else {
+                Text(String(repeating: "•", count: min(entry.value.count, 24)))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundColor(theme.tertiaryText)
+            }
+
+            Spacer()
+
+            visibilityToggle
+
+            if isHovering {
+                iconButton("pencil", color: theme.secondaryText, bg: theme.tertiaryBackground, action: onStartEditing)
+                deleteButton
+            }
+        }
+    }
+
+    // MARK: - Shared Components
+
+    private func editField(_ placeholder: String, text: Binding<String>, weight: Font.Weight = .regular) -> some View {
+        TextField(placeholder, text: text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12, weight: weight, design: .monospaced))
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.inputBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.accentColor.opacity(0.4), lineWidth: 1))
+            )
+    }
+
+    @ViewBuilder
+    private func valueField(text: Binding<String>, secure: Bool) -> some View {
+        if secure {
+            SecureField("value", text: text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, design: .monospaced))
+                .foregroundColor(theme.primaryText)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6).stroke(theme.accentColor.opacity(0.4), lineWidth: 1)
+                        )
+                )
+        } else {
+            editField("value", text: text)
+        }
+    }
+
+    private var visibilityToggle: some View {
+        iconButton(
+            showValue ? "eye.slash.fill" : "eye.fill",
+            color: theme.tertiaryText,
+            bg: theme.tertiaryBackground
+        ) { showValue.toggle() }
+        .help(showValue ? "Hide value" : "Show value")
+    }
+
+    private var commitButton: some View {
+        iconButton("checkmark", color: .white, bg: theme.accentColor) { onCommit(editKey, editValue) }
+    }
+
+    private var deleteButton: some View {
+        iconButton("trash", color: theme.errorColor, bg: theme.errorColor.opacity(0.1), action: onDelete)
+            .help("Delete secret")
+    }
+
+    private func iconButton(_ icon: String, color: Color, bg: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(color)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 6).fill(bg))
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
