@@ -20,7 +20,6 @@ struct ContentBlockView: View, Equatable {
     var onRegenerate: ((UUID) -> Void)?
     var onEdit: ((UUID) -> Void)?
     var onDelete: ((UUID) -> Void)?
-    var onClarificationSubmit: ((String) -> Void)?
 
     // Inline editing state
     var editingTurnId: UUID? = nil
@@ -131,16 +130,6 @@ struct ContentBlockView: View, Equatable {
             )
             .padding(.top, 6)
             .padding(.bottom, isLastInTurn ? 16 : 6)
-
-        case let .clarification(request):
-            ClarificationCardView(
-                request: request,
-                onSubmit: { response in
-                    onClarificationSubmit?(response)
-                }
-            )
-            .padding(.top, 6)
-            .padding(.bottom, isLastInTurn ? 12 : 4)
 
         case let .userMessage(text, attachments):
             HeaderBlockContent(

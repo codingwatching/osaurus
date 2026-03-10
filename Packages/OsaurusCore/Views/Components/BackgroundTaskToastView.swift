@@ -356,7 +356,8 @@ struct BackgroundTaskToastView: View {
                 Text(option)
                     .font(.system(size: 11, weight: isSelected ? .medium : .regular))
                     .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(1)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
 
                 Spacer()
             }

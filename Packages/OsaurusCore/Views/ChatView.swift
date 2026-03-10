@@ -782,10 +782,10 @@ final class ChatSession: ObservableObject {
 
         guard executionMode.usesSandboxTools else { return prompt }
         if prompt.isEmpty {
-            return WorkExecutionEngine.sandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
+            return WorkExecutionEngine.chatSandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return prompt + "\n\n"
-            + WorkExecutionEngine.sandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
+            + WorkExecutionEngine.chatSandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Build tool specifications based on capability selection state

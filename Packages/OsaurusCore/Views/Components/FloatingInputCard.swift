@@ -40,6 +40,8 @@ struct FloatingInputCard: View {
     var pendingQueuedMessage: String? = nil
     /// Callback to clear/dismiss the queued message (work mode)
     var onClearQueued: (() -> Void)? = nil
+    /// Callback to send a message immediately during execution (interrupt + inject)
+    var onSendNow: (() -> Void)? = nil
     /// Callback to end the current task (work mode)
     var onEndTask: (() -> Void)? = nil
     /// Callback to resume an in-progress issue (work mode)
@@ -616,7 +618,14 @@ struct FloatingInputCard: View {
         guard canSend else { return }
         text = localText
         onSend()
-        // Clear local text after send
+        localText = ""
+    }
+
+    private func syncAndSendNow() {
+        let trimmed = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, isStreaming, onSendNow != nil else { return }
+        text = localText
+        onSendNow?()
         localText = ""
     }
 
@@ -1222,7 +1231,7 @@ struct FloatingInputCard: View {
             case .executing:
                 return pendingQueuedMessage != nil
                     ? "Message queued..."
-                    : "Queue a follow-up message..."
+                    : "⏎ to queue, ⇧⏎ to send now..."
             case .idle:
                 return "What's next?"
             }
@@ -1241,7 +1250,11 @@ struct FloatingInputCard: View {
             maxHeight: maxHeight,
             onCommit: {
                 syncAndSend()
-            }
+            },
+            onShiftCommit: isStreaming && onSendNow != nil
+                ? {
+                    syncAndSendNow()
+                } : nil
         )
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
@@ -1288,7 +1301,7 @@ struct FloatingInputCard: View {
             HStack(spacing: 8) {
                 if isStreaming {
                     stopButton
-                } else if canResume {
+                } else if canResume && localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     resumeButton
                     endTaskButton
                 } else if workInputState == .idle {
@@ -1301,7 +1314,7 @@ struct FloatingInputCard: View {
 
     // MARK: - Action Buttons
 
-    /// Queued message banner showing the message text with a dismiss button
+    /// Queued message banner showing the message text with Send Now and dismiss buttons
     private func queuedMessageBanner(message: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "clock")
@@ -1318,6 +1331,28 @@ struct FloatingInputCard: View {
                 .lineLimit(2)
 
             Spacer()
+
+            if onSendNow != nil {
+                Button {
+                    text = message
+                    onSendNow?()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bolt.fill")
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .bold))
+                        Text("Send Now")
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(theme.accentColor)
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Interrupt and send immediately")
+            }
 
             Button {
                 onClearQueued?()

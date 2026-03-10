@@ -17,6 +17,7 @@ struct EditableTextView: NSViewRepresentable {
     @Binding var isFocused: Bool
     var maxHeight: CGFloat = .infinity
     var onCommit: (() -> Void)? = nil
+    var onShiftCommit: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -137,10 +138,14 @@ struct EditableTextView: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
-                    return false  // Let text view handle Shift+Enter (newline)
+                    if let shiftCommit = parent.onShiftCommit {
+                        shiftCommit()
+                        return true
+                    }
+                    return false  // No shift handler — insert newline
                 } else {
                     parent.onCommit?()
-                    return true  // Handled (don't insert newline)
+                    return true
                 }
             }
             return false

@@ -2,8 +2,8 @@
 //  ClarificationCardView.swift
 //  osaurus
 //
-//  UI for displaying clarification questions from the AI.
-//  Allows users to select from options or provide custom responses.
+//  Floating overlay for clarification questions, styled after VoiceInputOverlay.
+//  Appears anchored to the bottom of the chat area.
 //
 
 import SwiftUI
@@ -14,7 +14,6 @@ struct ClarificationCardView: View {
 
     @State private var selectedOption: String?
     @State private var customResponse: String = ""
-    @State private var isHovered: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -31,40 +30,43 @@ struct ClarificationCardView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(spacing: 12) {
             header
-            divider
-            questionContent
+
+            questionArea
+
             if hasOptions {
                 optionsContent
-            } else {
-                textInputContent
             }
-            submitButton
+
+            inputAndActions
         }
-        .background(cardBackground)
-        .overlay(alignment: .leading) {
-            // Accent strip rendered as an overlay so it doesn't
-            // participate in intrinsic height calculation.
-            theme.accentColor
-                .frame(width: 4)
-        }
-        .overlay(cardBorder)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .animation(theme.animationQuick(), value: isHovered)
-        .animation(theme.animationQuick(), value: selectedOption)
-        .onHover { isHovered = $0 }
+        .padding(16)
+        .background(overlayBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(borderOverlay)
+        .shadow(color: theme.shadowColor.opacity(0.12), radius: 16, x: 0, y: 6)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 10) {
-            questionIcon
+        HStack(alignment: .center, spacing: 12) {
+            HStack(spacing: 6) {
+                Image(systemName: "questionmark.circle.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.accentColor)
 
-            Text("Clarification Needed")
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                Text("Clarification Needed")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                    .foregroundColor(theme.accentColor)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                Capsule()
+                    .fill(theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1))
+            )
 
             Spacer()
 
@@ -76,70 +78,46 @@ struct ClarificationCardView: View {
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(theme.warningColor.opacity(0.1))
-            )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
-    private var questionIcon: some View {
-        ZStack {
-            Circle()
-                .fill(theme.accentColor.opacity(0.15))
-                .frame(width: 24, height: 24)
-
-            Image(systemName: "questionmark")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                .foregroundColor(theme.accentColor)
         }
     }
 
-    // MARK: - Divider
+    // MARK: - Question Area
 
-    private var divider: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.15))
-            .frame(height: 1)
-            .padding(.horizontal, 12)
-    }
-
-    // MARK: - Question Content
-
-    private var questionContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private var questionArea: some View {
+        VStack(alignment: .leading, spacing: 6) {
             Text(request.question)
                 .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                 .foregroundColor(theme.primaryText)
-                .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
 
             if let context = request.context, !context.isEmpty {
                 Text(context)
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
                     .foregroundColor(theme.tertiaryText)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 12)
-        .padding(.bottom, hasOptions ? 8 : 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(theme.inputBackground)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(theme.inputBorder, lineWidth: 1)
+        )
     }
 
-    // MARK: - Options Content
+    // MARK: - Options
 
     private var optionsContent: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             ForEach(request.options ?? [], id: \.self) { option in
                 optionButton(option)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
     }
 
     private func optionButton(_ option: String) -> some View {
@@ -151,6 +129,7 @@ struct ClarificationCardView: View {
                     selectedOption = nil
                 } else {
                     selectedOption = option
+                    customResponse = ""
                 }
             }
         } label: {
@@ -161,25 +140,25 @@ struct ClarificationCardView: View {
                             isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.4),
                             lineWidth: 1.5
                         )
-                        .frame(width: 18, height: 18)
+                        .frame(width: 16, height: 16)
 
                     if isSelected {
                         Circle()
                             .fill(theme.accentColor)
-                            .frame(width: 10, height: 10)
+                            .frame(width: 8, height: 8)
                     }
                 }
 
                 Text(option)
                     .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: isSelected ? .medium : .regular))
                     .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
 
                 Spacer()
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 9)
             .background(
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(isSelected ? theme.accentColor.opacity(0.1) : theme.tertiaryBackground.opacity(0.3))
@@ -195,86 +174,99 @@ struct ClarificationCardView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Text Input Content
+    // MARK: - Input & Actions
 
-    private var textInputContent: some View {
-        TextField("", text: $customResponse, axis: .vertical)
-            .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
-            .foregroundColor(theme.primaryText)
-            .textFieldStyle(.plain)
-            .lineLimit(1 ... 4)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .overlay(alignment: .topLeading) {
-                if customResponse.isEmpty {
-                    Text("Type your response...")
-                        .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
-                        .foregroundColor(theme.placeholderText)
-                        .padding(.leading, 12)
-                        .padding(.top, 10)
-                        .allowsHitTesting(false)
+    private var inputAndActions: some View {
+        HStack(spacing: 10) {
+            TextField("", text: $customResponse, axis: .vertical)
+                .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
+                .foregroundColor(theme.primaryText)
+                .textFieldStyle(.plain)
+                .lineLimit(1 ... 3)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .overlay(alignment: .topLeading) {
+                    if customResponse.isEmpty {
+                        Text(hasOptions ? "Or type a custom response..." : "Type your response...")
+                            .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
+                            .foregroundColor(theme.placeholderText)
+                            .padding(.leading, 12)
+                            .padding(.top, 9)
+                            .allowsHitTesting(false)
+                    }
                 }
-            }
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.tertiaryBackground.opacity(0.4))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
-            )
-            .onSubmit {
-                if canSubmit { onSubmit(responseToSubmit) }
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
-    }
-
-    // MARK: - Submit Button
-
-    private var submitButton: some View {
-        HStack {
-            Spacer()
-
-            Button {
-                if canSubmit {
-                    onSubmit(responseToSubmit)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Text("Continue")
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-
-                    Image(systemName: "arrow.right")
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                }
-                .foregroundColor(canSubmit ? .white : theme.tertiaryText)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(theme.tertiaryBackground.opacity(0.4))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                )
+                .onSubmit {
+                    if canSubmit { onSubmit(responseToSubmit) }
+                }
+                .onChange(of: customResponse) { _, newValue in
+                    if !newValue.isEmpty {
+                        withAnimation(theme.animationQuick()) {
+                            selectedOption = nil
+                        }
+                    }
+                }
+
+            Button {
+                if canSubmit { onSubmit(responseToSubmit) }
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 12, weight: .bold))
+                }
+                .foregroundColor(canSubmit ? .white : theme.tertiaryText)
+                .frame(width: 32, height: 32)
+                .background(
+                    Circle()
                         .fill(canSubmit ? theme.accentColor : theme.tertiaryBackground)
                 )
             }
+            .keyboardShortcut(.defaultAction)
             .buttonStyle(.plain)
             .disabled(!canSubmit)
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 12)
     }
 
     // MARK: - Background & Border
 
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .fill(theme.secondaryBackground.opacity(isHovered ? 0.6 : 0.4))
+    private var overlayBackground: some View {
+        ZStack {
+            if theme.glassEnabled {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            }
+
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
+
+            LinearGradient(
+                colors: [theme.accentColor.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
+                startPoint: .top,
+                endPoint: .center
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
     }
 
-    private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+    private var borderOverlay: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
             .strokeBorder(
-                theme.primaryBorder.opacity(isHovered ? 0.3 : 0.2),
-                lineWidth: 0.5
+                LinearGradient(
+                    colors: [
+                        theme.glassEdgeLight.opacity(0.2),
+                        theme.cardBorder,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                lineWidth: 1
             )
     }
 }
@@ -284,34 +276,30 @@ struct ClarificationCardView: View {
 #if DEBUG
     struct ClarificationCardView_Previews: PreviewProvider {
         static var previews: some View {
-            VStack(spacing: 20) {
-                // With options
+            ZStack(alignment: .bottom) {
+                Color(hex: "0c0c0b").ignoresSafeArea()
+
                 ClarificationCardView(
                     request: ClarificationRequest(
-                        question: "Which database system should I use for this project?",
-                        options: ["PostgreSQL", "MySQL", "SQLite"],
-                        context: "The task mentions a database but doesn't specify which one."
+                        question:
+                            "Which deployment target should I use for your personal website, and do you want me to deploy it there now?",
+                        options: [
+                            "GitHub Pages (needs GitHub repo access or you push it)",
+                            "Netlify (needs site/account access or deploy token)",
+                            "Vercel (needs account/project access or token)",
+                            "Just build the site locally and give me the files",
+                        ],
+                        context:
+                            "I can build the website immediately, but deployment requires a destination and access."
                     ),
                     onSubmit: { response in
                         print("Selected: \(response)")
                     }
                 )
-
-                // Without options (free text)
-                ClarificationCardView(
-                    request: ClarificationRequest(
-                        question: "What is the target directory for the generated files?",
-                        options: nil,
-                        context: "The task doesn't specify where to save the output."
-                    ),
-                    onSubmit: { response in
-                        print("Response: \(response)")
-                    }
-                )
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
             }
-            .frame(width: 500)
-            .padding()
-            .background(Color(hex: "0c0c0b"))
+            .frame(width: 560, height: 550)
         }
     }
 #endif
