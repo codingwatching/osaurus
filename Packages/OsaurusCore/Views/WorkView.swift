@@ -83,6 +83,9 @@ struct WorkView: View {
                             workInputState: session.inputState,
                             pendingQueuedMessage: session.pendingQueuedMessage,
                             onClearQueued: { session.clearQueuedMessage() },
+                            onSendNow: {
+                                Task { await session.redirectExecution(message: session.input) }
+                            },
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,

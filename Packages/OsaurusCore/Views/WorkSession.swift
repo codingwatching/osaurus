@@ -301,6 +301,9 @@ public final class WorkSession: ObservableObject {
     /// Raw user message stored for memory extraction after execution completes
     private var pendingUserMessage: String?
 
+    /// Pending redirect: the next interrupted result continues execution with this message
+    private var pendingRedirectMessage: String?
+
     /// Model options
     @Published var modelOptions: [ModelOption] = []
 
@@ -835,6 +838,21 @@ public final class WorkSession: ObservableObject {
 
     /// Handles the result of an execution
     private func handleExecutionResult(_ result: ExecutionResult) {
+        if let redirectMessage = pendingRedirectMessage {
+            pendingRedirectMessage = nil
+            let issue = result.issue
+            preserveTurnsOnNextExecutionStart = true
+            executionTask = Task { [weak self, engine] in
+                do {
+                    let result = try await engine.continueExecution(message: redirectMessage)
+                    await MainActor.run { self?.handleExecutionResult(result) }
+                } catch {
+                    await MainActor.run { self?.handleExecutionError(error, issue: issue) }
+                }
+            }
+            return
+        }
+
         if result.isPaused {
             if case .clarificationNeeded(let clarification) = result.pauseReason {
                 pendingClarification = clarification
@@ -884,6 +902,7 @@ public final class WorkSession: ObservableObject {
 
     /// Handles execution errors
     private func handleExecutionError(_ error: Error, issue: Issue) {
+        pendingRedirectMessage = nil
         finishExecution()
         clearQueuedMessage()
         pausedIssueId = nil
@@ -897,15 +916,38 @@ public final class WorkSession: ObservableObject {
         Task { [weak self] in await self?.refreshIssues() }
     }
 
-    /// Stops the current execution
+    /// Stops the current execution, preserving any queued message in the input field.
     public func stopExecution() {
-        clearQueuedMessage()
+        pendingRedirectMessage = nil
+        if let queued = pendingQueuedMessage {
+            input = queued
+            pendingQueuedMessage = nil
+            pendingQueuedAttachments = []
+        }
         executionTask?.cancel()
+        Task { [engine] in await engine.interrupt() }
+    }
+
+    /// Interrupts the current execution and re-enters with the given user message injected.
+    public func redirectExecution(message: String) {
+        guard activeIssue != nil, isExecuting else { return }
+        let query = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        input = ""
+        pendingQueuedMessage = nil
+        pendingQueuedAttachments = []
+        pendingRedirectMessage = query
+
+        liveExecutionTurns.append(ChatTurn(role: .user, content: query))
+        notifyTurnsChanged()
+
         Task { [engine] in await engine.interrupt() }
     }
 
     /// Hard cancel for destructive stop/close flows.
     public func cancelExecution() {
+        pendingRedirectMessage = nil
         executionTask?.cancel()
         executionTask = nil
         Task { [engine] in await engine.cancel() }
@@ -932,6 +974,7 @@ public final class WorkSession: ObservableObject {
 
     /// Ends the current task and resets to empty state
     public func endTask() {
+        pendingRedirectMessage = nil
         executionTask?.cancel()
         executionTask = nil
         Task { [engine] in await engine.cancel() }
