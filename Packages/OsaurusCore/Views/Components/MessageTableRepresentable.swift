@@ -10,7 +10,7 @@
 //    the hosting view's intrinsic content size (no manual estimation).
 //  - Three update paths in `applyBlocks`:
 //      1. No-change early return (skip if blocks are identical).
-//      2. Streaming fast path (update a single cell in place).
+//      2. In-place update (IDs unchanged, reconfigure changed cells directly).
 //      3. Full snapshot (apply diff, handle scroll anchoring).
 //  - Streaming row heights are debounced via `noteHeightOfRows` so the
 //    table re-measures at most once per `streamingHeightInterval`.
@@ -311,7 +311,7 @@ extension MessageTableRepresentable {
         /// Called from both `makeNSView` and `updateNSView`. Determines which
         /// update path to take:
         ///   1. No-change early return
-        ///   2. Streaming fast path (single cell update)
+        ///   2. In-place update (reconfigure changed cells directly)
         ///   3. Full snapshot (diffable data source apply + scroll anchoring)
         func applyBlocks(
             _ blocks: [ContentBlock],
@@ -360,16 +360,11 @@ extension MessageTableRepresentable {
                 return
             }
 
-            // --- Path 2: Streaming fast path ---
-            if !widthChanged,
-                newIds == blockIds,
-                let streamId = newStreamingBlockId,
-                let newBlock = newLookup[streamId],
-                blockLookup[streamId] != newBlock
-            {
+            // --- Path 2: In-place update (IDs unchanged, content changed) ---
+            if !widthChanged, newIds == blockIds {
+                reconfigureChangedCells(newLookup: newLookup, streamId: newStreamingBlockId)
                 blockLookup = newLookup
-                streamingBlockId = streamId
-                updateStreamingCell(streamId: streamId, block: newBlock)
+                streamingBlockId = newStreamingBlockId
                 return
             }
 
@@ -394,18 +389,39 @@ extension MessageTableRepresentable {
             return false
         }
 
-        /// Path 2: Update the streaming cell directly without a snapshot reapply.
-        private func updateStreamingCell(streamId: String, block: ContentBlock) {
-            guard let row = blockIds.firstIndex(of: streamId),
-                let tableView,
-                let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? MessageCellView
-            else { return }
+        /// Path 2: Reconfigure all cells whose content changed without a snapshot reapply.
+        /// Streaming cells get debounced height updates; others update height immediately.
+        private func reconfigureChangedCells(newLookup: [String: ContentBlock], streamId: String?) {
+            guard let tableView else { return }
+            var nonStreamingRows = IndexSet()
 
-            configureCell(cell, with: block)
-            scheduleStreamingHeightUpdate(row: row)
+            for (index, id) in blockIds.enumerated() {
+                guard newLookup[id] != blockLookup[id],
+                    let block = newLookup[id],
+                    let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? MessageCellView
+                else { continue }
+
+                configureCell(cell, with: block)
+
+                if id == streamId {
+                    scheduleStreamingHeightUpdate(row: index)
+                } else {
+                    nonStreamingRows.insert(index)
+                }
+            }
+
+            if !nonStreamingRows.isEmpty {
+                noteRowHeightsChanged(nonStreamingRows)
+                if scrollAnchor.isPinnedToBottom {
+                    scrollAnchor.scrollToBottom()
+                }
+            }
         }
 
         /// Path 3: Apply a new diffable snapshot and handle scroll anchoring.
+        /// After the snapshot is applied, existing cells whose content changed
+        /// (but whose ID survived the diff) are reconfigured in place so
+        /// tool-call rows update without cell destruction/recreation.
         private func applyFullSnapshot(
             newIds: [String],
             newLookup: [String: ContentBlock],
@@ -415,9 +431,16 @@ extension MessageTableRepresentable {
             streamingJustEnded: Bool = false,
             previousStreamingBlockId: String? = nil
         ) {
+            let oldLookup = blockLookup
+            let oldIdSet = Set(blockIds)
+
             blockLookup = newLookup
             blockIds = newIds
             streamingBlockId = newStreamingBlockId
+
+            let stableChangedIds = newIds.filter { id in
+                oldIdSet.contains(id) && newLookup[id] != oldLookup[id]
+            }
 
             let wasPinnedToBottom = scrollAnchor.isPinnedToBottom
             scrollAnchor.saveAnchor()
@@ -428,6 +451,27 @@ extension MessageTableRepresentable {
 
             dataSource?.apply(snapshot, animatingDifferences: false) { [weak self] in
                 guard let self else { return }
+
+                if !stableChangedIds.isEmpty {
+                    var reconfiguredRows = IndexSet()
+                    for id in stableChangedIds {
+                        if let row = self.blockIds.firstIndex(of: id),
+                            let block = self.blockLookup[id],
+                            let cell = self.tableView?.view(
+                                atColumn: 0,
+                                row: row,
+                                makeIfNecessary: false
+                            ) as? MessageCellView
+                        {
+                            self.configureCell(cell, with: block)
+                            reconfiguredRows.insert(row)
+                        }
+                    }
+                    if !reconfiguredRows.isEmpty {
+                        self.noteRowHeightsChanged(reconfiguredRows)
+                    }
+                }
+
                 self.handlePostSnapshotScroll(
                     lastAssistantTurnId: lastAssistantTurnId,
                     autoScrollEnabled: autoScrollEnabled,

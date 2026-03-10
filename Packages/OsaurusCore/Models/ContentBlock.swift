@@ -144,7 +144,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
 
     static func toolCallGroup(turnId: UUID, calls: [ToolCallItem], position: BlockPosition) -> ContentBlock {
         ContentBlock(
-            id: "toolgroup-\(turnId.uuidString)-\(calls.map(\.call.id).joined(separator: "-"))",
+            id: "toolgroup-\(turnId.uuidString)",
             turnId: turnId,
             kind: .toolCallGroup(calls: calls),
             position: position
