@@ -732,30 +732,39 @@ private struct ChatToolbarModeToggleView: View {
     }
 }
 
-/// Title view showing Work Task or Model Badge
+/// Title view showing Work Task or Model Badge, plus a Sandbox indicator when active.
 private struct ChatToolbarTitleView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
+    @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var folderContextService = WorkFolderContextService.shared
 
     private var isWorkMode: Bool { windowState.mode == .work }
 
+    private var isSandboxActive: Bool {
+        guard agentManager.effectiveAutonomousExec(for: windowState.agentId)?.enabled == true else {
+            return false
+        }
+        if isWorkMode {
+            return !folderContextService.hasActiveFolder
+        }
+        return true
+    }
+
     var body: some View {
-        Group {
+        HStack(spacing: 8) {
             if isWorkMode, let workSession = windowState.workSession {
                 WorkTaskTitleView(session: workSession)
                     .frame(maxWidth: 360, alignment: .leading)
-            } else if let model = session.selectedModel, session.modelOptions.count <= 1 {
-                ModeIndicatorBadge(style: .model(name: displayModelName(model)))
+            }
+
+            if isSandboxActive {
+                SandboxStatusIndicator()
+                    .transition(.opacity)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: isSandboxActive)
         .environment(\.theme, windowState.theme)
-    }
-
-    private func displayModelName(_ raw: String?) -> String {
-        guard let raw else { return "Model" }
-        if raw.lowercased() == "foundation" { return "Foundation" }
-        if let last = raw.split(separator: "/").last { return String(last) }
-        return raw
     }
 }
 

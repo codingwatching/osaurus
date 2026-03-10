@@ -95,54 +95,24 @@ struct ModeToggleButton: View {
     }
 }
 
-// MARK: - Mode Indicator Badge
+// MARK: - Sandbox Status Indicator
 
-/// A badge showing the current mode (model name for chat, "Work Mode" for work).
-struct ModeIndicatorBadge: View {
-    enum Style {
-        case model(name: String)
-        case work
-    }
-
-    let style: Style
-
+/// A non-interactive status label styled to sit alongside the mode toggle,
+/// using matching typography so it reads as part of the same toolbar group.
+struct SandboxStatusIndicator: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 6) {
-            switch style {
-            case .model(let name):
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 6, height: 6)
-                Text(name)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            case .work:
-                Image(systemName: "bolt.circle.fill")
-                    .foregroundColor(.orange)
-                Text("Work Mode")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
+        HStack(spacing: 5) {
+            Image(systemName: "shippingbox.fill")
+                .font(.system(size: 9, weight: .semibold))
+            Text("Sandbox")
+                .font(.system(size: 11, weight: .semibold))
         }
+        .foregroundColor(theme.tertiaryText)
         .padding(.horizontal, 10)
         .padding(.vertical, 5)
-        .background(
-            Capsule()
-                .fill(style.backgroundColor.opacity(0.15))
-        )
-    }
-}
-
-extension ModeIndicatorBadge.Style {
-    var backgroundColor: Color {
-        switch self {
-        case .model:
-            return .green
-        case .work:
-            return .orange
-        }
+        .help("Sandbox is active — your agent runs in an isolated Linux VM, keeping your system safe while it works.")
     }
 }
 

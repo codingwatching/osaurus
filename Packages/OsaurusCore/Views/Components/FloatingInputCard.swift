@@ -674,10 +674,6 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            if workInputState != nil {
-                executionModeChip
-            }
-
             // Folder context selector (work mode only)
             // Show if: has folder selected, OR in empty mode (can select folder)
             if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
@@ -850,14 +846,6 @@ struct FloatingInputCard: View {
         agentManager.effectiveSkillOverrides(for: effectiveAgentId)
     }
 
-    private var activeWorkExecutionMode: WorkExecutionMode {
-        guard workInputState != nil else { return .none }
-        return toolRegistry.resolveWorkExecutionMode(
-            withOverrides: toolOverrides,
-            folderContext: folderContextService.currentContext
-        )
-    }
-
     /// Count of enabled tools (with agent overrides applied, excluding work tools)
     private var enabledToolCount: Int {
         toolRegistry.listSelectableCapabilityTools(withOverrides: toolOverrides)
@@ -975,82 +963,6 @@ struct FloatingInputCard: View {
 
     /// Empty mode = no active task, folder can be changed
     private var isAgentEmptyMode: Bool { hideContextIndicator }
-
-    private var executionModeChip: some View {
-        let label: String
-        let icon: String
-        let helpText: String
-
-        switch activeWorkExecutionMode {
-        case .hostFolder:
-            label = "Host Folder"
-            icon = "externaldrive.fill"
-            helpText = "Work will use the selected host folder tools. Sandbox execution is disabled for this task."
-        case .sandbox:
-            label = "Sandbox"
-            icon = "shippingbox.fill"
-            helpText = "Work will use the isolated Linux sandbox tools."
-        case .none:
-            label = "No Context"
-            icon = "slash.circle"
-            helpText = "No host folder or sandbox execution context is active."
-        }
-
-        return HStack(spacing: 5) {
-            Image(systemName: icon)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                .foregroundColor(modeChipForegroundColor)
-
-            Text(label)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(modeChipForegroundColor)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(modeChipBackgroundColor)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(modeChipBorderColor, lineWidth: 1)
-                )
-        )
-        .help(helpText)
-    }
-
-    private var modeChipForegroundColor: Color {
-        switch activeWorkExecutionMode {
-        case .hostFolder:
-            return theme.secondaryText
-        case .sandbox:
-            return theme.accentColor
-        case .none:
-            return theme.tertiaryText
-        }
-    }
-
-    private var modeChipBackgroundColor: Color {
-        switch activeWorkExecutionMode {
-        case .hostFolder:
-            return theme.secondaryBackground.opacity(0.8)
-        case .sandbox:
-            return theme.accentColor.opacity(colorScheme == .dark ? 0.18 : 0.12)
-        case .none:
-            return theme.secondaryBackground.opacity(0.55)
-        }
-    }
-
-    private var modeChipBorderColor: Color {
-        switch activeWorkExecutionMode {
-        case .hostFolder:
-            return theme.primaryBorder.opacity(0.55)
-        case .sandbox:
-            return theme.accentColor.opacity(0.35)
-        case .none:
-            return theme.primaryBorder.opacity(0.35)
-        }
-    }
 
     private var folderContextChip: some View {
         let hasFolder = folderContextService.hasActiveFolder
