@@ -243,6 +243,7 @@ public actor WorkExecutionEngine {
 
     /// Callback type for token consumption (inputTokens, outputTokens)
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
+    public typealias InterruptCheckCallback = @Sendable () async -> Bool
 
     /// Default maximum iterations for the reasoning loop
     public static let defaultMaxIterations = 50
@@ -283,6 +284,7 @@ public actor WorkExecutionEngine {
         contextLength: Int? = nil,
         toolTokenEstimate: Int = 0,
         maxIterations: Int = defaultMaxIterations,
+        shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
         onToolCall: @escaping ToolCallCallback,
@@ -310,6 +312,13 @@ public actor WorkExecutionEngine {
         while iteration < maxIterations {
             iteration += 1
             try Task.checkCancellation()
+            if await shouldInterrupt() {
+                return .interrupted(
+                    messages: messages,
+                    iteration: iteration - 1,
+                    totalToolCalls: totalToolCalls
+                )
+            }
 
             await onIterationStart(iteration)
             await onStatusUpdate("Iteration \(iteration)")
@@ -441,7 +450,12 @@ public actor WorkExecutionEngine {
             case "request_clarification":
                 // Parse clarification request
                 let clarification = parseClarificationArgs(invocation.jsonArguments)
-                return .needsClarification(clarification)
+                return .needsClarification(
+                    clarification,
+                    messages: messages,
+                    iteration: iteration,
+                    totalToolCalls: totalToolCalls
+                )
 
             default:
                 break
@@ -513,6 +527,7 @@ public actor WorkExecutionEngine {
 
         // Hit iteration limit
         return .iterationLimitReached(
+            messages: messages,
             totalIterations: iteration,
             totalToolCalls: totalToolCalls,
             lastResponseContent: lastResponseContent

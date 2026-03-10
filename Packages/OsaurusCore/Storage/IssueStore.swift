@@ -936,4 +936,117 @@ public struct IssueStore {
             }
         }
     }
+
+    // MARK: - Persisted Work Execution Sessions
+
+    static func saveExecutionState(_ state: PersistedWorkExecutionState) throws {
+        let encoder = JSONEncoder()
+
+        let sql = """
+                INSERT INTO work_execution_sessions (issue_id, session_json, pending_context_json, awaiting_clarification_json, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(issue_id) DO UPDATE SET
+                    session_json = excluded.session_json,
+                    pending_context_json = excluded.pending_context_json,
+                    awaiting_clarification_json = excluded.awaiting_clarification_json,
+                    updated_at = excluded.updated_at
+            """
+
+        try WorkDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                WorkDatabase.bindText(stmt, index: 1, value: state.session.issueId)
+                WorkDatabase.bindText(stmt, index: 2, value: try? jsonString(for: state.session, encoder: encoder))
+                WorkDatabase.bindText(
+                    stmt,
+                    index: 3,
+                    value: try? jsonString(for: state.pendingContext, encoder: encoder)
+                )
+                WorkDatabase.bindText(
+                    stmt,
+                    index: 4,
+                    value: try? jsonString(for: state.awaitingClarification, encoder: encoder)
+                )
+                WorkDatabase.bindDate(stmt, index: 5, value: Date())
+            }
+        ) { stmt in
+            let result = sqlite3_step(stmt)
+            if result != SQLITE_DONE {
+                throw WorkDatabaseError.failedToExecute("Failed to persist execution state")
+            }
+        }
+    }
+
+    static func loadExecutionState(issueId: String) throws -> PersistedWorkExecutionState? {
+        let sql = """
+                SELECT session_json, pending_context_json, awaiting_clarification_json
+                FROM work_execution_sessions
+                WHERE issue_id = ?
+            """
+
+        let decoder = JSONDecoder()
+        var loadedState: PersistedWorkExecutionState?
+
+        try WorkDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
+            }
+        ) { stmt in
+            guard sqlite3_step(stmt) == SQLITE_ROW,
+                let sessionJson = WorkDatabase.getText(stmt, column: 0),
+                let sessionData = sessionJson.data(using: .utf8)
+            else {
+                return
+            }
+
+            let session = try decoder.decode(WorkExecutionSession.self, from: sessionData)
+            let pendingContext: PersistedPendingExecutionContext? =
+                try decodeJSONColumn(stmt, column: 1, decoder: decoder)
+            let awaitingClarification: AwaitingClarificationState? =
+                try decodeJSONColumn(stmt, column: 2, decoder: decoder)
+
+            loadedState = PersistedWorkExecutionState(
+                session: session,
+                pendingContext: pendingContext,
+                awaitingClarification: awaitingClarification
+            )
+        }
+
+        return loadedState
+    }
+
+    static func deleteExecutionState(issueId: String) throws {
+        let sql = "DELETE FROM work_execution_sessions WHERE issue_id = ?"
+        try WorkDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
+            }
+        ) { stmt in
+            let result = sqlite3_step(stmt)
+            if result != SQLITE_DONE {
+                throw WorkDatabaseError.failedToExecute("Failed to delete persisted execution state")
+            }
+        }
+    }
+
+    private static func jsonString<T: Encodable>(for value: T?, encoder: JSONEncoder) throws -> String? {
+        guard let value else { return nil }
+        let data = try encoder.encode(value)
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func decodeJSONColumn<T: Decodable>(
+        _ stmt: OpaquePointer,
+        column: Int32,
+        decoder: JSONDecoder
+    ) throws -> T? {
+        guard let json = WorkDatabase.getText(stmt, column: column),
+            let data = json.data(using: .utf8)
+        else {
+            return nil
+        }
+        return try decoder.decode(T.self, from: data)
+    }
 }

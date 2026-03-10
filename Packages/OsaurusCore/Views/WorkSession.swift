@@ -259,8 +259,10 @@ public final class WorkSession: ObservableObject {
     /// Issue ID awaiting clarification
     @Published public var clarificationIssueId: String?
 
-    /// Flag indicating we're resuming from clarification (don't reset turns)
-    private var isResumingFromClarification: Bool = false
+    /// Preserve existing transcript when the next execution start is a resume/continue.
+    private var preserveTurnsOnNextExecutionStart: Bool = false
+    @Published public var pausedIssueId: String?
+    @Published public var pausedExecutionReason: ExecutionResult.PauseReason?
 
     // MARK: - Artifact State
 
@@ -441,10 +443,10 @@ public final class WorkSession: ObservableObject {
 
     // MARK: - Initialization
 
-    init(agentId: UUID, windowState: ChatWindowState? = nil) {
+    init(agentId: UUID, windowState: ChatWindowState? = nil, engine: WorkEngine = WorkEngine()) {
         self.agentId = agentId
         self.windowState = windowState
-        self.engine = WorkEngine()
+        self.engine = engine
 
         // Initialize model options from ChatSession and subscribe to keep in sync
         // after provider changes (add/remove/enable/disable)
@@ -534,9 +536,14 @@ public final class WorkSession: ObservableObject {
                 pendingQueuedAttachments = attachments
 
             case .idle:
-                guard let task = currentTask else { return }
-                streamingContent = ""
-                try await addIssueToTask(query: query, images: images, task: task)
+                if canContinueSelectedIssue {
+                    streamingContent = ""
+                    try await continueSelectedIssue(with: query)
+                } else {
+                    guard let task = currentTask else { return }
+                    streamingContent = ""
+                    try await addIssueToTask(query: query, images: images, task: task)
+                }
             }
         } catch {
             errorMessage = "Failed: \(error.localizedDescription)"
@@ -547,6 +554,27 @@ public final class WorkSession: ObservableObject {
     public func clearQueuedMessage() {
         pendingQueuedMessage = nil
         pendingQueuedAttachments = []
+    }
+
+    private func continueSelectedIssue(with message: String?) async throws {
+        guard let issue = selectedIssue ?? activeIssue else { return }
+        _ = await engine.restorePersistedSessionIfNeeded(for: issue.id)
+        resetExecutionState(for: issue)
+        preserveTurnsOnNextExecutionStart = true
+
+        if let message, !message.isEmpty {
+            liveExecutionTurns.append(ChatTurn(role: .user, content: message))
+            notifyTurnsChanged()
+        }
+
+        executionTask = Task { [weak self, engine] in
+            do {
+                let result = try await engine.continueExecution(message: message)
+                await MainActor.run { self?.handleExecutionResult(result) }
+            } catch {
+                await MainActor.run { self?.handleExecutionError(error, issue: issue) }
+            }
+        }
     }
 
     /// Creates and starts a new task
@@ -738,7 +766,8 @@ public final class WorkSession: ObservableObject {
         failedIssue = nil
         pendingClarification = nil
         clarificationIssueId = nil
-        isResumingFromClarification = false
+        pausedIssueId = nil
+        pausedExecutionReason = nil
     }
 
     /// Builds execution configuration from current state
@@ -806,15 +835,18 @@ public final class WorkSession: ObservableObject {
 
     /// Handles the result of an execution
     private func handleExecutionResult(_ result: ExecutionResult) {
-        // Check if we're awaiting clarification (don't finish execution yet)
-        if result.isAwaitingInput, let clarification = result.awaitingClarification {
-            // Clarification already handled by delegate, but ensure state is set
-            if pendingClarification == nil {
+        if result.isPaused {
+            if case .clarificationNeeded(let clarification) = result.pauseReason {
                 pendingClarification = clarification
                 clarificationIssueId = result.issue.id
             }
-            // Don't finish execution - we're paused waiting for input
-            isExecuting = false
+            pausedIssueId = result.issue.id
+            pausedExecutionReason = result.pauseReason
+            finishExecution()
+            Task { [weak self] in
+                await self?.refreshIssues()
+                self?.windowState?.refreshWorkTasks()
+            }
             return
         }
 
@@ -854,6 +886,8 @@ public final class WorkSession: ObservableObject {
     private func handleExecutionError(_ error: Error, issue: Issue) {
         finishExecution()
         clearQueuedMessage()
+        pausedIssueId = nil
+        pausedExecutionReason = nil
         errorMessage = error.localizedDescription
 
         if isRetriableError(error) {
@@ -865,16 +899,28 @@ public final class WorkSession: ObservableObject {
 
     /// Stops the current execution
     public func stopExecution() {
+        clearQueuedMessage()
+        Task { [engine] in await engine.interrupt() }
+    }
+
+    /// Hard cancel for destructive stop/close flows.
+    public func cancelExecution() {
         executionTask?.cancel()
         executionTask = nil
         Task { [engine] in await engine.cancel() }
         finishExecution()
         clearQueuedMessage()
+        pausedIssueId = nil
+        pausedExecutionReason = nil
+        pendingClarification = nil
+        clarificationIssueId = nil
+        preserveTurnsOnNextExecutionStart = false
     }
 
     /// Cleans up execution state after completion/error/stop
     private func finishExecution() {
         preserveLiveExecutionTurns()
+        executionTask = nil
         isExecuting = false
         activeIssue = nil
         loopState = nil
@@ -906,6 +952,9 @@ public final class WorkSession: ObservableObject {
         failedIssue = nil
         pendingClarification = nil
         clarificationIssueId = nil
+        pausedIssueId = nil
+        pausedExecutionReason = nil
+        preserveTurnsOnNextExecutionStart = false
     }
 
     /// Checks if an error can be retried
@@ -959,25 +1008,26 @@ public final class WorkSession: ObservableObject {
 
         // Clear UI state and prepare for execution
         clearClarificationState()
+        pausedIssueId = nil
+        pausedExecutionReason = nil
         isExecuting = true
         errorMessage = nil
 
-        // Update turns: remove empty assistant turn, add clarification exchange
         removeEmptyAssistantTurn()
         addClarificationTurns(question: request.question, response: response)
+        preserveTurnsOnNextExecutionStart = true
 
-        // Resume execution with the clarification context
-        isResumingFromClarification = true
-
-        do {
-            let result = try await engine.provideClarification(
-                issueId: issueId,
-                response: response
-            )
-            handleExecutionResult(result)
-        } catch {
-            let fallbackIssue = activeIssue ?? issues.first { $0.id == issueId }
-            handleExecutionError(error, issue: fallbackIssue ?? Issue(taskId: "", title: ""))
+        let fallbackIssue = activeIssue ?? issues.first { $0.id == issueId } ?? Issue(taskId: "", title: "")
+        executionTask = Task { [weak self, engine] in
+            do {
+                let result = try await engine.provideClarification(
+                    issueId: issueId,
+                    response: response
+                )
+                await MainActor.run { self?.handleExecutionResult(result) }
+            } catch {
+                await MainActor.run { self?.handleExecutionError(error, issue: fallbackIssue) }
+            }
         }
     }
 
@@ -1064,6 +1114,13 @@ public final class WorkSession: ObservableObject {
                 selectedIssueTurns = [userTurn, assistantTurn]
             }
             notifyTurnsChanged()
+            Task { [weak self, engine] in
+                guard let self else { return }
+                let pauseReason = await engine.restorePersistedSessionIfNeeded(for: issue.id)
+                await MainActor.run {
+                    self.applyRestoredPauseState(pauseReason, for: issue)
+                }
+            }
         } catch {
             selectedIssueTurns = []
             notifyTurnsChanged()
@@ -1124,11 +1181,30 @@ public final class WorkSession: ObservableObject {
         !isExecuting && selectedIssue?.status == .inProgress
     }
 
+    public var canContinueSelectedIssue: Bool {
+        !isExecuting && pausedIssueId == selectedIssue?.id
+    }
+
     /// Resumes execution of the selected in-progress issue
     public func resumeSelectedIssue() async {
         guard canResumeSelectedIssue, let issue = selectedIssue else { return }
+        applyRestoredPauseState(await engine.restorePersistedSessionIfNeeded(for: issue.id), for: issue)
 
         resetExecutionState(for: issue)
+        preserveTurnsOnNextExecutionStart = true
+
+        if await engine.hasResumableSession(for: issue.id) {
+            executionTask = Task { [weak self, engine] in
+                do {
+                    let result = try await engine.continueExecution()
+                    await MainActor.run { self?.handleExecutionResult(result) }
+                } catch {
+                    await MainActor.run { self?.handleExecutionError(error, issue: issue) }
+                }
+            }
+            return
+        }
+
         let config = await buildExecutionConfig()
         let tools = ToolRegistry.shared.workSpecs(
             withOverrides: config.toolOverrides,
@@ -1162,6 +1238,31 @@ public final class WorkSession: ObservableObject {
             withOverrides: AgentManager.shared.effectiveSkillOverrides(for: agentId)
         )
     }
+
+    private func applyRestoredPauseState(_ pauseReason: ExecutionResult.PauseReason?, for issue: Issue) {
+        guard selectedIssueId == issue.id || activeIssue?.id == issue.id else { return }
+
+        pausedIssueId = pauseReason == nil ? nil : issue.id
+        pausedExecutionReason = pauseReason
+
+        switch pauseReason {
+        case .clarificationNeeded(let request):
+            pendingClarification = request
+            clarificationIssueId = issue.id
+            setPendingClarification(request)
+        default:
+            pendingClarification = nil
+            clarificationIssueId = nil
+            setPendingClarification(nil)
+        }
+    }
+
+    private func setPendingClarification(_ request: ClarificationRequest?) {
+        let turn = lastAssistantTurn()
+        guard turn.pendingClarification != request else { return }
+        turn.pendingClarification = request
+        turn.notifyContentChanged()
+    }
 }
 
 // MARK: - WorkEngineDelegate Conformance
@@ -1173,9 +1274,8 @@ extension WorkSession: WorkEngineDelegate {
         updateLocalIssueStatus(issue.id, to: .inProgress)
         emitActivity(.startedIssue(title: issue.title))
 
-        if isResumingFromClarification {
-            // Resuming after clarification - preserve existing turns
-            isResumingFromClarification = false
+        if preserveTurnsOnNextExecutionStart {
+            preserveTurnsOnNextExecutionStart = false
             ensureAssistantTurnExists()
         } else {
             // Fresh start - initialize turns with user request
@@ -1296,6 +1396,8 @@ extension WorkSession: WorkEngineDelegate {
     ) {
         pendingClarification = request
         clarificationIssueId = issue.id
+        pausedIssueId = issue.id
+        pausedExecutionReason = .clarificationNeeded(request)
         isExecuting = false  // Pause while waiting for user input
         emitActivity(.needsClarification)
 
@@ -1303,6 +1405,19 @@ extension WorkSession: WorkEngineDelegate {
         turn.pendingClarification = request
         turn.notifyContentChanged()
         notifyIfSelected(issue.id)
+    }
+
+    public func workEngine(_ engine: WorkEngine, didInterruptIssue issue: Issue) {
+        pausedIssueId = issue.id
+        pausedExecutionReason = .interrupted
+        emitActivity(.completedStep(index: currentStep, total: loopState?.maxIterations))
+    }
+
+    public func workEngine(_ engine: WorkEngine, didExhaustBudget issue: Issue, summary: String) {
+        pausedIssueId = issue.id
+        pausedExecutionReason = .budgetExhausted
+        appendToAssistantTurn("\n\n⚠️ **\(summary)**\n", forIssue: issue.id)
+        emitActivity(.completedStep(index: currentStep, total: loopState?.maxIterations))
     }
 
     public func workEngine(_ engine: WorkEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {

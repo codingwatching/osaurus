@@ -139,7 +139,7 @@ public final class ExecutionContext: ObservableObject {
     public func cancel() {
         switch mode {
         case .chat: chatSession.stop()
-        case .work: workSession?.stopExecution()
+        case .work: workSession?.cancelExecution()
         }
     }
 }

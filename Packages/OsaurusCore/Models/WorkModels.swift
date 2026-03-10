@@ -439,7 +439,7 @@ public struct ClarificationRequest: Codable, Sendable, Equatable {
 }
 
 /// State for tracking issues awaiting clarification
-public struct AwaitingClarificationState: Sendable {
+public struct AwaitingClarificationState: Codable, Sendable {
     /// The issue ID awaiting clarification
     public let issueId: String
     /// The clarification request
@@ -454,16 +454,84 @@ public struct AwaitingClarificationState: Sendable {
     }
 }
 
+/// Persistent execution state that survives across multiple reasoning-loop runs.
+struct WorkExecutionSession: Codable, Sendable {
+    let issueId: String
+    var messages: [ChatMessage]
+    var totalIterations: Int
+    var totalToolCalls: Int
+    let startedAt: Date
+    var lastExitReason: SessionExitReason?
+
+    init(
+        issueId: String,
+        messages: [ChatMessage],
+        totalIterations: Int = 0,
+        totalToolCalls: Int = 0,
+        startedAt: Date = Date(),
+        lastExitReason: SessionExitReason? = nil
+    ) {
+        self.issueId = issueId
+        self.messages = messages
+        self.totalIterations = totalIterations
+        self.totalToolCalls = totalToolCalls
+        self.startedAt = startedAt
+        self.lastExitReason = lastExitReason
+    }
+}
+
+enum SessionExitReason: Codable, Sendable, Equatable {
+    case interrupted(userMessage: String?)
+    case clarificationRequested(ClarificationRequest)
+    case iterationLimitReached
+    case completed
+    case error(String)
+}
+
+enum PersistedExecutionMode: String, Codable, Sendable {
+    case hostFolder
+    case sandbox
+    case none
+}
+
+struct PersistedPendingExecutionContext: Codable, Sendable {
+    let model: String?
+    let systemPrompt: String
+    let tools: [Tool]
+    let executionMode: PersistedExecutionMode
+    let hostFolderRootPath: String?
+    let toolOverrides: [String: Bool]?
+    let skillCatalog: [CapabilityEntry]
+}
+
+struct PersistedWorkExecutionState: Codable, Sendable {
+    let session: WorkExecutionSession
+    let pendingContext: PersistedPendingExecutionContext?
+    let awaitingClarification: AwaitingClarificationState?
+}
+
 // MARK: - Reasoning Loop
 
 /// Result of the reasoning loop execution
-public enum LoopResult: Sendable {
+enum LoopResult: Sendable {
     /// Task completed successfully
     case completed(summary: String, artifact: Artifact?)
+    /// Execution was interrupted between iterations and can resume later.
+    case interrupted(messages: [ChatMessage], iteration: Int, totalToolCalls: Int)
     /// Model needs clarification from user
-    case needsClarification(ClarificationRequest)
+    case needsClarification(
+        ClarificationRequest,
+        messages: [ChatMessage],
+        iteration: Int,
+        totalToolCalls: Int
+    )
     /// Hit the iteration limit
-    case iterationLimitReached(totalIterations: Int, totalToolCalls: Int, lastResponseContent: String)
+    case iterationLimitReached(
+        messages: [ChatMessage],
+        totalIterations: Int,
+        totalToolCalls: Int,
+        lastResponseContent: String
+    )
 }
 
 /// Tracks the state of an active reasoning loop (for UI updates)
@@ -508,6 +576,12 @@ public struct LoopState: Sendable {
 
 /// Result of executing an issue
 public struct ExecutionResult: Sendable {
+    public enum PauseReason: Sendable, Equatable {
+        case interrupted
+        case clarificationNeeded(ClarificationRequest)
+        case budgetExhausted
+    }
+
     /// The executed issue
     public let issue: Issue
     /// Whether execution was successful
@@ -520,10 +594,18 @@ public struct ExecutionResult: Sendable {
     public let artifact: Artifact?
     /// Pending clarification request (execution paused)
     public let awaitingClarification: ClarificationRequest?
+    /// Whether execution is paused and can be resumed.
+    public let isPaused: Bool
+    /// Pause reason when execution is resumable.
+    public let pauseReason: PauseReason?
 
     /// Whether execution is paused awaiting user input
     public var isAwaitingInput: Bool {
         awaitingClarification != nil
+    }
+
+    public var canContinue: Bool {
+        isPaused
     }
 
     public init(
@@ -532,7 +614,9 @@ public struct ExecutionResult: Sendable {
         message: String,
         childIssues: [Issue] = [],
         artifact: Artifact? = nil,
-        awaitingClarification: ClarificationRequest? = nil
+        awaitingClarification: ClarificationRequest? = nil,
+        isPaused: Bool = false,
+        pauseReason: PauseReason? = nil
     ) {
         self.issue = issue
         self.success = success
@@ -540,6 +624,8 @@ public struct ExecutionResult: Sendable {
         self.childIssues = childIssues
         self.artifact = artifact
         self.awaitingClarification = awaitingClarification
+        self.isPaused = isPaused
+        self.pauseReason = pauseReason
     }
 }
 

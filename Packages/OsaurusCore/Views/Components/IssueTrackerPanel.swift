@@ -524,9 +524,9 @@ private struct IssueRow: View {
 
     private var actionButtons: some View {
         HStack(spacing: 4) {
-            if issue.status == .open && !isActive {
+            if (issue.status == .open || issue.status == .inProgress) && !isActive {
                 Button(action: onRun) {
-                    Image(systemName: "play.fill")
+                    Image(systemName: issue.status == .inProgress ? "arrow.clockwise" : "play.fill")
                         .font(.system(size: 8))
                         .foregroundColor(theme.successColor)
                         .frame(width: 20, height: 20)
@@ -534,7 +534,7 @@ private struct IssueRow: View {
                         .overlay(Circle().stroke(theme.successColor.opacity(0.3), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .help("Run")
+                .help(issue.status == .inProgress ? "Resume" : "Run")
             }
 
             Button(action: onClose) {
