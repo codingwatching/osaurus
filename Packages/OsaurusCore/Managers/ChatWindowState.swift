@@ -131,7 +131,7 @@ final class ChatWindowState: ObservableObject {
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
     func cleanup() {
-        workSession?.stopExecution()
+        workSession?.cancelExecution()
         session.stop()
         workSession = nil
         session.onSessionChanged = nil

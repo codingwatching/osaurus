@@ -195,7 +195,7 @@ public final class BackgroundTaskManager: ObservableObject {
         guard let state = backgroundTasks[backgroundId] else { return }
 
         switch state.mode {
-        case .work: state.session?.stopExecution()
+        case .work: state.session?.cancelExecution()
         case .chat: state.chatSession?.stop()
         }
 

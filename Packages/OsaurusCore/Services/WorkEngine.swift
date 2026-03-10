@@ -15,7 +15,8 @@ public actor WorkEngine {
 
     /// Current execution state
     private var isExecuting = false
-    private var currentIssueId: String?
+    private var activeSession: WorkExecutionSession?
+    private var interruptRequested = false
 
     /// State for issues awaiting clarification
     private var awaitingClarification: AwaitingClarificationState?
@@ -34,6 +35,10 @@ public actor WorkEngine {
 
     public init() {
         self.executionEngine = WorkExecutionEngine()
+    }
+
+    init(executionEngine: WorkExecutionEngine) {
+        self.executionEngine = executionEngine
     }
 
     /// Sets the retry configuration
@@ -200,10 +205,60 @@ public actor WorkEngine {
 
     /// Cancels the current execution
     public func cancel() async {
+        let issueId = activeSession?.issueId
         isExecuting = false
-        currentIssueId = nil
+        interruptRequested = false
+        activeSession = nil
         awaitingClarification = nil
         pendingExecutionContext = nil
+        clearPersistedExecutionState(issueId: issueId)
+    }
+
+    /// Interrupts the current execution, preserving session state.
+    public func interrupt() async {
+        guard activeSession != nil else { return }
+        interruptRequested = true
+    }
+
+    public func continueExecution(message: String? = nil) async throws -> ExecutionResult {
+        guard var session = activeSession else {
+            throw WorkEngineError.noActiveSession
+        }
+
+        if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            appendUserMessage(
+                to: &session,
+                content: "[User guidance]: \(message)\n\nContinue with the task."
+            )
+            session.lastExitReason = .interrupted(userMessage: message)
+        } else {
+            appendUserMessage(
+                to: &session,
+                content: "Continue with the task. You have a fresh iteration budget."
+            )
+        }
+        activeSession = session
+        persistExecutionStateIfPossible()
+        return try await resumeActiveSession()
+    }
+
+    public func redirect(message: String) async throws -> ExecutionResult {
+        if isExecuting && !interruptRequested {
+            interruptRequested = true
+            while isExecuting {
+                try? await Task.sleep(for: .milliseconds(25))
+            }
+        }
+
+        guard var session = activeSession else {
+            throw WorkEngineError.noActiveSession
+        }
+
+        appendUserMessage(to: &session, content: "[User redirect]: \(message)")
+        session.lastExitReason = .interrupted(userMessage: message)
+        activeSession = session
+        persistExecutionStateIfPossible()
+        return try await resumeActiveSession()
     }
 
     // MARK: - Clarification
@@ -217,16 +272,16 @@ public actor WorkEngine {
         issueId: String,
         response: String
     ) async throws -> ExecutionResult {
-        // Verify we have a pending clarification for this issue
+        if awaitingClarification?.issueId != issueId || pendingExecutionContext == nil {
+            _ = await restorePersistedSessionIfNeeded(for: issueId)
+        }
         guard let awaiting = awaitingClarification, awaiting.issueId == issueId else {
             throw WorkEngineError.noPendingClarification
         }
-
-        guard let context = pendingExecutionContext else {
-            throw WorkEngineError.noPendingClarification
+        guard var session = activeSession, session.issueId == issueId else {
+            throw WorkEngineError.noActiveSession
         }
 
-        // Log the clarification response
         _ = try? IssueStore.createEvent(
             IssueEvent.withPayload(
                 issueId: issueId,
@@ -238,44 +293,34 @@ public actor WorkEngine {
             )
         )
 
-        // Get and update the issue with clarification context
-        guard var issue = try IssueStore.getIssue(id: issueId) else {
-            throw WorkEngineError.issueNotFound(issueId)
-        }
+        session.messages.append(
+            ChatMessage(
+                role: "user",
+                content: """
+                    [Clarification response]
+                    Q: \(awaiting.request.question)
+                    A: \(response)
 
-        // Append clarification to issue description for context
-        let clarificationContext = """
-
-            [Clarification]
-            Q: \(awaiting.request.question)
-            A: \(response)
-            """
-        issue.description = (issue.description ?? "") + clarificationContext
-        try IssueStore.updateIssue(issue)
-
-        // Clear awaiting state
-        awaitingClarification = nil
-        pendingExecutionContext = nil
-
-        // Re-run execution with enriched context
-        return try await execute(
-            issue: issue,
-            model: context.model,
-            systemPrompt: context.systemPrompt,
-            tools: context.tools,
-            executionMode: context.executionMode,
-            toolOverrides: context.toolOverrides,
-            skillCatalog: context.skillCatalog
+                    Continue with the task using this information.
+                    """
+            )
         )
+        activeSession = session
+
+        awaitingClarification = nil
+        persistExecutionStateIfPossible()
+        return try await resumeActiveSession()
     }
 
     /// Checks if there's a pending clarification for an issue
     public func hasPendingClarification(for issueId: String) -> Bool {
-        awaitingClarification?.issueId == issueId
+        loadPersistedClarificationIfNeeded(for: issueId)
+        return awaitingClarification?.issueId == issueId
     }
 
     /// Gets the pending clarification request for an issue
     public func getPendingClarification(for issueId: String) -> ClarificationRequest? {
+        loadPersistedClarificationIfNeeded(for: issueId)
         guard let awaiting = awaitingClarification, awaiting.issueId == issueId else {
             return nil
         }
@@ -298,32 +343,16 @@ public actor WorkEngine {
         attemptResume: Bool = false
     ) async throws -> ExecutionResult {
         isExecuting = true
-        currentIssueId = issue.id
+        interruptRequested = false
 
         defer {
             isExecuting = false
-            currentIssueId = nil
+            interruptRequested = false
         }
 
         // Mark issue as in progress
         _ = await IssueManager.shared.startIssueSafe(issue.id)
         await delegate?.workEngine(self, didStartIssue: issue)
-
-        // Build initial messages
-        var messages: [ChatMessage] = []
-
-        // Add prior context if available (skip internal capability selection markers)
-        if let context = issue.context, !context.contains("[Selected Capabilities]") {
-            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
-        }
-
-        // Add the user's query (with images if provided)
-        let userQuery = issue.description ?? issue.title
-        if images.isEmpty {
-            messages.append(ChatMessage(role: "user", content: userQuery))
-        } else {
-            messages.append(ChatMessage(role: "user", text: userQuery, imageData: images))
-        }
 
         let resolvedExecutionMode: WorkExecutionMode
         switch executionMode {
@@ -342,6 +371,25 @@ public actor WorkEngine {
 
         // Load skill instructions if any skills are selected
         let skillInstructions = await buildSkillInstructions(from: skillCatalog)
+
+        let initialMessages =
+            if attemptResume,
+                let existing = activeSession,
+                existing.issueId == issue.id
+            {
+                existing.messages
+            } else {
+                buildInitialMessages(issue: issue, images: images)
+            }
+        activeSession =
+            if attemptResume,
+                let existing = activeSession,
+                existing.issueId == issue.id
+            {
+                existing
+            } else {
+                WorkExecutionSession(issueId: issue.id, messages: initialMessages)
+            }
 
         // Build the work system prompt using the new method
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
@@ -377,69 +425,95 @@ public actor WorkEngine {
         // Estimate token overhead for tool definitions
         let toolTokenEstimate = await ToolRegistry.shared.totalEstimatedTokens(for: tools)
 
-        // Run the reasoning loop
-        let loopResult = try await executionEngine.executeLoop(
-            issue: issue,
-            messages: &messages,
-            systemPrompt: agentSystemPrompt,
+        pendingExecutionContext = PendingExecutionContext(
             model: model,
+            systemPrompt: systemPrompt,
             tools: tools,
+            executionMode: resolvedExecutionMode,
             toolOverrides: toolOverrides,
-            temperature: agentCfg.workTemperature,
-            maxTokens: agentCfg.workMaxTokens,
-            topPOverride: agentCfg.workTopPOverride,
-            contextLength: resolvedContextLength,
-            toolTokenEstimate: toolTokenEstimate,
-            maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
-            onIterationStart: { [weak self] iteration in
-                guard let self = self else { return }
-                self.delegate?.workEngine(self, didStartIteration: iteration, forIssue: issue)
-            },
-            onDelta: { [weak self] delta, iteration in
-                guard let self = self else { return }
-                self.delegate?.workEngine(self, didReceiveStreamingDelta: delta, forStep: iteration)
-            },
-            onToolCall: { [weak self] toolName, args, result in
-                guard let self = self else { return }
-                // Notify delegate of tool call
-                self.delegate?.workEngine(
-                    self,
-                    didCallTool: toolName,
-                    withArguments: args,
-                    result: result,
-                    forIssue: issue
-                )
-            },
-            onStatusUpdate: { [weak self] status in
-                guard let self = self else { return }
-                self.delegate?.workEngine(self, didUpdateStatus: status, forIssue: issue)
-            },
-            onArtifact: { [weak self] artifact in
-                guard let self = self else { return }
-                // Save the artifact and notify delegate
-                _ = try? IssueStore.createArtifact(artifact)
-                _ = try? IssueStore.createEvent(
-                    IssueEvent.withPayload(
-                        issueId: issue.id,
-                        eventType: .artifactGenerated,
-                        payload: EventPayload.ArtifactGenerated(
-                            artifactId: artifact.id,
-                            filename: artifact.filename,
-                            contentType: artifact.contentType.rawValue
+            skillCatalog: skillCatalog
+        )
+
+        var messages = activeSession?.messages ?? initialMessages
+
+        // Run the reasoning loop
+        let loopResult: LoopResult
+        do {
+            loopResult = try await executionEngine.executeLoop(
+                issue: issue,
+                messages: &messages,
+                systemPrompt: agentSystemPrompt,
+                model: model,
+                tools: tools,
+                toolOverrides: toolOverrides,
+                temperature: agentCfg.workTemperature,
+                maxTokens: agentCfg.workMaxTokens,
+                topPOverride: agentCfg.workTopPOverride,
+                contextLength: resolvedContextLength,
+                toolTokenEstimate: toolTokenEstimate,
+                maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
+                shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
+                onIterationStart: { [weak self] iteration in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(self, didStartIteration: iteration, forIssue: issue)
+                },
+                onDelta: { [weak self] delta, iteration in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(self, didReceiveStreamingDelta: delta, forStep: iteration)
+                },
+                onToolCall: { [weak self] toolName, args, result in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(
+                        self,
+                        didCallTool: toolName,
+                        withArguments: args,
+                        result: result,
+                        forIssue: issue
+                    )
+                },
+                onStatusUpdate: { [weak self] status in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(self, didUpdateStatus: status, forIssue: issue)
+                },
+                onArtifact: { [weak self] artifact in
+                    guard let self = self else { return }
+                    _ = try? IssueStore.createArtifact(artifact)
+                    _ = try? IssueStore.createEvent(
+                        IssueEvent.withPayload(
+                            issueId: issue.id,
+                            eventType: .artifactGenerated,
+                            payload: EventPayload.ArtifactGenerated(
+                                artifactId: artifact.id,
+                                filename: artifact.filename,
+                                contentType: artifact.contentType.rawValue
+                            )
                         )
                     )
-                )
-                self.delegate?.workEngine(self, didGenerateArtifact: artifact, forIssue: issue)
-            },
-            onTokensConsumed: { [weak self] inputTokens, outputTokens in
-                guard let self = self else { return }
-                self.delegate?.workEngine(self, didConsumeTokens: inputTokens, output: outputTokens, forIssue: issue)
+                    self.delegate?.workEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                },
+                onTokensConsumed: { [weak self] inputTokens, outputTokens in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(
+                        self,
+                        didConsumeTokens: inputTokens,
+                        output: outputTokens,
+                        forIssue: issue
+                    )
+                }
+            )
+        } catch {
+            if activeSession?.issueId == issue.id {
+                activeSession?.lastExitReason = .error(error.localizedDescription)
+                persistExecutionStateIfPossible()
             }
-        )
+            throw error
+        }
 
         // Handle the loop result
         switch loopResult {
         case .completed(let summary, let artifact):
+            activeSession?.messages = messages
+            activeSession?.lastExitReason = .completed
             // Close the issue with success
             _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
 
@@ -478,6 +552,10 @@ public actor WorkEngine {
             )
 
             await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
+            clearPersistedExecutionState(issueId: issue.id)
+            activeSession = nil
+            awaitingClarification = nil
+            pendingExecutionContext = nil
 
             return ExecutionResult(
                 issue: issue,
@@ -486,22 +564,37 @@ public actor WorkEngine {
                 artifact: finalArtifact
             )
 
-        case .needsClarification(let request):
-            // Store state for resuming after clarification
+        case .interrupted(let resumedMessages, let iteration, let totalToolCalls):
+            updateActiveSession(
+                issueId: issue.id,
+                messages: resumedMessages,
+                iteration: iteration,
+                toolCalls: totalToolCalls,
+                exitReason: .interrupted(userMessage: nil)
+            )
+            awaitingClarification = nil
+            persistExecutionStateIfPossible()
+            await delegate?.workEngine(self, didInterruptIssue: issue)
+            return ExecutionResult(
+                issue: issue,
+                success: false,
+                message: "Execution paused",
+                isPaused: true,
+                pauseReason: .interrupted
+            )
+
+        case .needsClarification(let request, let resumedMessages, let iteration, let totalToolCalls):
+            updateActiveSession(
+                issueId: issue.id,
+                messages: resumedMessages,
+                iteration: iteration,
+                toolCalls: totalToolCalls,
+                exitReason: .clarificationRequested(request)
+            )
             awaitingClarification = AwaitingClarificationState(
                 issueId: issue.id,
                 request: request,
                 timestamp: Date()
-            )
-
-            // Store execution context for resuming
-            pendingExecutionContext = PendingExecutionContext(
-                model: model,
-                systemPrompt: systemPrompt,
-                tools: tools,
-                executionMode: resolvedExecutionMode,
-                toolOverrides: toolOverrides,
-                skillCatalog: skillCatalog
             )
 
             // Log clarification requested event
@@ -519,70 +612,197 @@ public actor WorkEngine {
 
             // Notify delegate
             await delegate?.workEngine(self, needsClarification: request, forIssue: issue)
+            persistExecutionStateIfPossible()
 
             return ExecutionResult(
                 issue: issue,
                 success: false,
                 message: "Awaiting clarification",
-                awaitingClarification: request
+                awaitingClarification: request,
+                isPaused: true,
+                pauseReason: .clarificationNeeded(request)
             )
 
-        case .iterationLimitReached(let totalIterations, let totalToolCalls, let lastResponseContent):
+        case .iterationLimitReached(let resumedMessages, let totalIterations, let totalToolCalls, _):
+            updateActiveSession(
+                issueId: issue.id,
+                messages: resumedMessages,
+                iteration: totalIterations,
+                toolCalls: totalToolCalls,
+                exitReason: .iterationLimitReached
+            )
             let summary =
                 "Budget exhausted after \(totalIterations) iterations and \(totalToolCalls) tool calls."
-
-            // Build continuation context so the next execution can pick up where we left off
-            let progress = String(lastResponseContent.prefix(2000))
-            let continuationDescription = """
-                Continue the following task from where it left off:
-
-                Original task: \(issue.description ?? issue.title)
-
-                Progress so far:
-                \(progress)
-                """
-
-            let continuationIssue = await IssueManager.shared.createIssueWithContextSafe(
-                HandoffContext(
-                    title: "Continue: \(issue.title)",
-                    description: continuationDescription,
-                    reason: summary,
-                    priority: issue.priority,
-                    type: issue.type,
-                    isDiscoveredWork: false
-                ),
-                sourceIssueId: issue.id
-            )
-
-            let closeResult =
-                if let contIssue = continuationIssue {
-                    "Budget handoff created in \(contIssue.id): \(summary)"
-                } else {
-                    "Partial handoff: \(summary)"
-                }
-
-            _ = await IssueManager.shared.closeIssueSafe(issue.id, result: closeResult)
-
-            _ = try? IssueStore.createEvent(
-                IssueEvent.withPayload(
-                    issueId: issue.id,
-                    eventType: .executionCompleted,
-                    payload: EventPayload.ExecutionCompleted(
-                        success: true,
-                        discoveries: continuationIssue != nil ? 1 : 0,
-                        summary: closeResult
-                    )
-                )
-            )
-
-            await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
+            persistExecutionStateIfPossible()
+            await delegate?.workEngine(self, didExhaustBudget: issue, summary: summary)
 
             return ExecutionResult(
                 issue: issue,
-                success: true,
-                message: closeResult
+                success: false,
+                message: summary,
+                isPaused: true,
+                pauseReason: .budgetExhausted
             )
         }
+    }
+
+    private func buildInitialMessages(issue: Issue, images: [Data]) -> [ChatMessage] {
+        var messages: [ChatMessage] = []
+
+        if let context = issue.context, !context.contains("[Selected Capabilities]") {
+            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
+        }
+
+        let userQuery = issue.description ?? issue.title
+        if images.isEmpty {
+            messages.append(ChatMessage(role: "user", content: userQuery))
+        } else {
+            messages.append(ChatMessage(role: "user", text: userQuery, imageData: images))
+        }
+
+        return messages
+    }
+
+    private func shouldInterruptExecution(for issueId: String) -> Bool {
+        interruptRequested && activeSession?.issueId == issueId
+    }
+
+    func restorePersistedSessionIfNeeded(for issueId: String?) async -> ExecutionResult.PauseReason? {
+        guard let issueId else { return nil }
+        if activeSession?.issueId == issueId {
+            return currentPauseReason()
+        }
+
+        do {
+            guard let state = try IssueStore.loadExecutionState(issueId: issueId) else { return nil }
+            await restorePersistedState(state)
+            return currentPauseReason()
+        } catch {
+            return nil
+        }
+    }
+
+    private func restorePersistedClarification(for issueId: String) throws -> Bool {
+        guard let state = try IssueStore.loadExecutionState(issueId: issueId),
+            let clarification = state.awaitingClarification
+        else {
+            return false
+        }
+
+        restorePersistedState(state, pendingContext: nil)
+        awaitingClarification = clarification
+        pendingExecutionContext = nil
+        return true
+    }
+
+    private func restorePersistedState(
+        _ state: PersistedWorkExecutionState,
+        pendingContext: PendingExecutionContext? = nil
+    ) {
+        activeSession = state.session
+        awaitingClarification = state.awaitingClarification
+        pendingExecutionContext = pendingContext
+    }
+
+    private func restorePersistedState(_ state: PersistedWorkExecutionState) async {
+        let pendingContext: PendingExecutionContext? =
+            if let persistedContext = state.pendingContext {
+                await PendingExecutionContext.fromPersisted(persistedContext)
+            } else {
+                nil
+            }
+        restorePersistedState(state, pendingContext: pendingContext)
+    }
+
+    private func loadPersistedClarificationIfNeeded(for issueId: String) {
+        guard awaitingClarification?.issueId != issueId else { return }
+        _ = try? restorePersistedClarification(for: issueId)
+    }
+
+    private func currentPauseReason() -> ExecutionResult.PauseReason? {
+        if let awaitingClarification {
+            return .clarificationNeeded(awaitingClarification.request)
+        }
+
+        guard let exitReason = activeSession?.lastExitReason else { return nil }
+        switch exitReason {
+        case .interrupted:
+            return .interrupted
+        case .clarificationRequested(let request):
+            return .clarificationNeeded(request)
+        case .iterationLimitReached:
+            return .budgetExhausted
+        case .completed, .error:
+            return nil
+        }
+    }
+
+    private func updateActiveSession(
+        issueId: String,
+        messages: [ChatMessage],
+        iteration: Int,
+        toolCalls: Int,
+        exitReason: SessionExitReason
+    ) {
+        guard var session = activeSession, session.issueId == issueId else {
+            activeSession = WorkExecutionSession(
+                issueId: issueId,
+                messages: messages,
+                totalIterations: iteration,
+                totalToolCalls: toolCalls,
+                lastExitReason: exitReason
+            )
+            return
+        }
+
+        session.messages = messages
+        session.totalIterations += iteration
+        session.totalToolCalls += toolCalls
+        session.lastExitReason = exitReason
+        activeSession = session
+    }
+
+    private func persistExecutionStateIfPossible() {
+        guard let activeSession else { return }
+
+        let state = PersistedWorkExecutionState(
+            session: activeSession,
+            pendingContext: pendingExecutionContext?.persistedRepresentation,
+            awaitingClarification: awaitingClarification
+        )
+        try? IssueStore.saveExecutionState(state)
+    }
+
+    private func clearPersistedExecutionState(issueId: String?) {
+        guard let issueId else { return }
+        try? IssueStore.deleteExecutionState(issueId: issueId)
+    }
+
+    private func appendUserMessage(to session: inout WorkExecutionSession, content: String) {
+        session.messages.append(ChatMessage(role: "user", content: content))
+    }
+
+    private func resumeActiveSession() async throws -> ExecutionResult {
+        guard let session = activeSession else {
+            throw WorkEngineError.noActiveSession
+        }
+        guard let context = pendingExecutionContext else {
+            throw WorkEngineError.noActiveSession
+        }
+        guard let issue = try IssueStore.getIssue(id: session.issueId) else {
+            throw WorkEngineError.issueNotFound(session.issueId)
+        }
+
+        return try await execute(
+            issue: issue,
+            model: context.model,
+            systemPrompt: context.systemPrompt,
+            tools: context.tools,
+            executionMode: context.executionMode,
+            toolOverrides: context.toolOverrides,
+            skillCatalog: context.skillCatalog,
+            attemptResume: true
+        )
     }
 
     /// Builds skill instructions string from the skill catalog
@@ -704,9 +924,16 @@ public actor WorkEngine {
         isExecuting
     }
 
+    public func hasResumableSession(for issueId: String) -> Bool {
+        if activeSession?.issueId == issueId {
+            return true
+        }
+        return (try? IssueStore.loadExecutionState(issueId: issueId)) != nil
+    }
+
     /// Gets the ID of the currently executing issue
     public func getCurrentIssueId() -> String? {
-        currentIssueId
+        activeSession?.issueId
     }
 }
 
@@ -733,6 +960,8 @@ public protocol WorkEngineDelegate: AnyObject {
 
     // Clarification
     func workEngine(_ engine: WorkEngine, needsClarification request: ClarificationRequest, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didInterruptIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didExhaustBudget issue: Issue, summary: String)
 
     // Artifacts
     func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
@@ -769,6 +998,8 @@ extension WorkEngineDelegate {
         needsClarification request: ClarificationRequest,
         forIssue issue: Issue
     ) {}
+    public func workEngine(_ engine: WorkEngine, didInterruptIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didExhaustBudget issue: Issue, summary: String) {}
 
     // Artifacts
     public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
@@ -793,6 +1024,63 @@ struct PendingExecutionContext {
     let skillCatalog: [CapabilityEntry]
 }
 
+extension PendingExecutionContext {
+    var persistedRepresentation: PersistedPendingExecutionContext {
+        let executionModeSnapshot: PersistedExecutionMode
+        let hostFolderRootPath: String?
+
+        switch self.executionMode {
+        case .hostFolder(let context):
+            executionModeSnapshot = .hostFolder
+            hostFolderRootPath = context.rootPath.path
+        case .sandbox:
+            executionModeSnapshot = .sandbox
+            hostFolderRootPath = nil
+        case .none:
+            executionModeSnapshot = .none
+            hostFolderRootPath = nil
+        }
+
+        return PersistedPendingExecutionContext(
+            model: model,
+            systemPrompt: systemPrompt,
+            tools: tools,
+            executionMode: executionModeSnapshot,
+            hostFolderRootPath: hostFolderRootPath,
+            toolOverrides: toolOverrides,
+            skillCatalog: skillCatalog
+        )
+    }
+
+    static func fromPersisted(_ persisted: PersistedPendingExecutionContext) async -> PendingExecutionContext {
+        let executionMode = await MainActor.run { () -> WorkExecutionMode in
+            switch persisted.executionMode {
+            case .sandbox:
+                return .sandbox
+            case .none:
+                return .none
+            case .hostFolder:
+                guard let context = WorkFolderContextService.shared.currentContext else {
+                    return .none
+                }
+                if let rootPath = persisted.hostFolderRootPath, context.rootPath.path != rootPath {
+                    return .none
+                }
+                return .hostFolder(context)
+            }
+        }
+
+        return PendingExecutionContext(
+            model: persisted.model,
+            systemPrompt: persisted.systemPrompt,
+            tools: persisted.tools,
+            executionMode: executionMode,
+            toolOverrides: persisted.toolOverrides,
+            skillCatalog: persisted.skillCatalog
+        )
+    }
+}
+
 // MARK: - Errors
 
 /// Errors that can occur in the work engine
@@ -804,6 +1092,7 @@ public enum WorkEngineError: Error, LocalizedError {
     case maxRetriesExceeded(underlying: Error, attempts: Int)
     case cancelled
     case noPendingClarification
+    case noActiveSession
 
     public var errorDescription: String? {
         switch self {
@@ -821,13 +1110,15 @@ public enum WorkEngineError: Error, LocalizedError {
             return "Execution was cancelled"
         case .noPendingClarification:
             return "No pending clarification for this issue"
+        case .noActiveSession:
+            return "No active work session to continue"
         }
     }
 
     /// Whether this error is retriable
     public var isRetriable: Bool {
         switch self {
-        case .alreadyExecuting, .cancelled, .noPendingClarification:
+        case .alreadyExecuting, .cancelled, .noPendingClarification, .noActiveSession:
             return false
         case .issueNotFound, .noIssueCreated, .taskNotFound:
             return false

@@ -1224,7 +1224,7 @@ struct ChatView: View {
                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                 },
                 .destructive("Stop Task & Close") {
-                    windowState.workSession?.stopExecution()
+                    windowState.workSession?.cancelExecution()
                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                 },
                 .cancel("Cancel"),

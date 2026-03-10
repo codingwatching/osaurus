@@ -130,6 +130,88 @@ struct WorkExecutionEngineTests {
         #expect(statuses.contains("Budget: 5 of 15 iterations remaining"))
         #expect(statuses.contains("Warning: 5 iterations remaining"))
     }
+
+    @Test @MainActor
+    func executeLoop_returnsInterruptedWithAccumulatedMessages() async throws {
+        let registry = ToolRegistry.shared
+        registry.register(NoopTestTool())
+        registry.setEnabled(true, for: "noop_test")
+        defer { registry.unregister(names: ["noop_test"]) }
+
+        let tools = [noopToolSpec()]
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(steps: [.tool("noop_test", "{}")])
+        )
+        let issue = Issue(taskId: "task-3", title: "Interrupt me")
+        var messages: [ChatMessage] = []
+        let interruptCounter = InterruptCounter()
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: tools,
+            toolOverrides: nil,
+            maxIterations: 5,
+            shouldInterrupt: {
+                await interruptCounter.nextShouldInterrupt()
+            },
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .interrupted(let preservedMessages, let iteration, let toolCalls) = result else {
+            Issue.record("Expected interruption result")
+            return
+        }
+
+        #expect(iteration == 1)
+        #expect(toolCalls == 1)
+        #expect(preservedMessages.contains(where: { $0.role == "tool" && $0.content == "{}" }))
+    }
+
+    @Test @MainActor
+    func executeLoop_clarificationResultCarriesMessages() async throws {
+        let engine = WorkExecutionEngine(
+            chatEngine: SequencedWorkChatEngine(
+                steps: [.tool("request_clarification", #"{"question":"Database?","options":["SQLite","Postgres"]}"#)]
+            )
+        )
+        let issue = Issue(taskId: "task-4", title: "Need clarification")
+        var messages = [ChatMessage(role: "user", content: "Build it")]
+
+        let result = try await engine.executeLoop(
+            issue: issue,
+            messages: &messages,
+            systemPrompt: "Base",
+            model: "mock",
+            tools: [clarificationToolSpec()],
+            toolOverrides: nil,
+            maxIterations: 2,
+            onIterationStart: { _ in },
+            onDelta: { _, _ in },
+            onToolCall: { _, _, _ in },
+            onStatusUpdate: { _ in },
+            onArtifact: { _ in },
+            onTokensConsumed: { _, _ in }
+        )
+
+        guard case .needsClarification(let clarification, let preservedMessages, let iteration, let toolCalls) = result
+        else {
+            Issue.record("Expected clarification result")
+            return
+        }
+
+        #expect(clarification.question == "Database?")
+        #expect(iteration == 1)
+        #expect(toolCalls == 1)
+        #expect(preservedMessages.first?.content == "Build it")
+    }
 }
 
 private func parseEngineJSON(_ string: String) throws -> [String: Any]? {
@@ -145,6 +227,28 @@ private struct NoopTestTool: OsaurusTool {
     func execute(argumentsJSON _: String) async throws -> String {
         "{}"
     }
+}
+
+private func noopToolSpec() -> Tool {
+    Tool(
+        type: "function",
+        function: ToolFunction(
+            name: "noop_test",
+            description: "No-op test tool.",
+            parameters: .object(["type": .string("object")])
+        )
+    )
+}
+
+private func clarificationToolSpec() -> Tool {
+    Tool(
+        type: "function",
+        function: ToolFunction(
+            name: "request_clarification",
+            description: "Clarify the task",
+            parameters: .object(["type": .string("object")])
+        )
+    )
 }
 
 private actor SequencedWorkChatEngine: ChatEngineProtocol {
@@ -174,5 +278,14 @@ private actor SequencedWorkChatEngine: ChatEngineProtocol {
 
     func completeChat(request _: ChatCompletionRequest) async throws -> ChatCompletionResponse {
         throw NSError(domain: "WorkExecutionEngineTests", code: 1)
+    }
+}
+
+private actor InterruptCounter {
+    private var count = 0
+
+    func nextShouldInterrupt() -> Bool {
+        count += 1
+        return count > 1
     }
 }

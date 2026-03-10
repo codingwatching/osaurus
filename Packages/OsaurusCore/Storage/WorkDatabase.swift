@@ -136,6 +136,10 @@ public final class WorkDatabase: @unchecked Sendable {
         if currentVersion < 2 {
             try migrateToV2()
         }
+
+        if currentVersion < 3 {
+            try migrateToV3()
+        }
     }
 
     /// Gets the current schema version from the database
@@ -285,6 +289,28 @@ public final class WorkDatabase: @unchecked Sendable {
         )
 
         try setSchemaVersion(2)
+    }
+
+    /// Migration to schema version 3 - add persisted work execution sessions
+    private func migrateToV3() throws {
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS work_execution_sessions (
+                    issue_id TEXT PRIMARY KEY,
+                    session_json TEXT NOT NULL,
+                    pending_context_json TEXT,
+                    awaiting_clarification_json TEXT,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY (issue_id) REFERENCES issues(id) ON DELETE CASCADE
+                )
+            """
+        )
+
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_work_execution_sessions_updated_at ON work_execution_sessions(updated_at)"
+        )
+
+        try setSchemaVersion(3)
     }
 
     // MARK: - Query Execution
