@@ -39,7 +39,6 @@ struct CellRenderingContext {
     let onRegenerate: ((UUID) -> Void)?
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
-    let onClarificationSubmit: ((String) -> Void)?
     let editingTurnId: UUID?
     let editText: Binding<String>?
     let onConfirmEdit: (() -> Void)?
@@ -71,7 +70,6 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let onRegenerate: ((UUID) -> Void)?
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
-    let onClarificationSubmit: ((String) -> Void)?
 
     // Inline editing state
     let editingTurnId: UUID?
@@ -143,7 +141,6 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onRegenerate: onRegenerate,
             onEdit: onEdit,
             onDelete: onDelete,
-            onClarificationSubmit: onClarificationSubmit,
             editingTurnId: editingTurnId,
             editText: editText,
             onConfirmEdit: onConfirmEdit,
@@ -227,7 +224,6 @@ extension MessageTableRepresentable {
             onRegenerate: nil,
             onEdit: nil,
             onDelete: nil,
-            onClarificationSubmit: nil,
             editingTurnId: nil,
             editText: nil,
             onConfirmEdit: nil,
@@ -518,7 +514,6 @@ extension MessageTableRepresentable {
                 onRegenerate: ctx.onRegenerate,
                 onEdit: ctx.onEdit,
                 onDelete: ctx.onDelete,
-                onClarificationSubmit: ctx.onClarificationSubmit,
                 editingTurnId: ctx.editingTurnId,
                 editText: ctx.editText,
                 onConfirmEdit: ctx.onConfirmEdit,

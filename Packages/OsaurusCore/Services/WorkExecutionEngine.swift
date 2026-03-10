@@ -181,7 +181,40 @@ public actor WorkExecutionEngine {
         return section
     }
 
-    /// Shared sandbox environment guidance for prompts when sandbox tools are active.
+    /// Chat-mode sandbox guidance: environment description and tool usage only.
+    /// Omits the work-mode execution pattern and `complete_task` references so
+    /// the model doesn't enter a task-execution loop in conversational chat.
+    static func chatSandboxPromptSection() -> String {
+        """
+
+        ## Linux Sandbox Environment
+
+        You have access to an isolated Linux sandbox (Alpine Linux, ARM64).
+        Your workspace is your home directory inside the sandbox. Files persist across messages.
+        Use `/output` for files the user should see on the host.
+
+        Pre-installed: sh, curl, jq. Install more with `sandbox_install`, `sandbox_pip_install`, or `sandbox_npm_install`.
+        Internet access is available (curl, wget, git clone all work).
+
+        **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for
+        multi-line scripts (python, bash, node). For single shell commands use
+        `sandbox_exec`. For background processes use `sandbox_exec_background`.
+        Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
+
+        Runtime hints:
+        - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
+        - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
+        - Toolchains like Go, Node, or build tools can be installed with `sandbox_install`.
+        - Use `sandbox_whoami` to inspect the current environment and available runtimes.
+        - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
+
+        The sandbox is disposable — experiment freely.
+
+        """
+    }
+
+    /// Work-mode sandbox guidance: includes the full execution pattern with
+    /// `complete_task` and iterative verify/fix steps for the reasoning loop.
     static func sandboxPromptSection() -> String {
         """
 
@@ -311,7 +344,13 @@ public actor WorkExecutionEngine {
 
         while iteration < maxIterations {
             iteration += 1
-            try Task.checkCancellation()
+            if Task.isCancelled {
+                return .interrupted(
+                    messages: messages,
+                    iteration: iteration - 1,
+                    totalToolCalls: totalToolCalls
+                )
+            }
             if await shouldInterrupt() {
                 return .interrupted(
                     messages: messages,
@@ -387,6 +426,12 @@ public actor WorkExecutionEngine {
                 }
             } catch let invocation as ServiceToolInvocation {
                 toolInvoked = invocation
+            } catch is CancellationError {
+                return .interrupted(
+                    messages: messages,
+                    iteration: iteration,
+                    totalToolCalls: totalToolCalls
+                )
             }
 
             lastResponseContent = responseContent

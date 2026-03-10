@@ -410,6 +410,33 @@ struct WorkView: View {
     }
 }
 
+// MARK: - Clarification Overlay
+
+private struct ClarificationOverlay: View {
+    let request: ClarificationRequest
+    let onSubmit: (String) -> Void
+
+    @Environment(\.theme) private var theme
+    @State private var isAppearing = false
+
+    var body: some View {
+        VStack {
+            Spacer()
+
+            ClarificationCardView(request: request, onSubmit: onSubmit)
+                .opacity(isAppearing ? 1 : 0)
+                .offset(y: isAppearing ? 0 : 30)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
+        }
+        .onAppear {
+            withAnimation(theme.springAnimation()) {
+                isAppearing = true
+            }
+        }
+    }
+}
+
 // MARK: - Collapsed Sidebar Button
 
 private struct CollapsedSidebarButton: View {
@@ -488,7 +515,6 @@ extension WorkView {
 
     private func issueDetailView(width: CGFloat) -> some View {
         let agentName = windowState.cachedAgentDisplayName
-        // Calculate content width: available width minus padding, capped at max
         let availableWidth = width - (Self.contentHorizontalPadding * 2)
         let contentWidth = min(availableWidth, Self.maxChatContentWidth)
 
@@ -508,16 +534,10 @@ extension WorkView {
                 scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
-                onCopy: copyTurnContent,
-                onClarificationSubmit: { response in
-                    Task {
-                        await session.submitClarification(response)
-                    }
-                }
+                onCopy: copyTurnContent
             )
             .frame(maxWidth: contentWidth)
 
-            // Scroll to bottom button
             ScrollToBottomButton(
                 isPinnedToBottom: isPinnedToBottom,
                 hasTurns: !blocks.isEmpty,
@@ -530,6 +550,15 @@ extension WorkView {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.horizontal, Self.contentHorizontalPadding)
         .padding(.top, 16)
+        .overlay {
+            if let request = session.pendingClarification {
+                ClarificationOverlay(request: request) { response in
+                    Task {
+                        await session.submitClarification(response)
+                    }
+                }
+            }
+        }
     }
 
     /// Copy a turn's content to the clipboard

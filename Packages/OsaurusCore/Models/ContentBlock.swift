@@ -31,7 +31,6 @@ enum ContentBlockKind: Equatable {
     case paragraph(index: Int, text: String, isStreaming: Bool, role: MessageRole)
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
-    case clarification(request: ClarificationRequest)
     case userMessage(text: String, attachments: [Attachment])
     case typingIndicator
     case groupSpacer
@@ -58,9 +57,6 @@ enum ContentBlockKind: Equatable {
             guard lIdx == rIdx && lStream == rStream else { return false }
             guard lText.count == rText.count else { return false }
             return lText == rText
-
-        case let (.clarification(lRequest), .clarification(rRequest)):
-            return lRequest == rRequest
 
         case let (.userMessage(lText, lAttach), .userMessage(rText, rAttach)):
             guard lText.count == rText.count else { return false }
@@ -92,7 +88,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .clarification, .typingIndicator, .groupSpacer:
+        case .toolCallGroup, .thinking, .typingIndicator, .groupSpacer:
             return .assistant
         case .userMessage: return .user
         }
@@ -162,17 +158,6 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             id: "think-\(turnId.uuidString)-\(index)",
             turnId: turnId,
             kind: .thinking(index: index, text: text, isStreaming: isStreaming),
-            position: position
-        )
-    }
-
-    static func clarification(turnId: UUID, request: ClarificationRequest, position: BlockPosition)
-        -> ContentBlock
-    {
-        ContentBlock(
-            id: "clarification-\(turnId.uuidString)",
-            turnId: turnId,
-            kind: .clarification(request: request),
             position: position
         )
     }
@@ -250,17 +235,6 @@ extension ContentBlock {
                         agentName: agentName,
                         isFirstInGroup: true,
                         position: .first
-                    )
-                )
-            }
-
-            // Add clarification block if pending (work mode)
-            if let clarification = turn.pendingClarification {
-                turnBlocks.append(
-                    .clarification(
-                        turnId: turn.id,
-                        request: clarification,
-                        position: .middle
                     )
                 )
             }

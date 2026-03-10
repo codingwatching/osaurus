@@ -900,6 +900,7 @@ public final class WorkSession: ObservableObject {
     /// Stops the current execution
     public func stopExecution() {
         clearQueuedMessage()
+        executionTask?.cancel()
         Task { [engine] in await engine.interrupt() }
     }
 

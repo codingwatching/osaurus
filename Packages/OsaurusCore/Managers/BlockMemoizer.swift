@@ -3,10 +3,12 @@
 //  osaurus
 //
 //  Memoizes content block generation with incremental updates during streaming.
-//  Supports three cache paths to minimize NSTableView re-layout:
-//    1. Fast path   – nothing changed, return cached blocks
-//    2. Incremental – only last turn's content changed (streaming)
-//    3. Append      – one or more turns added at the end
+//  Supports four cache paths to minimize NSTableView re-layout:
+//    1. Fast path       – nothing changed, return cached blocks
+//    2. Incremental     – only last turn's content changed (streaming)
+//    3. Append          – one or more turns added at the end
+//    4. Metadata change – version bumped but turns/content unchanged
+//                         (e.g. pendingClarification toggled)
 //  Falls back to full rebuild when none of the above apply.
 //
 
@@ -57,6 +59,14 @@ final class BlockMemoizer {
             && count > lastCount && !cached.isEmpty
             && lastCount >= 1 && turns[lastCount - 1].id == lastTurnId
 
+        // Metadata change: turn structure unchanged but version bumped
+        // (e.g. pendingClarification toggled). Regenerate only the last turn.
+        let canRegenerateLastTurn =
+            !canIncrement && !canAppend
+            && count == lastCount && lastId == lastTurnId
+            && count >= 1 && !cached.isEmpty
+            && version != lastVersion
+
         let blocks: [ContentBlock]
 
         if canIncrement {
@@ -72,6 +82,13 @@ final class BlockMemoizer {
             // modified (e.g. tool calls added) before the new turns were appended.
             blocks = regenerateFromTurn(
                 at: lastCount - 1,
+                in: turns,
+                streamingTurnId: streamingTurnId,
+                agentName: agentName
+            )
+        } else if canRegenerateLastTurn {
+            blocks = regenerateFromTurn(
+                at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
                 agentName: agentName
