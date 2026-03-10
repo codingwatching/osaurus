@@ -219,7 +219,9 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
         }
 
         let agentId = resolveAgentUUID(callingUser)
-        let value = ToolSecretsKeychain.getSecret(id: name, for: pluginName, agentId: agentId)
+        let value =
+            ToolSecretsKeychain.getSecret(id: name, for: pluginName, agentId: agentId)
+            ?? AgentSecretsKeychain.getSecret(id: name, agentId: agentId)
         if let value = value {
             return .ok("{\"value\":\(jsonEscape(value))}")
         }

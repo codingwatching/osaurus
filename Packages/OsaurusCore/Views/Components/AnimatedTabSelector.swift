@@ -152,6 +152,7 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
 enum SandboxTab: String, CaseIterable, AnimatedTabItem {
     case container = "Container"
     case plugins = "Plugins"
+    case secrets = "Secrets"
 
     var title: String { rawValue }
 }
