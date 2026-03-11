@@ -193,8 +193,9 @@ public actor WorkExecutionEngine {
         Your workspace is your home directory inside the sandbox. Files persist across messages.
         Use `/output` for files the user should see on the host.
 
-        Pre-installed: sh, curl, jq. Install more with `sandbox_install`, `sandbox_pip_install`, or `sandbox_npm_install`.
-        Internet access is available (curl, wget, git clone all work).
+        Pre-installed: bash, python3, pip, node, npm, git, curl, wget, jq, ripgrep (rg),
+        sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
+        The default shell is bash. Internet access is available.
 
         **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for
         multi-line scripts (python, bash, node). For single shell commands use
@@ -204,8 +205,7 @@ public actor WorkExecutionEngine {
         Runtime hints:
         - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
         - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
-        - Toolchains like Go, Node, or build tools can be installed with `sandbox_install`.
-        - Use `sandbox_whoami` to inspect the current environment and available runtimes.
+        - Additional toolchains like Go or Rust can be installed with `sandbox_install`.
         - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
 
         The sandbox is disposable — experiment freely.
@@ -224,8 +224,9 @@ public actor WorkExecutionEngine {
         Your workspace is your home directory inside the sandbox. Files persist across tasks.
         Use `/output` for files the user should see on the host.
 
-        Pre-installed: sh, curl, jq. Install more with `sandbox_install`, `sandbox_pip_install`, or `sandbox_npm_install`.
-        Internet access is available (curl, wget, git clone all work).
+        Pre-installed: bash, python3, pip, node, npm, git, curl, wget, jq, ripgrep (rg),
+        sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
+        The default shell is bash. Internet access is available.
 
         **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for
         multi-line scripts (python, bash, node). For single shell commands use
@@ -234,8 +235,8 @@ public actor WorkExecutionEngine {
 
         For build/test tasks, follow this pattern:
         1. Inspect the workspace and choose a stack.
-        2. Install missing runtimes or dependencies before running code.
-        3. Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files.
+        2. Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files.
+        3. Install project-specific dependencies with `sandbox_pip_install` or `sandbox_npm_install`.
         4. Run tests or verification commands with `sandbox_exec`.
         5. If verification fails, read the error carefully, fix the cause, and rerun.
         6. When everything passes, call `complete_task` with a concise summary.
@@ -243,8 +244,7 @@ public actor WorkExecutionEngine {
         Runtime hints:
         - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
         - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
-        - Toolchains like Go, Node, or build tools can be installed with `sandbox_install`.
-        - Use `sandbox_whoami` to inspect the current environment and available runtimes.
+        - Additional toolchains like Go or Rust can be installed with `sandbox_install`.
         - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
 
         The sandbox is disposable — experiment freely.

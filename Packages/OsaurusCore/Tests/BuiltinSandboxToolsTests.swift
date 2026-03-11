@@ -27,12 +27,7 @@ struct BuiltinSandboxToolsTests {
 
         let calls = await runner.calls
         #expect(calls.count == 2)
-        #expect(
-            calls[0]
-                == .root(
-                    "test -x /usr/bin/python3 && /usr/bin/python3 -m venv --help >/dev/null 2>&1 || apk add --no-cache python3 py3-pip"
-                )
-        )
+        #expect(calls[0] == .root("test -x /usr/bin/python3"))
         guard case .agent(_, let command) = calls[1] else {
             Issue.record("Expected agent install call")
             return
@@ -43,9 +38,9 @@ struct BuiltinSandboxToolsTests {
     }
 
     @Test @MainActor
-    func sandboxPipInstall_returnsRequestedWhenBootstrapFails() async throws {
+    func sandboxPipInstall_returnsErrorWhenPythonMissing() async throws {
         let runner = MockSandboxToolCommandRunner(
-            rootResults: [.init(stdout: "", stderr: "apk failed", exitCode: 1)],
+            rootResults: [.init(stdout: "", stderr: "", exitCode: 1)],
             agentResults: []
         )
 
@@ -57,14 +52,12 @@ struct BuiltinSandboxToolsTests {
         }
 
         let payload = try #require(try parseJSON(output))
-        let requested = try #require(payload["requested"] as? [String])
-        #expect(requested == ["flask", "pytest"])
+        #expect(payload["error"] as? String == "python3 is not installed in the sandbox image")
         #expect(payload["installed"] == nil)
-        #expect(payload["exit_code"] as? Int == 1)
-        #expect((payload["output"] as? String)?.contains("apk failed") == true)
 
         let calls = await runner.calls
         #expect(calls.count == 1)
+        #expect(calls[0] == .root("test -x /usr/bin/python3"))
     }
 
     @Test @MainActor
@@ -89,7 +82,7 @@ struct BuiltinSandboxToolsTests {
 
         let calls = await runner.calls
         #expect(calls.count == 2)
-        #expect(calls[0] == .root("test -x /usr/bin/node && test -x /usr/bin/npm || apk add --no-cache nodejs npm"))
+        #expect(calls[0] == .root("test -x /usr/bin/node && test -x /usr/bin/npm"))
     }
 
     @Test @MainActor

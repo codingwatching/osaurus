@@ -428,7 +428,7 @@ private struct SandboxListDirectoryTool: OsaurusTool, @unchecked Sendable {
 
         let cmd =
             recursive
-            ? "find '\(resolved)' -maxdepth 3 -printf '%T@ %y %s %p\\n' 2>/dev/null | sort -rn | head -200"
+            ? "tree -L 3 --dirsfirst '\(resolved)' 2>/dev/null | head -200"
             : "ls -la '\(resolved)' 2>/dev/null"
 
         let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
@@ -440,7 +440,7 @@ private struct SandboxListDirectoryTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_search_files"
-    let description = "Search file contents with grep in the sandbox environment."
+    let description = "Search file contents with ripgrep in the sandbox environment."
     let agentName: String
     let home: String
 
@@ -475,9 +475,9 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         guard let resolved = validatePath(path, home: home)
         else { return jsonResult(["error": "Invalid path"]) }
 
-        var cmd = "grep -rn"
+        var cmd = "rg -n --no-heading"
         if let include = args["include"] as? String {
-            cmd += " --include='\(include)'"
+            cmd += " --glob '\(include)'"
         }
         cmd += " '\(pattern)' '\(resolved)' 2>/dev/null | head -100"
 
@@ -831,15 +831,12 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
         else { return jsonResult(["error": "Packages array required"]) }
 
         let venvPath = agentVenvPath(home: home)
-        let bootstrapResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
-            command:
-                "test -x /usr/bin/python3 && /usr/bin/python3 -m venv --help >/dev/null 2>&1 || apk add --no-cache python3 py3-pip",
-            timeout: 120,
-            streamToLogs: true,
-            logSource: "pip-bootstrap"
+        let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+            command: "test -x /usr/bin/python3",
+            timeout: 10
         )
-        guard bootstrapResult.succeeded else {
-            return installResultJSON(packages: packages, result: bootstrapResult)
+        guard checkResult.succeeded else {
+            return jsonResult(["error": "python3 is not installed in the sandbox image"])
         }
 
         let pkgList = packages.joined(separator: " ")
@@ -882,14 +879,12 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
             let packages = args["packages"] as? [String], !packages.isEmpty
         else { return jsonResult(["error": "Packages array required"]) }
 
-        let bootstrapResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
-            command: "test -x /usr/bin/node && test -x /usr/bin/npm || apk add --no-cache nodejs npm",
-            timeout: 120,
-            streamToLogs: true,
-            logSource: "npm-bootstrap"
+        let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
+            command: "test -x /usr/bin/node && test -x /usr/bin/npm",
+            timeout: 10
         )
-        guard bootstrapResult.succeeded else {
-            return installResultJSON(packages: packages, result: bootstrapResult)
+        guard checkResult.succeeded else {
+            return jsonResult(["error": "node/npm is not installed in the sandbox image"])
         }
 
         let pkgList = packages.joined(separator: " ")
@@ -1033,8 +1028,21 @@ private struct SandboxWhoamiTool: OsaurusTool, @unchecked Sendable {
 
         if let toolsResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
-            command:
-                "for tool in python3 pip node npm go; do if command -v \"$tool\" >/dev/null 2>&1; then printf '%s=%s\\n' \"$tool\" \"$(command -v \"$tool\")\"; fi; done"
+            command: """
+                for pair in \
+                "bash:bash --version | head -1" \
+                "python3:python3 --version 2>&1" \
+                "node:node --version 2>&1" \
+                "npm:npm --version 2>&1" \
+                "git:git --version 2>&1" \
+                "gcc:gcc --version | head -1" \
+                "cmake:cmake --version | head -1" \
+                "sqlite3:sqlite3 --version 2>&1" \
+                "rg:rg --version | head -1"; \
+                do tool="${pair%%:*}"; cmd="${pair#*:}"; \
+                if command -v "$tool" >/dev/null 2>&1; then \
+                ver=$(eval "$cmd" 2>/dev/null); printf '%s=%s\\n' "$tool" "$ver"; fi; done
+                """
         ), toolsResult.succeeded {
             let toolMap = toolsResult.stdout
                 .split(separator: "\n")
@@ -1044,7 +1052,7 @@ private struct SandboxWhoamiTool: OsaurusTool, @unchecked Sendable {
                         partial[pieces[0]] = pieces[1]
                     }
                 }
-            info["available_commands"] = toolMap
+            info["tool_versions"] = toolMap
         }
 
         return jsonResult(info)
