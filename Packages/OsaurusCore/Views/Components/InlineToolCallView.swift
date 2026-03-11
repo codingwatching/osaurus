@@ -482,32 +482,104 @@ struct InlineToolCallView: View {
 
     private var expandedContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // Arguments - hide if empty or "{}"
             let currentArgs = formattedArgs ?? call.function.arguments
             let isArgsEmpty =
                 currentArgs.trimmingCharacters(in: .whitespacesAndNewlines) == "{}"
                 || currentArgs.isEmpty
 
             if !isArgsEmpty {
-                CollapsibleCodeSection(
-                    title: "Arguments",
-                    text: currentArgs,
-                    language: "json",
-                    previewText: PreviewGenerator.jsonPreview(call.function.arguments, maxLength: 80),
-                    sectionId: "\(call.id)-args"
-                )
+                ToolDetailSection(title: "Arguments", text: currentArgs)
             }
 
-            // Result (if complete)
             if let result {
-                CollapsibleCodeSection(
-                    title: "Result",
-                    text: result,
-                    language: nil,
-                    previewText: PreviewGenerator.resultPreview(result, maxLength: 80),
-                    sectionId: "\(call.id)-result"
-                )
+                ToolDetailSection(title: "Result", text: result)
             }
+        }
+    }
+}
+
+// MARK: - Tool Detail Section (Always Visible)
+
+/// Non-collapsible content block for expanded tool call details.
+/// Shows a minimal header label with copy button, then the full text content.
+private struct ToolDetailSection: View {
+    let title: String
+    let text: String
+
+    private static let maxContentHeight: CGFloat = 300
+
+    @State private var isCopied = false
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header: label + copy
+            HStack(spacing: 6) {
+                Text(title.uppercased())
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                    .foregroundColor(theme.tertiaryText)
+                    .tracking(0.8)
+
+                Spacer()
+
+                Button(action: copyToClipboard) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .medium))
+                            .contentTransition(.symbolEffect(.replace))
+                        if isCopied {
+                            Text("Copied!")
+                                .font(.system(size: 9, weight: .medium))
+                                .transition(.opacity.combined(with: .move(edge: .leading)))
+                        }
+                    }
+                    .foregroundColor(isCopied ? theme.successColor : theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule().fill(isCopied ? theme.successColor.opacity(0.12) : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovered || isCopied ? 1 : 0.6)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+
+            // Content
+            ScrollView(.vertical, showsIndicators: true) {
+                Text(text)
+                    .font(theme.monoFont(size: CGFloat(theme.codeSize) - 2, weight: .regular))
+                    .foregroundColor(theme.primaryText.opacity(0.9))
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: Self.maxContentHeight)
+            .background(theme.codeBlockBackground)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.codeBlockBackground.opacity(0.6))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(isHovered ? 0.25 : 0.15), lineWidth: 0.5)
+        )
+        .onHover { isHovered = $0 }
+    }
+
+    private func copyToClipboard() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isCopied = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            withAnimation(.easeOut(duration: 0.2)) { isCopied = false }
         }
     }
 }

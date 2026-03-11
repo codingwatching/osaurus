@@ -281,9 +281,11 @@ extension MessageTableRepresentable {
             expandedStoreSubscription?.cancel()
             expandedStoreSubscription = store.objectWillChange
                 .sink { [weak self] _ in
-                    // `objectWillChange` fires *before* the mutation, so defer
-                    // to the next run-loop tick to let the hosting view relayout.
                     DispatchQueue.main.async { [weak self] in
+                        self?.noteVisibleRowHeightsChanged()
+                    }
+                    // Re-measure after SwiftUI spring animation settles
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                         self?.noteVisibleRowHeightsChanged()
                     }
                 }
@@ -294,7 +296,13 @@ extension MessageTableRepresentable {
             guard let tableView else { return }
             let visible = tableView.rows(in: tableView.visibleRect)
             guard visible.length > 0 else { return }
-            noteRowHeightsChanged(IndexSet(integersIn: visible.location ..< visible.location + visible.length))
+            let rows = IndexSet(integersIn: visible.location ..< visible.location + visible.length)
+            for row in rows {
+                if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) {
+                    cell.layoutSubtreeIfNeeded()
+                }
+            }
+            noteRowHeightsChanged(rows)
         }
 
         /// Re-measure specific rows without animation.

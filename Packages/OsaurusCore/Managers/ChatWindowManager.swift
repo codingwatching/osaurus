@@ -753,14 +753,15 @@ private struct ChatToolbarTitleView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if isWorkMode, let workSession = windowState.workSession {
-                WorkTaskTitleView(session: workSession)
-                    .frame(maxWidth: 360, alignment: .leading)
-            }
-
             if isSandboxActive {
                 SandboxStatusIndicator()
                     .transition(.opacity)
+            }
+
+            if isWorkMode, let workSession = windowState.workSession {
+                WorkTaskTitleView(session: workSession)
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .lineLimit(1)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isSandboxActive)
