@@ -40,6 +40,7 @@
         private var _availability: SandboxAvailability?
         private var containerManager: ContainerManager?
         private var linuxContainer: LinuxContainer?
+        private var _removedByUser = false
 
         // MARK: - Observable State (MainActor bridge)
 
@@ -49,6 +50,7 @@
             @Published public var availability: SandboxAvailability = .unavailable(reason: "Not checked yet")
             @Published public var status: ContainerStatus = .notProvisioned
             @Published public var provisioningPhase: String?
+            @Published public var provisioningProgress: Double?
             @Published public var isProvisioning: Bool = false
         }
 
@@ -115,6 +117,7 @@
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
             }
+            _removedByUser = false
 
             do {
                 let config = SandboxConfigurationStore.load()
@@ -210,6 +213,7 @@
             guard _availability?.isAvailable == true else {
                 throw SandboxError.unavailable
             }
+            guard !_removedByUser else { return }
 
             let current = refreshStatus()
             switch current {
@@ -220,7 +224,6 @@
             case .starting:
                 return
             case .error:
-                // Clean up stale state before re-provisioning
                 try? FileManager.default.removeItem(at: staleContainerDir)
                 linuxContainer = nil
                 containerManager = nil
@@ -249,7 +252,9 @@
             try? FileManager.default.removeItem(at: OsaurusPaths.containerKernelFile())
             try? FileManager.default.removeItem(at: OsaurusPaths.containerInitFSFile())
             _status = .notProvisioned
+            _removedByUser = true
             syncStatus()
+            await setProvisioningPhase(nil)
         }
 
         public func resetContainer() async throws {
@@ -272,19 +277,12 @@
                 throw SandboxError.containerNotRunning
             }
 
-            var args: [String]
-            if let user = user {
-                var shellCommand = command
-                if let cwd = cwd {
-                    shellCommand = "cd \(cwd) && \(command)"
-                }
+            let shellCommand = cwd.map { "cd \($0) && \(command)" } ?? command
+            let args: [String]
+            if let user {
                 args = ["su", "-s", "/bin/bash", user, "-c", shellCommand]
             } else {
-                if let cwd = cwd {
-                    args = ["sh", "-c", "cd \(cwd) && \(command)"]
-                } else {
-                    args = ["sh", "-c", command]
-                }
+                args = ["sh", "-c", shellCommand]
             }
 
             return try await execViaAgent(
@@ -624,14 +622,23 @@
 
         // MARK: - Private: Asset Download
 
-        /// Downloads a file from the first successful URL in the list to the given destination.
+        /// Downloads a file from the first successful URL in the list to the given destination,
+        /// reporting byte-level download progress to the UI.
         private func downloadFile(from urls: [String], to destination: URL) async throws {
+            let delegate = DownloadProgressDelegate { progress in
+                Task { @MainActor in
+                    State.shared.provisioningProgress = progress
+                }
+            }
+            let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+            defer { session.finishTasksAndInvalidate() }
+
             var lastError: Error?
             for urlString in urls {
                 guard let url = URL(string: urlString) else { continue }
                 do {
                     NSLog("[SandboxManager] Downloading from \(urlString)...")
-                    let (tempURL, response) = try await URLSession.shared.download(from: url)
+                    let (tempURL, response) = try await session.download(from: url)
                     guard let httpResponse = response as? HTTPURLResponse,
                         (200 ... 299).contains(httpResponse.statusCode)
                     else {
@@ -798,6 +805,7 @@
         private func setProvisioningPhase(_ phase: String?) async {
             await MainActor.run {
                 State.shared.provisioningPhase = phase
+                State.shared.provisioningProgress = nil
                 State.shared.isProvisioning = phase != nil
                 if let phase = phase {
                     SandboxLogBuffer.shared.append(
@@ -808,6 +816,7 @@
                 }
             }
         }
+
     }
 
     // MARK: - Errors
@@ -964,6 +973,29 @@
                 SandboxLogBuffer.shared.appendBatch(lines.map { (lvl, $0, src) })
             }
         }
+    }
+
+    // MARK: - Download Progress Delegate
+
+    private final class DownloadProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        private let onProgress: @Sendable (Double) -> Void
+
+        init(onProgress: @escaping @Sendable (Double) -> Void) {
+            self.onProgress = onProgress
+        }
+
+        func urlSession(
+            _: URLSession,
+            downloadTask _: URLSessionDownloadTask,
+            didWriteData _: Int64,
+            totalBytesWritten: Int64,
+            totalBytesExpectedToWrite: Int64
+        ) {
+            guard totalBytesExpectedToWrite > 0 else { return }
+            onProgress(min(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite), 1.0))
+        }
+
+        func urlSession(_: URLSession, downloadTask _: URLSessionDownloadTask, didFinishDownloadingTo _: URL) {}
     }
 
 #endif

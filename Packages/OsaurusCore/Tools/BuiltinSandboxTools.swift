@@ -1026,23 +1026,27 @@ private struct SandboxWhoamiTool: OsaurusTool, @unchecked Sendable {
             info["venv_exists"] = venvResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
         }
 
+        let versionScript = [
+            "bash:bash --version | head -1",
+            "python3:python3 --version 2>&1",
+            "node:node --version 2>&1",
+            "npm:npm --version 2>&1",
+            "git:git --version 2>&1",
+            "gcc:gcc --version | head -1",
+            "cmake:cmake --version | head -1",
+            "sqlite3:sqlite3 --version 2>&1",
+            "rg:rg --version | head -1",
+        ].map { "\"\($0)\"" }.joined(separator: " ")
+
+        let versionCmd =
+            "for pair in \(versionScript); do "
+            + "tool=\"${pair%%:*}\"; cmd=\"${pair#*:}\"; "
+            + "if command -v \"$tool\" >/dev/null 2>&1; then "
+            + "ver=$(eval \"$cmd\" 2>/dev/null); printf '%s=%s\\n' \"$tool\" \"$ver\"; fi; done"
+
         if let toolsResult = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
-            command: """
-                for pair in \
-                "bash:bash --version | head -1" \
-                "python3:python3 --version 2>&1" \
-                "node:node --version 2>&1" \
-                "npm:npm --version 2>&1" \
-                "git:git --version 2>&1" \
-                "gcc:gcc --version | head -1" \
-                "cmake:cmake --version | head -1" \
-                "sqlite3:sqlite3 --version 2>&1" \
-                "rg:rg --version | head -1"; \
-                do tool="${pair%%:*}"; cmd="${pair#*:}"; \
-                if command -v "$tool" >/dev/null 2>&1; then \
-                ver=$(eval "$cmd" 2>/dev/null); printf '%s=%s\\n' "$tool" "$ver"; fi; done
-                """
+            command: versionCmd
         ), toolsResult.succeeded {
             let toolMap = toolsResult.stdout
                 .split(separator: "\n")
