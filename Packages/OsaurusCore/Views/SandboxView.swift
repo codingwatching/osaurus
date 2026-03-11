@@ -219,9 +219,17 @@ private extension SandboxView {
         VStack(spacing: 24) {
             Spacer()
 
-            ProgressView()
-                .controlSize(.large)
-                .tint(theme.accentColor)
+            if let progress = sandboxState.provisioningProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .frame(width: 220)
+                    .tint(theme.accentColor)
+                    .animation(.easeOut(duration: 0.3), value: progress)
+            } else {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(theme.accentColor)
+            }
 
             VStack(spacing: 8) {
                 Text("Setting Up Sandbox")
@@ -229,11 +237,18 @@ private extension SandboxView {
                     .foregroundColor(theme.primaryText)
 
                 if let phase = sandboxState.provisioningPhase {
-                    Text(phase)
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.secondaryText)
-                        .multilineTextAlignment(.center)
-                        .animation(.easeInOut(duration: 0.2), value: phase)
+                    HStack(spacing: 6) {
+                        Text(phase)
+                        if let progress = sandboxState.provisioningProgress {
+                            Text("\(Int(progress * 100))%")
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                        }
+                    }
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .animation(.easeInOut(duration: 0.2), value: phase)
                 }
             }
 
