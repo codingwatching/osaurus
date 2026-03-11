@@ -20,7 +20,7 @@
         public static let shared = SandboxManager()
 
         private static let containerID = "osaurus-sandbox"
-        private static let containerImage = "docker.io/library/alpine:latest"
+        private static let containerImage = "ghcr.io/osaurus-ai/sandbox:latest"
         private static let kernelDownloadURLs = [
             "https://github.com/kata-containers/kata-containers/releases/download/3.17.0/kata-static-3.17.0-arm64.tar.xz"
         ]
@@ -278,7 +278,7 @@
                 if let cwd = cwd {
                     shellCommand = "cd \(cwd) && \(command)"
                 }
-                args = ["su", "-s", "/bin/sh", user, "-c", shellCommand]
+                args = ["su", "-s", "/bin/bash", user, "-c", shellCommand]
             } else {
                 if let cwd = cwd {
                     args = ["sh", "-c", "cd \(cwd) && \(command)"]
@@ -716,11 +716,6 @@
         private func configureSandbox() async throws {
             _ = try? await exec(command: "mount -o remount,hidepid=2 /proc 2>/dev/null || true")
             _ = try? await execAsRoot(command: "udhcpc -i eth0 -f -q -n 2>/dev/null || true")
-            _ = try? await execAsRoot(
-                command: "apk add --no-cache curl jq",
-                streamToLogs: true,
-                logSource: "setup"
-            )
 
             // Install osaurus-host shell shim via host mount
             let shimScript = Self.osaurusHostShimScript
