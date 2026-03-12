@@ -1045,6 +1045,11 @@ final class ChatSession: ObservableObject {
                                 processor.finalize()
                                 break outer
                             }
+                            if let toolName = StreamingToolHint.decode(delta) {
+                                assistantTurn.pendingToolName = toolName
+                                self.objectWillChange.send()
+                                continue
+                            }
                             if !delta.isEmpty {
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
@@ -1076,6 +1081,7 @@ final class ChatSession: ObservableObject {
                             function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments),
                             geminiThoughtSignature: inv.geminiThoughtSignature
                         )
+                        assistantTurn.pendingToolName = nil
                         if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
                         assistantTurn.toolCalls!.append(call)
 

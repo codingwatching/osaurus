@@ -44,7 +44,7 @@ private enum JSONFormatter {
 // MARK: - Tool Category
 
 /// Tool categories for icon selection
-private enum ToolCategory {
+enum ToolCategory {
     case file
     case search
     case terminal
@@ -283,7 +283,7 @@ private enum PreviewGenerator {
 // MARK: - Pulsing Dot Animation
 
 /// Animated pulsing dot for in-progress state
-private struct PulsingDot: View {
+struct PulsingDot: View {
     let color: Color
     @State private var isPulsing = false
 

@@ -186,6 +186,11 @@ struct ContentBlockView: View, Equatable {
                 .padding(.top, 6)
                 .padding(.bottom, isLastInTurn ? 16 : 6)
 
+        case let .pendingToolCall(toolName):
+            PendingToolCallView(toolName: toolName)
+                .padding(.top, 8)
+                .padding(.bottom, isLastInTurn ? 16 : 8)
+
         case .typingIndicator:
             TypingIndicator()
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -489,5 +494,31 @@ private struct ActionButton: View {
         }
         .buttonStyle(.plain)
         .help(help)
+    }
+}
+
+// MARK: - Pending Tool Call View
+
+private struct PendingToolCallView: View {
+    let toolName: String
+
+    @Environment(\.theme) private var theme
+
+    private var category: ToolCategory { ToolCategory.from(toolName: toolName) }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            PulsingDot(color: theme.accentColor)
+
+            Image(systemName: category.icon)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(theme.secondaryText)
+
+            Text(toolName)
+                .font(theme.monoFont(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

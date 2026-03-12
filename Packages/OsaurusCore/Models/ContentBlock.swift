@@ -33,6 +33,7 @@ enum ContentBlockKind: Equatable {
     case thinking(index: Int, text: String, isStreaming: Bool)
     case userMessage(text: String, attachments: [Attachment])
     case sharedArtifact(artifact: SharedArtifact)
+    case pendingToolCall(toolName: String)
     case typingIndicator
     case groupSpacer
 
@@ -67,6 +68,9 @@ enum ContentBlockKind: Equatable {
         case let (.sharedArtifact(lArt), .sharedArtifact(rArt)):
             return lArt == rArt
 
+        case let (.pendingToolCall(lName), .pendingToolCall(rName)):
+            return lName == rName
+
         case (.typingIndicator, .typingIndicator):
             return true
 
@@ -92,7 +96,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .sharedArtifact, .typingIndicator, .groupSpacer:
+        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .typingIndicator, .groupSpacer:
             return .assistant
         case .userMessage: return .user
         }
@@ -173,6 +177,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
             id: "usermsg-\(turnId.uuidString)",
             turnId: turnId,
             kind: .userMessage(text: text, attachments: attachments),
+            position: position
+        )
+    }
+
+    static func pendingToolCall(turnId: UUID, toolName: String, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "pending-tool-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .pendingToolCall(toolName: toolName),
             position: position
         )
     }
@@ -270,12 +283,16 @@ extension ContentBlock {
                         turnId: turn.id,
                         index: 0,
                         text: turn.visibleContent,
-                        isStreaming: isStreaming,
+                        isStreaming: isStreaming && turn.pendingToolName == nil,
                         role: turn.role,
                         position: .middle
                     )
                 )
-            } else if isStreaming && !turn.hasThinking && (turn.toolCalls ?? []).isEmpty {
+            }
+
+            if isStreaming && turn.contentIsEmpty && !turn.hasThinking
+                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+            {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
@@ -299,6 +316,10 @@ extension ContentBlock {
                 if !regularItems.isEmpty {
                     turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
                 }
+            }
+
+            if isStreaming, let pendingName = turn.pendingToolName {
+                turnBlocks.append(.pendingToolCall(turnId: turn.id, toolName: pendingName, position: .middle))
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))

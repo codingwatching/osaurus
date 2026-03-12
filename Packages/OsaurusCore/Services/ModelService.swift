@@ -49,6 +49,26 @@ struct ServiceToolInvocation: Error, Sendable {
     }
 }
 
+/// In-band signaling for tool name detection during streaming.
+/// The stream type is `AsyncThrowingStream<String, Error>`, so we encode the
+/// detected tool name as a sentinel string using a Unicode non-character prefix
+/// that can never appear in normal LLM output.
+enum StreamingToolHint: Sendable {
+    private static let sentinel: Character = "\u{FFFE}"
+    private static let prefix = "\u{FFFE}tool:"
+
+    static func encode(_ toolName: String) -> String { prefix + toolName }
+
+    /// O(1) check — only inspects the first character.
+    static func isSentinel(_ delta: String) -> Bool { delta.first == sentinel }
+
+    /// Extracts the tool name from a sentinel delta, or nil if not a sentinel.
+    static func decode(_ delta: String) -> String? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        return String(delta.dropFirst(prefix.count))
+    }
+}
+
 protocol ModelService: Sendable {
     /// Stable identifier for the service (e.g., "foundation").
     var id: String { get }

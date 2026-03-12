@@ -411,6 +411,7 @@ public actor WorkExecutionEngine {
             do {
                 let stream = try await chatEngine.streamChat(request: request)
                 for try await delta in stream {
+                    if StreamingToolHint.isSentinel(delta) { continue }
                     responseContent += delta
                     await onDelta(delta, iteration)
                 }
