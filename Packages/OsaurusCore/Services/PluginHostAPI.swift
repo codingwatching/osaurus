@@ -639,6 +639,7 @@ final class PluginHostContext: @unchecked Sendable {
                     var iterContent = ""
 
                     for try await delta in stream {
+                        if StreamingToolHint.isSentinel(delta) { continue }
                         iterContent += delta
                         lastContent += delta
                         emit(Self.chunkPayload(id: cid, delta: ["content": delta]))

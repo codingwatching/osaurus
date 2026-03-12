@@ -165,6 +165,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         continuation.finish()
                         return
                     }
+
+                    // Pass through tool-hint sentinels without counting as tokens
+                    if StreamingToolHint.isSentinel(delta) {
+                        continuation.yield(delta)
+                        continue
+                    }
+
                     deltaCount += 1
                     let now = Date()
                     let timeSinceStart = now.timeIntervalSince(startTime)

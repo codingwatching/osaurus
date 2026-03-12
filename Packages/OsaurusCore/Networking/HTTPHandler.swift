@@ -2115,6 +2115,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     let enrichedReq = await Self.enrichWithMemoryContext(req, agentId: memoryAgentId)
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     for try await delta in stream {
+                        if StreamingToolHint.isSentinel(delta) { continue }
                         hop {
                             writerBound.value.writeContent(
                                 delta,
@@ -2400,6 +2401,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let stream = try await chatEngine.streamChat(request: req)
                 for try await delta in stream {
+                    if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
                         writerBound.value.writeContent(
                             delta,
@@ -3210,6 +3212,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
+                    if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
                         writerBound.value.writeTextDelta(delta, context: ctx.value)
                     }
@@ -3843,6 +3846,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
+                    if StreamingToolHint.isSentinel(delta) { continue }
                     hop {
                         writerBound.value.writeTextDelta(delta, context: ctx.value)
                     }

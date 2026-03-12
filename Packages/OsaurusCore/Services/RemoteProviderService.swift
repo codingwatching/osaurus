@@ -465,6 +465,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                             id: funcCall.call_id, name: funcCall.name, args: "",
                                                             thoughtSignature: nil
                                                         )
+                                                        continuation.yield(StreamingToolHint.encode(funcCall.name))
                                                     }
                                                 }
                                             case "response.function_call_arguments.delta":
@@ -510,8 +511,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                 if let id = toolCall.id {
                                                     current.id = id
                                                 }
-                                                if let name = toolCall.function?.name {
+                                                if let name = toolCall.function?.name, current.name == nil {
                                                     current.name = name
+                                                    continuation.yield(StreamingToolHint.encode(name))
                                                 }
                                                 if let args = toolCall.function?.arguments {
                                                     current.args += args
@@ -901,6 +903,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                     print(
                                                         "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
                                                     )
+                                                    continuation.yield(StreamingToolHint.encode(funcCall.name))
                                                 case .inlineData(let imageData):
                                                     if accumulatedToolCalls.isEmpty {
                                                         continuation.yield(
@@ -990,6 +993,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                         print(
                                                             "[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)"
                                                         )
+                                                        continuation.yield(StreamingToolHint.encode(toolBlock.name))
                                                     }
                                                 }
                                             case "message_delta":
@@ -1053,6 +1057,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                         print(
                                                             "[Osaurus] Open Responses tool call detected: index=\(idx), name=\(funcCall.name)"
                                                         )
+                                                        continuation.yield(StreamingToolHint.encode(funcCall.name))
                                                     }
                                                 }
                                             case "response.function_call_arguments.delta":
@@ -1103,9 +1108,10 @@ public actor RemoteProviderService: ToolCapableService {
                                                 if let id = toolCall.id {
                                                     current.id = id
                                                 }
-                                                if let name = toolCall.function?.name {
+                                                if let name = toolCall.function?.name, current.name == nil {
                                                     current.name = name
                                                     print("[Osaurus] Tool call detected: index=\(idx), name=\(name)")
+                                                    continuation.yield(StreamingToolHint.encode(name))
                                                 }
                                                 if let args = toolCall.function?.arguments {
                                                     current.args += args
