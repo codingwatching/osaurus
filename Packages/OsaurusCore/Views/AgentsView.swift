@@ -1,23 +1,14 @@
-//
-//  AgentsView.swift
-//  osaurus
-//
-//  Management view for creating, editing, and deleting Agents
-//
-
 import SwiftUI
 import UniformTypeIdentifiers
 
 // MARK: - Shared Helpers
 
-/// Generate a consistent color based on an agent name
 func agentColorFor(_ name: String) -> Color {
     let hash = abs(name.hashValue)
     let hue = Double(hash % 360) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
 }
 
-/// Format a model identifier to show only the last path component
 private func formatModelName(_ model: String) -> String {
     if let last = model.split(separator: "/").last {
         return String(last)
@@ -39,25 +30,21 @@ struct AgentsView: View {
     @State private var successMessage: String?
     @State private var sandboxCleanupNotice: SandboxCleanupNotice?
 
-    // Import/Export
     @State private var showImportPicker = false
     @State private var importError: String?
     @State private var showExportSuccess = false
 
-    /// Custom agents only (excluding built-in)
     private var customAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
     }
 
     var body: some View {
         ZStack {
-            // Grid view
             if selectedAgent == nil {
                 gridContent
                     .transition(.opacity.combined(with: .move(edge: .leading)))
             }
 
-            // Detail view
             if let agent = selectedAgent {
                 AgentDetailView(
                     agent: agent,
@@ -84,7 +71,6 @@ struct AgentsView: View {
                 .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
 
-            // Success toast
             if let message = successMessage {
                 VStack {
                     Spacer()
@@ -151,13 +137,11 @@ struct AgentsView: View {
 
     private var gridContent: some View {
         VStack(spacing: 0) {
-            // Header
             headerView
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : -10)
                 .animation(.spring(response: 0.4, dampingFraction: 0.8), value: hasAppeared)
 
-            // Content
             if customAgents.isEmpty {
                 SettingsEmptyState(
                     icon: "theatermasks.fill",
@@ -263,7 +247,6 @@ struct AgentsView: View {
     }
 
     private func duplicateAgent(_ agent: Agent) {
-        // Generate unique copy name
         let baseName = "\(agent.name) Copy"
         let existingNames = Set(customAgents.map { $0.name })
         var newName = baseName
@@ -295,7 +278,6 @@ struct AgentsView: View {
         agentManager.refresh()
         showSuccess("Duplicated as \"\(newName)\"")
 
-        // Open detail for the duplicated agent
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                 selectedAgent = duplicated
@@ -309,8 +291,6 @@ struct AgentsView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-
-            // Start accessing security-scoped resource
             guard url.startAccessingSecurityScopedResource() else {
                 importError = "Unable to access the selected file"
                 return
@@ -371,19 +351,16 @@ private struct AgentCard: View {
 
     private var agentColor: Color { agentColorFor(agent.name) }
 
-    /// Resolved enabled tool count
     private var enabledToolCount: Int {
         let overrides = agentManager.effectiveToolOverrides(for: agent.id)
         let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
         return tools.filter { $0.enabled }.count
     }
 
-    /// Total tool count
     private var totalToolCount: Int {
         ToolRegistry.shared.listTools().count
     }
 
-    /// Resolved enabled skill count
     private var enabledSkillCount: Int {
         let skills = SkillManager.shared.skills
         return skills.filter { skill in
@@ -396,12 +373,10 @@ private struct AgentCard: View {
         }.count
     }
 
-    /// Total skill count
     private var totalSkillCount: Int {
         SkillManager.shared.skills.count
     }
 
-    /// Schedule count for this agent
     private var scheduleCount: Int {
         scheduleManager.schedules.filter { $0.agentId == agent.id }.count
     }
@@ -409,9 +384,7 @@ private struct AgentCard: View {
     var body: some View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: 12) {
-                // Header row
                 HStack(alignment: .center, spacing: 12) {
-                    // Avatar with colored ring
                     ZStack {
                         Circle()
                             .fill(
@@ -461,7 +434,6 @@ private struct AgentCard: View {
 
                     Spacer(minLength: 8)
 
-                    // Context menu button
                     Menu {
                         Button(action: onSelect) {
                             Label("Open", systemImage: "arrow.right.circle")
@@ -493,7 +465,6 @@ private struct AgentCard: View {
                     .frame(width: 24)
                 }
 
-                // System prompt excerpt
                 if !agent.systemPrompt.isEmpty {
                     Text(agent.systemPrompt)
                         .font(.system(size: 12))
@@ -503,7 +474,6 @@ private struct AgentCard: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                // Compact stat row
                 compactStats
             }
             .frame(maxHeight: .infinity, alignment: .top)
@@ -614,6 +584,46 @@ private struct AgentCard: View {
     }
 }
 
+// MARK: - Detail Tab
+
+private enum DetailTab: String, CaseIterable {
+    case configure
+    case abilities
+    case sandbox
+    case automation
+    case memory
+
+    var label: String {
+        switch self {
+        case .configure: return "Configure"
+        case .abilities: return "Tools"
+        case .sandbox: return "Sandbox"
+        case .automation: return "Automation"
+        case .memory: return "Memory"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .configure: return "gear"
+        case .abilities: return "wrench.and.screwdriver"
+        case .sandbox: return "shippingbox"
+        case .automation: return "clock.badge.checkmark"
+        case .memory: return "brain.head.profile"
+        }
+    }
+
+    var helperText: String {
+        switch self {
+        case .configure: return "Set up instructions, model settings, shortcuts, and appearance."
+        case .abilities: return "Choose which tools and skills this agent can use."
+        case .sandbox: return "Configure sandbox execution and relay tunnel access."
+        case .automation: return "Set up schedules and file watchers for autonomous behavior."
+        case .memory: return "View conversation history, working memory, and summaries."
+        }
+    }
+}
+
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
@@ -645,65 +655,51 @@ struct AgentDetailView: View {
 
     // MARK: - UI State
 
+    @State private var selectedTab: DetailTab = .configure
     @State private var hasAppeared = false
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
     @State private var showRelayConfirmation = false
     @State private var copiedRelayURL = false
-
-    // Model picker
     @State private var modelOptions: [ModelOption] = []
     @State private var showModelPicker = false
     @State private var selectedModel: String?
-
-    // Schedule & Watcher creation
     @State private var showCreateSchedule = false
     @State private var showCreateWatcher = false
-
-    // Memory
     @State private var memoryEntries: [MemoryEntry] = []
     @State private var conversationSummaries: [ConversationSummary] = []
     @State private var showAllSummaries = false
-
-    // Guard to prevent save on initial load
     @State private var isInitialLoadComplete = false
 
-    /// Current agent (refreshed from manager)
     private var currentAgent: Agent {
         agentManager.agent(for: agent.id) ?? agent
     }
 
-    /// Schedules linked to this agent
     private var linkedSchedules: [Schedule] {
         scheduleManager.schedules.filter { $0.agentId == agent.id }
     }
 
-    /// Watchers linked to this agent
     private var linkedWatchers: [Watcher] {
         watcherManager.watchers.filter { $0.agentId == agent.id }
     }
 
-    /// Chat sessions for this agent
     private var chatSessions: [ChatSessionData] {
         ChatSessionsManager.shared.sessions(for: agent.id)
     }
 
-    /// Tasks for this agent
     private var workTasks: [WorkTask] {
         (try? IssueStore.listTasks(agentId: agent.id)) ?? []
     }
 
     private var agentColor: Color { agentColorFor(name) }
 
-    /// Resolved enabled tool count using AgentManager's effective overrides
     private var resolvedEnabledToolCount: Int {
         let overrides = agentManager.effectiveToolOverrides(for: agent.id)
         let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
         return tools.filter { $0.enabled }.count
     }
 
-    /// Resolved enabled skill count using AgentManager's effective overrides
     private var resolvedEnabledSkillCount: Int {
         let skills = SkillManager.shared.skills
         return skills.filter { skill in
@@ -718,32 +714,39 @@ struct AgentDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Top bar
             detailHeaderBar
 
-            // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Hero header
-                    heroHeader
-                        .padding(.bottom, 8)
+            VStack(alignment: .leading, spacing: 0) {
+                heroHeader
+                    .padding(.horizontal, 24)
+                    .padding(.top, 20)
+                    .padding(.bottom, 12)
 
-                    // Sections (all always expanded, ordered by importance)
-                    identitySection
-                    systemPromptSection
-                    generationSection
-                    capabilitiesSection
-                    sandboxSection
-                    relaySection
-                    quickActionsSection
-                    themeSection
-                    schedulesSection
-                    watchersSection
-                    historySection
-                    workingMemorySection
-                    conversationSummariesSection
+                tabBar
+                    .padding(.horizontal, 20)
+
+                Divider()
+                    .foregroundColor(theme.primaryBorder)
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        switch selectedTab {
+                        case .configure:
+                            configureTabContent
+                        case .abilities:
+                            abilitiesTabContent
+                        case .sandbox:
+                            sandboxTabContent
+                        case .automation:
+                            automationTabContent
+                        case .memory:
+                            memoryTabContent
+                        }
+                    }
+                    .padding(24)
+                    .id(selectedTab)
                 }
-                .padding(24)
+                .animation(nil, value: selectedTab)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -754,7 +757,6 @@ struct AgentDetailView: View {
             loadAgentData()
             loadMemoryData()
             selectedModel = currentAgent.defaultModel
-            // Defer the flag so initial .onChange triggers are ignored
             DispatchQueue.main.async {
                 isInitialLoadComplete = true
             }
@@ -913,110 +915,150 @@ struct AgentDetailView: View {
             .frame(width: 72, height: 72)
             .animation(.spring(response: 0.3), value: name)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(name.isEmpty ? "Untitled Agent" : name)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-
-                if !description.isEmpty {
-                    Text(description)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                }
-
-                HStack(spacing: 12) {
-                    let toolCount = resolvedEnabledToolCount
-                    let totalTools = ToolRegistry.shared.listTools().count
-                    statBadge(icon: "wrench.and.screwdriver", text: "\(toolCount)/\(totalTools) tools", color: .orange)
-
-                    let skillCount = resolvedEnabledSkillCount
-                    let totalSkills = SkillManager.shared.skills.count
-                    statBadge(icon: "sparkles", text: "\(skillCount)/\(totalSkills) skills", color: .cyan)
-
-                    if !linkedSchedules.isEmpty {
-                        statBadge(
-                            icon: "clock",
-                            text: "\(linkedSchedules.count) schedule\(linkedSchedules.count == 1 ? "" : "s")",
-                            color: .green
-                        )
-                    }
-                    if !linkedWatchers.isEmpty {
-                        statBadge(
-                            icon: "eye",
-                            text: "\(linkedWatchers.count) watcher\(linkedWatchers.count == 1 ? "" : "s")",
-                            color: .purple
-                        )
-                    }
-                    statBadge(
-                        icon: "calendar",
-                        text: "Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))",
-                        color: theme.tertiaryText
-                    )
-                }
-                .padding(.top, 2)
-            }
-
-            Spacer()
-        }
-    }
-
-    private func statBadge(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .medium))
-                .foregroundColor(color)
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-        }
-    }
-
-    // MARK: - Identity Section
-
-    private var identitySection: some View {
-        AgentDetailSection(title: "Identity", icon: "person.circle.fill") {
-            VStack(spacing: 16) {
-                HStack(spacing: 16) {
-                    ZStack {
-                        Circle()
-                            .fill(
-                                LinearGradient(
-                                    colors: [agentColor.opacity(0.2), agentColor.opacity(0.05)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                )
-                            )
-                        Circle()
-                            .strokeBorder(agentColor.opacity(0.5), lineWidth: 2)
-                        Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                            .font(.system(size: 20, weight: .bold, design: .rounded))
-                            .foregroundColor(agentColor)
-                    }
-                    .frame(width: 52, height: 52)
-                    .animation(.spring(response: 0.3), value: name)
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        StyledTextField(
-                            placeholder: "e.g., Code Assistant",
-                            text: $name,
-                            icon: "textformat"
-                        )
-                    }
-                }
+            VStack(alignment: .leading, spacing: 8) {
+                StyledTextField(
+                    placeholder: "e.g., Code Assistant",
+                    text: $name,
+                    icon: "textformat"
+                )
 
                 StyledTextField(
                     placeholder: "Brief description (optional)",
                     text: $description,
                     icon: "text.alignleft"
                 )
+
+                HStack(spacing: 8) {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                    Text("Created \(agent.createdAt.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
-            .onChange(of: name) { debouncedSave() }
-            .onChange(of: description) { debouncedSave() }
+
+            Spacer()
+        }
+        .onChange(of: name) { debouncedSave() }
+        .onChange(of: description) { debouncedSave() }
+    }
+
+    // MARK: - Tab Bar
+
+    private func tabBadgeCount(for tab: DetailTab) -> Int? {
+        switch tab {
+        case .configure: return nil
+        case .abilities:
+            let count = resolvedEnabledToolCount + resolvedEnabledSkillCount
+            return count > 0 ? count : nil
+        case .sandbox: return nil
+        case .automation:
+            let count = linkedSchedules.count + linkedWatchers.count
+            return count > 0 ? count : nil
+        case .memory:
+            let count = chatSessions.count + workTasks.count
+            return count > 0 ? count : nil
         }
     }
 
-    // MARK: - System Prompt Section
+    private var tabBar: some View {
+        HStack(spacing: 0) {
+            ForEach(DetailTab.allCases, id: \.self) { tab in
+                let isSelected = selectedTab == tab
+                Button {
+                    selectedTab = tab
+                } label: {
+                    VStack(spacing: 0) {
+                        HStack(spacing: 5) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+
+                            Text(tab.label)
+                                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+
+                            if let count = tabBadgeCount(for: tab) {
+                                Text("\(count)")
+                                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(
+                                        Capsule()
+                                            .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
+                                    )
+                            }
+                        }
+                        .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 10)
+                        .padding(.bottom, 8)
+
+                        Rectangle()
+                            .fill(isSelected ? theme.accentColor : Color.clear)
+                            .frame(height: 2)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 4)
+    }
+
+    private func tabHelperText(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.tertiaryText)
+        }
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - Tab Content
+
+    @ViewBuilder
+    private var configureTabContent: some View {
+        tabHelperText(DetailTab.configure.helperText)
+        systemPromptSection
+        generationSection
+        quickActionsSection
+        themeSection
+    }
+
+    @ViewBuilder
+    private var abilitiesTabContent: some View {
+        tabHelperText(DetailTab.abilities.helperText)
+        capabilitiesSection
+    }
+
+    @ViewBuilder
+    private var sandboxTabContent: some View {
+        tabHelperText(DetailTab.sandbox.helperText)
+        sandboxSection
+        relaySection
+    }
+
+    @ViewBuilder
+    private var automationTabContent: some View {
+        tabHelperText(DetailTab.automation.helperText)
+        schedulesSection
+        watchersSection
+    }
+
+    @ViewBuilder
+    private var memoryTabContent: some View {
+        tabHelperText(DetailTab.memory.helperText)
+        historySection
+        workingMemorySection
+        conversationSummariesSection
+    }
+
+    // MARK: - Configure Tab Sections
 
     private var systemPromptSection: some View {
         AgentDetailSection(title: "System Prompt", icon: "brain") {
@@ -1055,12 +1097,9 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Generation Section
-
     private var generationSection: some View {
         AgentDetailSection(title: "Generation", icon: "cpu") {
             VStack(spacing: 16) {
-                // Model selector
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Default Model", systemImage: "cube.fill")
                         .font(.system(size: 11, weight: .medium))
@@ -1158,11 +1197,11 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Abilities Section
+    // MARK: - Tools Tab Sections
 
     private var capabilitiesSection: some View {
         AgentDetailSection(
-            title: "Abilities",
+            title: "Tools & Skills",
             icon: "wrench.and.screwdriver",
             subtitle: "\(resolvedEnabledToolCount + resolvedEnabledSkillCount) enabled"
         ) {
@@ -1179,7 +1218,7 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Sandbox Section
+    // MARK: - Sandbox Tab Sections
 
     @ViewBuilder
     private var sandboxSection: some View {
@@ -1233,7 +1272,6 @@ struct AgentDetailView: View {
                             .foregroundColor(theme.secondaryText)
                     }
                 } else {
-                    // Autonomous Exec Toggle
                     HStack {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Autonomous Execution")
@@ -1282,7 +1320,6 @@ struct AgentDetailView: View {
                         }
                     }
 
-                    // Sandbox Plugin List
                     if !sandboxPlugins.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Sandbox Plugins")
@@ -1310,8 +1347,6 @@ struct AgentDetailView: View {
             }
         }
     }
-
-    // MARK: - Relay Section
 
     @ViewBuilder
     private var relaySection: some View {
@@ -1448,8 +1483,6 @@ struct AgentDetailView: View {
             .padding(.vertical, 3)
             .background(Capsule().fill(color.opacity(0.1)))
     }
-
-    // MARK: - Quick Actions Section
 
     private var quickActionsSection: some View {
         AgentDetailSection(
@@ -1746,8 +1779,6 @@ struct AgentDetailView: View {
         debouncedSave()
     }
 
-    // MARK: - Theme Section
-
     private var themeSection: some View {
         AgentDetailSection(title: "Visual Theme", icon: "paintpalette.fill") {
             VStack(alignment: .leading, spacing: 12) {
@@ -1789,7 +1820,7 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Schedules Section
+    // MARK: - Automation Tab Sections
 
     private var schedulesSection: some View {
         AgentDetailSection(
@@ -1875,8 +1906,6 @@ struct AgentDetailView: View {
             }
         }
     }
-
-    // MARK: - Watchers Section
 
     private var watchersSection: some View {
         AgentDetailSection(
@@ -1968,7 +1997,7 @@ struct AgentDetailView: View {
         )
     }
 
-    // MARK: - History Section
+    // MARK: - Memory Tab Sections
 
     private var historySection: some View {
         AgentDetailSection(
@@ -1978,7 +2007,6 @@ struct AgentDetailView: View {
                 "\(chatSessions.count) chat\(chatSessions.count == 1 ? "" : "s"), \(workTasks.count) task\(workTasks.count == 1 ? "" : "s")"
         ) {
             VStack(alignment: .leading, spacing: 16) {
-                // Chat sessions
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         HStack(spacing: 6) {
@@ -2054,7 +2082,6 @@ struct AgentDetailView: View {
                     .fill(theme.primaryBorder)
                     .frame(height: 1)
 
-                // Work tasks
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 6) {
                         Image(systemName: "checklist")
@@ -2112,8 +2139,6 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Working Memory Section
-
     private var workingMemorySection: some View {
         AgentDetailSection(
             title: "Working Memory",
@@ -2135,8 +2160,6 @@ struct AgentDetailView: View {
             }
         }
     }
-
-    // MARK: - Conversation Summaries Section
 
     private var conversationSummariesSection: some View {
         AgentDetailSection(
@@ -2227,8 +2250,6 @@ struct AgentDetailView: View {
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
-
-        // Preserve existing tool/skill overrides managed by CapabilitiesSelectorView
         let current = currentAgent
 
         let updated = Agent(
@@ -2371,13 +2392,10 @@ private struct AgentEditorSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             headerView
 
-            // Form
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    // Identity Section
                     EditorSection(title: "Identity", icon: "person.circle.fill") {
                         VStack(spacing: 16) {
                             HStack(spacing: 16) {
@@ -2416,7 +2434,6 @@ private struct AgentEditorSheet: View {
                         }
                     }
 
-                    // System Prompt Section
                     EditorSection(title: "System Prompt", icon: "brain") {
                         VStack(alignment: .leading, spacing: 8) {
                             ZStack(alignment: .topLeading) {
@@ -2453,7 +2470,6 @@ private struct AgentEditorSheet: View {
                         }
                     }
 
-                    // Generation Settings
                     EditorSection(title: "Generation", icon: "cpu") {
                         VStack(spacing: 16) {
                             HStack(spacing: 16) {
@@ -2488,7 +2504,6 @@ private struct AgentEditorSheet: View {
                         }
                     }
 
-                    // Theme Section
                     EditorSection(title: "Visual Theme", icon: "paintpalette.fill") {
                         VStack(alignment: .leading, spacing: 12) {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 12)], spacing: 12) {
