@@ -5,9 +5,13 @@
 //  Main view for work mode - displays task execution with issue tracking.
 //
 
+import AVFoundation
+import AVKit
 import CoreText
+import PDFKit
 import SwiftUI
 import UniformTypeIdentifiers
+import WebKit
 
 struct WorkView: View {
     @ObservedObject var windowState: ChatWindowState
@@ -84,7 +88,7 @@ struct WorkView: View {
                             pendingQueuedMessage: session.pendingQueuedMessage,
                             onClearQueued: { session.clearQueuedMessage() },
                             onSendNow: {
-                                Task { await session.redirectExecution(message: session.input) }
+                                Task { session.redirectExecution(message: session.input) }
                             },
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
@@ -729,23 +733,6 @@ extension WorkView {
         }
     }
 
-    // MARK: - Helpers
-
-    private func statusIcon(for status: WorkTaskStatus) -> String {
-        switch status {
-        case .active: return "play.circle.fill"
-        case .completed: return "checkmark.circle.fill"
-        case .cancelled: return "xmark.circle.fill"
-        }
-    }
-
-    private func statusColor(for status: WorkTaskStatus) -> Color {
-        switch status {
-        case .active: return .orange
-        case .completed: return .green
-        case .cancelled: return .gray
-        }
-    }
 }
 
 // MARK: - Progress Sidebar Resize Handle
@@ -821,35 +808,45 @@ struct ArtifactViewerSheet: View {
     @State private var showRawSource = false
     @State private var isHoveringCopy = false
     @State private var isHoveringDownload = false
+    @State private var isHoveringOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
             sheetHeader
 
             GeometryReader { geometry in
-                ScrollView {
-                    if artifact.isImage {
-                        imageContentView
-                            .padding(24)
-                    } else if artifact.isText, artifact.content != nil {
-                        if artifact.mimeType == "text/markdown" && !showRawSource {
-                            MarkdownMessageView(
-                                text: artifact.content ?? "",
-                                baseWidth: min(geometry.size.width - 80, 800)
-                            )
-                            .padding(.horizontal, 32)
-                            .padding(.vertical, 24)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            sourceCodeView
-                                .padding(20)
-                        }
+                Group {
+                    if artifact.isPDF, !artifact.hostPath.isEmpty {
+                        PDFViewerRepresentable(url: URL(fileURLWithPath: artifact.hostPath))
+                    } else if artifact.isVideo, !artifact.hostPath.isEmpty {
+                        VideoPlayerRepresentable(url: URL(fileURLWithPath: artifact.hostPath))
+                    } else if artifact.isHTML, !artifact.hostPath.isEmpty {
+                        WebViewRepresentable(url: URL(fileURLWithPath: artifact.hostPath))
+                    } else if artifact.isAudio, !artifact.hostPath.isEmpty {
+                        AudioPlayerView(url: URL(fileURLWithPath: artifact.hostPath), theme: theme)
                     } else {
-                        nonPreviewableContentView
-                            .padding(40)
+                        ScrollView {
+                            if artifact.isImage {
+                                imageContentView.padding(24)
+                            } else if artifact.isText, artifact.content != nil {
+                                if artifact.mimeType == "text/markdown" && !showRawSource {
+                                    MarkdownMessageView(
+                                        text: artifact.content ?? "",
+                                        baseWidth: min(geometry.size.width - 80, 800)
+                                    )
+                                    .padding(.horizontal, 32)
+                                    .padding(.vertical, 24)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                } else {
+                                    sourceCodeView.padding(20)
+                                }
+                            } else {
+                                nonPreviewableContentView.padding(40)
+                            }
+                        }
+                        .scrollIndicators(.automatic)
                     }
                 }
-                .scrollIndicators(.automatic)
             }
         }
         .frame(minWidth: 750, idealWidth: 950, maxWidth: 1200)
@@ -864,16 +861,18 @@ struct ArtifactViewerSheet: View {
         .shadow(color: theme.shadowColor.opacity(0.3), radius: 30, x: 0, y: 10)
     }
 
-    // MARK: - Components
+    // MARK: - Background & Header
 
     @ViewBuilder
     private var sheetBackground: some View {
-        theme.primaryBackground.opacity(theme.glassEnabled ? 0.95 : 1.0)
+        ZStack {
+            theme.primaryBackground.opacity(theme.glassEnabled ? 0.92 : 1.0)
+        }
     }
 
     private var sheetHeader: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 20) {
+            HStack(spacing: 16) {
                 fileIconView
                 fileInfoView
                 Spacer(minLength: 20)
@@ -883,36 +882,48 @@ struct ArtifactViewerSheet: View {
                 actionButtons.fixedSize()
             }
             .padding(.horizontal, 24)
-            .padding(.vertical, 18)
+            .padding(.vertical, 16)
+            .background(
+                theme.glassEnabled
+                    ? AnyView(theme.secondaryBackground.opacity(0.3))
+                    : AnyView(Color.clear)
+            )
 
             Rectangle().fill(theme.primaryBorder.opacity(0.1)).frame(height: 1)
         }
     }
 
     private var fileIconView: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [sheetIconColor.opacity(0.2), sheetIconColor.opacity(0.1)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
+        Image(systemName: sheetIconName)
+            .font(.system(size: 14, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 32, height: 32)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: sheetIconGradient,
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
                     )
-                )
-                .frame(width: 40, height: 40)
-
-            Image(systemName: sheetIconName)
-                .font(theme.font(size: 18, weight: .medium))
-                .foregroundColor(sheetIconColor)
-        }
+            )
     }
 
     private var fileInfoView: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(artifact.filename)
-                .font(theme.font(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 8) {
+                Text(artifact.filename)
+                    .font(theme.font(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                Text(artifact.categoryLabel)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
+            }
             Text(sheetSubtitle)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
@@ -922,6 +933,8 @@ struct ArtifactViewerSheet: View {
     private var sheetIconName: String {
         if artifact.isDirectory { return "folder.fill" }
         if artifact.isImage { return "photo" }
+        if artifact.isPDF { return "doc.richtext.fill" }
+        if artifact.isVideo { return "film" }
         if artifact.isAudio { return "waveform" }
         if artifact.isHTML { return "globe" }
         if artifact.mimeType == "text/markdown" { return "doc.richtext" }
@@ -929,21 +942,20 @@ struct ArtifactViewerSheet: View {
         return "doc"
     }
 
-    private var sheetIconColor: Color {
-        if artifact.isImage { return .purple }
-        if artifact.isAudio { return .orange }
-        if artifact.isHTML { return .blue }
-        if artifact.isDirectory { return .cyan }
-        return theme.accentColor
+    private var sheetIconGradient: [Color] {
+        if artifact.isImage { return [Color(hex: "8b5cf6"), Color(hex: "7c3aed")] }
+        if artifact.isPDF { return [Color(hex: "ef4444"), Color(hex: "dc2626")] }
+        if artifact.isVideo { return [Color(hex: "ec4899"), Color(hex: "db2777")] }
+        if artifact.isAudio { return [Color(hex: "f59e0b"), Color(hex: "d97706")] }
+        if artifact.isHTML { return [Color(hex: "3b82f6"), Color(hex: "2563eb")] }
+        if artifact.isDirectory { return [Color(hex: "f59e0b"), Color(hex: "d97706")] }
+        return [Color(hex: "6b7280"), Color(hex: "4b5563")]
     }
 
     private var sheetSubtitle: String {
-        if artifact.isDirectory { return "Directory - \(formatSheetSize(artifact.fileSize))" }
-        if artifact.isImage { return "Image - \(formatSheetSize(artifact.fileSize))" }
-        if artifact.isAudio { return "Audio - \(formatSheetSize(artifact.fileSize))" }
-        if artifact.mimeType == "text/markdown" { return "Markdown Document" }
-        if artifact.isText { return "Text File - \(formatSheetSize(artifact.fileSize))" }
-        return "\(artifact.mimeType) - \(formatSheetSize(artifact.fileSize))"
+        let size = formatSheetSize(artifact.fileSize)
+        if let desc = artifact.description, !desc.isEmpty { return "\(desc) (\(size))" }
+        return "\(artifact.categoryLabel) - \(size)"
     }
 
     private func formatSheetSize(_ bytes: Int) -> String {
@@ -951,6 +963,8 @@ struct ArtifactViewerSheet: View {
         if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
         return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
     }
+
+    // MARK: - Toolbar Controls
 
     private var viewToggle: some View {
         HStack(spacing: 2) {
@@ -981,8 +995,13 @@ struct ArtifactViewerSheet: View {
     }
 
     private var actionButtons: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             if artifact.isText && artifact.content != nil { copyButton }
+
+            if !artifact.hostPath.isEmpty && (artifact.isPDF || artifact.isAudio || artifact.isVideo) {
+                openWithButton
+            }
+
             downloadButton
             closeButton
         }
@@ -1023,6 +1042,36 @@ struct ArtifactViewerSheet: View {
         .animation(.easeOut(duration: 0.2), value: isCopied)
     }
 
+    private var openWithButton: some View {
+        Button {
+            NSWorkspace.shared.open(URL(fileURLWithPath: artifact.hostPath))
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                Text("Open with\u{2026}")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(isHoveringOpen ? theme.primaryText : theme.secondaryText)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.tertiaryBackground.opacity(isHoveringOpen ? 0.8 : 0.5))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(isHoveringOpen ? 0.2 : 0.1), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Open with default application")
+        .onHover { isHoveringOpen = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHoveringOpen)
+    }
+
     @ViewBuilder
     private var downloadButton: some View {
         if artifact.mimeType == "text/markdown" && artifact.content != nil {
@@ -1037,15 +1086,11 @@ struct ArtifactViewerSheet: View {
                             .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     }
                     .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
-                    .padding(.leading, 10)
-                    .padding(.trailing, 6)
-                    .padding(.vertical, 7)
+                    .padding(.leading, 10).padding(.trailing, 6).padding(.vertical, 7)
                 }
                 .buttonStyle(.plain)
 
-                Divider()
-                    .frame(height: 16)
-                    .opacity(0.3)
+                Divider().frame(height: 16).opacity(0.3)
 
                 Button {
                     showDownloadMenu()
@@ -1053,9 +1098,7 @@ struct ArtifactViewerSheet: View {
                     Image(systemName: "chevron.down")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
                         .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
-                        .padding(.leading, 2)
-                        .padding(.trailing, 8)
-                        .padding(.vertical, 7)
+                        .padding(.leading, 2).padding(.trailing, 8).padding(.vertical, 7)
                 }
                 .buttonStyle(.plain)
             }
@@ -1083,8 +1126,7 @@ struct ArtifactViewerSheet: View {
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 10).padding(.vertical, 7)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(theme.tertiaryBackground.opacity(isHoveringDownload ? 0.8 : 0.5))
@@ -1116,10 +1158,11 @@ struct ArtifactViewerSheet: View {
         .buttonStyle(.plain)
     }
 
+    // MARK: - Content Views
+
     private var imageContentView: some View {
         VStack {
-            let url = URL(fileURLWithPath: artifact.hostPath)
-            if let nsImage = NSImage(contentsOf: url) {
+            if let nsImage = NSImage(contentsOf: URL(fileURLWithPath: artifact.hostPath)) {
                 Image(nsImage: nsImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -1137,14 +1180,20 @@ struct ArtifactViewerSheet: View {
 
     private var nonPreviewableContentView: some View {
         VStack(spacing: 16) {
-            ZStack {
-                Circle()
-                    .fill(sheetIconColor.opacity(0.1))
-                    .frame(width: 64, height: 64)
-                Image(systemName: sheetIconName)
-                    .font(.system(size: 28, weight: .medium))
-                    .foregroundColor(sheetIconColor)
-            }
+            Image(systemName: sheetIconName)
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundColor(.white)
+                .frame(width: 52, height: 52)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: sheetIconGradient,
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                )
 
             Text(artifact.filename)
                 .font(theme.font(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
@@ -1171,8 +1220,7 @@ struct ArtifactViewerSheet: View {
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 }
                 .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 16).padding(.vertical, 8)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(theme.accentColor.opacity(0.1))
@@ -1186,7 +1234,6 @@ struct ArtifactViewerSheet: View {
     private var sourceCodeView: some View {
         let lines = (artifact.content ?? "").components(separatedBy: "\n")
         return HStack(alignment: .top, spacing: 0) {
-            // Line numbers
             LazyVStack(alignment: .trailing, spacing: 0) {
                 ForEach(Array(lines.enumerated()), id: \.offset) { index, _ in
                     Text("\(index + 1)")
@@ -1200,7 +1247,6 @@ struct ArtifactViewerSheet: View {
 
             Rectangle().fill(theme.primaryBorder.opacity(0.1)).frame(width: 1)
 
-            // Scrollable code content
             ScrollView(.horizontal, showsIndicators: true) {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
@@ -1223,19 +1269,18 @@ struct ArtifactViewerSheet: View {
         )
     }
 
+    // MARK: - Actions
+
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(artifact.content ?? "", forType: .string)
         isCopied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            isCopied = false
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { isCopied = false }
     }
 
     private func openInFinder() {
         guard !artifact.hostPath.isEmpty else { return }
-        let url = URL(fileURLWithPath: artifact.hostPath)
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: artifact.hostPath)])
     }
 
     private func showDownloadMenu() {
@@ -1680,6 +1725,216 @@ struct ArtifactViewerSheet: View {
         }
 
         return result
+    }
+}
+
+// MARK: - PDF Viewer (NSViewRepresentable)
+
+private struct PDFViewerRepresentable: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePageContinuous
+        view.displaysPageBreaks = true
+        view.document = PDFDocument(url: url)
+        return view
+    }
+
+    func updateNSView(_ nsView: PDFView, context: Context) {}
+}
+
+// MARK: - Video Player (NSViewRepresentable)
+
+private struct VideoPlayerRepresentable: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = AVPlayer(url: url)
+        view.controlsStyle = .inline
+        return view
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {}
+
+    static func dismantleNSView(_ nsView: AVPlayerView, coordinator: ()) {
+        nsView.player?.pause()
+        nsView.player = nil
+    }
+}
+
+// MARK: - Web View (NSViewRepresentable)
+
+private struct WebViewRepresentable: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> WKWebView {
+        let view = WKWebView()
+        view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        return view
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {}
+}
+
+// MARK: - Audio Player View
+
+private struct AudioPlayerView: View {
+    let url: URL
+    let theme: ThemeProtocol
+
+    @State private var player: AVPlayer?
+    @State private var isPlaying = false
+    @State private var currentTime: Double = 0
+    @State private var duration: Double = 0
+    @State private var timer: Timer?
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Spacer()
+
+            ZStack {
+                Circle()
+                    .fill(theme.accentColor.opacity(0.1))
+                    .frame(width: 100, height: 100)
+                Circle()
+                    .fill(theme.accentColor.opacity(0.06))
+                    .frame(width: 140, height: 140)
+                Image(systemName: "waveform")
+                    .font(.system(size: 36, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+
+            VStack(spacing: 16) {
+                VStack(spacing: 4) {
+                    Text(url.lastPathComponent)
+                        .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    if duration > 0 {
+                        Text(formatTime(duration))
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+
+                if duration > 0 {
+                    VStack(spacing: 4) {
+                        Slider(value: $currentTime, in: 0 ... max(duration, 1)) { editing in
+                            if !editing {
+                                player?.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600))
+                            }
+                        }
+                        .tint(theme.accentColor)
+
+                        HStack {
+                            Text(formatTime(currentTime))
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                            Spacer()
+                            Text("-\(formatTime(max(0, duration - currentTime)))")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                    }
+                    .frame(maxWidth: 400)
+                }
+
+                HStack(spacing: 20) {
+                    Button {
+                        seekRelative(-10)
+                    } label: {
+                        Image(systemName: "gobackward.10")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        togglePlayback()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(theme.accentColor.opacity(0.15))
+                                .frame(width: 56, height: 56)
+                            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundColor(theme.accentColor)
+                                .offset(x: isPlaying ? 0 : 2)
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        seekRelative(10)
+                    } label: {
+                        Image(systemName: "goforward.10")
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(32)
+        .onAppear { setupPlayer() }
+        .onDisappear { teardownPlayer() }
+    }
+
+    private func setupPlayer() {
+        let p = AVPlayer(url: url)
+        player = p
+        Task {
+            let asset = AVURLAsset(url: url)
+            if let dur = try? await asset.load(.duration) {
+                let secs = CMTimeGetSeconds(dur)
+                if secs.isFinite { await MainActor.run { duration = secs } }
+            }
+        }
+        let periodicPlayer = p
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [self] _ in
+            let t = CMTimeGetSeconds(periodicPlayer.currentTime())
+            DispatchQueue.main.async {
+                if t.isFinite { self.currentTime = t }
+            }
+        }
+    }
+
+    private func teardownPlayer() {
+        timer?.invalidate()
+        timer = nil
+        player?.pause()
+        player = nil
+    }
+
+    private func togglePlayback() {
+        guard let p = player else { return }
+        if isPlaying {
+            p.pause()
+        } else {
+            if currentTime >= duration - 0.5 {
+                p.seek(to: .zero)
+                currentTime = 0
+            }
+            p.play()
+        }
+        isPlaying.toggle()
+    }
+
+    private func seekRelative(_ seconds: Double) {
+        guard let p = player else { return }
+        let target = max(0, min(duration, currentTime + seconds))
+        p.seek(to: CMTime(seconds: target, preferredTimescale: 600))
+        currentTime = target
+    }
+
+    private func formatTime(_ seconds: Double) -> String {
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        return String(format: "%d:%02d", mins, secs)
     }
 }
 

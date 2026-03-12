@@ -753,6 +753,29 @@ public struct SharedArtifact: Identifiable, Codable, Sendable, Equatable {
     public var isHTML: Bool {
         mimeType == "text/html"
     }
+
+    /// Whether this artifact's MIME type indicates video.
+    public var isVideo: Bool {
+        mimeType.hasPrefix("video/")
+    }
+
+    /// Whether this artifact is a PDF document.
+    public var isPDF: Bool {
+        mimeType == "application/pdf"
+    }
+
+    /// Human-readable content category label.
+    public var categoryLabel: String {
+        if isDirectory { return "Directory" }
+        if isImage { return "Image" }
+        if isPDF { return "PDF" }
+        if isAudio { return "Audio" }
+        if isVideo { return "Video" }
+        if isHTML { return "Web Page" }
+        if mimeType == "text/markdown" { return "Markdown" }
+        if isText { return "Text" }
+        return "File"
+    }
 }
 
 // MARK: - SharedArtifact Tool Result Processing

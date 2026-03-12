@@ -1023,12 +1023,38 @@ final class SelectableNSTextView: NSTextView {
         {
             let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
             if let url {
-                NSWorkspace.shared.open(url)
+                if url.scheme == "artifact" {
+                    handleArtifactLink(url)
+                } else {
+                    NSWorkspace.shared.open(url)
+                }
                 return
             }
         }
 
         super.mouseDown(with: event)
+    }
+
+    private func handleArtifactLink(_ url: URL) {
+        let filename = url.host ?? url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !filename.isEmpty else { return }
+
+        let artifactsRoot = OsaurusPaths.artifactsDir()
+        let fm = FileManager.default
+        guard
+            let contextDirs = try? fm.contentsOfDirectory(
+                at: artifactsRoot,
+                includingPropertiesForKeys: nil
+            )
+        else { return }
+
+        for dir in contextDirs {
+            let candidate = dir.appendingPathComponent(filename)
+            if fm.fileExists(atPath: candidate.path) {
+                NSWorkspace.shared.activateFileViewerSelecting([candidate])
+                return
+            }
+        }
     }
 
     /// Theme colors for custom drawing (set by SelectableTextView on update)
