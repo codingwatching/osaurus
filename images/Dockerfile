@@ -1,5 +1,7 @@
 FROM alpine:latest
 
+RUN mkdir -p /run /tmp
+
 RUN apk add --no-cache \
     bash \
     python3 python3-dev py3-pip \
