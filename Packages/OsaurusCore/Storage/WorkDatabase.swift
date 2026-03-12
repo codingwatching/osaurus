@@ -140,6 +140,10 @@ public final class WorkDatabase: @unchecked Sendable {
         if currentVersion < 3 {
             try migrateToV3()
         }
+
+        if currentVersion < 4 {
+            try migrateToV4()
+        }
     }
 
     /// Gets the current schema version from the database
@@ -241,7 +245,7 @@ public final class WorkDatabase: @unchecked Sendable {
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_tasks_persona ON tasks(persona_id)")
 
-        // Create artifacts table for storing generated content
+        // Legacy artifacts table (superseded by shared_artifacts in V4, kept for schema compatibility)
         try executeRaw(
             """
                 CREATE TABLE IF NOT EXISTS artifacts (
@@ -257,7 +261,6 @@ public final class WorkDatabase: @unchecked Sendable {
             """
         )
 
-        // Create index for efficient artifact lookups by task
         try executeRaw("CREATE INDEX IF NOT EXISTS idx_artifacts_task ON artifacts(task_id)")
 
         try setSchemaVersion(1)
@@ -311,6 +314,34 @@ public final class WorkDatabase: @unchecked Sendable {
         )
 
         try setSchemaVersion(3)
+    }
+
+    /// Migration to schema version 4 - add shared_artifacts table
+    private func migrateToV4() throws {
+        try executeRaw(
+            """
+                CREATE TABLE IF NOT EXISTS shared_artifacts (
+                    id TEXT PRIMARY KEY,
+                    context_id TEXT NOT NULL,
+                    context_type TEXT NOT NULL,
+                    filename TEXT NOT NULL,
+                    mime_type TEXT NOT NULL,
+                    file_size INTEGER NOT NULL DEFAULT 0,
+                    host_path TEXT NOT NULL,
+                    is_directory INTEGER NOT NULL DEFAULT 0,
+                    content TEXT,
+                    description TEXT,
+                    is_final_result INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+            """
+        )
+
+        try executeRaw(
+            "CREATE INDEX IF NOT EXISTS idx_shared_artifacts_context ON shared_artifacts(context_id)"
+        )
+
+        try setSchemaVersion(4)
     }
 
     // MARK: - Query Execution

@@ -177,21 +177,16 @@ public actor WorkExecutionEngine {
         section +=
             "\n**File Tools Available:** Use file_read, file_write, file_edit, file_search, etc. to work with files.\n"
         section += "Always read files before editing. Use relative paths from the working directory.\n"
+        section +=
+            "To share files or content with the user, call `share_artifact` with a relative path or pass content directly.\n"
 
         return section
     }
 
-    /// Chat-mode sandbox guidance: environment description and tool usage only.
-    /// Omits the work-mode execution pattern and `complete_task` references so
-    /// the model doesn't enter a task-execution loop in conversational chat.
-    static func chatSandboxPromptSection() -> String {
-        """
-
-        ## Linux Sandbox Environment
-
+    private static let sandboxEnvironmentBlock = """
         You have access to an isolated Linux sandbox (Alpine Linux, ARM64).
-        Your workspace is your home directory inside the sandbox. Files persist across messages.
-        Use `/output` for files the user should see on the host.
+        Your workspace is your home directory inside the sandbox.
+        The user cannot see files you create unless you call `share_artifact` with a relative path or inline content.
 
         Pre-installed: bash, python3, pip, node, npm, git, curl, wget, jq, ripgrep (rg),
         sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
@@ -201,7 +196,9 @@ public actor WorkExecutionEngine {
         multi-line scripts (python, bash, node). For single shell commands use
         `sandbox_exec`. For background processes use `sandbox_exec_background`.
         Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
+        """
 
+    private static let sandboxRuntimeHints = """
         Runtime hints:
         - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
         - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
@@ -209,29 +206,30 @@ public actor WorkExecutionEngine {
         - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
 
         The sandbox is disposable — experiment freely.
+        """
+
+    /// Chat-mode sandbox guidance (no `complete_task` workflow).
+    static func chatSandboxPromptSection() -> String {
+        """
+
+        ## Linux Sandbox Environment
+
+        \(sandboxEnvironmentBlock)
+        Files persist across messages.
+
+        \(sandboxRuntimeHints)
 
         """
     }
 
-    /// Work-mode sandbox guidance: includes the full execution pattern with
-    /// `complete_task` and iterative verify/fix steps for the reasoning loop.
+    /// Work-mode sandbox guidance with the full build/verify/share/complete pattern.
     static func sandboxPromptSection() -> String {
         """
 
         ## Linux Sandbox Environment
 
-        You have access to an isolated Linux sandbox (Alpine Linux, ARM64).
-        Your workspace is your home directory inside the sandbox. Files persist across tasks.
-        Use `/output` for files the user should see on the host.
-
-        Pre-installed: bash, python3, pip, node, npm, git, curl, wget, jq, ripgrep (rg),
-        sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
-        The default shell is bash. Internet access is available.
-
-        **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for
-        multi-line scripts (python, bash, node). For single shell commands use
-        `sandbox_exec`. For background processes use `sandbox_exec_background`.
-        Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
+        \(sandboxEnvironmentBlock)
+        Files persist across tasks.
 
         For build/test tasks, follow this pattern:
         1. Inspect the workspace and choose a stack.
@@ -239,22 +237,12 @@ public actor WorkExecutionEngine {
         3. Install project-specific dependencies with `sandbox_pip_install` or `sandbox_npm_install`.
         4. Run tests or verification commands with `sandbox_exec`.
         5. If verification fails, read the error carefully, fix the cause, and rerun.
-        6. When everything passes, call `complete_task` with a concise summary.
+        6. **IMPORTANT:** Call `share_artifact` for every file or directory the user should see (images, charts, websites, reports, code output, etc.). Do this BEFORE calling `complete_task`.
+        7. When everything passes, call `complete_task` with a concise summary.
 
-        Runtime hints:
-        - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
-        - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
-        - Additional toolchains like Go or Rust can be installed with `sandbox_install`.
-        - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
-
-        The sandbox is disposable — experiment freely.
+        \(sandboxRuntimeHints)
 
         """
-    }
-
-    /// Builds the sandbox environment section for prompts when sandbox tools are active
-    private static func buildSandboxPromptSection() -> String {
-        Self.sandboxPromptSection()
     }
 
     // MARK: - Reasoning Loop
@@ -269,7 +257,7 @@ public actor WorkExecutionEngine {
     public typealias StatusCallback = @MainActor @Sendable (String) async -> Void
 
     /// Callback type for artifact generation
-    public typealias ArtifactCallback = @MainActor @Sendable (Artifact) async -> Void
+    public typealias ArtifactCallback = @MainActor @Sendable (SharedArtifact) async -> Void
 
     /// Callback type for iteration start (iteration number)
     public typealias IterationStartCallback = @MainActor @Sendable (Int) async -> Void
@@ -301,7 +289,7 @@ public actor WorkExecutionEngine {
     ///   - onDelta: Callback for streaming text deltas
     ///   - onToolCall: Callback when a tool is called (toolName, args, result)
     ///   - onStatusUpdate: Callback for status messages
-    ///   - onArtifact: Callback when an artifact is generated (via generate_artifact tool)
+    ///   - onArtifact: Callback when an artifact is shared (via share_artifact tool)
     ///   - onTokensConsumed: Callback with estimated token consumption per iteration
     /// - Returns: The result of the loop execution
     func executeLoop(
@@ -317,6 +305,8 @@ public actor WorkExecutionEngine {
         contextLength: Int? = nil,
         toolTokenEstimate: Int = 0,
         maxIterations: Int = defaultMaxIterations,
+        executionMode: WorkExecutionMode = .none,
+        sandboxAgentName: String? = nil,
         shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
@@ -508,8 +498,26 @@ public actor WorkExecutionEngine {
 
             // Execute the tool
             let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
-            let truncatedResult = truncateToolResult(result.result)
-            await onToolCall(invocation.toolName, invocation.jsonArguments, result.result)
+
+            // Process share_artifact before storing the result so the enriched
+            // metadata (host_path, file_size, etc.) flows into the transcript.
+            var toolResultForDisplay = result.result
+            var sharedArtifact: SharedArtifact?
+            if invocation.toolName == "share_artifact" {
+                if let processed = SharedArtifact.processToolResult(
+                    result.result,
+                    contextId: issue.taskId,
+                    contextType: .work,
+                    executionMode: executionMode,
+                    sandboxAgentName: sandboxAgentName
+                ) {
+                    toolResultForDisplay = processed.enrichedToolResult
+                    sharedArtifact = processed.artifact
+                }
+            }
+
+            let truncatedResult = truncateToolResult(toolResultForDisplay)
+            await onToolCall(invocation.toolName, invocation.jsonArguments, toolResultForDisplay)
 
             // Clean response content - strip any leaked function-call JSON patterns
             let cleanedContent = StringCleaning.stripFunctionCallLeakage(responseContent, toolName: invocation.toolName)
@@ -558,11 +566,10 @@ public actor WorkExecutionEngine {
             case "create_issue":
                 await onStatusUpdate("Created follow-up issue")
 
-            case "generate_artifact":
-                // Extract artifact from tool result and notify delegate
-                if let artifact = parseGeneratedArtifact(from: result.result, taskId: issue.taskId) {
+            case "share_artifact":
+                if let artifact = sharedArtifact {
                     await onArtifact(artifact)
-                    await onStatusUpdate("Generated artifact: \(artifact.filename)")
+                    await onStatusUpdate("Shared artifact: \(artifact.filename)")
                 }
 
             default:
@@ -576,45 +583,6 @@ public actor WorkExecutionEngine {
             totalIterations: iteration,
             totalToolCalls: totalToolCalls,
             lastResponseContent: lastResponseContent
-        )
-    }
-
-    /// Parses generate_artifact tool result to extract the artifact
-    private func parseGeneratedArtifact(from result: String, taskId: String) -> Artifact? {
-        // Look for the artifact markers
-        guard let startRange = result.range(of: "---GENERATED_ARTIFACT_START---\n"),
-            let endRange = result.range(of: "\n---GENERATED_ARTIFACT_END---")
-        else {
-            return nil
-        }
-
-        let fullContent = String(result[startRange.upperBound ..< endRange.lowerBound])
-
-        // First line is JSON metadata, rest is content
-        let lines = fullContent.components(separatedBy: "\n")
-        guard lines.count >= 2, let metadataLine = lines.first else {
-            return nil
-        }
-
-        // Parse metadata
-        guard let metadataData = metadataLine.data(using: .utf8),
-            let metadata = try? JSONSerialization.jsonObject(with: metadataData) as? [String: String],
-            let filename = metadata["filename"]
-        else {
-            return nil
-        }
-
-        let contentType = metadata["content_type"].flatMap { ArtifactContentType(rawValue: $0) } ?? .text
-        let content = lines.dropFirst().joined(separator: "\n")
-
-        guard !content.isEmpty else { return nil }
-
-        return Artifact(
-            taskId: taskId,
-            filename: filename,
-            content: content,
-            contentType: contentType,
-            isFinalResult: false
         )
     }
 
@@ -669,14 +637,17 @@ public actor WorkExecutionEngine {
             - Use concise natural language (not code or JSON) when explaining your actions.
             - The user sees your text responses in real time, so keep them informed of progress.
 
+            ## Sharing Output
+
+            **Always call `share_artifact` for every output file or directory the user should see** — images, charts, generated code, websites, reports, audio, etc. The user cannot see files you create unless you explicitly share them. Call `share_artifact` with the file's relative path before calling `complete_task`.
+
             ## Completion
 
-            When the goal is fully achieved, call `complete_task` with:
-            - A summary of what was accomplished
-            - `success: true`
-            - Any artifact content if it is genuinely useful to show the user
+            When the goal is fully achieved:
+            1. First, call `share_artifact` for any generated files or content the user needs.
+            2. Then call `complete_task` with a summary and `success: true`.
 
-            Do NOT call complete_task until you have actually done the work and verified it.
+            Do NOT call complete_task until you have actually done the work, verified it, and shared any output files.
 
             """
 
@@ -684,7 +655,7 @@ public actor WorkExecutionEngine {
         case .hostFolder(let folderContext):
             prompt += buildFolderContextSection(from: folderContext)
         case .sandbox:
-            prompt += buildSandboxPromptSection()
+            prompt += sandboxPromptSection()
         case .none:
             break
         }
@@ -722,7 +693,7 @@ public actor WorkExecutionEngine {
     }
 
     /// Parses complete_task tool arguments
-    private func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> (String, Artifact?) {
+    private func parseCompleteTaskArgs(_ jsonArgs: String, taskId: String) -> (String, SharedArtifact?) {
         struct CompleteTaskArgs: Decodable {
             let summary: String
             let success: Bool?
@@ -736,21 +707,29 @@ public actor WorkExecutionEngine {
             return ("Task completed", nil)
         }
 
-        var artifact: Artifact? = nil
+        var artifact: SharedArtifact? = nil
         if let rawContent = args.artifact, !rawContent.isEmpty {
-            // Unescape literal \n and \t sequences that models sometimes send
             let content =
                 rawContent
                 .replacingOccurrences(of: "\\n", with: "\n")
                 .replacingOccurrences(of: "\\t", with: "\t")
 
-            artifact = Artifact(
-                taskId: taskId,
+            let contextDir = OsaurusPaths.contextArtifactsDir(contextId: taskId)
+            OsaurusPaths.ensureExistsSilent(contextDir)
+            let destPath = contextDir.appendingPathComponent("result.md")
+            try? content.write(to: destPath, atomically: true, encoding: .utf8)
+
+            artifact = SharedArtifact(
+                contextId: taskId,
+                contextType: .work,
                 filename: "result.md",
+                mimeType: "text/markdown",
+                fileSize: content.utf8.count,
+                hostPath: destPath.path,
                 content: content,
-                contentType: .markdown,
                 isFinalResult: true
             )
+            if let artifact { _ = try? IssueStore.createSharedArtifact(artifact) }
         }
 
         var summary = args.summary

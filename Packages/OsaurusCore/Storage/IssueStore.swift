@@ -501,9 +501,12 @@ public struct IssueStore {
         }
     }
 
-    /// Deletes a task and all its issues
+    /// Deletes a task and all its issues, including shared artifacts
     public static func deleteTask(id: String) throws {
-        // Delete all issues for this task first (cascades to deps and events)
+        // Delete shared artifacts (DB rows + on-disk files)
+        try? deleteSharedArtifacts(contextId: id)
+
+        // Delete all issues for this task (cascades to deps and events)
         let deleteIssuesSql = "DELETE FROM issues WHERE task_id = ?"
         try WorkDatabase.shared.prepareAndExecute(
             deleteIssuesSql,
@@ -658,41 +661,44 @@ public struct IssueStore {
         )
     }
 
-    // MARK: - Artifact Operations
+    // MARK: - Shared Artifact Operations
 
-    /// Creates a new artifact in the database
     @discardableResult
-    public static func createArtifact(_ artifact: Artifact) throws -> Artifact {
+    public static func createSharedArtifact(_ artifact: SharedArtifact) throws -> SharedArtifact {
         let sql = """
-                INSERT INTO artifacts (id, task_id, filename, content, content_type, is_final_result, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shared_artifacts (id, context_id, context_type, filename, mime_type, file_size, host_path, is_directory, content, description, is_final_result, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
 
         try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
                 WorkDatabase.bindText(stmt, index: 1, value: artifact.id)
-                WorkDatabase.bindText(stmt, index: 2, value: artifact.taskId)
-                WorkDatabase.bindText(stmt, index: 3, value: artifact.filename)
-                WorkDatabase.bindText(stmt, index: 4, value: artifact.content)
-                WorkDatabase.bindText(stmt, index: 5, value: artifact.contentType.rawValue)
-                WorkDatabase.bindInt(stmt, index: 6, value: artifact.isFinalResult ? 1 : 0)
-                WorkDatabase.bindDate(stmt, index: 7, value: artifact.createdAt)
+                WorkDatabase.bindText(stmt, index: 2, value: artifact.contextId)
+                WorkDatabase.bindText(stmt, index: 3, value: artifact.contextType.rawValue)
+                WorkDatabase.bindText(stmt, index: 4, value: artifact.filename)
+                WorkDatabase.bindText(stmt, index: 5, value: artifact.mimeType)
+                WorkDatabase.bindInt(stmt, index: 6, value: artifact.fileSize)
+                WorkDatabase.bindText(stmt, index: 7, value: artifact.hostPath)
+                WorkDatabase.bindInt(stmt, index: 8, value: artifact.isDirectory ? 1 : 0)
+                WorkDatabase.bindText(stmt, index: 9, value: artifact.content)
+                WorkDatabase.bindText(stmt, index: 10, value: artifact.description)
+                WorkDatabase.bindInt(stmt, index: 11, value: artifact.isFinalResult ? 1 : 0)
+                WorkDatabase.bindDate(stmt, index: 12, value: artifact.createdAt)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw WorkDatabaseError.failedToExecute("Failed to insert artifact")
+                throw WorkDatabaseError.failedToExecute("Failed to insert shared artifact")
             }
         }
 
         return artifact
     }
 
-    /// Gets an artifact by ID
-    public static func getArtifact(id: String) throws -> Artifact? {
-        let sql = "SELECT * FROM artifacts WHERE id = ?"
-        var artifact: Artifact?
+    public static func getSharedArtifact(id: String) throws -> SharedArtifact? {
+        let sql = "SELECT * FROM shared_artifacts WHERE id = ?"
+        var artifact: SharedArtifact?
 
         try WorkDatabase.shared.prepareAndExecute(
             sql,
@@ -701,26 +707,25 @@ public struct IssueStore {
             }
         ) { stmt in
             if sqlite3_step(stmt) == SQLITE_ROW {
-                artifact = parseArtifactRow(stmt)
+                artifact = parseSharedArtifactRow(stmt)
             }
         }
 
         return artifact
     }
 
-    /// Lists all artifacts for a specific task
-    public static func listArtifacts(forTask taskId: String) throws -> [Artifact] {
-        let sql = "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC"
-        var artifacts: [Artifact] = []
+    public static func listSharedArtifacts(contextId: String) throws -> [SharedArtifact] {
+        let sql = "SELECT * FROM shared_artifacts WHERE context_id = ? ORDER BY created_at ASC"
+        var artifacts: [SharedArtifact] = []
 
         try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                WorkDatabase.bindText(stmt, index: 1, value: taskId)
+                WorkDatabase.bindText(stmt, index: 1, value: contextId)
             }
         ) { stmt in
             while sqlite3_step(stmt) == SQLITE_ROW {
-                if let artifact = parseArtifactRow(stmt) {
+                if let artifact = parseSharedArtifactRow(stmt) {
                     artifacts.append(artifact)
                 }
             }
@@ -729,77 +734,54 @@ public struct IssueStore {
         return artifacts
     }
 
-    /// Gets the final result artifact for a task (if any)
-    public static func getFinalArtifact(forTask taskId: String) throws -> Artifact? {
-        let sql = "SELECT * FROM artifacts WHERE task_id = ? AND is_final_result = 1 ORDER BY created_at DESC LIMIT 1"
-        var artifact: Artifact?
+    /// Deletes shared artifacts for a context from the DB and removes their on-disk directory.
+    public static func deleteSharedArtifacts(contextId: String) throws {
+        let sql = "DELETE FROM shared_artifacts WHERE context_id = ?"
 
         try WorkDatabase.shared.prepareAndExecute(
             sql,
             bind: { stmt in
-                WorkDatabase.bindText(stmt, index: 1, value: taskId)
-            }
-        ) { stmt in
-            if sqlite3_step(stmt) == SQLITE_ROW {
-                artifact = parseArtifactRow(stmt)
-            }
-        }
-
-        return artifact
-    }
-
-    /// Deletes an artifact by ID
-    public static func deleteArtifact(id: String) throws {
-        let sql = "DELETE FROM artifacts WHERE id = ?"
-
-        try WorkDatabase.shared.prepareAndExecute(
-            sql,
-            bind: { stmt in
-                WorkDatabase.bindText(stmt, index: 1, value: id)
+                WorkDatabase.bindText(stmt, index: 1, value: contextId)
             }
         ) { stmt in
             let result = sqlite3_step(stmt)
             if result != SQLITE_DONE {
-                throw WorkDatabaseError.failedToExecute("Failed to delete artifact")
+                throw WorkDatabaseError.failedToExecute("Failed to delete shared artifacts")
             }
         }
+
+        let dir = OsaurusPaths.contextArtifactsDir(contextId: contextId)
+        try? FileManager.default.removeItem(at: dir)
     }
 
-    /// Deletes all artifacts for a task
-    public static func deleteArtifacts(forTask taskId: String) throws {
-        let sql = "DELETE FROM artifacts WHERE task_id = ?"
-
-        try WorkDatabase.shared.prepareAndExecute(
-            sql,
-            bind: { stmt in
-                WorkDatabase.bindText(stmt, index: 1, value: taskId)
-            }
-        ) { stmt in
-            let result = sqlite3_step(stmt)
-            if result != SQLITE_DONE {
-                throw WorkDatabaseError.failedToExecute("Failed to delete artifacts for task")
-            }
-        }
-    }
-
-    private static func parseArtifactRow(_ stmt: OpaquePointer) -> Artifact? {
+    private static func parseSharedArtifactRow(_ stmt: OpaquePointer) -> SharedArtifact? {
         guard let id = WorkDatabase.getText(stmt, column: 0),
-            let taskId = WorkDatabase.getText(stmt, column: 1),
-            let filename = WorkDatabase.getText(stmt, column: 2),
-            let content = WorkDatabase.getText(stmt, column: 3),
-            let contentTypeRaw = WorkDatabase.getText(stmt, column: 4),
-            let contentType = ArtifactContentType(rawValue: contentTypeRaw),
-            let createdAt = WorkDatabase.getDate(stmt, column: 6)
+            let contextId = WorkDatabase.getText(stmt, column: 1),
+            let contextTypeRaw = WorkDatabase.getText(stmt, column: 2),
+            let contextType = ArtifactContextType(rawValue: contextTypeRaw),
+            let filename = WorkDatabase.getText(stmt, column: 3),
+            let mimeType = WorkDatabase.getText(stmt, column: 4),
+            let hostPath = WorkDatabase.getText(stmt, column: 6),
+            let createdAt = WorkDatabase.getDate(stmt, column: 11)
         else { return nil }
 
-        let isFinalResult = WorkDatabase.getInt(stmt, column: 5) == 1
+        let fileSize = WorkDatabase.getInt(stmt, column: 5)
+        let isDirectory = WorkDatabase.getInt(stmt, column: 7) == 1
+        let content = WorkDatabase.getText(stmt, column: 8)
+        let description = WorkDatabase.getText(stmt, column: 9)
+        let isFinalResult = WorkDatabase.getInt(stmt, column: 10) == 1
 
-        return Artifact(
+        return SharedArtifact(
             id: id,
-            taskId: taskId,
+            contextId: contextId,
+            contextType: contextType,
             filename: filename,
+            mimeType: mimeType,
+            fileSize: fileSize,
+            hostPath: hostPath,
+            isDirectory: isDirectory,
             content: content,
-            contentType: contentType,
+            description: description,
             isFinalResult: isFinalResult,
             createdAt: createdAt
         )

@@ -88,6 +88,7 @@ enum BuiltinSandboxTools {
             runtimeManaged: true
         )
         registry.registerSandboxTool(SandboxProcessesTool(agentName: agentName), runtimeManaged: true)
+        registry.registerSandboxTool(ShareArtifactTool(), runtimeManaged: true)
     }
 
     /// Unregister all built-in sandbox tools.
@@ -100,6 +101,7 @@ enum BuiltinSandboxTools {
             "sandbox_install", "sandbox_pip_install", "sandbox_npm_install",
             "sandbox_run_script",
             "sandbox_whoami", "sandbox_processes",
+            "share_artifact",
         ]
         ToolRegistry.shared.unregister(names: names)
     }

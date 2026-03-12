@@ -18,7 +18,7 @@ struct WorkView: View {
 
     @State private var progressSidebarWidth: CGFloat = 280
     @State private var isProgressSidebarCollapsed: Bool = false
-    @State private var selectedArtifact: Artifact?
+    @State private var selectedArtifact: SharedArtifact?
     @State private var fileOperations: [WorkFileOperation] = []
 
     private let minProgressSidebarWidth: CGFloat = 200
@@ -106,7 +106,6 @@ struct WorkView: View {
         .sheet(item: $selectedArtifact) { artifact in
             ArtifactViewerSheet(
                 artifact: artifact,
-                onDownload: { downloadArtifact(artifact) },
                 onDismiss: { selectedArtifact = nil }
             )
             .environment(\.theme, windowState.theme)
@@ -124,25 +123,13 @@ struct WorkView: View {
 
     // MARK: - Artifact Actions
 
-    private func viewArtifact(_ artifact: Artifact) {
+    private func viewArtifact(_ artifact: SharedArtifact) {
         selectedArtifact = artifact
     }
 
-    private func downloadArtifact(_ artifact: Artifact) {
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = artifact.filename
-        panel.allowedContentTypes =
-            artifact.contentType == .markdown
-            ? [UTType(filenameExtension: "md") ?? .plainText]
-            : [.plainText]
-
-        if panel.runModal() == .OK, let url = panel.url {
-            do {
-                try artifact.content.write(to: url, atomically: true, encoding: .utf8)
-            } catch {
-                print("[WorkView] Failed to save artifact: \(error)")
-            }
-        }
+    private func openArtifactInFinder(_ artifact: SharedArtifact) {
+        let url = URL(fileURLWithPath: artifact.hostPath)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     // MARK: - File Operations Undo
@@ -351,14 +338,14 @@ struct WorkView: View {
                     activeIssueId: session.activeIssue?.id,
                     selectedIssueId: session.selectedIssueId,
                     finalArtifact: session.finalArtifact,
-                    artifacts: session.artifacts,
+                    sharedArtifacts: session.sharedArtifacts,
                     fileOperations: fileOperations,
                     isCollapsed: $isProgressSidebarCollapsed,
                     onIssueSelect: { session.selectIssue($0) },
                     onIssueRun: { issue in Task { await session.executeIssue(issue) } },
                     onIssueClose: { issueId in Task { await session.closeIssue(issueId, reason: "Manually closed") } },
                     onArtifactView: { viewArtifact($0) },
-                    onArtifactDownload: { downloadArtifact($0) },
+                    onArtifactOpen: { openArtifactInFinder($0) },
                     onUndoOperation: { operationId in undoFileOperation(operationId) },
                     onUndoAllOperations: { undoAllFileOperations() }
                 )
@@ -826,8 +813,7 @@ private class DownloadMenuTarget: NSObject {
 // MARK: - Artifact Viewer Sheet
 
 struct ArtifactViewerSheet: View {
-    let artifact: Artifact
-    let onDownload: () -> Void
+    let artifact: SharedArtifact
     let onDismiss: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
@@ -838,25 +824,29 @@ struct ArtifactViewerSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             sheetHeader
 
-            // Content
             GeometryReader { geometry in
                 ScrollView {
-                    if artifact.contentType == .markdown && !showRawSource {
-                        // Rendered markdown view
-                        MarkdownMessageView(
-                            text: artifact.content,
-                            baseWidth: min(geometry.size.width - 80, 800)
-                        )
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if artifact.isImage {
+                        imageContentView
+                            .padding(24)
+                    } else if artifact.isText, artifact.content != nil {
+                        if artifact.mimeType == "text/markdown" && !showRawSource {
+                            MarkdownMessageView(
+                                text: artifact.content ?? "",
+                                baseWidth: min(geometry.size.width - 80, 800)
+                            )
+                            .padding(.horizontal, 32)
+                            .padding(.vertical, 24)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            sourceCodeView
+                                .padding(20)
+                        }
                     } else {
-                        // Raw source view with line numbers
-                        sourceCodeView
-                            .padding(20)
+                        nonPreviewableContentView
+                            .padding(40)
                     }
                 }
                 .scrollIndicators(.automatic)
@@ -887,7 +877,9 @@ struct ArtifactViewerSheet: View {
                 fileIconView
                 fileInfoView
                 Spacer(minLength: 20)
-                if artifact.contentType == .markdown { viewToggle.fixedSize() }
+                if artifact.mimeType == "text/markdown" && artifact.content != nil {
+                    viewToggle.fixedSize()
+                }
                 actionButtons.fixedSize()
             }
             .padding(.horizontal, 24)
@@ -902,16 +894,16 @@ struct ArtifactViewerSheet: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(
                     LinearGradient(
-                        colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.1)],
+                        colors: [sheetIconColor.opacity(0.2), sheetIconColor.opacity(0.1)],
                         startPoint: .topLeading,
                         endPoint: .bottomTrailing
                     )
                 )
                 .frame(width: 40, height: 40)
 
-            Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+            Image(systemName: sheetIconName)
                 .font(theme.font(size: 18, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(sheetIconColor)
         }
     }
 
@@ -921,10 +913,43 @@ struct ArtifactViewerSheet: View {
                 .font(theme.font(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(1)
-            Text(artifact.contentType == .markdown ? "Markdown Document" : "Text File")
+            Text(sheetSubtitle)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
         }
+    }
+
+    private var sheetIconName: String {
+        if artifact.isDirectory { return "folder.fill" }
+        if artifact.isImage { return "photo" }
+        if artifact.isAudio { return "waveform" }
+        if artifact.isHTML { return "globe" }
+        if artifact.mimeType == "text/markdown" { return "doc.richtext" }
+        if artifact.isText { return "doc.text" }
+        return "doc"
+    }
+
+    private var sheetIconColor: Color {
+        if artifact.isImage { return .purple }
+        if artifact.isAudio { return .orange }
+        if artifact.isHTML { return .blue }
+        if artifact.isDirectory { return .cyan }
+        return theme.accentColor
+    }
+
+    private var sheetSubtitle: String {
+        if artifact.isDirectory { return "Directory - \(formatSheetSize(artifact.fileSize))" }
+        if artifact.isImage { return "Image - \(formatSheetSize(artifact.fileSize))" }
+        if artifact.isAudio { return "Audio - \(formatSheetSize(artifact.fileSize))" }
+        if artifact.mimeType == "text/markdown" { return "Markdown Document" }
+        if artifact.isText { return "Text File - \(formatSheetSize(artifact.fileSize))" }
+        return "\(artifact.mimeType) - \(formatSheetSize(artifact.fileSize))"
+    }
+
+    private func formatSheetSize(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
+        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
     }
 
     private var viewToggle: some View {
@@ -957,7 +982,9 @@ struct ArtifactViewerSheet: View {
 
     private var actionButtons: some View {
         HStack(spacing: 10) {
-            copyButton; downloadButton; closeButton
+            if artifact.isText && artifact.content != nil { copyButton }
+            downloadButton
+            closeButton
         }
     }
 
@@ -998,16 +1025,15 @@ struct ArtifactViewerSheet: View {
 
     @ViewBuilder
     private var downloadButton: some View {
-        if artifact.contentType == .markdown {
-            // Markdown: primary save + PDF export option
+        if artifact.mimeType == "text/markdown" && artifact.content != nil {
             HStack(spacing: 0) {
                 Button {
-                    onDownload()
+                    openInFinder()
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: "arrow.down.to.line")
+                        Image(systemName: "folder")
                             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        Text("Download")
+                        Text("Reveal in Finder")
                             .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                     }
                     .foregroundColor(isHoveringDownload ? theme.primaryText : theme.secondaryText)
@@ -1042,18 +1068,17 @@ struct ArtifactViewerSheet: View {
                     .strokeBorder(theme.primaryBorder.opacity(isHoveringDownload ? 0.2 : 0.1), lineWidth: 1)
             )
             .fixedSize()
-            .help("Download as Markdown or PDF")
+            .help("Reveal in Finder or export as PDF")
             .onHover { isHoveringDownload = $0 }
             .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
         } else {
-            // Plain text: single download button
             Button {
-                onDownload()
+                openInFinder()
             } label: {
                 HStack(spacing: 6) {
-                    Image(systemName: "arrow.down.to.line")
+                    Image(systemName: "folder")
                         .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    Text("Download")
+                    Text("Reveal in Finder")
                         .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
                 }
                 .fixedSize(horizontal: true, vertical: false)
@@ -1071,7 +1096,7 @@ struct ArtifactViewerSheet: View {
             }
             .buttonStyle(.plain)
             .fixedSize()
-            .help("Download")
+            .help("Reveal in Finder")
             .onHover { isHoveringDownload = $0 }
             .animation(.easeOut(duration: 0.15), value: isHoveringDownload)
         }
@@ -1091,8 +1116,75 @@ struct ArtifactViewerSheet: View {
         .buttonStyle(.plain)
     }
 
+    private var imageContentView: some View {
+        VStack {
+            let url = URL(fileURLWithPath: artifact.hostPath)
+            if let nsImage = NSImage(contentsOf: url) {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
+                    )
+            } else {
+                nonPreviewableContentView
+            }
+        }
+    }
+
+    private var nonPreviewableContentView: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(sheetIconColor.opacity(0.1))
+                    .frame(width: 64, height: 64)
+                Image(systemName: sheetIconName)
+                    .font(.system(size: 28, weight: .medium))
+                    .foregroundColor(sheetIconColor)
+            }
+
+            Text(artifact.filename)
+                .font(theme.font(size: CGFloat(theme.bodySize) + 2, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            if let desc = artifact.description {
+                Text(desc)
+                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .regular))
+                    .foregroundColor(theme.secondaryText)
+                    .multilineTextAlignment(.center)
+            }
+
+            Text(formatSheetSize(artifact.fileSize))
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+
+            Button {
+                openInFinder()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    Text("Reveal in Finder")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var sourceCodeView: some View {
-        let lines = artifact.content.components(separatedBy: "\n")
+        let lines = (artifact.content ?? "").components(separatedBy: "\n")
         return HStack(alignment: .top, spacing: 0) {
             // Line numbers
             LazyVStack(alignment: .trailing, spacing: 0) {
@@ -1133,13 +1225,17 @@ struct ArtifactViewerSheet: View {
 
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(artifact.content, forType: .string)
+        NSPasteboard.general.setString(artifact.content ?? "", forType: .string)
         isCopied = true
-
-        // Reset after delay
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             isCopied = false
         }
+    }
+
+    private func openInFinder() {
+        guard !artifact.hostPath.isEmpty else { return }
+        let url = URL(fileURLWithPath: artifact.hostPath)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func showDownloadMenu() {
@@ -1173,7 +1269,7 @@ struct ArtifactViewerSheet: View {
         menu.popUp(positioning: nil, at: locationInView, in: contentView)
 
         switch target.selectedTag {
-        case 0: onDownload()
+        case 0: openInFinder()
         case 1: exportAsPDF()
         default: break
         }
@@ -1199,7 +1295,7 @@ struct ArtifactViewerSheet: View {
         let contentWidth = pdfWidth - (margin * 2)
 
         // Convert markdown to attributed string
-        let attributedString = markdownToAttributedString(artifact.content)
+        let attributedString = markdownToAttributedString(artifact.content ?? "")
 
         // Create PDF context
         var mediaBox = CGRect(x: 0, y: 0, width: pdfWidth, height: pdfHeight)

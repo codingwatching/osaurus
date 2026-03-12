@@ -178,9 +178,16 @@ public enum OsaurusPaths {
         containerWorkspace().appendingPathComponent("shared", isDirectory: true)
     }
 
-    /// Mounted as `/output` inside the container, writable by all agents
-    public static func containerOutputDir() -> URL {
-        container().appendingPathComponent("output", isDirectory: true)
+    // MARK: - Shared Artifacts
+
+    /// Root directory for all shared artifacts: `~/.osaurus/artifacts/`
+    public static func artifactsDir() -> URL {
+        root().appendingPathComponent("artifacts", isDirectory: true)
+    }
+
+    /// Per-context artifacts directory: `~/.osaurus/artifacts/{contextId}/`
+    public static func contextArtifactsDir(contextId: String) -> URL {
+        artifactsDir().appendingPathComponent(contextId, isDirectory: true)
     }
 
     /// In-container absolute path for an agent's home directory
@@ -276,6 +283,21 @@ public enum OsaurusPaths {
     /// Ensures a directory exists (non-throwing version)
     public static func ensureExistsSilent(_ url: URL) {
         try? ensureExists(url)
+    }
+
+    // MARK: - File Utilities
+
+    /// Computes the total size of all files in a directory tree.
+    public static func directorySize(at url: URL) -> Int {
+        let fm = FileManager.default
+        guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        var total = 0
+        for case let fileURL as URL in enumerator {
+            if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += size
+            }
+        }
+        return total
     }
 
     // MARK: - Migration

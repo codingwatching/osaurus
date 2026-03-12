@@ -591,6 +591,31 @@ final class ChatSession: ObservableObject {
         selectedSkillInstructions = ""
     }
 
+    // MARK: - Share Artifact Processing
+
+    /// Process share_artifact tool results in chat context.
+    /// Uses the shared processing pipeline to copy files, persist to DB,
+    /// and enrich the result metadata for ContentBlock display.
+    private func processShareArtifactResult(
+        toolResult: String,
+        executionMode: WorkExecutionMode
+    ) -> String {
+        guard let sessionId else { return toolResult }
+        let agentName = SandboxAgentProvisioner.linuxName(
+            for: (agentId ?? Agent.defaultId).uuidString
+        )
+        if let processed = SharedArtifact.processToolResult(
+            toolResult,
+            contextId: sessionId.uuidString,
+            contextType: .chat,
+            executionMode: executionMode,
+            sandboxAgentName: agentName
+        ) {
+            return processed.enrichedToolResult
+        }
+        return toolResult
+    }
+
     private struct RunContext {
         let hasContent: Bool
         let userContent: String
@@ -1055,7 +1080,7 @@ final class ChatSession: ObservableObject {
                         assistantTurn.toolCalls!.append(call)
 
                         // Execute tool and append hidden tool result turn
-                        let resultText: String
+                        var resultText: String
                         do {
                             // Log tool execution start
                             let truncatedArgs = inv.jsonArguments.prefix(200)
@@ -1100,6 +1125,13 @@ final class ChatSession: ObservableObject {
                                     overrides: executionOverrides.isEmpty ? nil : executionOverrides
                                 )
                                 if !isRunActive(runId) { break outer }
+                            }
+
+                            if inv.toolName == "share_artifact" {
+                                resultText = processShareArtifactResult(
+                                    toolResult: resultText,
+                                    executionMode: executionMode
+                                )
                             }
 
                             // Log tool success (truncated result)

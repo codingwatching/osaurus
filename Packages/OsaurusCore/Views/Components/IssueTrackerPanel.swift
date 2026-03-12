@@ -15,9 +15,9 @@ struct IssueTrackerPanel: View {
     /// ID of the issue currently selected for viewing
     let selectedIssueId: String?
     /// Final artifact from task completion
-    let finalArtifact: Artifact?
-    /// All generated artifacts
-    let artifacts: [Artifact]
+    let finalArtifact: SharedArtifact?
+    /// All shared artifacts
+    let sharedArtifacts: [SharedArtifact]
     /// File operations for undo tracking
     let fileOperations: [WorkFileOperation]
     /// Binding to control collapse state
@@ -29,9 +29,9 @@ struct IssueTrackerPanel: View {
     /// Called when user closes an issue
     let onIssueClose: (String) -> Void
     /// Called when user wants to view an artifact
-    let onArtifactView: (Artifact) -> Void
-    /// Called when user wants to download an artifact
-    let onArtifactDownload: (Artifact) -> Void
+    let onArtifactView: (SharedArtifact) -> Void
+    /// Called when user wants to open an artifact in Finder
+    let onArtifactOpen: (SharedArtifact) -> Void
     /// Called when user wants to undo a file operation
     let onUndoOperation: (UUID) -> Void
     /// Called when user wants to undo all file operations
@@ -67,7 +67,7 @@ struct IssueTrackerPanel: View {
 
                         if let artifact = finalArtifact { resultSection(artifact: artifact) }
 
-                        let additionalArtifacts = artifacts.filter { !$0.isFinalResult }
+                        let additionalArtifacts = sharedArtifacts.filter { !$0.isFinalResult }
                         if !additionalArtifacts.isEmpty { artifactsSection(artifacts: additionalArtifacts) }
 
                         if !fileOperations.isEmpty { changedFilesSection }
@@ -136,7 +136,7 @@ struct IssueTrackerPanel: View {
             .padding(.vertical, 12)
     }
 
-    private func resultSection(artifact: Artifact) -> some View {
+    private func resultSection(artifact: SharedArtifact) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionDivider
 
@@ -158,15 +158,15 @@ struct IssueTrackerPanel: View {
                     .buttonStyle(.plain).help("View artifact")
 
                     Button {
-                        onArtifactDownload(artifact)
+                        onArtifactOpen(artifact)
                     } label: {
-                        Image(systemName: "arrow.down.circle")
+                        Image(systemName: "folder")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.secondaryText)
                             .frame(width: 24, height: 24)
                             .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.5)))
                     }
-                    .buttonStyle(.plain).help("Download artifact")
+                    .buttonStyle(.plain).help("Reveal in Finder")
                 }
             }
             .padding(.horizontal, 12)
@@ -178,7 +178,7 @@ struct IssueTrackerPanel: View {
         }
     }
 
-    private func artifactsSection(artifacts: [Artifact]) -> some View {
+    private func artifactsSection(artifacts: [SharedArtifact]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionDivider
 
@@ -195,7 +195,7 @@ struct IssueTrackerPanel: View {
                     ArtifactRow(
                         artifact: artifact,
                         onView: { onArtifactView(artifact) },
-                        onDownload: { onArtifactDownload(artifact) }
+                        onOpen: { onArtifactOpen(artifact) }
                     )
                 }
             }
@@ -583,52 +583,62 @@ private struct IssueRow: View {
 // MARK: - Artifact Preview Card
 
 private struct ArtifactPreviewCard: View {
-    let artifact: Artifact
+    let artifact: SharedArtifact
     let onView: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var isHovered = false
-
-    /// Preview of content (first few lines)
-    private var contentPreview: String {
-        let lines = artifact.content.components(separatedBy: .newlines)
-        let previewLines = lines.prefix(6)
-        let preview = previewLines.joined(separator: "\n")
-        if lines.count > 6 {
-            return preview + "\n..."
-        }
-        return preview
-    }
 
     var body: some View {
         Button {
             onView()
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                // Filename badge
                 HStack(spacing: 4) {
-                    Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+                    Image(systemName: artifactIconName)
                         .font(.system(size: 9))
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(artifactIconColor)
 
                     Text(artifact.filename)
                         .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(artifactIconColor)
                 }
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(
                     Capsule()
-                        .fill(theme.accentColor.opacity(0.1))
+                        .fill(artifactIconColor.opacity(0.1))
                 )
 
-                // Content preview - plain text
-                Text(contentPreview)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(6)
-                    .lineSpacing(2)
+                if artifact.isImage, !artifact.hostPath.isEmpty,
+                    let nsImage = NSImage(contentsOf: URL(fileURLWithPath: artifact.hostPath))
+                {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxHeight: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                } else if artifact.isText, let content = artifact.content, !content.isEmpty {
+                    let lines = content.components(separatedBy: .newlines)
+                    let preview = lines.prefix(6).joined(separator: "\n") + (lines.count > 6 ? "\n..." : "")
+                    Text(preview)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(6)
+                        .lineSpacing(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: artifactIconName)
+                            .font(.system(size: 14))
+                            .foregroundColor(theme.tertiaryText)
+                        Text(formatPreviewSize(artifact.fileSize))
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
+                }
             }
             .padding(10)
             .background(
@@ -643,29 +653,69 @@ private struct ArtifactPreviewCard: View {
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
     }
+
+    private var artifactIconName: String {
+        if artifact.isDirectory { return "folder.fill" }
+        if artifact.isImage { return "photo" }
+        if artifact.isAudio { return "waveform" }
+        if artifact.isHTML { return "globe" }
+        if artifact.mimeType == "text/markdown" { return "doc.richtext" }
+        if artifact.isText { return "doc.text" }
+        return "doc"
+    }
+
+    private var artifactIconColor: Color {
+        if artifact.isImage { return .purple }
+        if artifact.isAudio { return .orange }
+        if artifact.isHTML { return .blue }
+        if artifact.isDirectory { return .cyan }
+        return theme.accentColor
+    }
+
+    private func formatPreviewSize(_ bytes: Int) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
+        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
+    }
 }
 
 // MARK: - Artifact Row
 
 private struct ArtifactRow: View {
-    let artifact: Artifact
+    let artifact: SharedArtifact
     let onView: () -> Void
-    let onDownload: () -> Void
+    let onOpen: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var isHovered = false
+
+    private var rowIconName: String {
+        if artifact.isDirectory { return "folder.fill" }
+        if artifact.isImage { return "photo" }
+        if artifact.isAudio { return "waveform" }
+        if artifact.isHTML { return "globe" }
+        if artifact.mimeType == "text/markdown" { return "doc.richtext" }
+        if artifact.isText { return "doc.text" }
+        return "doc"
+    }
+
+    private var rowIconColor: Color {
+        if artifact.isImage { return .purple }
+        if artifact.isAudio { return .orange }
+        if artifact.isHTML { return .blue }
+        if artifact.isDirectory { return .cyan }
+        return theme.secondaryText
+    }
 
     var body: some View {
         Button {
             onView()
         } label: {
             HStack(spacing: 8) {
-                // File icon
-                Image(systemName: artifact.contentType == .markdown ? "doc.richtext" : "doc.text")
+                Image(systemName: rowIconName)
                     .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(rowIconColor)
 
-                // Filename
                 Text(artifact.filename)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.primaryText)
@@ -673,8 +723,6 @@ private struct ArtifactRow: View {
 
                 Spacer()
 
-                // Action buttons - always rendered, opacity controlled by hover
-                // This prevents layout jiggle when hovering
                 HStack(spacing: 4) {
                     Button(action: onView) {
                         Image(systemName: "eye")
@@ -687,8 +735,8 @@ private struct ArtifactRow: View {
                     .buttonStyle(.plain)
                     .help("View")
 
-                    Button(action: onDownload) {
-                        Image(systemName: "arrow.down")
+                    Button(action: onOpen) {
+                        Image(systemName: "folder")
                             .font(.system(size: 9))
                             .foregroundColor(theme.secondaryText)
                             .frame(width: 20, height: 20)
@@ -696,7 +744,7 @@ private struct ArtifactRow: View {
                             .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
-                    .help("Download")
+                    .help("Reveal in Finder")
                 }
                 .opacity(isHovered ? 1 : 0)
                 .animation(.easeOut(duration: 0.15), value: isHovered)

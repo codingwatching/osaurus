@@ -19,7 +19,7 @@ public enum WorkActivityEvent: Equatable, Sendable {
     case toolExecuted(name: String)
     case needsClarification
     case retrying(attempt: Int, waitSeconds: Int)
-    case generatedArtifact(filename: String, isFinal: Bool)
+    case sharedArtifact(filename: String, isFinal: Bool)
     case completedIssue(success: Bool)
 }
 
@@ -209,11 +209,13 @@ public final class WorkSession: ObservableObject {
             }
         }
 
-        // Include final artifact if available
-        if let artifact = try? IssueStore.getFinalArtifact(forTask: taskId) {
-            let content =
-                artifact.content.count > 2000 ? String(artifact.content.prefix(2000)) + "..." : artifact.content
-            parts.append("[Artifact - \(artifact.filename)]:\n\(content)")
+        // Include final shared artifact if available
+        if let artifacts = try? IssueStore.listSharedArtifacts(contextId: taskId),
+            let final = artifacts.last(where: { $0.isFinalResult }),
+            let content = final.content
+        {
+            let truncated = content.count > 2000 ? String(content.prefix(2000)) + "..." : content
+            parts.append("[Artifact - \(final.filename)]:\n\(truncated)")
         }
 
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
@@ -266,11 +268,11 @@ public final class WorkSession: ObservableObject {
 
     // MARK: - Artifact State
 
-    /// All artifacts generated during execution
-    @Published public var artifacts: [Artifact] = []
+    /// All shared artifacts generated during execution
+    @Published public var sharedArtifacts: [SharedArtifact] = []
 
     /// The final completion artifact (from complete_task)
-    @Published public var finalArtifact: Artifact?
+    @Published public var finalArtifact: SharedArtifact?
 
     // MARK: - Input State
 
@@ -493,6 +495,7 @@ public final class WorkSession: ObservableObject {
 
             // Set self as delegate on WorkEngine to receive updates
             engine.setDelegate(self)
+            engine.sandboxAgentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
 
             // Refresh window state's task list now that database is ready
             windowState?.refreshWorkTasks()
@@ -585,8 +588,7 @@ public final class WorkSession: ObservableObject {
         let task = try await IssueManager.shared.createTask(query: query, agentId: agentId)
         currentTask = task
 
-        // Clear artifacts for new task
-        artifacts = []
+        sharedArtifacts = []
         finalArtifact = nil
 
         // Reset cumulative token usage for new task
@@ -632,8 +634,7 @@ public final class WorkSession: ObservableObject {
         currentTask = task
         await IssueManager.shared.setActiveTask(task)
 
-        // Load artifacts for the task
-        loadArtifacts(forTask: task.id)
+        loadSharedArtifacts(forTask: task.id)
 
         // Reset cumulative tokens when switching tasks (usage isn't persisted)
         cumulativeInputTokens = 0
@@ -878,7 +879,7 @@ public final class WorkSession: ObservableObject {
         }
 
         if let artifact = result.artifact {
-            addArtifact(artifact, isFinal: true)
+            addSharedArtifact(artifact, isFinal: true)
         }
 
         Task { [weak self] in
@@ -984,7 +985,7 @@ public final class WorkSession: ObservableObject {
         activeIssue = nil
         clearSelection()
         clearTurns()
-        artifacts = []
+        sharedArtifacts = []
         finalArtifact = nil
         clearQueuedMessage()
         isExecuting = false
@@ -1012,10 +1013,10 @@ public final class WorkSession: ObservableObject {
         return true  // Unknown errors might be retriable
     }
 
-    /// Adds an artifact to the collection
-    private func addArtifact(_ artifact: Artifact, isFinal: Bool) {
-        if !artifacts.contains(where: { $0.id == artifact.id }) {
-            artifacts.append(artifact)
+    /// Adds a shared artifact to the collection
+    private func addSharedArtifact(_ artifact: SharedArtifact, isFinal: Bool) {
+        if !sharedArtifacts.contains(where: { $0.id == artifact.id }) {
+            sharedArtifacts.append(artifact)
         }
         if isFinal {
             finalArtifact = artifact
@@ -1172,15 +1173,15 @@ public final class WorkSession: ObservableObject {
         }
     }
 
-    /// Loads artifacts from the database for a task
-    private func loadArtifacts(forTask taskId: String) {
+    /// Loads shared artifacts from the database for a task
+    private func loadSharedArtifacts(forTask taskId: String) {
         do {
-            artifacts = try IssueStore.listArtifacts(forTask: taskId)
-            finalArtifact = try IssueStore.getFinalArtifact(forTask: taskId)
+            sharedArtifacts = try IssueStore.listSharedArtifacts(contextId: taskId)
+            finalArtifact = sharedArtifacts.last(where: { $0.isFinalResult })
         } catch {
-            artifacts = []
+            sharedArtifacts = []
             finalArtifact = nil
-            print("[WorkSession] Failed to load artifacts: \(error)")
+            print("[WorkSession] Failed to load shared artifacts: \(error)")
         }
     }
 
@@ -1375,18 +1376,18 @@ extension WorkSession: WorkEngineDelegate {
         streamingOutputSubject.send(streamingContent)
     }
 
-    public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {
+    public func workEngine(_ engine: WorkEngine, didShareArtifact artifact: SharedArtifact, forIssue issue: Issue) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            if !artifacts.contains(where: { $0.id == artifact.id }) {
-                artifacts.append(artifact)
+            if !sharedArtifacts.contains(where: { $0.id == artifact.id }) {
+                sharedArtifacts.append(artifact)
             }
             if artifact.isFinalResult {
                 finalArtifact = artifact
             }
         }
 
-        emitActivity(.generatedArtifact(filename: artifact.filename, isFinal: artifact.isFinalResult))
+        emitActivity(.sharedArtifact(filename: artifact.filename, isFinal: artifact.isFinalResult))
     }
 
     public func workEngine(_ engine: WorkEngine, didCompleteIssue issue: Issue, success: Bool) {

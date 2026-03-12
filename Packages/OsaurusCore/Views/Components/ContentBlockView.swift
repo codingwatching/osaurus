@@ -180,6 +180,12 @@ struct ContentBlockView: View, Equatable {
                 .padding(.bottom, 16)
             }
 
+        case let .sharedArtifact(artifact):
+            ArtifactCardView(artifact: artifact)
+                .frame(maxWidth: min(width, 420))
+                .padding(.top, 6)
+                .padding(.bottom, isLastInTurn ? 16 : 6)
+
         case .typingIndicator:
             TypingIndicator()
                 .frame(maxWidth: .infinity, alignment: .leading)

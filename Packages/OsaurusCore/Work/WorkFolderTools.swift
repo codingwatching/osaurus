@@ -1268,6 +1268,7 @@ enum WorkFolderToolFactory {
             WorkFileCopyTool(rootPath: rootPath),
             WorkFileDeleteTool(rootPath: rootPath),
             WorkDirCreateTool(rootPath: rootPath),
+            ShareArtifactTool(),
             WorkFileMetadataTool(rootPath: rootPath),
             WorkBatchTool(rootPath: rootPath),
         ]
@@ -1295,7 +1296,7 @@ enum WorkFolderToolFactory {
             // Core
             "file_tree", "file_read", "file_write", "file_move",
             "file_copy", "file_delete", "dir_create", "file_metadata",
-            "batch",
+            "batch", "share_artifact",
             // Coding
             "file_edit", "file_search", "shell_run",
             // Git

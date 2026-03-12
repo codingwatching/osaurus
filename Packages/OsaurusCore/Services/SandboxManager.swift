@@ -150,7 +150,6 @@
                     await setProvisioningPhase("Creating container...")
 
                     let workspace = OsaurusPaths.containerWorkspace().path
-                    let output = OsaurusPaths.containerOutputDir().path
                     let bridgeSocketPath = Self.bridgeSocketPath
                     let guestBridgeSocketPath = Self.guestBridgeSocketPath
 
@@ -182,9 +181,6 @@
 
                         let workspaceMount = Containerization.Mount.share(source: workspace, destination: "/workspace")
                         cfg.mounts.append(workspaceMount)
-
-                        let outputMount = Containerization.Mount.share(source: output, destination: "/output")
-                        cfg.mounts.append(outputMount)
                     }
 
                     await setProvisioningPhase("Starting container...")
@@ -717,7 +713,6 @@
             try OsaurusPaths.ensureExists(OsaurusPaths.containerWorkspace())
             try OsaurusPaths.ensureExists(OsaurusPaths.containerAgentsDir())
             try OsaurusPaths.ensureExists(OsaurusPaths.containerSharedDir())
-            try OsaurusPaths.ensureExists(OsaurusPaths.containerOutputDir())
         }
 
         private func configureSandbox() async throws {
