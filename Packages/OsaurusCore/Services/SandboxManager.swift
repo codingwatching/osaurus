@@ -121,11 +121,12 @@
 
             do {
                 let config = SandboxConfigurationStore.load()
+                let isRestart = hasRequiredAssets
 
                 let kernel = try await ensureKernel()
                 let initfs = try await ensureInitFS()
 
-                await setProvisioningPhase("Pulling Alpine image...")
+                await setProvisioningPhase(isRestart ? "Preparing sandbox..." : "Pulling Alpine image...")
                 try ensureHostDirectories()
 
                 // Clean up stale container state from a previous crash
@@ -135,9 +136,7 @@
                 }
 
                 if #available(macOS 26, *) {
-                    // Start the host API bridge server on a Unix socket before
-                    // creating the container so the vsock relay can find it.
-                    await setProvisioningPhase("Starting host API bridge...")
+                    await setProvisioningPhase(isRestart ? "Starting sandbox..." : "Starting host API bridge...")
                     try await HostAPIBridgeServer.shared.start(socketPath: Self.bridgeSocketPath)
 
                     // NAT networking -- no vmnet entitlement required
@@ -147,7 +146,7 @@
                         root: OsaurusPaths.container()
                     )
 
-                    await setProvisioningPhase("Creating container...")
+                    await setProvisioningPhase(isRestart ? "Booting container..." : "Creating container...")
 
                     let workspace = OsaurusPaths.containerWorkspace().path
                     let bridgeSocketPath = Self.bridgeSocketPath
@@ -191,7 +190,7 @@
                     self.linuxContainer = container
                 }
 
-                await setProvisioningPhase("Configuring sandbox...")
+                await setProvisioningPhase(isRestart ? "Finishing up..." : "Configuring sandbox...")
                 try await configureSandbox()
 
                 _status = .running
@@ -213,16 +212,16 @@
 
             let current = refreshStatus()
             switch current {
-            case .running:
-                return
-            case .stopped, .notProvisioned:
-                try await provision()
-            case .starting:
+            case .running, .starting:
                 return
             case .error:
                 try? FileManager.default.removeItem(at: staleContainerDir)
                 linuxContainer = nil
                 containerManager = nil
+                fallthrough
+            case .stopped, .notProvisioned:
+                _status = .starting
+                syncStatus()
                 try await provision()
             }
         }
