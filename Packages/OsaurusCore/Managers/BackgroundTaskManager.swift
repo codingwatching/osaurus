@@ -373,10 +373,12 @@ public final class BackgroundTaskManager: ObservableObject {
         resumeCompletion(for: state.id, result: resultFromState(state))
 
         let eventType: TaskEventType = success ? .completed : .failed
+        let artifacts = state.executionContext?.workSession?.sharedArtifacts ?? []
         let json = PluginHostContext.serializeCompletedEvent(
             success: success,
             summary: summary,
-            sessionId: state.executionContext?.id
+            sessionId: state.executionContext?.id,
+            artifacts: artifacts
         )
         emitPluginEvent(state, type: eventType, json: json)
         lastProgressEmit.removeValue(forKey: state.id)
@@ -653,8 +655,8 @@ public final class BackgroundTaskManager: ObservableObject {
             emitTitle = "Retrying"
             emitDetail = detail
 
-        case .generatedArtifact(let filename, let isFinal):
-            let title = isFinal ? "Final artifact" : "Artifact"
+        case .sharedArtifact(let filename, let isFinal):
+            let title = isFinal ? "Final artifact" : "Shared artifact"
             state.appendActivity(kind: .info, title: title, detail: filename)
             emitKind = .info
             emitTitle = title

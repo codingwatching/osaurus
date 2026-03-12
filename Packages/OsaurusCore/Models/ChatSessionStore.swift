@@ -88,9 +88,10 @@ enum ChatSessionStore {
         }
     }
 
-    /// Delete a session by ID
+    /// Delete a session by ID, including any shared artifacts
     static func delete(id: UUID) {
         try? FileManager.default.removeItem(at: sessionFileURL(for: id))
+        try? IssueStore.deleteSharedArtifacts(contextId: id.uuidString)
     }
 
     // MARK: - Private

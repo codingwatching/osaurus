@@ -30,6 +30,10 @@ public actor WorkEngine {
     /// Retry configuration
     private var retryConfig = RetryConfiguration.default
 
+    /// Sandbox agent name for path resolution in share_artifact processing.
+    /// Set by WorkSession before execution when running in sandbox mode.
+    public nonisolated(unsafe) var sandboxAgentName: String?
+
     /// Delegate for execution events
     public nonisolated(unsafe) weak var delegate: WorkEngineDelegate?
 
@@ -452,6 +456,8 @@ public actor WorkEngine {
                 contextLength: resolvedContextLength,
                 toolTokenEstimate: toolTokenEstimate,
                 maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
+                executionMode: resolvedExecutionMode,
+                sandboxAgentName: sandboxAgentName,
                 shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
                 onIterationStart: { [weak self] iteration in
                     guard let self = self else { return }
@@ -477,7 +483,6 @@ public actor WorkEngine {
                 },
                 onArtifact: { [weak self] artifact in
                     guard let self = self else { return }
-                    _ = try? IssueStore.createArtifact(artifact)
                     _ = try? IssueStore.createEvent(
                         IssueEvent.withPayload(
                             issueId: issue.id,
@@ -485,11 +490,11 @@ public actor WorkEngine {
                             payload: EventPayload.ArtifactGenerated(
                                 artifactId: artifact.id,
                                 filename: artifact.filename,
-                                contentType: artifact.contentType.rawValue
+                                contentType: artifact.mimeType
                             )
                         )
                     )
-                    self.delegate?.workEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                    self.delegate?.workEngine(self, didShareArtifact: artifact, forIssue: issue)
                 },
                 onTokensConsumed: { [weak self] inputTokens, outputTokens in
                     guard let self = self else { return }
@@ -517,12 +522,8 @@ public actor WorkEngine {
             // Close the issue with success
             _ = await IssueManager.shared.closeIssueSafe(issue.id, result: summary)
 
-            // Save artifact if present
             let finalArtifact = artifact
             if let artifact = artifact {
-                _ = try? IssueStore.createArtifact(artifact)
-
-                // Log artifact event
                 _ = try? IssueStore.createEvent(
                     IssueEvent.withPayload(
                         issueId: issue.id,
@@ -530,12 +531,12 @@ public actor WorkEngine {
                         payload: EventPayload.ArtifactGenerated(
                             artifactId: artifact.id,
                             filename: artifact.filename,
-                            contentType: artifact.contentType.rawValue
+                            contentType: artifact.mimeType
                         )
                     )
                 )
 
-                await delegate?.workEngine(self, didGenerateArtifact: artifact, forIssue: issue)
+                await delegate?.workEngine(self, didShareArtifact: artifact, forIssue: issue)
             }
 
             // Log execution completed
@@ -964,7 +965,7 @@ public protocol WorkEngineDelegate: AnyObject {
     func workEngine(_ engine: WorkEngine, didExhaustBudget issue: Issue, summary: String)
 
     // Artifacts
-    func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didShareArtifact artifact: SharedArtifact, forIssue issue: Issue)
 
     // Token consumption
     func workEngine(_ engine: WorkEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue)
@@ -1002,7 +1003,7 @@ extension WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didExhaustBudget issue: Issue, summary: String) {}
 
     // Artifacts
-    public func workEngine(_ engine: WorkEngine, didGenerateArtifact artifact: Artifact, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didShareArtifact artifact: SharedArtifact, forIssue issue: Issue) {}
 
     // Token consumption
     public func workEngine(_ engine: WorkEngine, didConsumeTokens input: Int, output: Int, forIssue issue: Issue) {}

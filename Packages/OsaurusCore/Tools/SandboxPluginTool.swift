@@ -46,8 +46,6 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
 
         let env = buildEnvVars(from: argumentsJSON)
 
-        let outputBefore = await listOutputFiles()
-
         let result = try await SandboxManager.shared.execAsAgent(
             agentName,
             command: runCommand,
@@ -58,14 +56,10 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
             logSource: pluginId
         )
 
-        let outputAfter = await listOutputFiles()
-        let newFiles = outputAfter.subtracting(outputBefore).sorted()
-
         return encodeResult(
             stdout: result.stdout,
             stderr: result.stderr,
-            exitCode: result.exitCode,
-            newFiles: newFiles
+            exitCode: result.exitCode
         )
     }
 
@@ -137,38 +131,18 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
         return .object(schema)
     }
 
-    // MARK: - Output Tracking
-
-    private func listOutputFiles() async -> Set<String> {
-        guard
-            let result = try? await SandboxManager.shared.execAsAgent(
-                agentName,
-                command: "find /output -type f 2>/dev/null"
-            ), result.succeeded
-        else {
-            return []
-        }
-        return Set(
-            result.stdout.split(separator: "\n").map(String.init)
-        )
-    }
-
     // MARK: - Result Encoding
 
     private func encodeResult(
         stdout: String,
         stderr: String,
-        exitCode: Int32,
-        newFiles: [String] = []
+        exitCode: Int32
     ) -> String {
-        var dict: [String: Any] = [
+        let dict: [String: Any] = [
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": Int(exitCode),
         ]
-        if !newFiles.isEmpty {
-            dict["new_files"] = newFiles
-        }
         guard let data = try? JSONSerialization.data(withJSONObject: dict),
             let json = String(data: data, encoding: .utf8)
         else {

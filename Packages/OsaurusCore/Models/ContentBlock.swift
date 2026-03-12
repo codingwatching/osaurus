@@ -32,6 +32,7 @@ enum ContentBlockKind: Equatable {
     case toolCallGroup(calls: [ToolCallItem])
     case thinking(index: Int, text: String, isStreaming: Bool)
     case userMessage(text: String, attachments: [Attachment])
+    case sharedArtifact(artifact: SharedArtifact)
     case typingIndicator
     case groupSpacer
 
@@ -63,6 +64,9 @@ enum ContentBlockKind: Equatable {
             guard lAttach.count == rAttach.count else { return false }
             return lText == rText && lAttach == rAttach
 
+        case let (.sharedArtifact(lArt), .sharedArtifact(rArt)):
+            return lArt == rArt
+
         case (.typingIndicator, .typingIndicator):
             return true
 
@@ -88,7 +92,7 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .typingIndicator, .groupSpacer:
+        case .toolCallGroup, .thinking, .sharedArtifact, .typingIndicator, .groupSpacer:
             return .assistant
         case .userMessage: return .user
         }
@@ -175,6 +179,15 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
 
     static func typingIndicator(turnId: UUID, position: BlockPosition) -> ContentBlock {
         ContentBlock(id: "typing-\(turnId.uuidString)", turnId: turnId, kind: .typingIndicator, position: position)
+    }
+
+    static func sharedArtifact(turnId: UUID, artifact: SharedArtifact, position: BlockPosition) -> ContentBlock {
+        ContentBlock(
+            id: "artifact-\(turnId.uuidString)-\(artifact.id)",
+            turnId: turnId,
+            kind: .sharedArtifact(artifact: artifact),
+            position: position
+        )
     }
 
     static func groupSpacer(afterTurnId: UUID, associatedWithTurnId: UUID? = nil) -> ContentBlock {
@@ -266,12 +279,26 @@ extension ContentBlock {
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
-            // Emit tool calls inline per turn to preserve chronological order.
-            // Multiple tool calls within a single turn (parallel calls) are still
-            // grouped together, but tool calls from different turns are not merged.
             if let toolCalls = turn.toolCalls, !toolCalls.isEmpty {
-                let items = toolCalls.map { ToolCallItem(call: $0, result: turn.toolResults[$0.id]) }
-                turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: items, position: .middle))
+                var regularItems: [ToolCallItem] = []
+                for call in toolCalls {
+                    let result = turn.toolResults[call.id]
+                    if call.function.name == "share_artifact",
+                        let result,
+                        let artifact = Self.parseSharedArtifactFromResult(result)
+                    {
+                        if !regularItems.isEmpty {
+                            turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
+                            regularItems = []
+                        }
+                        turnBlocks.append(.sharedArtifact(turnId: turn.id, artifact: artifact, position: .middle))
+                    } else {
+                        regularItems.append(ToolCallItem(call: call, result: result))
+                    }
+                }
+                if !regularItems.isEmpty {
+                    turnBlocks.append(.toolCallGroup(turnId: turn.id, calls: regularItems, position: .middle))
+                }
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
@@ -280,6 +307,11 @@ extension ContentBlock {
         }
 
         return blocks
+    }
+
+    /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
+    private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
+        SharedArtifact.fromEnrichedToolResult(result)
     }
 
     private static func assignPositions(to blocks: [ContentBlock]) -> [ContentBlock] {

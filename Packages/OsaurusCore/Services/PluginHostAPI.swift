@@ -1189,10 +1189,34 @@ extension PluginHostContext {
     }
 
     @MainActor
-    static func serializeCompletedEvent(success: Bool, summary: String, sessionId: UUID?) -> String {
+    static func serializeCompletedEvent(
+        success: Bool,
+        summary: String,
+        sessionId: UUID?,
+        artifacts: [SharedArtifact] = []
+    ) -> String {
         var dict: [String: Any] = ["success": success, "summary": summary]
         if let sid = sessionId { dict["session_id"] = sid.uuidString }
+        if !artifacts.isEmpty {
+            dict["artifacts"] = artifacts.map { serializeArtifactDict($0) }
+        }
         return jsonString(dict)
+    }
+
+    static func serializeArtifactEvent(artifact: SharedArtifact) -> String {
+        return jsonString(serializeArtifactDict(artifact))
+    }
+
+    private static func serializeArtifactDict(_ artifact: SharedArtifact) -> [String: Any] {
+        var dict: [String: Any] = [
+            "filename": artifact.filename,
+            "mime_type": artifact.mimeType,
+            "size": artifact.fileSize,
+            "host_path": artifact.hostPath,
+            "is_directory": artifact.isDirectory,
+        ]
+        if let desc = artifact.description { dict["description"] = desc }
+        return dict
     }
 
     static func serializeCancelledEvent() -> String {

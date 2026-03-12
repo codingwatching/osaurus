@@ -13,7 +13,7 @@ import Foundation
 public struct CompleteTaskTool: OsaurusTool {
     public let name = "complete_task"
     public let description =
-        "Mark the current task as complete with a summary of the verified result. Optional artifact content may be included when it adds value."
+        "Mark the current task as complete with a summary of the verified result. IMPORTANT: Call share_artifact for any generated files BEFORE calling this tool."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -66,7 +66,6 @@ public struct CompleteTaskTool: OsaurusTool {
 
         let remainingWork = json["remaining_work"] as? String
 
-        // Build result with artifact content encoded for parsing by WorkEngine
         var result = """
             Task completion reported:
             - Status: \(success ? "SUCCESS" : "PARTIAL")
@@ -81,89 +80,142 @@ public struct CompleteTaskTool: OsaurusTool {
             result += "\n- Remaining work: \(remaining)"
         }
 
-        // Append artifact in a structured format for extraction
-        if let artifact, !artifact.isEmpty {
-            result += "\n\n---ARTIFACT_START---\n\(artifact)\n---ARTIFACT_END---"
-        }
-
         return result
     }
 }
 
-// MARK: - Generate Artifact Tool
+// MARK: - Share Artifact Tool
 
-/// Tool for generating downloadable artifacts during execution
-public struct GenerateArtifactTool: OsaurusTool {
-    public let name = "generate_artifact"
+/// Unified tool for sharing files or inline content with the user.
+/// Supports any file type, directories, and inline text content.
+public struct ShareArtifactTool: OsaurusTool {
+    public let name = "share_artifact"
     public let description =
-        "Generate a downloadable artifact file with markdown or text content. Use this to create reports, documentation, code snippets, or any other content the user might want to save."
+        "Share a file, directory, or text content with the user. The user cannot see any files you create unless you call this tool. Always call this for generated images, charts, websites, reports, code output, etc."
 
     public let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
-            "filename": .object([
+            "path": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Name for the artifact file with extension (e.g., 'report.md', 'summary.txt', 'analysis.md')"
+                    "Relative path to a file or directory to share. Resolved relative to your working directory."
                 ),
             ]),
             "content": .object([
                 "type": .string("string"),
-                "description": .string("The content of the artifact in markdown or plain text format"),
+                "description": .string(
+                    "Inline text or markdown content to share directly. Use this when you want to share generated text without writing to a file first."
+                ),
+            ]),
+            "filename": .object([
+                "type": .string("string"),
+                "description": .string(
+                    "Filename for the artifact. Required when using 'content'. Optional with 'path' (defaults to the file/directory name)."
+                ),
+            ]),
+            "description": .object([
+                "type": .string("string"),
+                "description": .string("Brief human-readable description of what this artifact is."),
             ]),
         ]),
-        "required": .array([.string("filename"), .string("content")]),
+        "required": .array([]),
     ])
 
     public init() {}
 
     public func execute(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
         guard let data = argumentsJSON.data(using: .utf8),
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let filename = json["filename"] as? String,
-            let rawContent = json["content"] as? String
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             throw NSError(
                 domain: "WorkTools",
                 code: 4,
                 userInfo: [
-                    NSLocalizedDescriptionKey: "Invalid artifact format. Required: filename (string), content (string)"
+                    NSLocalizedDescriptionKey:
+                        "Invalid arguments. Provide at least one of: path (string), content (string)"
                 ]
             )
         }
 
-        // Unescape literal \n and \t sequences that models sometimes send
-        let content =
-            rawContent
-            .replacingOccurrences(of: "\\n", with: "\n")
-            .replacingOccurrences(of: "\\t", with: "\t")
+        let path = json["path"] as? String
+        let rawContent = json["content"] as? String
+        let filename = json["filename"] as? String
+        let description = json["description"] as? String
 
-        // Validate filename
-        let trimmedFilename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedFilename.isEmpty else {
+        guard path != nil || rawContent != nil else {
             throw NSError(
                 domain: "WorkTools",
                 code: 4,
-                userInfo: [NSLocalizedDescriptionKey: "Filename cannot be empty"]
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "At least one of 'path' or 'content' must be provided."
+                ]
             )
         }
 
-        // Determine content type from extension
-        let contentType = Artifact.contentType(from: trimmedFilename)
+        if rawContent != nil {
+            guard let fn = filename, !fn.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw NSError(
+                    domain: "WorkTools",
+                    code: 4,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "'filename' is required when using 'content' mode."
+                    ]
+                )
+            }
+        }
 
-        // Return structured result for extraction by WorkEngine
-        return """
-            Artifact generated:
-            - Filename: \(trimmedFilename)
-            - Content Type: \(contentType.rawValue)
-            - Size: \(content.count) characters
+        let content = rawContent?
+            .replacingOccurrences(of: "\\n", with: "\n")
+            .replacingOccurrences(of: "\\t", with: "\t")
 
-            ---GENERATED_ARTIFACT_START---
-            {"filename": "\(trimmedFilename)", "content_type": "\(contentType.rawValue)"}
-            \(content)
-            ---GENERATED_ARTIFACT_END---
+        let resolvedFilename: String
+        if let filename, !filename.isEmpty {
+            resolvedFilename = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let path {
+            resolvedFilename = (path as NSString).lastPathComponent
+        } else {
+            resolvedFilename = "artifact.txt"
+        }
+
+        let mimeType = SharedArtifact.mimeType(from: resolvedFilename)
+
+        var metadataDict: [String: Any] = [
+            "filename": resolvedFilename,
+            "mime_type": mimeType,
+        ]
+        if let path { metadataDict["path"] = path }
+        if content != nil { metadataDict["has_content"] = true }
+        if let description { metadataDict["description"] = description }
+
+        let metadataJSON: String
+        if let jsonData = try? JSONSerialization.data(withJSONObject: metadataDict),
+            let jsonStr = String(data: jsonData, encoding: .utf8)
+        {
+            metadataJSON = jsonStr
+        } else {
+            metadataJSON = "{}"
+        }
+
+        var result = """
+            Artifact shared:
+            - Filename: \(resolvedFilename)
+            - Type: \(mimeType)
             """
+        if let description {
+            result += "\n- Description: \(description)"
+        }
+
+        result += "\n\n---SHARED_ARTIFACT_START---\n"
+        result += metadataJSON + "\n"
+        if let content {
+            result += content + "\n"
+        }
+        result += "---SHARED_ARTIFACT_END---"
+
+        return result
     }
 }
 
@@ -377,7 +429,6 @@ public final class WorkToolManager {
     /// Note: SubmitPlanTool and ReportDiscoveryTool removed - no longer used with reasoning loop architecture
     private lazy var tools: [OsaurusTool] = [
         CompleteTaskTool(),
-        GenerateArtifactTool(),
         CreateIssueTool(),
         RequestClarificationTool(),
     ]

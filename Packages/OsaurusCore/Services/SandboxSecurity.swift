@@ -122,7 +122,6 @@ public enum SandboxPathSanitizer {
             let allowedPrefixes = [
                 agentHome,
                 "/workspace/shared",
-                "/output",
             ]
             guard allowedPrefixes.contains(where: { path.hasPrefix($0) }) else { return nil }
             return path
