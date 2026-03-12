@@ -18,9 +18,12 @@ import SwiftUI
 struct ArtifactCardView: View {
     let artifact: SharedArtifact
 
+    private static let thumbnailHeight: CGFloat = 160
+
     @Environment(\.theme) private var theme
     @State private var isHovered = false
     @State private var showGlow = false
+    @State private var loadedImage: NSImage?
     @State private var pdfThumbnail: NSImage?
     @State private var pdfPageCount: Int?
     @State private var videoThumbnail: NSImage?
@@ -46,8 +49,9 @@ struct ArtifactCardView: View {
                 )
         )
         .shadow(color: showGlow ? theme.accentColor.opacity(0.12) : .clear, radius: 6, y: 2)
-        .onHover { isHovered = $0 }
-        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+        }
         .onAppear {
             showGlow = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
@@ -137,44 +141,15 @@ struct ArtifactCardView: View {
     }
 
     private var imagePreview: some View {
-        Group {
-            if let nsImage = NSImage(contentsOf: URL(fileURLWithPath: artifact.hostPath)) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxHeight: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 0.5)
-                    )
+        thumbnailContainer(thumbnail: loadedImage)
+            .task(id: artifact.hostPath) {
+                loadedImage = NSImage(contentsOf: URL(fileURLWithPath: artifact.hostPath))
             }
-        }
     }
 
     private var pdfPreview: some View {
         ZStack(alignment: .bottomTrailing) {
-            Group {
-                if let thumb = pdfThumbnail {
-                    Image(nsImage: thumb)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 200)
-                } else {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                        .frame(height: 120)
-                        .overlay(
-                            ProgressView()
-                                .scaleEffect(0.6)
-                        )
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 0.5)
-            )
+            thumbnailContainer(thumbnail: pdfThumbnail)
 
             if let count = pdfPageCount {
                 Text("\(count) page\(count == 1 ? "" : "s")")
@@ -193,23 +168,7 @@ struct ArtifactCardView: View {
 
     private var videoPreview: some View {
         ZStack {
-            Group {
-                if let thumb = videoThumbnail {
-                    Image(nsImage: thumb)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxHeight: 200)
-                } else {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                        .frame(height: 120)
-                }
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 0.5)
-            )
+            thumbnailContainer(thumbnail: videoThumbnail)
 
             Image(systemName: "play.circle.fill")
                 .font(.system(size: 36))
@@ -221,6 +180,23 @@ struct ArtifactCardView: View {
         .task(id: artifact.hostPath) {
             await loadVideoThumbnail()
         }
+    }
+
+    private func thumbnailContainer(thumbnail: NSImage?) -> some View {
+        ZStack {
+            theme.tertiaryBackground.opacity(0.3)
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+            }
+        }
+        .frame(height: Self.thumbnailHeight)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 0.5)
+        )
     }
 
     private var audioPreview: some View {
@@ -318,7 +294,6 @@ struct ArtifactCardView: View {
         }
         .padding(.top, 8)
         .opacity(isHovered ? 1 : 0.6)
-        .animation(.easeOut(duration: 0.15), value: isHovered)
     }
 
     private func actionButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
