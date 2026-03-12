@@ -127,6 +127,8 @@ private extension SandboxView {
             unavailableEmptyState
         } else if sandboxState.status == .notProvisioned {
             provisionEmptyState
+        } else if sandboxState.isProvisioning || sandboxState.status == .starting {
+            provisioningProgressView
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
@@ -399,6 +401,10 @@ private extension SandboxView {
             destructiveButton("Stop", action: performStop)
         case .stopped:
             accentButton("Start", action: performStart)
+        case .starting:
+            ProgressView()
+                .controlSize(.small)
+                .tint(theme.accentColor)
         default:
             EmptyView()
         }
