@@ -34,7 +34,7 @@
             OsaurusPaths.container().appendingPathComponent("bridge.sock").path
         }
         /// Where the bridge socket appears inside the guest container
-        private static let guestBridgeSocketPath = "/run/osaurus-bridge.sock"
+        private static let guestBridgeSocketPath = "/tmp/osaurus-bridge.sock"
 
         private var _status: ContainerStatus = .notProvisioned
         private var _availability: SandboxAvailability?
@@ -492,7 +492,7 @@
             results.append(
                 await diagnose("vsock-bridge") {
                     let r = try await exec(
-                        command: "curl -sf --unix-socket /run/osaurus-bridge.sock http://localhost/api/log "
+                        command: "curl -sf --unix-socket /tmp/osaurus-bridge.sock http://localhost/api/log "
                             + "-X POST -d '{\"level\":\"info\",\"message\":\"diag ping\"}'"
                     )
                     guard r.succeeded else {
@@ -734,7 +734,7 @@
             #!/bin/sh
             # osaurus-host — Host API bridge shim for sandbox plugins.
             # Translates CLI commands to HTTP calls over a vsock-relayed Unix socket.
-            SOCK="/run/osaurus-bridge.sock"
+            SOCK="/tmp/osaurus-bridge.sock"
             API="http://localhost/api"
             USER=$(whoami)
             PLUGIN="${OSAURUS_PLUGIN:-$(basename "$(pwd)")}"
