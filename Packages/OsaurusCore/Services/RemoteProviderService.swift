@@ -1918,13 +1918,14 @@ private struct RemoteChatRequest: Encodable {
         flushToolResults()
 
         // Convert tools
+        let emptySchema: JSONValue = .object(["type": .string("object"), "properties": .object([:])])
         var anthropicTools: [AnthropicTool]? = nil
         if let tools = tools {
             anthropicTools = tools.map { tool in
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters
+                    input_schema: tool.function.parameters ?? emptySchema
                 )
             }
         }
