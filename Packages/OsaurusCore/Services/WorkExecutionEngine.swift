@@ -262,6 +262,9 @@ public actor WorkExecutionEngine {
     /// Callback type for iteration start (iteration number)
     public typealias IterationStartCallback = @MainActor @Sendable (Int) async -> Void
 
+    /// Callback type for tool hint (pending tool name detected during streaming)
+    public typealias ToolHintCallback = @MainActor @Sendable (String) async -> Void
+
     /// Callback type for token consumption (inputTokens, outputTokens)
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
     public typealias InterruptCheckCallback = @Sendable () async -> Bool
@@ -310,6 +313,7 @@ public actor WorkExecutionEngine {
         shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
+        onToolHint: @escaping ToolHintCallback,
         onToolCall: @escaping ToolCallCallback,
         onStatusUpdate: @escaping StatusCallback,
         onArtifact: @escaping ArtifactCallback,
@@ -411,7 +415,10 @@ public actor WorkExecutionEngine {
             do {
                 let stream = try await chatEngine.streamChat(request: request)
                 for try await delta in stream {
-                    if StreamingToolHint.isSentinel(delta) { continue }
+                    if let toolName = StreamingToolHint.decode(delta) {
+                        await onToolHint(toolName)
+                        continue
+                    }
                     responseContent += delta
                     await onDelta(delta, iteration)
                 }

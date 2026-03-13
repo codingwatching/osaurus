@@ -417,6 +417,10 @@ public actor RemoteProviderService: ToolCapableService {
                                                             id: toolBlock.id, name: toolBlock.name, args: "",
                                                             thoughtSignature: nil
                                                         )
+                                                        print(
+                                                            "[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)"
+                                                        )
+                                                        continuation.yield(StreamingToolHint.encode(toolBlock.name))
                                                     }
                                                 }
                                             case "message_stop":

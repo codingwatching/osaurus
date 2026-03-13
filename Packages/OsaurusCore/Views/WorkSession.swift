@@ -1376,6 +1376,12 @@ extension WorkSession: WorkEngineDelegate {
         streamingOutputSubject.send(streamingContent)
     }
 
+    public func workEngine(_ engine: WorkEngine, didDetectPendingTool toolName: String, forIssue issue: Issue) {
+        let turn = lastAssistantTurn()
+        turn.pendingToolName = toolName
+        notifyIfSelected(issue.id)
+    }
+
     public func workEngine(_ engine: WorkEngine, didShareArtifact artifact: SharedArtifact, forIssue issue: Issue) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -1520,6 +1526,7 @@ extension WorkSession: WorkEngineDelegate {
         emitActivity(.toolExecuted(name: toolName))
 
         let assistantTurn = lastAssistantTurn()
+        assistantTurn.pendingToolName = nil
 
         // Clean up any leaked function-call JSON from the assistant turn's content
         // This handles cases where raw function call text was streamed before detection
