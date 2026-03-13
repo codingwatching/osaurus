@@ -33,7 +33,19 @@ struct MLXGenerationEngine {
                 prefillStep: runtime.prefillStep
             )
             let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: toolsSpec)
-            let fullLMInput = try await context.processor.prepare(input: fullInput)
+            let fullLMInput: LMInput
+            do {
+                fullLMInput = try await context.processor.prepare(input: fullInput)
+            } catch {
+                let detail =
+                    (error as? LocalizedError)?.errorDescription
+                    ?? String(describing: error)
+                throw NSError(
+                    domain: "MLXGenerationEngine",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+                )
+            }
 
             var contextWithEOS = context
             let existing = context.configuration.extraEOSTokens
