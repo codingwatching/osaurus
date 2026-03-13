@@ -635,7 +635,10 @@ public enum JSONValue: Codable, Sendable {
 // MARK: - JSONValue Conversions
 
 extension JSONValue {
-    /// Convert JSONValue to Sendable-compatible value (for MLXLMCommon.ToolSpec)
+    /// Convert JSONValue to Sendable-compatible value for Jinja chat templates.
+    /// Null values are dropped from dictionaries because Jinja's `Value(any:)` cannot
+    /// handle `NSNull` and throws a runtime error. JSON Schema treats a missing key
+    /// the same as `null`, so this is semantically lossless for tool specs.
     var sendableValue: any Sendable {
         switch self {
         case .null:
@@ -650,13 +653,35 @@ extension JSONValue {
             return arr.map { $0.sendableValue }
         case .object(let obj):
             var dict: [String: any Sendable] = [:]
-            for (k, v) in obj { dict[k] = v.sendableValue }
+            for (k, v) in obj {
+                if case .null = v { continue }
+                dict[k] = v.sendableValue
+            }
             return dict
         }
     }
 
-    /// Convert JSONValue to Foundation JSON-compatible Any (for JSONSerialization)
-    var anyValue: Any { sendableValue }
+    /// Convert JSONValue to Foundation JSON-compatible Any (for JSONSerialization).
+    /// Unlike `sendableValue`, this preserves null as `NSNull` in dictionaries
+    /// since `JSONSerialization` handles it correctly.
+    var anyValue: Any {
+        switch self {
+        case .null:
+            return NSNull()
+        case .bool(let b):
+            return b
+        case .number(let n):
+            return n
+        case .string(let s):
+            return s
+        case .array(let arr):
+            return arr.map { $0.anyValue }
+        case .object(let obj):
+            var dict: [String: Any] = [:]
+            for (k, v) in obj { dict[k] = v.anyValue }
+            return dict
+        }
+    }
 }
 
 extension ToolFunction {
