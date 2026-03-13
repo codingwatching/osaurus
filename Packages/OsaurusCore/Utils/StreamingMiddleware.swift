@@ -38,7 +38,7 @@ enum StreamingMiddlewareResolver {
 
         let needsPrependThink =
             (id.contains("glm") && id.contains("flash"))
-            || (id.contains("qwen") && id.contains("3.5") && hasParamSize(id, anyOf: "4b", "9b"))
+            || (id.contains("qwen") && id.contains("3.5") && hasParamSize(id, anyOf: "4b", "9b", "27b"))
 
         return needsPrependThink ? PrependThinkTagMiddleware() : nil
     }
