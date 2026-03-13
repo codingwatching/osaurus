@@ -20,6 +20,16 @@ extension SocketAddress {
     }
 }
 
+private final class SendableBool: @unchecked Sendable {
+    private var _value: Bool
+    private let _lock = NSLock()
+    init(_ value: Bool) { _value = value }
+    var value: Bool {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
 /// SwiftNIO HTTP request handler
 final class HTTPHandler: ChannelInboundHandler, Sendable {
     typealias InboundIn = HTTPServerRequestPart
@@ -28,6 +38,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let configuration: ServerConfiguration
     private let apiKeyValidator: APIKeyValidator
     private let chatEngine: ChatEngineProtocol
+    private let _isChannelActive = SendableBool(false)
     private final class RequestState {
         var requestHead: HTTPRequestHead?
         var requestBodyBuffer: ByteBuffer?
@@ -47,6 +58,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         self.apiKeyValidator = apiKeyValidator
         self.chatEngine = chatEngine
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
+    }
+
+    func channelActive(context: ChannelHandlerContext) {
+        _isChannelActive.value = true
+        context.fireChannelActive()
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        _isChannelActive.value = false
+        context.fireChannelInactive()
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -1363,9 +1384,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1480,9 +1499,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1553,9 +1570,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1690,9 +1705,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1759,9 +1772,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1821,9 +1832,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -1956,9 +1965,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2089,9 +2096,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let writerBound = NIOLoopBound(writer, eventLoop: loop)
             let ctx = NIOLoopBound(context, eventLoop: loop)
             let chatEngine = self.chatEngine
-            let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-                if loop.inEventLoop { block() } else { loop.execute { block() } }
-            }
+            let hop = makeHop(channel: context.channel, loop: loop)
             hop {
                 writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
                 writerBound.value.writeRole(
@@ -2237,9 +2242,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let loop = context.eventLoop
             let ctx = NIOLoopBound(context, eventLoop: loop)
             let chatEngine = self.chatEngine
-            let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-                if loop.inEventLoop { block() } else { loop.execute { block() } }
-            }
+            let hop = makeHop(channel: context.channel, loop: loop)
             // Capture for logging
             let logStartTime = startTime
             let logUserAgent = userAgent
@@ -2383,9 +2386,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let chatEngine = self.chatEngine
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
         }
@@ -2466,9 +2467,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
@@ -2521,9 +2520,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
@@ -2665,9 +2662,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logRequestBody = requestBodyString
@@ -2813,9 +2808,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         // Capture for logging
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -2950,9 +2943,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let cors = stateRef.value.corsHeaders
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
         let toolName = req.name
         // Capture for logging
         let logStartTime = startTime
@@ -3180,9 +3171,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let chatEngine = self.chatEngine
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
 
         // Estimate input tokens (rough: 1 token per 4 chars)
         let inputTokens =
@@ -3310,9 +3299,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let chatEngine = self.chatEngine
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
         let logStartTime = startTime
@@ -3512,8 +3499,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    private func makeHop(channel: Channel, loop: EventLoop) -> (@escaping @Sendable () -> Void) -> Void {
+        { block in
+            guard channel.isActive else { return }
+            if loop.inEventLoop { block() } else { loop.execute { block() } }
+        }
+    }
+
     @inline(__always)
     private func executeOnLoop(_ loop: EventLoop, _ block: @escaping @Sendable () -> Void) {
+        guard _isChannelActive.value else { return }
         if loop.inEventLoop { block() } else { loop.execute { block() } }
     }
 
@@ -3537,9 +3532,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
         let logStartTime = startTime
@@ -3797,9 +3790,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let chatEngine = self.chatEngine
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
 
         // Estimate input tokens (rough: 1 token per 4 chars)
         let inputTokens: Int =
@@ -3958,9 +3949,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let chatEngine = self.chatEngine
-        let hop: (@escaping @Sendable () -> Void) -> Void = { block in
-            if loop.inEventLoop { block() } else { loop.execute { block() } }
-        }
+        let hop = makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
         let logStartTime = startTime
