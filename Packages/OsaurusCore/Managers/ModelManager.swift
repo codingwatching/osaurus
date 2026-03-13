@@ -835,6 +835,14 @@ extension ModelManager {
         ),
 
         MLXModel(
+            id: "mlx-community/Qwen3.5-27B-4bit",
+            name: friendlyName(from: "mlx-community/Qwen3.5-27B-4bit"),
+            description: "Largest Qwen3.5 vision model. Top-tier multimodal reasoning.",
+            downloadURL: "https://huggingface.co/mlx-community/Qwen3.5-27B-4bit",
+            downloadSizeBytes: 16_100_000_000
+        ),
+
+        MLXModel(
             id: "mlx-community/Qwen3.5-9B-MLX-4bit",
             name: friendlyName(from: "mlx-community/Qwen3.5-9B-MLX-4bit"),
             description: "Most capable Qwen3.5 vision model. Strong multimodal understanding.",
