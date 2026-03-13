@@ -417,6 +417,10 @@ public actor RemoteProviderService: ToolCapableService {
                                                             id: toolBlock.id, name: toolBlock.name, args: "",
                                                             thoughtSignature: nil
                                                         )
+                                                        print(
+                                                            "[Osaurus] Tool call detected: index=\(idx), name=\(toolBlock.name)"
+                                                        )
+                                                        continuation.yield(StreamingToolHint.encode(toolBlock.name))
                                                     }
                                                 }
                                             case "message_stop":
@@ -1918,13 +1922,14 @@ private struct RemoteChatRequest: Encodable {
         flushToolResults()
 
         // Convert tools
+        let emptySchema: JSONValue = .object(["type": .string("object"), "properties": .object([:])])
         var anthropicTools: [AnthropicTool]? = nil
         if let tools = tools {
             anthropicTools = tools.map { tool in
                 AnthropicTool(
                     name: tool.function.name,
                     description: tool.function.description,
-                    input_schema: tool.function.parameters
+                    input_schema: tool.function.parameters ?? emptySchema
                 )
             }
         }
