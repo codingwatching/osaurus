@@ -152,6 +152,62 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
         #expect(body.contains("\"finish_reason\":\"tool_calls\""))
     }
+    @Test func shutdown_during_active_stream_does_not_crash() async throws {
+        struct SlowStreamEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    Task {
+                        for i in 0 ..< 20 {
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                            continuation.yield("chunk-\(i)")
+                        }
+                        continuation.finish()
+                    }
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: SlowStreamEngine())
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        let reqBody = ChatCompletionRequest(
+            model: "fake",
+            messages: [ChatMessage(role: "user", content: "hi")],
+            temperature: 0.5,
+            max_tokens: 16,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil,
+            session_id: nil
+        )
+        request.httpBody = try JSONEncoder().encode(reqBody)
+
+        let streamTask = Task {
+            try? await URLSession.shared.data(for: request)
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        await server.shutdown()
+
+        streamTask.cancel()
+    }
 }
 
 // MARK: - Test server bootstrap
