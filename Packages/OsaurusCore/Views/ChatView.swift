@@ -1030,7 +1030,8 @@ final class ChatSession: ObservableObject {
 
                         let processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
-                            modelId: selectedModel ?? "default"
+                            modelId: selectedModel ?? "default",
+                            modelOptions: activeModelOptions
                         ) { [weak self] in
                             self?.objectWillChange.send()
                         }

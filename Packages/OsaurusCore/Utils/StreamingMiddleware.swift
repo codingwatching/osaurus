@@ -33,12 +33,17 @@ final class PrependThinkTagMiddleware: StreamingMiddleware {
 
 enum StreamingMiddlewareResolver {
     @MainActor
-    static func resolve(for modelId: String) -> StreamingMiddleware? {
+    static func resolve(
+        for modelId: String,
+        modelOptions: [String: ModelOptionValue] = [:]
+    ) -> StreamingMiddleware? {
+        let thinkingDisabled = modelOptions["disableThinking"]?.boolValue == true
         let id = modelId.lowercased()
 
         let needsPrependThink =
-            (id.contains("glm") && id.contains("flash"))
-            || (id.contains("qwen") && id.contains("3.5") && hasParamSize(id, anyOf: "4b", "9b", "27b"))
+            !thinkingDisabled
+            && ((id.contains("glm") && id.contains("flash"))
+                || (id.contains("qwen") && id.contains("3.5") && hasParamSize(id, anyOf: "4b", "9b", "27b")))
 
         return needsPrependThink ? PrependThinkTagMiddleware() : nil
     }
