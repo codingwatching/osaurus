@@ -635,7 +635,7 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     "description": .string("Working directory (default: agent home)"),
                 ]),
                 "timeout": .object([
-                    "type": .string("number"),
+                    "type": .string("integer"),
                     "description": .string("Timeout in seconds (default: 30, max: 300)"),
                 ]),
             ]),
