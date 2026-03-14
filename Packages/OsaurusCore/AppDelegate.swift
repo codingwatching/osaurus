@@ -413,6 +413,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         menu.addItem(NSMenuItem(title: "New Chat", action: #selector(dockNewChat), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Agents", action: #selector(dockShowAgents), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(dockShowSettings), keyEquivalent: ""))
+        #if DEBUG
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(
+                NSMenuItem(title: "Reset Onboarding", action: #selector(dockResetOnboarding), keyEquivalent: "")
+            )
+        #endif
         return menu
     }
 
@@ -427,6 +433,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     @objc private func dockShowSettings() {
         showManagementWindow(initialTab: .settings)
     }
+
+    #if DEBUG
+        @objc private func dockResetOnboarding() {
+            OnboardingService.shared.resetOnboarding()
+            showOnboardingWindow(forceShowIdentity: true)
+        }
+    #endif
 
     public func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Defer termination so in-flight inference tasks and MLX GPU resources are
@@ -885,16 +898,22 @@ extension AppDelegate {
 extension AppDelegate {
     private static var onboardingWindow: NSWindow?
 
-    @MainActor public func showOnboardingWindow() {
-        // Reuse existing window if already open
-        if let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
+    @MainActor public func showOnboardingWindow(forceShowIdentity: Bool = false) {
+        // Reuse existing window if already open (unless forcing full flow)
+        if !forceShowIdentity, let existingWindow = Self.onboardingWindow, existingWindow.isVisible {
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
+        // Close existing window when forcing a fresh flow
+        if forceShowIdentity {
+            Self.onboardingWindow?.close()
+            Self.onboardingWindow = nil
+        }
+
         let themeManager = ThemeManager.shared
-        let contentView = OnboardingView { [weak self] in
+        let contentView = OnboardingView(forceShowIdentity: forceShowIdentity) { [weak self] in
             // Close the onboarding window when complete
             Self.onboardingWindow?.close()
             Self.onboardingWindow = nil
@@ -907,8 +926,8 @@ extension AppDelegate {
         .environment(\.theme, themeManager.currentTheme)
 
         // Use NSHostingView directly in an NSView container to avoid auto-sizing issues
-        let windowWidth: CGFloat = 500
-        let windowHeight: CGFloat = 560
+        let windowWidth: CGFloat = OnboardingLayout.windowWidth
+        let windowHeight: CGFloat = OnboardingLayout.windowHeight
 
         let hostingView = NSHostingView(rootView: contentView)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
