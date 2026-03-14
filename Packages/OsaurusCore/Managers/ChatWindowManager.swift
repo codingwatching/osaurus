@@ -738,10 +738,16 @@ private struct ChatToolbarTitleView: View {
     @ObservedObject var session: ChatSession
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
+    @ObservedObject private var sandboxState = SandboxManager.State.shared
 
     private var isWorkMode: Bool { windowState.mode == .work }
 
-    private var isSandboxActive: Bool {
+    private var isSandboxLoading: Bool {
+        sandboxState.status == .starting || sandboxState.isProvisioning
+    }
+
+    private var showSandboxIndicator: Bool {
+        guard sandboxState.status.isRunning || isSandboxLoading else { return false }
         guard agentManager.effectiveAutonomousExec(for: windowState.agentId)?.enabled == true else {
             return false
         }
@@ -753,8 +759,8 @@ private struct ChatToolbarTitleView: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            if isSandboxActive {
-                SandboxStatusIndicator()
+            if showSandboxIndicator {
+                SandboxStatusIndicator(isLoading: isSandboxLoading)
                     .transition(.opacity)
             }
 
@@ -764,7 +770,7 @@ private struct ChatToolbarTitleView: View {
                     .lineLimit(1)
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isSandboxActive)
+        .animation(.easeInOut(duration: 0.2), value: showSandboxIndicator)
         .environment(\.theme, windowState.theme)
     }
 }

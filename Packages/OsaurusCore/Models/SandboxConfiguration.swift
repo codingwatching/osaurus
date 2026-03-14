@@ -16,24 +16,38 @@ public struct SandboxConfiguration: Codable, Sendable, Equatable {
     /// "outbound" (default) or "none"
     public var network: String
     public var autoStart: Bool
+    /// True once the user has completed initial sandbox setup at least once.
+    public var setupComplete: Bool
 
     public static let `default` = SandboxConfiguration(
         cpus: 2,
         memoryGB: 2,
         network: "outbound",
-        autoStart: true
+        autoStart: true,
+        setupComplete: false
     )
 
     public init(
         cpus: Int = 2,
         memoryGB: Int = 2,
         network: String = "outbound",
-        autoStart: Bool = true
+        autoStart: Bool = true,
+        setupComplete: Bool = false
     ) {
         self.cpus = cpus
         self.memoryGB = memoryGB
         self.network = network
         self.autoStart = autoStart
+        self.setupComplete = setupComplete
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        cpus = try container.decode(Int.self, forKey: .cpus)
+        memoryGB = try container.decode(Int.self, forKey: .memoryGB)
+        network = try container.decode(String.self, forKey: .network)
+        autoStart = try container.decode(Bool.self, forKey: .autoStart)
+        setupComplete = try container.decodeIfPresent(Bool.self, forKey: .setupComplete) ?? true
     }
 }
 

@@ -201,8 +201,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             let availability = await SandboxManager.shared.refreshAvailability()
             if availability.isAvailable {
                 let config = SandboxConfigurationStore.load()
-                let status = await SandboxManager.shared.refreshStatus()
-                if config.autoStart && (status == .stopped || status.isRunning) {
+                if config.autoStart && config.setupComplete {
                     try? await SandboxManager.shared.startContainer()
                 }
             }
