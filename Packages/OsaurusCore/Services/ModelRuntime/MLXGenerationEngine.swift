@@ -32,7 +32,8 @@ struct MLXGenerationEngine {
                 maxKV: runtime.maxKV,
                 prefillStep: runtime.prefillStep
             )
-            let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: toolsSpec)
+            let imageResizeConfig: UserInput.Processing = .init(resize: CGSize(width: 1024, height: 1024))
+            let fullInput = MLXLMCommon.UserInput(chat: chat, processing: imageResizeConfig, tools: toolsSpec)
             let fullLMInput: LMInput
             do {
                 fullLMInput = try await context.processor.prepare(input: fullInput)
