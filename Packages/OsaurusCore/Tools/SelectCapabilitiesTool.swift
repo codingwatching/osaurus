@@ -86,8 +86,8 @@ final class SelectCapabilitiesTool: OsaurusTool, @unchecked Sendable {
             throw SelectCapabilitiesError.invalidArguments
         }
         return Request(
-            tools: (json["tools"] as? [String]) ?? [],
-            skills: (json["skills"] as? [String]) ?? []
+            tools: ArgumentCoercion.stringArray(json["tools"]) ?? [],
+            skills: ArgumentCoercion.stringArray(json["skills"]) ?? []
         )
     }
 

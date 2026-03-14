@@ -349,10 +349,10 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
             let resolved = validatePath(path, home: home)
         else { return jsonResult(["error": "Invalid path"]) }
 
-        let startLine = max((args["start_line"] as? Int) ?? 0, 0)
-        let lineCount = max((args["line_count"] as? Int) ?? 0, 0)
-        let tailLines = max((args["tail_lines"] as? Int) ?? 0, 0)
-        let maxChars = max((args["max_chars"] as? Int) ?? 0, 0)
+        let startLine = max(coerceInt(args["start_line"]) ?? 0, 0)
+        let lineCount = max(coerceInt(args["line_count"]) ?? 0, 0)
+        let tailLines = max(coerceInt(args["tail_lines"]) ?? 0, 0)
+        let maxChars = max(coerceInt(args["max_chars"]) ?? 0, 0)
 
         let command: String
         if tailLines > 0 {
@@ -423,7 +423,7 @@ private struct SandboxListDirectoryTool: OsaurusTool, @unchecked Sendable {
     func execute(argumentsJSON: String) async throws -> String {
         let args = parseArguments(argumentsJSON) ?? [:]
         let path = args["path"] as? String ?? "."
-        let recursive = args["recursive"] as? Bool ?? false
+        let recursive = coerceBool(args["recursive"]) ?? false
 
         guard let resolved = validatePath(path, home: home)
         else { return jsonResult(["error": "Invalid path"]) }
@@ -602,7 +602,7 @@ private struct SandboxDeleteTool: OsaurusTool, @unchecked Sendable {
             let resolved = validatePath(path, home: home)
         else { return jsonResult(["error": "Invalid path"]) }
 
-        let recursive = args["recursive"] as? Bool ?? false
+        let recursive = coerceBool(args["recursive"]) ?? false
         let cmd = recursive ? "rm -rf '\(resolved)'" : "rm -f '\(resolved)'"
         let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: cmd)
         guard result.succeeded else {
@@ -665,7 +665,7 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         }
 
         let timeout = min(
-            (args["timeout"] as? Int) ?? 30,
+            coerceInt(args["timeout"]) ?? 30,
             min(maxTimeout, 300)
         )
 
@@ -757,8 +757,12 @@ private struct SandboxExecKillTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-            let pid = args["pid"] as? Int
-        else { return jsonResult(["error": "PID required"]) }
+            let pid = coerceInt(args["pid"])
+        else {
+            return jsonResult([
+                "error": "Invalid pid argument. Expected an integer, e.g. {\"pid\": 1234}"
+            ])
+        }
 
         let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
@@ -772,7 +776,8 @@ private struct SandboxExecKillTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
-    let description = "Install system packages via apk (runs as root)."
+    let description =
+        "Install system packages via apk (runs as root). Example args: {\"packages\": [\"ffmpeg\", \"imagemagick\"]}"
     let agentName: String
 
     var parameters: JSONValue? {
@@ -791,8 +796,13 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-            let packages = args["packages"] as? [String], !packages.isEmpty
-        else { return jsonResult(["error": "Packages array required"]) }
+            let packages = coerceStringArray(args["packages"]), !packages.isEmpty
+        else {
+            return jsonResult([
+                "error":
+                    "Invalid packages argument. Expected a JSON array of strings, e.g. {\"packages\": [\"ffmpeg\", \"imagemagick\"]}"
+            ])
+        }
 
         let pkgList = packages.joined(separator: " ")
         let result = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
@@ -809,7 +819,8 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_pip_install"
-    let description = "Install Python packages via pip (runs as agent user)."
+    let description =
+        "Install Python packages via pip (runs as agent user). Example args: {\"packages\": [\"numpy\", \"flask\"]}"
     let agentName: String
     let home: String
 
@@ -829,8 +840,13 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-            let packages = args["packages"] as? [String], !packages.isEmpty
-        else { return jsonResult(["error": "Packages array required"]) }
+            let packages = coerceStringArray(args["packages"]), !packages.isEmpty
+        else {
+            return jsonResult([
+                "error":
+                    "Invalid packages argument. Expected a JSON array of strings, e.g. {\"packages\": [\"numpy\", \"flask\"]}"
+            ])
+        }
 
         let venvPath = agentVenvPath(home: home)
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
@@ -858,7 +874,8 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_npm_install"
-    let description = "Install Node packages via npm (runs as agent user)."
+    let description =
+        "Install Node packages via npm (runs as agent user). Example args: {\"packages\": [\"express\", \"lodash\"]}"
     let agentName: String
     let home: String
 
@@ -878,8 +895,13 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-            let packages = args["packages"] as? [String], !packages.isEmpty
-        else { return jsonResult(["error": "Packages array required"]) }
+            let packages = coerceStringArray(args["packages"]), !packages.isEmpty
+        else {
+            return jsonResult([
+                "error":
+                    "Invalid packages argument. Expected a JSON array of strings, e.g. {\"packages\": [\"express\", \"lodash\"]}"
+            ])
+        }
 
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/node && test -x /usr/bin/npm",
@@ -960,7 +982,7 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
             return jsonResult(["error": "Required: language (python|bash|node) and script"])
         }
 
-        let timeout = min((args["timeout"] as? Int) ?? 60, min(maxTimeout, 300))
+        let timeout = min(coerceInt(args["timeout"]) ?? 60, min(maxTimeout, 300))
         let cwd = (args["cwd"] as? String).flatMap { validatePath($0, home: home) } ?? home
         let scriptPath = "\(home)/.tmp/script_\(UUID().uuidString.prefix(8))\(config.ext)"
         let escaped = script.replacingOccurrences(of: "'", with: "'\\''")

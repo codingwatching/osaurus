@@ -43,18 +43,17 @@ public struct CompleteTaskTool: OsaurusTool {
     public init() {}
 
     public func execute(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
         guard let data = argumentsJSON.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let summary = json["summary"] as? String,
-            let success = json["success"] as? Bool
+            let success = coerceBool(json["success"])
         else {
             throw NSError(
                 domain: "WorkTools",
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "Invalid completion format. Required: summary (string), success (boolean)"
+                        "Invalid completion format. Required: summary (string), success (true/false). Example: {\"summary\": \"Done\", \"success\": true}"
                 ]
             )
         }
@@ -271,7 +270,6 @@ public struct CreateIssueTool: OsaurusTool {
     public init() {}
 
     public func execute(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
         guard let data = argumentsJSON.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let title = json["title"] as? String,
@@ -286,10 +284,9 @@ public struct CreateIssueTool: OsaurusTool {
             )
         }
 
-        // Parse optional context fields
         let reason = json["reason"] as? String
-        let learnings = json["learnings"] as? [String]
-        let relevantFiles = json["relevant_files"] as? [String]
+        let learnings = coerceStringArray(json["learnings"])
+        let relevantFiles = coerceStringArray(json["relevant_files"])
 
         let priorityStr = json["priority"] as? String ?? "p2"
         let priority: IssuePriority
@@ -381,7 +378,6 @@ public struct RequestClarificationTool: OsaurusTool {
     public init() {}
 
     public func execute(argumentsJSON: String) async throws -> String {
-        // Parse the arguments
         guard let data = argumentsJSON.data(using: .utf8),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
             let question = json["question"] as? String
@@ -393,10 +389,8 @@ public struct RequestClarificationTool: OsaurusTool {
             )
         }
 
-        let options = json["options"] as? [String]
+        let options = coerceStringArray(json["options"])
         let context = json["context"] as? String
-
-        // Build response that signals clarification is needed
         var response = """
             Clarification requested:
             Question: \(question)
