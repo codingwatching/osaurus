@@ -196,6 +196,12 @@
                 _status = .running
                 syncStatus()
                 await setProvisioningPhase(nil)
+
+                var savedConfig = SandboxConfigurationStore.load()
+                if !savedConfig.setupComplete {
+                    savedConfig.setupComplete = true
+                    SandboxConfigurationStore.save(savedConfig)
+                }
             } catch {
                 await setProvisioningPhase(nil)
                 throw error
@@ -250,6 +256,10 @@
             _removedByUser = true
             syncStatus()
             await setProvisioningPhase(nil)
+
+            var config = SandboxConfigurationStore.load()
+            config.setupComplete = false
+            SandboxConfigurationStore.save(config)
         }
 
         public func resetContainer() async throws {
