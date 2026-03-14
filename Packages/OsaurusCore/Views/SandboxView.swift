@@ -2305,12 +2305,12 @@ private struct SandboxAgentsView: View {
                     execToggleRow(
                         title: "Autonomous Execution",
                         subtitle: "Allow agent to run commands in the sandbox",
-                        isOn: execConfig?.enabled ?? false,
                         isLoading: isProvisioning,
                         loadingLabel: execConfig?.enabled == true ? "Disabling\u{2026}" : "Setting up\u{2026}",
-                        onChange: { enabled in
-                            updateExecConfig(for: agent.id, current: execConfig) { $0.enabled = enabled }
-                        }
+                        isOn: Binding(
+                            get: { execConfig?.enabled ?? false },
+                            set: { enabled in self.updateExecConfig(for: agent.id, current: execConfig) { $0.enabled = enabled } }
+                        )
                     )
 
                     if execConfig?.enabled == true && !isProvisioning {
@@ -2319,10 +2319,10 @@ private struct SandboxAgentsView: View {
                         execToggleRow(
                             title: "Plugin Creation",
                             subtitle: "Agent can create its own tools as plugins",
-                            isOn: execConfig?.pluginCreate ?? false,
-                            onChange: { create in
-                                updateExecConfig(for: agent.id, current: execConfig) { $0.pluginCreate = create }
-                            }
+                            isOn: Binding(
+                                get: { execConfig?.pluginCreate ?? false },
+                                set: { create in self.updateExecConfig(for: agent.id, current: execConfig) { $0.pluginCreate = create } }
+                            )
                         )
                     }
                 }
@@ -2334,10 +2334,9 @@ private struct SandboxAgentsView: View {
     private func execToggleRow(
         title: String,
         subtitle: String,
-        isOn: Bool,
         isLoading: Bool = false,
         loadingLabel: String = "Updating\u{2026}",
-        onChange: @escaping @MainActor (Bool) -> Void
+        isOn: Binding<Bool>
     ) -> some View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
@@ -2364,7 +2363,7 @@ private struct SandboxAgentsView: View {
                     .tint(theme.accentColor)
                     .transition(.opacity.combined(with: .scale(scale: 0.6)))
             } else {
-                Toggle("", isOn: Binding(get: { isOn }, set: onChange))
+                Toggle("", isOn: isOn)
                     .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                     .labelsHidden()
                     .transition(.opacity)
