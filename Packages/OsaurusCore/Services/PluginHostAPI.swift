@@ -406,18 +406,7 @@ final class PluginHostContext: @unchecked Sendable {
         }
 
         var messages = request.messages
-        if !ctx.systemPrompt.isEmpty {
-            if let idx = messages.firstIndex(where: { $0.role == "system" }),
-                let existing = messages[idx].content, !existing.isEmpty
-            {
-                messages[idx] = ChatMessage(
-                    role: "system",
-                    content: ctx.systemPrompt + "\n\n" + existing
-                )
-            } else {
-                messages.insert(ChatMessage(role: "system", content: ctx.systemPrompt), at: 0)
-            }
-        }
+        SystemPromptBuilder.injectSystemContent(ctx.systemPrompt, into: &messages)
 
         let effectiveTools: [Tool]?
         if let explicit = request.tools, !explicit.isEmpty {

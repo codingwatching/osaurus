@@ -1316,12 +1316,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         guard !memoryContext.isEmpty else { return request }
 
         var enriched = request
-        if let idx = enriched.messages.firstIndex(where: { $0.role == "system" }) {
-            let existing = enriched.messages[idx].content ?? ""
-            enriched.messages[idx] = ChatMessage(role: "system", content: memoryContext + "\n\n" + existing)
-        } else {
-            enriched.messages.insert(ChatMessage(role: "system", content: memoryContext), at: 0)
-        }
+        SystemPromptBuilder.injectMemoryContext(memoryContext, into: &enriched.messages)
         return enriched
     }
 

@@ -540,7 +540,7 @@ public actor MemoryService {
 
     private let extractionSystemPrompt = """
         You extract structured memories from conversations. \
-        Respond ONLY with a valid JSON object. Never ask questions. Never refuse. \
+        Respond ONLY with a valid JSON object. Do NOT ask questions. Do NOT refuse. \
         The JSON must have: "entries" (array of objects with "type", "content", "confidence", "tags", "valid_from"), \
         "profile_facts" (array of strings), \
         "entities" (array of objects with "name" and "type"), \

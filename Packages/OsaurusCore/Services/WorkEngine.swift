@@ -395,12 +395,13 @@ public actor WorkEngine {
                 WorkExecutionSession(issueId: issue.id, messages: initialMessages)
             }
 
-        // Build the work system prompt using the new method
+        let compact = SystemPromptBuilder.isLocalModel(model)
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             issue: issue,
             executionMode: resolvedExecutionMode,
-            skillInstructions: skillInstructions
+            skillInstructions: skillInstructions,
+            compact: compact
         )
 
         // Log execution started

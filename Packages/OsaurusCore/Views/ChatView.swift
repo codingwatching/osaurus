@@ -241,13 +241,14 @@ final class ChatSession: ObservableObject {
         let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
         let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
-        // System prompt
+        let compact = SystemPromptBuilder.isLocalModel(selectedModel)
         let systemPrompt = buildSystemPrompt(
             base: AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             agentId: effectiveId,
             needsSelection: needsCapabilitySelection,
-            executionMode: executionMode
+            executionMode: executionMode,
+            compact: compact
         )
         if !systemPrompt.isEmpty {
             breakdown.systemPrompt = max(1, systemPrompt.count / 4)
@@ -757,39 +758,38 @@ final class ChatSession: ObservableObject {
         )
     }
 
-    /// Build system prompt based on capability selection state
+    /// Build system prompt based on capability selection state.
+    /// When `compact` is true, uses shorter variants suited for local models.
     func buildSystemPrompt(
         base: String,
         agentId: UUID,
         needsSelection: Bool,
-        executionMode: WorkExecutionMode
+        executionMode: WorkExecutionMode,
+        compact: Bool = false
     ) -> String {
         let prompt: String
         if needsSelection {
-            // Phase 1: Include full capability catalog for selection
             prompt = CapabilityService.shared.buildSystemPromptWithCatalog(
                 basePrompt: base,
-                agentId: agentId
+                agentId: agentId,
+                compact: compact
             )
         } else if capabilitiesSelected {
-            // Phase 2: Include selected skill instructions + available capabilities reminder
             var selectedPrompt = base
 
-            // Add active skill instructions
             if !selectedSkillInstructions.isEmpty {
                 if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
-                selectedPrompt += "# Active Skills\n\n"
+                selectedPrompt += "## Active Skills\n\n"
                 selectedPrompt += selectedSkillInstructions
             }
 
-            // Add compact reminder of other available capabilities
             let catalog = CapabilityCatalogBuilder.build(for: agentId)
             let unselectedTools = catalog.tools.map { $0.name }.filter { !selectedToolNames.contains($0) }
             let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
 
             if !unselectedTools.isEmpty || !unselectedSkills.isEmpty {
                 if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
-                selectedPrompt += "# Additional Capabilities Available\n"
+                selectedPrompt += "## Additional Capabilities Available\n"
                 selectedPrompt += "Call `select_capabilities` to add more:\n"
                 if !unselectedTools.isEmpty {
                     selectedPrompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
@@ -801,16 +801,16 @@ final class ChatSession: ObservableObject {
 
             prompt = selectedPrompt
         } else {
-            // No capability selection needed, use base prompt
             prompt = base
         }
 
         guard executionMode.usesSandboxTools else { return prompt }
+        let sandboxSection = WorkExecutionEngine.chatSandboxPromptSection(compact: compact)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if prompt.isEmpty {
-            return WorkExecutionEngine.chatSandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
+            return sandboxSection
         }
-        return prompt + "\n\n"
-            + WorkExecutionEngine.chatSandboxPromptSection().trimmingCharacters(in: .whitespacesAndNewlines)
+        return prompt + "\n\n" + sandboxSection
     }
 
     /// Build tool specifications based on capability selection state
@@ -913,8 +913,9 @@ final class ChatSession: ObservableObject {
                 let phasedLoading = chatCfg.phasedContextLoading
                 let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
-                let baseSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
+                    AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
+                )
 
                 // Inject memory context before the system prompt (async to avoid main thread blocking)
                 let memoryConfig = MemoryConfigurationStore.load()
@@ -925,17 +926,16 @@ final class ChatSession: ObservableObject {
                 guard isRunActive(runId) else { return }
                 updateMemoryTokens(fromContext: memoryContext)
 
-                // Build system prompt and tool specs based on capability selection state
+                let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
                     needsSelection: needsCapabilitySelection,
-                    executionMode: executionMode
+                    executionMode: executionMode,
+                    compact: isCompact
                 )
 
-                if !memoryContext.isEmpty {
-                    sys = memoryContext + "\n\n" + sys
-                }
+                sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
                 var toolSpecs = buildToolSpecs(
                     needsSelection: needsCapabilitySelection,
                     hasCapabilities: phasedLoading && hasCapabilities,
@@ -1099,12 +1099,12 @@ final class ChatSession: ObservableObject {
                                 resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
                                 if !isRunActive(runId) { break outer }
 
-                                // Rebuild system prompt and tool specs using helper methods
                                 sys = buildSystemPrompt(
                                     base: baseSystemPrompt,
                                     agentId: effectiveAgentId,
                                     needsSelection: false,
-                                    executionMode: executionMode
+                                    executionMode: executionMode,
+                                    compact: isCompact
                                 )
                                 toolSpecs = buildToolSpecs(
                                     needsSelection: false,

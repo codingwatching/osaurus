@@ -98,7 +98,7 @@ public actor MemoryContextAssembler {
         do {
             let edits = try db.loadUserEdits()
             if !edits.isEmpty {
-                var block = "# User Overrides\n"
+                var block = "## User Overrides\n"
                 for edit in edits {
                     block += "- \(edit.content)\n"
                 }
@@ -111,7 +111,7 @@ public actor MemoryContextAssembler {
         // 2. User Profile (never trimmed)
         do {
             if let profile = try db.loadUserProfile() {
-                sections.append("# User Profile\n\(profile.content)")
+                sections.append("## User Profile\n\(profile.content)")
             }
         } catch {
             MemoryLogger.service.warning("Context assembly: failed to load user profile: \(error)")
@@ -122,7 +122,7 @@ public actor MemoryContextAssembler {
             let entries = try db.loadActiveEntries(agentId: agentId)
             if !entries.isEmpty {
                 let block = buildBudgetSection(
-                    header: "# Remembered Details",
+                    header: "## Remembered Details",
                     budgetTokens: config.workingMemoryBudgetTokens,
                     items: entries,
                     formatLine: Self.formatEntryLine
@@ -143,7 +143,7 @@ public actor MemoryContextAssembler {
             if !summaries.isEmpty {
                 sections.append(
                     buildBudgetSection(
-                        header: "# Recent Conversation Summaries",
+                        header: "## Recent Conversation Summaries",
                         budgetTokens: config.summaryBudgetTokens,
                         items: summaries
                     ) { "- [date: \(Self.naturalLanguageDate($0.conversationAt))] \($0.summary)" }
@@ -159,7 +159,7 @@ public actor MemoryContextAssembler {
             if !relationships.isEmpty {
                 sections.append(
                     buildBudgetSection(
-                        header: "# Key Relationships",
+                        header: "## Key Relationships",
                         budgetTokens: config.graphBudgetTokens,
                         items: relationships
                     ) { "- \($0.path)" }
@@ -334,7 +334,7 @@ public actor MemoryContextAssembler {
             }
             sections.append(
                 buildBudgetSection(
-                    header: "# Relevant Conversation Excerpts",
+                    header: "## Relevant Conversation Excerpts",
                     budgetTokens: config.chunkBudgetTokens,
                     items: chunks
                 ) { chunk in
@@ -357,7 +357,7 @@ public actor MemoryContextAssembler {
                 }
                 sections.append(
                     buildBudgetSection(
-                        header: "# Relevant Memories",
+                        header: "## Relevant Memories",
                         budgetTokens: config.workingMemoryBudgetTokens,
                         items: deduplicated,
                         formatLine: Self.formatEntryLine
@@ -376,7 +376,7 @@ public actor MemoryContextAssembler {
                 }
                 sections.append(
                     buildBudgetSection(
-                        header: "# Relevant Summaries",
+                        header: "## Relevant Summaries",
                         budgetTokens: config.summaryBudgetTokens,
                         items: deduplicated
                     ) { "- [date: \(Self.naturalLanguageDate($0.conversationAt))] \($0.summary)" }

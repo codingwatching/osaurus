@@ -63,7 +63,7 @@ public struct CapabilityCatalog: Sendable {
         }
 
         var sections: [String] = []
-        sections.append("# Available Capabilities")
+        sections.append("## Available Capabilities")
         sections.append("")
         sections.append(
             "You have access to tools and skills. In chat mode, call `select_capabilities` to choose the relevant capabilities before proceeding when tools or specialized guidance are needed. For simple informational queries, respond directly without selection."
@@ -71,7 +71,7 @@ public struct CapabilityCatalog: Sendable {
         sections.append("")
 
         if !tools.isEmpty {
-            sections.append("## Tools (callable functions)")
+            sections.append("### Tools (callable functions)")
             for tool in tools {
                 let categoryTag = tool.category.map { " [\($0)]" } ?? ""
                 sections.append("- **\(tool.name)**\(categoryTag): \(tool.description)")
@@ -80,7 +80,7 @@ public struct CapabilityCatalog: Sendable {
         }
 
         if !skills.isEmpty {
-            sections.append("## Skills (specialized knowledge/guidance)")
+            sections.append("### Skills (specialized knowledge/guidance)")
             for skill in skills {
                 let categoryTag = skill.category.map { " [\($0)]" } ?? ""
                 sections.append("- **\(skill.name)**\(categoryTag): \(skill.description)")
@@ -89,7 +89,7 @@ public struct CapabilityCatalog: Sendable {
         }
 
         sections.append("### Selection Tips")
-        sections.append("- Select tools you'll actually call, not all related tools")
+        sections.append("- Select only the tools you will actually call, not all related tools")
         sections.append("- Select skills that provide domain expertise for the task")
         sections.append("- Fewer selections = faster execution and lower token usage")
         sections.append("")

@@ -39,12 +39,12 @@ public final class CapabilityService {
             enhanced += "\n\n"
         }
 
-        enhanced += "# Active Skills\n\n"
+        enhanced += "## Active Skills\n\n"
         enhanced += "Apply the following skill guidance contextually based on the task. "
         enhanced += "If multiple skills are relevant, synthesize their guidance coherently.\n\n"
 
         for skill in enabledSkills {
-            enhanced += "## \(skill.name)\n"
+            enhanced += "### \(skill.name)\n"
             if !skill.description.isEmpty {
                 enhanced += "*\(skill.description)*\n\n"
             }
@@ -66,14 +66,15 @@ public final class CapabilityService {
     /// Build a ChatView system prompt with capability catalog for two-phase loading.
     /// The model will see metadata only and can call `select_capabilities`.
     /// Uses agent-level overrides to filter available capabilities.
+    /// When `compact` is true, uses a shorter catalog suited for local models.
     public func buildSystemPromptWithCatalog(
         basePrompt: String,
-        agentId: UUID?
+        agentId: UUID?,
+        compact: Bool = false
     ) -> String {
         let effectiveAgentId = agentId ?? Agent.defaultId
         let effectivePrompt = basePrompt.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // Build catalog with agent-level overrides
         let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
 
         guard !catalog.isEmpty else {
@@ -86,7 +87,7 @@ public final class CapabilityService {
             enhanced += "\n\n"
         }
 
-        enhanced += catalog.asSystemPromptSection()
+        enhanced += compact ? catalog.asCompactCatalog() : catalog.asSystemPromptSection()
 
         return enhanced.trimmingCharacters(in: .whitespacesAndNewlines)
     }
