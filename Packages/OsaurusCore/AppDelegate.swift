@@ -434,6 +434,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         Task { @MainActor in
             ChatWindowManager.shared.stopAllSessions()
             BackgroundTaskManager.shared.cancelAllTasks()
+            MCPProviderManager.shared.disconnectAll()
+            RemoteProviderManager.shared.disconnectAll()
             if serverController.isRunning {
                 await serverController.ensureShutdown()
             }
