@@ -14,6 +14,7 @@ struct SandboxView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var pluginLibrary = SandboxPluginLibrary.shared
+    @ObservedObject private var agentManager = AgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -32,7 +33,6 @@ struct SandboxView: View {
     @State private var refreshTimer: Timer?
 
     @State private var showProvisionSheet = false
-    @State private var secretsCount: Int = 0
 
     private var configIsDirty: Bool { pendingConfig != config }
 
@@ -53,8 +53,12 @@ struct SandboxView: View {
                     } else {
                         SandboxPluginGridView(hasAppeared: hasAppeared)
                     }
-                case .secrets:
-                    SandboxSecretsView(onCountChanged: { secretsCount = $0 })
+                case .agents:
+                    if !sandboxState.availability.isAvailable {
+                        unavailableEmptyState
+                    } else {
+                        SandboxAgentsView(hasAppeared: hasAppeared)
+                    }
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -63,9 +67,6 @@ struct SandboxView: View {
         .background(theme.primaryBackground)
         .environment(\.theme, theme)
         .onAppear {
-            secretsCount = AgentManager.shared.agents.reduce(0) {
-                $0 + AgentSecretsKeychain.getAllSecrets(agentId: $1.id).count
-            }
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
@@ -96,7 +97,7 @@ private extension SandboxView {
                 selection: $selectedTab,
                 counts: [
                     .plugins: pluginLibrary.plugins.count,
-                    .secrets: secretsCount,
+                    .agents: agentManager.agents.count,
                 ],
                 showSearch: false
             )
@@ -2119,19 +2120,26 @@ private struct SandboxManageInstallsSheet: View {
     }
 }
 
-// MARK: - Secrets Tab
+// MARK: - Agents Tab
 
-private struct SandboxSecretsView: View {
+private struct SandboxAgentsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var pluginManager = SandboxPluginManager.shared
+    @ObservedObject private var pluginLibrary = SandboxPluginLibrary.shared
+    @ObservedObject private var sandboxState = SandboxManager.State.shared
 
-    var onCountChanged: ((Int) -> Void)?
+    let hasAppeared: Bool
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var sandboxRunning: Bool { sandboxState.status == .running }
 
     @State private var expandedAgents: Set<UUID> = []
     @State private var agentSecrets: [UUID: [SecretEntry]] = [:]
     @State private var editingEntry: SecretEntry.ID?
+    @State private var pluginInstallAgent: UUID?
+    @State private var hoveringPlugin: String?
+    @State private var provisioningAgents: Set<UUID> = []
 
     struct SecretEntry: Identifiable, Equatable {
         let id = UUID()
@@ -2140,51 +2148,97 @@ private struct SandboxSecretsView: View {
         var isNew: Bool
     }
 
+    // MARK: - Body
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if agentManager.agents.isEmpty {
                     emptyState
                 } else {
-                    ForEach(agentManager.agents) { agent in
-                        agentSection(agent)
+                    ForEach(Array(agentManager.agents.enumerated()), id: \.element.id) { index, agent in
+                        agentCard(agent)
+                            .opacity(hasAppeared ? 1 : 0)
+                            .offset(y: hasAppeared ? 0 : 12)
+                            .animation(
+                                .spring(response: 0.45, dampingFraction: 0.8).delay(Double(index) * 0.06),
+                                value: hasAppeared
+                            )
                     }
                 }
             }
             .padding(24)
         }
-        .onAppear { loadAllSecrets() }
+        .onAppear {
+            loadAllSecrets()
+            expandedAgents = Set(agentManager.agents.map(\.id))
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { pluginInstallAgent != nil },
+                set: { if !$0 { pluginInstallAgent = nil } }
+            )
+        ) {
+            if let agentId = pluginInstallAgent,
+                let agent = agentManager.agent(for: agentId)
+            {
+                SandboxAgentPluginInstallSheet(
+                    agent: agent,
+                    pluginLibrary: pluginLibrary,
+                    pluginManager: pluginManager
+                )
+                .environment(\.theme, theme)
+            }
+        }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "key.slash")
-                .font(.system(size: 28, weight: .light))
+        VStack(spacing: 16) {
+            Image(systemName: "person.2")
+                .font(.system(size: 32, weight: .light))
                 .foregroundColor(theme.tertiaryText)
-            Text("No agents found")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+            VStack(spacing: 6) {
+                Text("No Agents")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                Text("Create an agent to configure sandbox access, plugins, and secrets.")
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.tertiaryText)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 200)
+        .frame(maxWidth: .infinity, minHeight: 240)
+        .opacity(hasAppeared ? 1 : 0)
+        .animation(.easeOut(duration: 0.4).delay(0.15), value: hasAppeared)
     }
 
-    // MARK: - Agent Section
+    // MARK: - Agent Card
 
-    private func agentSection(_ agent: Agent) -> some View {
+    private func agentCard(_ agent: Agent) -> some View {
         let isExpanded = expandedAgents.contains(agent.id)
-        let entries = agentSecrets[agent.id] ?? []
+        let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
+        let plugins = pluginManager.plugins(for: agent.id.uuidString)
+        let secrets = agentSecrets[agent.id] ?? []
 
         return VStack(alignment: .leading, spacing: 0) {
-            agentHeader(agent, isExpanded: isExpanded, count: entries.count)
+            agentCardHeader(
+                agent,
+                isExpanded: isExpanded,
+                execEnabled: execConfig?.enabled ?? false,
+                pluginCount: plugins.count,
+                secretCount: secrets.filter { !$0.isNew }.count
+            )
 
             if isExpanded {
                 Rectangle().fill(theme.cardBorder).frame(height: 1)
 
-                if entries.isEmpty {
-                    emptyAgentRow
-                } else {
-                    secretsList(entries, agentId: agent.id)
+                VStack(alignment: .leading, spacing: 16) {
+                    executionToggles(agent: agent, execConfig: execConfig)
+                    pluginsSection(agent: agent, plugins: plugins)
+                    secretsSection(agent: agent, entries: secrets)
                 }
+                .padding(16)
             }
         }
         .background(
@@ -2192,82 +2246,302 @@ private struct SandboxSecretsView: View {
                 .fill(theme.cardBackground)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
         )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .animation(.easeInOut(duration: 0.2), value: isExpanded)
     }
 
-    private func agentHeader(_ agent: Agent, isExpanded: Bool, count: Int) -> some View {
+    private func agentCardHeader(
+        _ agent: Agent,
+        isExpanded: Bool,
+        execEnabled: Bool,
+        pluginCount: Int,
+        secretCount: Int
+    ) -> some View {
         Button(action: { toggleAgent(agent.id) }) {
-            HStack(spacing: 10) {
-                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 14)
+            HStack(spacing: 12) {
+                SandboxAgentAvatar(name: agent.name, size: 30)
 
-                Text(agent.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(agent.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
 
-                if count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.tertiaryBackground))
+                    HStack(spacing: 8) {
+                        pill(execEnabled ? "Autonomous" : "Manual", color: execEnabled ? .green : theme.tertiaryText)
+                        if pluginCount > 0 { pill("\(pluginCount) plugin\(pluginCount == 1 ? "" : "s")") }
+                        if secretCount > 0 { pill("\(secretCount) secret\(secretCount == 1 ? "" : "s")") }
+                    }
                 }
 
                 Spacer()
 
-                if isExpanded {
-                    addSecretButton(agentId: agent.id)
-                }
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    .animation(.easeInOut(duration: 0.2), value: isExpanded)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
     }
 
-    private func addSecretButton(agentId: UUID) -> some View {
-        Button(action: { addSecret(for: agentId) }) {
+    // MARK: - Execution Toggles
+
+    private func executionToggles(agent: Agent, execConfig: AutonomousExecConfig?) -> some View {
+        let isProvisioning = provisioningAgents.contains(agent.id)
+
+        return VStack(alignment: .leading, spacing: 0) {
+            if !sandboxRunning {
+                inlineBanner(
+                    icon: "exclamationmark.circle",
+                    text: "Start the sandbox container to configure execution settings.",
+                    color: theme.warningColor
+                )
+            } else {
+                VStack(spacing: 0) {
+                    execToggleRow(
+                        title: "Autonomous Execution",
+                        subtitle: "Allow agent to run commands in the sandbox",
+                        isOn: execConfig?.enabled ?? false,
+                        isLoading: isProvisioning,
+                        loadingLabel: execConfig?.enabled == true ? "Disabling\u{2026}" : "Setting up\u{2026}",
+                        onChange: { enabled in
+                            updateExecConfig(for: agent.id, current: execConfig) { $0.enabled = enabled }
+                        }
+                    )
+
+                    if execConfig?.enabled == true && !isProvisioning {
+                        insetDivider
+
+                        execToggleRow(
+                            title: "Plugin Creation",
+                            subtitle: "Agent can create its own tools as plugins",
+                            isOn: execConfig?.pluginCreate ?? false,
+                            onChange: { create in
+                                updateExecConfig(for: agent.id, current: execConfig) { $0.pluginCreate = create }
+                            }
+                        )
+                    }
+                }
+                .insetPanel(theme: theme)
+            }
+        }
+    }
+
+    private func execToggleRow(
+        title: String,
+        subtitle: String,
+        isOn: Bool,
+        isLoading: Bool = false,
+        loadingLabel: String = "Updating\u{2026}",
+        onChange: @escaping @MainActor (Bool) -> Void
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if isLoading {
+                        Text(loadingLabel)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.accentColor)
+                            .transition(.opacity)
+                    }
+                }
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            Spacer()
+
+            if isLoading {
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(theme.accentColor)
+                    .transition(.opacity.combined(with: .scale(scale: 0.6)))
+            } else {
+                Toggle("", isOn: Binding(get: { isOn }, set: onChange))
+                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                    .labelsHidden()
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: isLoading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    // MARK: - Plugins Section
+
+    private func pluginsSection(agent: Agent, plugins: [InstalledSandboxPlugin]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                sectionLabel("Plugins", icon: "puzzlepiece.extension", count: plugins.count)
+                Spacer()
+                if sandboxRunning { addButton { pluginInstallAgent = agent.id } }
+            }
+
+            if plugins.isEmpty {
+                inlineHint("No sandbox plugins installed")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(plugins.enumerated()), id: \.element.id) { index, installed in
+                        if index > 0 { insetDivider }
+                        pluginRow(installed, agentId: agent.id)
+                    }
+                }
+                .insetPanel(theme: theme)
+            }
+        }
+    }
+
+    private func pluginRow(_ installed: InstalledSandboxPlugin, agentId: UUID) -> some View {
+        let isHovering = hoveringPlugin == installed.id
+        let statusColor: Color = installed.status == .ready ? .green : .orange
+
+        return HStack(spacing: 10) {
+            Circle().fill(statusColor).frame(width: 7, height: 7)
+
+            Text(installed.plugin.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+
+            pill(installed.status.rawValue, color: statusColor)
+
+            Spacer()
+
+            if isHovering {
+                Button(action: { uninstallPlugin(installed.plugin.id, from: agentId) }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(theme.tertiaryText)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Uninstall plugin")
+                .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(isHovering ? theme.primaryBackground.opacity(0.5) : Color.clear)
+        .contentShape(Rectangle())
+        .onHover { hoveringPlugin = $0 ? installed.id : nil }
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
+    }
+
+    // MARK: - Secrets Section
+
+    private func secretsSection(agent: Agent, entries: [SecretEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                sectionLabel("Secrets", icon: "key", count: entries.filter { !$0.isNew }.count)
+                Spacer()
+                addButton { addSecret(for: agent.id) }
+            }
+
+            if entries.isEmpty {
+                inlineHint("No secrets configured")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                        if index > 0 { insetDivider }
+                        SecretEntryRow(
+                            entry: entry,
+                            isEditing: editingEntry == entry.id,
+                            theme: theme,
+                            onCommit: { commitSecret(entryId: entry.id, agentId: agent.id, key: $0, value: $1) },
+                            onDelete: { deleteSecretEntry(entryId: entry.id, agentId: agent.id, key: entry.key) },
+                            onStartEditing: { editingEntry = entry.id }
+                        )
+                    }
+                }
+                .insetPanel(theme: theme)
+            }
+        }
+    }
+
+    // MARK: - Shared Components
+
+    private func pill(_ text: String, color: Color = .secondary) -> some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.1)))
+    }
+
+    private func sectionLabel(_ title: String, icon: String, count: Int) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.accentColor)
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(theme.secondaryText)
+                .tracking(0.5)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .foregroundColor(theme.tertiaryText)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(theme.tertiaryBackground))
+            }
+        }
+    }
+
+    private func addButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack(spacing: 4) {
-                Image(systemName: "plus").font(.system(size: 10, weight: .semibold))
-                Text("Add Secret").font(.system(size: 11, weight: .medium))
+                Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                Text("Add").font(.system(size: 11, weight: .semibold))
             }
             .foregroundColor(theme.accentColor)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor.opacity(0.1)))
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.accentColor.opacity(0.08))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.accentColor.opacity(0.2), lineWidth: 1))
+            )
         }
         .buttonStyle(PlainButtonStyle())
     }
 
-    private var emptyAgentRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "key.slash").font(.system(size: 12)).foregroundColor(theme.tertiaryText)
-            Text("No secrets configured for this agent").font(.system(size: 12)).foregroundColor(theme.tertiaryText)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
+    private func inlineHint(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12))
+            .foregroundColor(theme.tertiaryText)
+            .padding(.vertical, 4)
     }
 
-    private func secretsList(_ entries: [SecretEntry], agentId: UUID) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                if index > 0 {
-                    Rectangle().fill(theme.cardBorder.opacity(0.5)).frame(height: 1).padding(.horizontal, 16)
-                }
-                SecretEntryRow(
-                    entry: entry,
-                    isEditing: editingEntry == entry.id,
-                    theme: theme,
-                    onCommit: { commitSecret(entryId: entry.id, agentId: agentId, key: $0, value: $1) },
-                    onDelete: { deleteSecretEntry(entryId: entry.id, agentId: agentId, key: entry.key) },
-                    onStartEditing: { editingEntry = entry.id }
-                )
-            }
+    private func inlineBanner(icon: String, text: String, color: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(color.opacity(0.8))
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(theme.secondaryText)
         }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(color.opacity(0.06))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(color.opacity(0.15), lineWidth: 1))
+        )
+    }
+
+    private var insetDivider: some View {
+        Rectangle().fill(theme.cardBorder.opacity(0.4)).frame(height: 1).padding(.horizontal, 12)
     }
 
     // MARK: - Actions
@@ -2282,21 +2556,53 @@ private struct SandboxSecretsView: View {
         }
     }
 
+    private func updateExecConfig(
+        for agentId: UUID,
+        current: AutonomousExecConfig?,
+        _ mutate: (inout AutonomousExecConfig) -> Void
+    ) {
+        var config = current ?? .default
+        mutate(&config)
+
+        let enabledChanged = config.enabled != (current?.enabled ?? false)
+        if enabledChanged {
+            provisioningAgents.insert(agentId)
+        }
+
+        Task { @MainActor in
+            do {
+                try await agentManager.updateAutonomousExec(config, for: agentId)
+            } catch {
+                ToastManager.shared.error("Failed to update sandbox access", message: error.localizedDescription)
+            }
+            provisioningAgents.remove(agentId)
+        }
+    }
+
+    private func uninstallPlugin(_ pluginId: String, from agentId: UUID) {
+        Task {
+            do {
+                try await pluginManager.uninstall(pluginId: pluginId, from: agentId.uuidString)
+            } catch {
+                ToastManager.shared.error("Failed to uninstall plugin", message: error.localizedDescription)
+            }
+        }
+    }
+
     private func loadAllSecrets() {
         for agent in agentManager.agents {
-            expandedAgents.insert(agent.id)
             let stored = AgentSecretsKeychain.getAllSecrets(agentId: agent.id)
             agentSecrets[agent.id] = stored.map { SecretEntry(key: $0.key, value: $0.value, isNew: false) }
                 .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
         }
-        notifyCount()
     }
 
     private func addSecret(for agentId: UUID) {
+        if !expandedAgents.contains(agentId) {
+            _ = withAnimation(.easeInOut(duration: 0.2)) { expandedAgents.insert(agentId) }
+        }
         let entry = SecretEntry(key: "", value: "", isNew: true)
-        var entries = agentSecrets[agentId] ?? []
-        entries.append(entry)
-        agentSecrets[agentId] = entries
+        agentSecrets[agentId, default: []].append(entry)
         editingEntry = entry.id
     }
 
@@ -2305,8 +2611,7 @@ private struct SandboxSecretsView: View {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard !trimmedKey.isEmpty, !trimmedValue.isEmpty else {
-            agentSecrets[agentId]?.removeAll { $0.id == entryId }
-            notifyCount()
+            withAnimation(.easeInOut(duration: 0.15)) { agentSecrets[agentId]?.removeAll { $0.id == entryId } }
             return
         }
 
@@ -2322,29 +2627,186 @@ private struct SandboxSecretsView: View {
             agentSecrets[agentId]?[idx] = SecretEntry(key: trimmedKey, value: trimmedValue, isNew: false)
         }
         editingEntry = nil
-        notifyCount()
     }
 
     private func deleteSecretEntry(entryId: SecretEntry.ID, agentId: UUID, key: String) {
-        if !key.isEmpty {
-            AgentSecretsKeychain.deleteSecret(id: key, agentId: agentId)
-        }
-        withAnimation(.easeInOut(duration: 0.2)) {
-            agentSecrets[agentId]?.removeAll { $0.id == entryId }
-        }
-        notifyCount()
+        if !key.isEmpty { AgentSecretsKeychain.deleteSecret(id: key, agentId: agentId) }
+        withAnimation(.easeInOut(duration: 0.2)) { agentSecrets[agentId]?.removeAll { $0.id == entryId } }
+    }
+}
+
+// MARK: - Inset Panel Modifier
+
+private extension View {
+    func insetPanel(theme: ThemeProtocol) -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.secondaryBackground.opacity(0.5))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.cardBorder.opacity(0.6), lineWidth: 1))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Agent Plugin Install Sheet
+
+private struct SandboxAgentPluginInstallSheet: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.dismiss) private var dismiss
+
+    let agent: Agent
+    @ObservedObject var pluginLibrary: SandboxPluginLibrary
+    @ObservedObject var pluginManager: SandboxPluginManager
+
+    @State private var hoveredPlugin: String?
+
+    private var availablePlugins: [SandboxPlugin] {
+        pluginLibrary.plugins.filter { pluginManager.plugin(id: $0.id, for: agent.id.uuidString) == nil }
     }
 
-    private func notifyCount() {
-        let count = agentSecrets.values.reduce(0) { $0 + $1.filter { !$0.isNew }.count }
-        onCountChanged?(count)
+    var body: some View {
+        VStack(spacing: 0) {
+            sheetHeader
+            Rectangle().fill(theme.cardBorder).frame(height: 1)
+            sheetContent
+            Rectangle().fill(theme.cardBorder).frame(height: 1)
+            sheetFooter
+        }
+        .frame(width: 460, height: 440)
+        .background(theme.primaryBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var sheetHeader: some View {
+        HStack(spacing: 12) {
+            SandboxAgentAvatar(name: agent.name, size: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Add Plugin")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundColor(theme.primaryText)
+                Text(agent.name)
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+            }
+            Spacer()
+            Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.tertiaryText)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 20)
+    }
+
+    @ViewBuilder
+    private var sheetContent: some View {
+        if availablePlugins.isEmpty {
+            VStack(spacing: 14) {
+                Image(systemName: "checkmark.circle")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundColor(.green.opacity(0.6))
+                VStack(spacing: 4) {
+                    Text("All Installed")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.secondaryText)
+                    Text("Every available plugin is already installed for this agent.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.tertiaryText)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 260)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(availablePlugins) { plugin in
+                        installablePluginRow(plugin)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private var sheetFooter: some View {
+        HStack {
+            Spacer()
+            Button("Done") { dismiss() }
+                .buttonStyle(.plain)
+                .foregroundColor(theme.secondaryText)
+                .font(.system(size: 13, weight: .medium))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(RoundedRectangle(cornerRadius: 7).fill(theme.tertiaryBackground))
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+    }
+
+    private func installablePluginRow(_ plugin: SandboxPlugin) -> some View {
+        let isHovering = hoveredPlugin == plugin.id
+
+        return HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(theme.accentColor.opacity(0.1))
+                    .frame(width: 34, height: 34)
+                Image(systemName: "puzzlepiece.extension.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(plugin.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                if !plugin.description.isEmpty {
+                    Text(plugin.description)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Button(action: { installPlugin(plugin) }) {
+                Text("Install")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(theme.accentColor))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(isHovering ? theme.secondaryBackground.opacity(0.5) : Color.clear)
+        .contentShape(Rectangle())
+        .onHover { hoveredPlugin = $0 ? plugin.id : nil }
+        .animation(.easeInOut(duration: 0.12), value: isHovering)
+    }
+
+    private func installPlugin(_ plugin: SandboxPlugin) {
+        Task {
+            do {
+                try await pluginManager.install(plugin: plugin, for: agent.id.uuidString)
+            } catch {
+                ToastManager.shared.error("Failed to install plugin", message: error.localizedDescription)
+            }
+        }
     }
 }
 
 // MARK: - Secret Entry Row
 
 private struct SecretEntryRow: View {
-    let entry: SandboxSecretsView.SecretEntry
+    let entry: SandboxAgentsView.SecretEntry
     let isEditing: Bool
     let theme: ThemeProtocol
     let onCommit: (_ key: String, _ value: String) -> Void
@@ -2364,33 +2826,27 @@ private struct SecretEntryRow: View {
                 readOnlyContent
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(isHovering ? theme.secondaryBackground.opacity(0.3) : Color.clear)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(isHovering ? theme.primaryBackground.opacity(0.5) : Color.clear)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        .animation(.easeInOut(duration: 0.12), value: isHovering)
         .onAppear {
-            editKey = entry.key
-            editValue = entry.value
+            editKey = entry.key; editValue = entry.value
         }
     }
-
-    // MARK: - Editable
 
     private var editableContent: some View {
         HStack(spacing: 10) {
-            editField("SECRET_NAME", text: $editKey, weight: .medium)
-                .frame(maxWidth: 200)
-
-            valueField(text: $editValue, secure: !showValue)
-
-            visibilityToggle
-            commitButton
-            deleteButton
+            monoField("SECRET_NAME", text: $editKey, weight: .medium).frame(maxWidth: 200)
+            secretValueField(text: $editValue, secure: !showValue)
+            visibilityButton
+            iconButton("checkmark", color: .white, bg: theme.accentColor) { onCommit(editKey, editValue) }
+            iconButton("trash", color: theme.errorColor, bg: theme.errorColor.opacity(0.1), action: onDelete)
+                .help("Delete secret")
         }
     }
-
-    // MARK: - Read-Only
 
     private var readOnlyContent: some View {
         HStack(spacing: 10) {
@@ -2399,31 +2855,34 @@ private struct SecretEntryRow: View {
                 .foregroundColor(theme.primaryText)
                 .frame(maxWidth: 200, alignment: .leading)
 
-            if showValue {
-                Text(entry.value)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-            } else {
-                Text(String(repeating: "•", count: min(entry.value.count, 24)))
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+            Group {
+                if showValue {
+                    Text(entry.value).foregroundColor(theme.secondaryText)
+                } else {
+                    Text(String(repeating: "\u{2022}", count: min(entry.value.count, 24))).foregroundColor(
+                        theme.tertiaryText
+                    )
+                }
             }
+            .font(.system(size: 12, design: .monospaced))
+            .lineLimit(1)
 
             Spacer()
-
-            visibilityToggle
+            visibilityButton
 
             if isHovering {
                 iconButton("pencil", color: theme.secondaryText, bg: theme.tertiaryBackground, action: onStartEditing)
-                deleteButton
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+                iconButton("trash", color: theme.errorColor, bg: theme.errorColor.opacity(0.1), action: onDelete)
+                    .help("Delete secret")
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
     }
 
-    // MARK: - Shared Components
+    // MARK: - Field Helpers
 
-    private func editField(_ placeholder: String, text: Binding<String>, weight: Font.Weight = .regular) -> some View {
+    private func monoField(_ placeholder: String, text: Binding<String>, weight: Font.Weight = .regular) -> some View {
         TextField(placeholder, text: text)
             .textFieldStyle(.plain)
             .font(.system(size: 12, weight: weight, design: .monospaced))
@@ -2438,7 +2897,7 @@ private struct SecretEntryRow: View {
     }
 
     @ViewBuilder
-    private func valueField(text: Binding<String>, secure: Bool) -> some View {
+    private func secretValueField(text: Binding<String>, secure: Bool) -> some View {
         if secure {
             SecureField("value", text: text)
                 .textFieldStyle(.plain)
@@ -2449,31 +2908,20 @@ private struct SecretEntryRow: View {
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6).stroke(theme.accentColor.opacity(0.4), lineWidth: 1)
-                        )
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.accentColor.opacity(0.4), lineWidth: 1))
                 )
         } else {
-            editField("value", text: text)
+            monoField("value", text: text)
         }
     }
 
-    private var visibilityToggle: some View {
+    private var visibilityButton: some View {
         iconButton(
             showValue ? "eye.slash.fill" : "eye.fill",
             color: theme.tertiaryText,
             bg: theme.tertiaryBackground
         ) { showValue.toggle() }
         .help(showValue ? "Hide value" : "Show value")
-    }
-
-    private var commitButton: some View {
-        iconButton("checkmark", color: .white, bg: theme.accentColor) { onCommit(editKey, editValue) }
-    }
-
-    private var deleteButton: some View {
-        iconButton("trash", color: theme.errorColor, bg: theme.errorColor.opacity(0.1), action: onDelete)
-            .help("Delete secret")
     }
 
     private func iconButton(_ icon: String, color: Color, bg: Color, action: @escaping () -> Void) -> some View {
