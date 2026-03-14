@@ -168,7 +168,7 @@ struct WorkFileTreeTool: OsaurusTool {
     func execute(argumentsJSON: String) async throws -> String {
         let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
         let relativePath = args["path"] as? String ?? "."
-        let maxDepth = args["max_depth"] as? Int ?? 3
+        let maxDepth = coerceInt(args["max_depth"]) ?? 3
 
         let targetURL = try WorkFolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
 
@@ -289,8 +289,8 @@ struct WorkFileReadTool: OsaurusTool {
         let content = try String(contentsOf: fileURL, encoding: .utf8)
         let lines = content.components(separatedBy: .newlines)
 
-        let startLine = (args["start_line"] as? Int) ?? 1
-        let endLine = (args["end_line"] as? Int) ?? lines.count
+        let startLine = coerceInt(args["start_line"]) ?? 1
+        let endLine = coerceInt(args["end_line"]) ?? lines.count
         let validStart = max(1, min(startLine, lines.count))
         let validEnd = max(validStart, min(endLine, lines.count))
 
@@ -889,7 +889,7 @@ struct WorkFileSearchTool: OsaurusTool {
 
         let searchPath = args["path"] as? String ?? "."
         let filePattern = args["file_pattern"] as? String
-        let maxResults = args["max_results"] as? Int ?? 50
+        let maxResults = coerceInt(args["max_results"]) ?? 50
 
         let searchURL = try WorkFolderToolHelpers.resolvePath(searchPath, rootPath: rootPath)
 
@@ -1020,7 +1020,7 @@ struct WorkShellRunTool: OsaurusTool, PermissionedTool {
             throw WorkFolderToolError.invalidArguments("Missing required parameter: command")
         }
 
-        let timeout = min(args["timeout"] as? Int ?? 30, 300)
+        let timeout = min(coerceInt(args["timeout"]) ?? 30, 300)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -1154,7 +1154,7 @@ struct WorkGitDiffTool: OsaurusTool {
         let args = try WorkFolderToolHelpers.parseArguments(argumentsJSON)
 
         let filePath = args["path"] as? String
-        let staged = args["staged"] as? Bool ?? false
+        let staged = coerceBool(args["staged"]) ?? false
         let commit = args["commit"] as? String
 
         var arguments = ["diff"]
@@ -1222,7 +1222,7 @@ struct WorkGitCommitTool: OsaurusTool, PermissionedTool {
             throw WorkFolderToolError.invalidArguments("Missing required parameter: message")
         }
 
-        let files = args["files"] as? [String]
+        let files = coerceStringArray(args["files"])
 
         // Stage files
         let stageArgs = (files != nil && !files!.isEmpty) ? ["add"] + files! : ["add", "-A"]

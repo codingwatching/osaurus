@@ -188,7 +188,7 @@ public actor WorkExecutionEngine {
         Your workspace is your home directory inside the sandbox.
         The user cannot see files you create unless you call `share_artifact` with a relative path or inline content.
 
-        Pre-installed: bash, python3, pip, node, npm, git, curl, wget, jq, ripgrep (rg),
+        Pre-installed: bash, python3, node, git, curl, wget, jq, ripgrep (rg),
         sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
         The default shell is bash. Internet access is available.
 
@@ -200,9 +200,9 @@ public actor WorkExecutionEngine {
 
     private static let sandboxRuntimeHints = """
         Runtime hints:
-        - Python deps: `sandbox_pip_install` installs into the agent's `.venv`; execution tools automatically prefer it.
-        - Node deps: `sandbox_npm_install` installs packages and execution tools include local `node_modules/.bin` on PATH for the current working directory.
-        - Additional toolchains like Go or Rust can be installed with `sandbox_install`.
+        - Python deps: `sandbox_pip_install` with `{"packages": ["numpy"]}` installs into the agent's `.venv`; execution tools automatically use it.
+        - Node deps: `sandbox_npm_install` with `{"packages": ["express"]}` installs packages; execution tools include `node_modules/.bin` on PATH.
+        - System packages: `sandbox_install` with `{"packages": ["ffmpeg"]}` installs via apk as root.
         - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
 
         The sandbox is disposable — experiment freely.
@@ -653,7 +653,7 @@ public actor WorkExecutionEngine {
 
             When the goal is fully achieved:
             1. First, call `share_artifact` for any generated files or content the user needs.
-            2. Then call `complete_task` with a summary and `success: true`.
+            2. Then call `complete_task` with `{"summary": "what was accomplished", "success": true}`.
 
             Do NOT call complete_task until you have actually done the work, verified it, and shared any output files.
 
