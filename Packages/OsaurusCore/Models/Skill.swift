@@ -316,7 +316,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                     - End with conclusions or next steps
 
                     ## Quality Guidelines
-                    - Maintain accuracy - don't add interpretation
+                    - Maintain accuracy - do not add interpretation
                     - Keep the original tone and intent
                     - Adjust length to the requested format
                     - Highlight what's new or surprising

@@ -146,7 +146,7 @@ public actor WorkExecutionEngine {
         let tail = String(result.suffix(tailSize))
         let omitted = result.count - headSize - tailSize
         return
-            "\(head)\n\n[... \(omitted) characters omitted — use sandbox_read_file (with start_line, line_count, or tail_lines) or file_read to inspect the full output ...]\n\n\(tail)"
+            "\(head)\n\n[... \(omitted) characters omitted — use `sandbox_read_file` (with start_line, line_count, or tail_lines) or `file_read` to inspect the full output ...]\n\n\(tail)"
     }
 
     // MARK: - Folder Context
@@ -175,74 +175,102 @@ public actor WorkExecutionEngine {
         }
 
         section +=
-            "\n**File Tools Available:** Use file_read, file_write, file_edit, file_search, etc. to work with files.\n"
+            "\n**File Tools Available:** Use `file_read`, `file_write`, `file_edit`, `file_search`, etc. to work with files.\n"
         section += "Always read files before editing. Use relative paths from the working directory.\n"
-        section +=
-            "To share files or content with the user, call `share_artifact` with a relative path or pass content directly.\n"
 
         return section
     }
 
+    // MARK: - Sandbox Prompt Blocks
+
     private static let sandboxEnvironmentBlock = """
-        You have access to an isolated Linux sandbox (Alpine Linux, ARM64).
+        You have access to an isolated Linux sandbox (Alpine Linux, ARM64). \
         Your workspace is your home directory inside the sandbox.
-        The user cannot see files you create unless you call `share_artifact` with a relative path or inline content.
 
-        Pre-installed: bash, python3, node, git, curl, wget, jq, ripgrep (rg),
+        **IMPORTANT — You have full internet access in this sandbox.** You can \
+        use `curl`, `wget`, Python `requests`/`urllib`, Node `fetch`, or any \
+        HTTP client to call external APIs, download files, and fetch live data. \
+        Do NOT say you lack internet access or cannot reach external services — \
+        you can. Always prefer fetching real data over generating fake/placeholder data.
+
+        Pre-installed: bash, python3, node, git, curl, wget, jq, ripgrep (rg), \
         sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
-        The default shell is bash. Internet access is available.
 
-        **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for
-        multi-line scripts (python, bash, node). For single shell commands use
-        `sandbox_exec`. For background processes use `sandbox_exec_background`.
-        Set `timeout` for long operations (default 60s scripts, 30s exec, max 300s).
+        **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for \
+        multi-line scripts (python, bash, node). For single shell commands use \
+        `sandbox_exec`. For background processes use `sandbox_exec_background`. \
+        Set `timeout` for long operations (default 60 s scripts, 30 s exec, max 300 s).
+        """
+
+    private static let sandboxEnvironmentBlockCompact = """
+        Isolated Linux sandbox (Alpine, ARM64). Home dir is your workspace. \
+        **You have full internet access.** Use `curl`, Python `requests`, or \
+        Node `fetch` to call APIs and download data. Do NOT claim you lack \
+        internet — always fetch real data. \
+        Pre-installed: bash, python3, node, git, curl, jq, rg, sqlite3, gcc/make, cmake. \
+        Prefer `sandbox_run_script` for multi-line scripts; `sandbox_exec` for single commands.
         """
 
     private static let sandboxRuntimeHints = """
         Runtime hints:
-        - Python deps: `sandbox_pip_install` with `{"packages": ["numpy"]}` installs into the agent's `.venv`; execution tools automatically use it.
-        - Node deps: `sandbox_npm_install` with `{"packages": ["express"]}` installs packages; execution tools include `node_modules/.bin` on PATH.
-        - System packages: `sandbox_install` with `{"packages": ["ffmpeg"]}` installs via apk as root.
-        - Use `sandbox_read_file` with `start_line`, `line_count`, or `tail_lines` to inspect large logs.
+        - Python deps: `sandbox_pip_install` — e.g. `{"packages": ["numpy"]}`.
+        - Node deps: `sandbox_npm_install` — e.g. `{"packages": ["express"]}`.
+        - System packages: `sandbox_install` — e.g. `{"packages": ["ffmpeg"]}`.
+        - Use `sandbox_read_file` with `start_line`/`line_count`/`tail_lines` to inspect large logs.
+        - The sandbox is disposable — experiment freely.
+        """
 
-        The sandbox is disposable — experiment freely.
+    private static let sandboxRuntimeHintsCompact = """
+        `sandbox_pip_install` for Python, `sandbox_npm_install` for Node, `sandbox_install` for system packages.
         """
 
     /// Chat-mode sandbox guidance (no `complete_task` workflow).
-    static func chatSandboxPromptSection() -> String {
-        """
+    static func chatSandboxPromptSection(compact: Bool = false) -> String {
+        let env = compact ? sandboxEnvironmentBlockCompact : sandboxEnvironmentBlock
+        let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
+        return """
 
-        ## Linux Sandbox Environment
+            ## Linux Sandbox Environment
 
-        \(sandboxEnvironmentBlock)
-        Files persist across messages.
+            \(env)
+            Files persist across messages.
 
-        \(sandboxRuntimeHints)
+            \(hints)
 
-        """
+            """
     }
 
-    /// Work-mode sandbox guidance with the full build/verify/share/complete pattern.
-    static func sandboxPromptSection() -> String {
-        """
+    /// Work-mode sandbox guidance with build/verify pattern.
+    static func sandboxPromptSection(compact: Bool = false) -> String {
+        let env = compact ? sandboxEnvironmentBlockCompact : sandboxEnvironmentBlock
+        let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
 
-        ## Linux Sandbox Environment
+        var section = """
 
-        \(sandboxEnvironmentBlock)
-        Files persist across tasks.
+            ## Linux Sandbox Environment
 
-        For build/test tasks, follow this pattern:
-        1. Inspect the workspace and choose a stack.
-        2. Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files.
-        3. Install project-specific dependencies with `sandbox_pip_install` or `sandbox_npm_install`.
-        4. Run tests or verification commands with `sandbox_exec`.
-        5. If verification fails, read the error carefully, fix the cause, and rerun.
-        6. **IMPORTANT:** Call `share_artifact` for every file or directory the user should see (images, charts, websites, reports, code output, etc.). Do this BEFORE calling `complete_task`.
-        7. When everything passes, call `complete_task` with a concise summary.
+            \(env)
+            Files persist across tasks.
 
-        \(sandboxRuntimeHints)
+            """
 
-        """
+        if !compact {
+            section += """
+                For build/test tasks, follow this pattern:
+                1. Inspect the workspace and choose a stack.
+                2. Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files.
+                3. Install project-specific dependencies with `sandbox_pip_install` or `sandbox_npm_install`.
+                4. Run tests or verification commands with `sandbox_exec`.
+                5. If verification fails, read the error carefully, fix the cause, and rerun.
+
+                """
+        }
+
+        section += """
+            \(hints)
+
+            """
+        return section
     }
 
     // MARK: - Reasoning Loop
@@ -356,15 +384,14 @@ public actor WorkExecutionEngine {
             await onIterationStart(iteration)
             await onStatusUpdate("Iteration \(iteration)")
 
-            // Budget awareness — inject every 10 iterations and at the 5-remaining mark
             if iteration > 1 && iteration % 10 == 0 {
                 let remaining = maxIterations - iteration
                 await onStatusUpdate("Budget: \(remaining) of \(maxIterations) iterations remaining")
                 messages.append(
                     ChatMessage(
-                        role: "system",
+                        role: "user",
                         content:
-                            "[Budget: \(remaining)/\(maxIterations) iterations remaining. Prioritize completing the core task. Use create_issue for non-essential follow-up work.]"
+                            "[System Notice] Budget: \(remaining)/\(maxIterations) iterations remaining. Prioritize completing the core task. Use `create_issue` for non-essential follow-up work."
                     )
                 )
             }
@@ -373,9 +400,9 @@ public actor WorkExecutionEngine {
                 await onStatusUpdate("Warning: 5 iterations remaining")
                 messages.append(
                     ChatMessage(
-                        role: "system",
+                        role: "user",
                         content:
-                            "[WARNING: 5 iterations remaining. Finish current work and call complete_task with a summary. Create issues for anything unfinished.]"
+                            "[System Notice] 5 iterations remaining. Finish current work and call `complete_task` with a summary. Create issues for anything unfinished."
                     )
                 )
             }
@@ -467,7 +494,7 @@ public actor WorkExecutionEngine {
                     ChatMessage(
                         role: "user",
                         content:
-                            "Continue with the next action. Use the available tools to do the work, verify the result, and call complete_task only after verification."
+                            "Continue with the next action. Use the available tools to do the work, verify the result, and call `complete_task` only after verification."
                     )
                 )
                 continue
@@ -594,86 +621,104 @@ public actor WorkExecutionEngine {
         )
     }
 
-    /// Builds the work system prompt for reasoning loop execution
-    /// - Parameters:
-    ///   - base: Base system prompt (agent instructions, etc.)
-    ///   - issue: The issue being executed
-    ///   - executionMode: Resolved work execution mode
-    ///   - skillInstructions: Optional skill-specific instructions
-    /// - Returns: Complete system prompt for work mode
+    // MARK: - Work System Prompt
+
+    /// Builds the complete work-mode system prompt for reasoning loop execution.
     static func buildAgentSystemPrompt(
         base: String,
         issue: Issue,
         executionMode: WorkExecutionMode,
-        skillInstructions: String? = nil
+        skillInstructions: String? = nil,
+        compact: Bool = false
     ) -> String {
         var prompt = base
+        let desc = issue.description ?? ""
 
-        prompt += """
-
-
-            # Work Mode
-
-            You are executing a task for the user. Your goal:
-
-            **\(issue.title)**
-            \(issue.description ?? "")
-
-            ## How to Work
-
-            - You have tools available. Use them to accomplish the goal.
-            - Work step by step. After each tool call, assess what you learned and decide the next action.
-            - You do NOT need to plan everything upfront. Explore, read, understand, then act.
-            - If you discover additional work needed, use `create_issue` to track it.
-            - Use `complete_task` as the normal way to finish work once the task is actually verified.
-            - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
-
-            ## Important Guidelines
-
-            - Always read/explore before modifying. Don't guess at file contents or project structure.
-            - For coding tasks: install missing dependencies, write code efficiently, then verify it works.
-            - Prefer bulk file generation or editing approaches over many tiny write calls when the tools support it.
-            - After failed tests/builds, inspect the error output, fix the cause, and rerun verification.
-            - If something fails, analyze the error and try a different approach. Don't repeat the same action.
-            - Keep the user's original request in mind at all times. Every action should serve the goal.
-            - When creating follow-up issues, write detailed descriptions with full context about what you learned.
-
-            ## Communication Style
-
-            - Before calling tools, briefly explain what you are about to do and why.
-            - After receiving tool results, summarize what you learned before proceeding.
-            - Use concise natural language (not code or JSON) when explaining your actions.
-            - The user sees your text responses in real time, so keep them informed of progress.
-
-            ## Sharing Output
-
-            **Always call `share_artifact` for every output file or directory the user should see** — images, charts, generated code, websites, reports, audio, etc. The user cannot see files you create unless you explicitly share them. Call `share_artifact` with the file's relative path before calling `complete_task`.
-
-            ## Completion
-
-            When the goal is fully achieved:
-            1. First, call `share_artifact` for any generated files or content the user needs.
-            2. Then call `complete_task` with `{"summary": "what was accomplished", "success": true}`.
-
-            Do NOT call complete_task until you have actually done the work, verified it, and shared any output files.
-
-            """
+        prompt +=
+            compact
+            ? workModeCompact(title: issue.title, description: desc)
+            : workModeFull(title: issue.title, description: desc)
 
         switch executionMode {
-        case .hostFolder(let folderContext):
-            prompt += buildFolderContextSection(from: folderContext)
-        case .sandbox:
-            prompt += sandboxPromptSection()
-        case .none:
-            break
+        case .hostFolder(let ctx): prompt += buildFolderContextSection(from: ctx)
+        case .sandbox: prompt += sandboxPromptSection(compact: compact)
+        case .none: break
         }
 
-        // Add skill instructions if available
         if let skills = skillInstructions, !skills.isEmpty {
             prompt += "\n## Active Skills\n\(skills)\n"
         }
 
         return prompt
+    }
+
+    private static func workModeCompact(title: String, description: String) -> String {
+        """
+
+
+        # Work Mode
+
+        **Goal:** \(title)
+        \(description)
+
+        ## Instructions
+
+        - ALWAYS attempt the task using your tools. Never refuse or list limitations.
+        - Use tools step by step. Read/explore before modifying.
+        - Use `create_issue` for additional work; `request_clarification` if ambiguous.
+        - You MUST call `share_artifact` for every output file BEFORE calling `complete_task`. The user sees nothing unless you share it.
+        - Only after sharing all outputs, call `complete_task` with `{"summary": "...", "success": true}`.
+        - NEVER call `complete_task` without first calling `share_artifact`.
+
+        """
+    }
+
+    private static func workModeFull(title: String, description: String) -> String {
+        """
+
+
+        # Work Mode
+
+        You are executing a task for the user. Your goal:
+
+        **\(title)**
+        \(description)
+
+        ## How to Work
+
+        - ALWAYS attempt the task using your tools. Never refuse, never list limitations, never say you cannot do something without trying first. You have powerful tools — use them.
+        - Work step by step. After each tool call, assess what you learned and decide the next action.
+        - You do not need to plan everything upfront. Explore, read, understand, then act.
+        - If you discover additional work needed, use `create_issue` to track it.
+        - Use `complete_task` as the normal way to finish work once the task is actually verified.
+        - If the task is ambiguous and you cannot make a reasonable assumption, use `request_clarification`.
+
+        ## Important Guidelines
+
+        - Always read/explore before modifying. Do not guess at file contents or project structure.
+        - For coding tasks: install missing dependencies, write code efficiently, then verify it works.
+        - Prefer bulk file generation or editing approaches over many tiny write calls when the tools support it.
+        - After failed tests/builds, inspect the error output, fix the cause, and rerun verification.
+        - If something fails, analyze the error and try a different approach. Do not repeat the same action.
+        - Keep the user's original request in mind at all times. Every action should serve the goal.
+        - When creating follow-up issues, write detailed descriptions with full context about what you learned.
+
+        ## Communication Style
+
+        - Before calling tools, briefly explain what you are about to do and why.
+        - After receiving tool results, summarize what you learned before proceeding.
+        - Use concise natural language (not code or JSON) when explaining your actions.
+        - The user sees your text responses in real time, so keep them informed of progress.
+
+        ## Completion
+
+        When the goal is fully achieved:
+        1. You MUST call `share_artifact` BEFORE `complete_task`. The user cannot see any files you created unless you explicitly share them. Call `share_artifact` for every output file or directory (images, charts, code, websites, reports, HTML, videos, etc.).
+        2. Only AFTER sharing all outputs, call `complete_task` with `{"summary": "what was accomplished", "success": true}`.
+
+        NEVER call `complete_task` without first calling `share_artifact` for every file the user should see. If you skip `share_artifact`, the user gets nothing.
+
+        """
     }
 
     /// Extracts a completion summary from a text response

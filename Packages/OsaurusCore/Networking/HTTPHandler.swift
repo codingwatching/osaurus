@@ -1297,31 +1297,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Chat handlers
 
-    /// Inject assembled memory context into a chat request when an agent ID is provided
-    /// via the `X-Osaurus-Agent-Id` header. Uses query-aware retrieval when the last
-    /// user message is available, ensuring semantically relevant memories are included.
-    private static func enrichWithMemoryContext(
+    /// Enrich a chat request with the agent's system prompt and memory context
+    /// when an agent ID is provided via the `X-Osaurus-Agent-Id` header.
+    private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
         agentId: String?
     ) async -> ChatCompletionRequest {
         guard let agentId, !agentId.isEmpty else { return request }
 
-        let config = MemoryConfigurationStore.load()
+        var enriched = request
+
+        if let agentUUID = UUID(uuidString: agentId) {
+            let agentPrompt = await MainActor.run {
+                SystemPromptBuilder.effectiveBasePrompt(
+                    AgentManager.shared.effectiveSystemPrompt(for: agentUUID)
+                )
+            }
+            SystemPromptBuilder.injectSystemContent(agentPrompt, into: &enriched.messages)
+        }
+
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
         let memoryContext = await MemoryContextAssembler.assembleContext(
             agentId: agentId,
-            config: config,
+            config: MemoryConfigurationStore.load(),
             query: query
         )
-        guard !memoryContext.isEmpty else { return request }
+        SystemPromptBuilder.injectMemoryContext(memoryContext, into: &enriched.messages)
 
-        var enriched = request
-        if let idx = enriched.messages.firstIndex(where: { $0.role == "system" }) {
-            let existing = enriched.messages[idx].content ?? ""
-            enriched.messages[idx] = ChatMessage(role: "system", content: memoryContext + "\n\n" + existing)
-        } else {
-            enriched.messages.insert(ChatMessage(role: "system", content: memoryContext), at: 0)
-        }
         return enriched
     }
 
@@ -2117,7 +2119,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
-                    let enrichedReq = await Self.enrichWithMemoryContext(req, agentId: memoryAgentId)
+                    let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     for try await delta in stream {
                         if StreamingToolHint.isSentinel(delta) { continue }
@@ -2253,7 +2255,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
-                    let enrichedReq = await Self.enrichWithMemoryContext(req, agentId: memoryAgentId)
+                    let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
                     let resp = try await chatEngine.completeChat(request: enrichedReq)
                     let json = try JSONEncoder().encode(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]

@@ -28,22 +28,18 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     struct EngineError: Error {}
 
     private func enrichMessagesWithSystemPrompt(_ messages: [ChatMessage]) async -> [ChatMessage] {
-        // Check if a system prompt is already present
         if messages.contains(where: { $0.role == "system" }) {
             return messages
         }
 
-        // If not, fetch the global system prompt
         let systemPrompt = await MainActor.run {
             ChatConfigurationStore.load().systemPrompt
         }
 
-        let trimmed = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return messages }
-
-        // Prepend the system prompt
-        let systemMessage = ChatMessage(role: "system", content: trimmed)
-        return [systemMessage] + messages
+        let effective = SystemPromptBuilder.effectiveBasePrompt(systemPrompt)
+        var enriched = messages
+        SystemPromptBuilder.injectSystemContent(effective, into: &enriched)
+        return enriched
     }
 
     /// Estimate input tokens from messages (rough heuristic: ~4 chars per token)

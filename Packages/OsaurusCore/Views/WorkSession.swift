@@ -331,9 +331,10 @@ public final class WorkSession: ObservableObject {
     func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
         guard let issue else { return .zero }
 
-        let baseSystemPrompt =
+        let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
             windowState?.cachedSystemPrompt
-            ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+                ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        )
         let executionMode = estimatedExecutionModeForBudget()
         let toolOverrides = effectiveToolOverridesForBudget()
         let toolSpecs = ToolRegistry.shared.workSpecs(withOverrides: toolOverrides, mode: executionMode)
@@ -781,19 +782,17 @@ public final class WorkSession: ObservableObject {
         toolOverrides: [String: Bool]?,
         executionMode: WorkExecutionMode
     ) {
-        let baseSystemPrompt =
+        let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
             windowState?.cachedSystemPrompt
-            ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+                ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
+        )
 
         let memoryConfig = MemoryConfigurationStore.load()
         let memoryContext = await MemoryContextAssembler.assembleContext(
             agentId: agentId.uuidString,
             config: memoryConfig
         )
-        let systemPrompt =
-            memoryContext.isEmpty
-            ? baseSystemPrompt
-            : memoryContext + "\n\n" + baseSystemPrompt
+        let systemPrompt = SystemPromptBuilder.prependMemoryContext(memoryContext, to: baseSystemPrompt)
 
         // Model priority: selectedModel > windowState model > agent default
         let model =
