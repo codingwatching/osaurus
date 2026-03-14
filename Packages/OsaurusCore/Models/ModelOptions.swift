@@ -69,6 +69,7 @@ enum ModelProfileRegistry {
     static let profiles: [any ModelProfile.Type] = [
         VeniceModelProfile.self,
         OpenAIReasoningProfile.self,
+        QwenThinkingProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -117,6 +118,32 @@ struct OpenAIReasoningProfile: ModelProfile {
 
     static let defaults: [String: ModelOptionValue] = [
         "reasoningEffort": .string("medium")
+    ]
+}
+
+// MARK: - Qwen Thinking Profile
+
+/// Qwen3 / Qwen3.5 local models — supports disabling thinking via `enable_thinking` chat template kwarg.
+/// Excludes Qwen3-Coder variants which are non-thinking only.
+struct QwenThinkingProfile: ModelProfile {
+    static let displayName = "Qwen Thinking"
+
+    static func matches(modelId: String) -> Bool {
+        let lower = modelId.lowercased()
+        return lower.contains("qwen3") && !lower.contains("coder")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "disableThinking",
+            label: "Disable Thinking",
+            icon: "brain.head.profile",
+            kind: .toggle(default: false)
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "disableThinking": .bool(false)
     ]
 }
 

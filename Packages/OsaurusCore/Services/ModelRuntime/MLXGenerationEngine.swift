@@ -12,15 +12,15 @@ import CoreImage
 import MLXVLM
 
 struct MLXGenerationEngine {
-    
+
     private static let maxImageSize = CGSize(width: 1024, height: 1024)
-    
+
     private static func downscaleIfNeeded(_ image: CIImage) -> CIImage {
         let scale = min(MediaProcessing.bestFitScale(image.extent.size, in: maxImageSize), 1.0)
         guard scale < 1.0 else { return image }
         return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     }
-    
+
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -39,7 +39,7 @@ struct MLXGenerationEngine {
             )
         }
     }
-    
+
     static func prepareAndGenerate(
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
@@ -62,7 +62,15 @@ struct MLXGenerationEngine {
                 maxKV: runtime.maxKV,
                 prefillStep: runtime.prefillStep
             )
-            let fullInput = MLXLMCommon.UserInput(chat: chat, processing: .init(), tools: toolsSpec)
+            let additionalContext: [String: any Sendable]? =
+                generation.modelOptions["disableThinking"]?.boolValue == true
+                ? ["enable_thinking": false] : nil
+            let fullInput = MLXLMCommon.UserInput(
+                chat: chat,
+                processing: .init(),
+                tools: toolsSpec,
+                additionalContext: additionalContext
+            )
             let fullLMInput: LMInput
             do {
                 fullLMInput = try await context.processor.prepare(input: fullInput)
