@@ -39,26 +39,18 @@ final class HoverTrackingTableView: NSTableView {
     override func mouseExited(with event: NSEvent) { onMouseExited?() }
 }
 
-// MARK: - Table Hosting Cell View
+// MARK: - Table Hosting Cell View (AnyView - Legacy)
 
-/// Generic NSTableCellView subclass that hosts SwiftUI row views via
-/// NSHostingView. Supports efficient cell reuse: on reconfiguration
-/// we update `rootView` in place rather than tearing down the hosting view.
-///
-/// Uses autoresizing mask instead of Auto Layout to avoid constraint
-/// conflicts between the hosting view's intrinsic content size and the
-/// manually-specified row heights from `tableView(_:heightOfRow:)`.
+/// NSTableCellView subclass that hosts SwiftUI row views via NSHostingView
+/// using AnyView type erasure. Kept for backward compatibility with any
+/// callers that pass heterogeneous view types through a single cell pool.
 @MainActor
 final class TableHostingCellView: NSTableCellView {
 
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("TableHostingCellView")
 
-    // MARK: - Private State
-
     private var hostingView: NSHostingView<AnyView>?
     private(set) var rowId: String?
-
-    // MARK: - Initialization
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -70,12 +62,6 @@ final class TableHostingCellView: NSTableCellView {
         fatalError("init(coder:) is not supported")
     }
 
-    // MARK: - Configuration
-
-    /// Configure with a SwiftUI view for the given row.
-    ///
-    /// If a hosting view already exists it updates `rootView` in place,
-    /// which is significantly cheaper than recreating the view hierarchy.
     func configure<V: View>(id: String, content: V) {
         rowId = id
 
@@ -88,14 +74,10 @@ final class TableHostingCellView: NSTableCellView {
         }
     }
 
-    // MARK: - Reuse
-
     override func prepareForReuse() {
         super.prepareForReuse()
         rowId = nil
     }
-
-    // MARK: - Private Helpers
 
     private func createHostingView(rootView: AnyView) {
         let hv = NSHostingView(rootView: rootView)
@@ -106,5 +88,53 @@ final class TableHostingCellView: NSTableCellView {
 
         addSubview(hv)
         hostingView = hv
+    }
+}
+
+// MARK: - Typed Hosting Cell View
+
+/// Generic NSTableCellView that hosts a concrete SwiftUI view type via
+/// NSHostingView<Content>. Preserves structural identity so SwiftUI can
+/// diff efficiently (no AnyView erasure).
+///
+/// Each reuse identifier pool should map to exactly one Content type.
+/// On reconfiguration, `rootView` is updated in place which is significantly
+/// cheaper than recreating the hosting view hierarchy.
+@MainActor
+final class TypedHostingCellView<Content: View>: NSTableCellView {
+
+    private var hostingView: NSHostingView<Content>?
+    private(set) var rowId: String?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    func configure(id: String, content: Content) {
+        rowId = id
+
+        if let hostingView {
+            hostingView.rootView = content
+        } else {
+            let hv = NSHostingView(rootView: content)
+            hv.translatesAutoresizingMaskIntoConstraints = true
+            hv.autoresizingMask = [.width, .height]
+            hv.frame = bounds
+            hv.layer?.backgroundColor = NSColor.clear.cgColor
+
+            addSubview(hv)
+            hostingView = hv
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        rowId = nil
     }
 }

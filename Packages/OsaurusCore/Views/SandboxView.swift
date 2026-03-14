@@ -2309,7 +2309,9 @@ private struct SandboxAgentsView: View {
                         loadingLabel: execConfig?.enabled == true ? "Disabling\u{2026}" : "Setting up\u{2026}",
                         isOn: Binding(
                             get: { execConfig?.enabled ?? false },
-                            set: { enabled in self.updateExecConfig(for: agent.id, current: execConfig) { $0.enabled = enabled } }
+                            set: { enabled in
+                                self.updateExecConfig(for: agent.id, current: execConfig) { $0.enabled = enabled }
+                            }
                         )
                     )
 
@@ -2321,7 +2323,11 @@ private struct SandboxAgentsView: View {
                             subtitle: "Agent can create its own tools as plugins",
                             isOn: Binding(
                                 get: { execConfig?.pluginCreate ?? false },
-                                set: { create in self.updateExecConfig(for: agent.id, current: execConfig) { $0.pluginCreate = create } }
+                                set: { create in
+                                    self.updateExecConfig(for: agent.id, current: execConfig) {
+                                        $0.pluginCreate = create
+                                    }
+                                }
                             )
                         )
                     }

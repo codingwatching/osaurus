@@ -2,31 +2,30 @@
 //  CapabilitiesSelectorView.swift
 //  osaurus
 //
-//  Capabilities selector with tools grouped by plugin/provider.
+//  Unified capabilities selector with tools and skills grouped by source.
 //
 
 import Combine
 import SwiftUI
 
-// MARK: - Types
+// MARK: - Unified Group Model
 
-enum CapabilityTab: String, CaseIterable {
-    case plugins = "Plugins"
-    case tools = "Tools"
-    case skills = "Skills"
-}
-
-private struct ToolGroup: Identifiable {
+/// A single source of capabilities (plugin, MCP provider, etc.) containing
+/// both tools and skills.
+struct CapabilityGroup: Identifiable {
     enum Source: Hashable {
         case plugin(id: String, name: String)
         case sandboxPlugin(id: String, name: String)
         case mcpProvider(id: UUID, name: String)
         case memory
         case builtIn
+        case standaloneSkills
     }
 
     let source: Source
     var tools: [ToolRegistry.ToolEntry]
+    var skills: [Skill]
+    var hasRoutes: Bool
 
     var id: String {
         switch source {
@@ -35,6 +34,7 @@ private struct ToolGroup: Identifiable {
         case .mcpProvider(let id, _): return "mcp-\(id.uuidString)"
         case .memory: return "memory"
         case .builtIn: return "builtin"
+        case .standaloneSkills: return "standalone-skills"
         }
     }
 
@@ -43,6 +43,7 @@ private struct ToolGroup: Identifiable {
         case .plugin(_, let name), .sandboxPlugin(_, let name), .mcpProvider(_, let name): return name
         case .memory: return "Memory"
         case .builtIn: return "Built-in"
+        case .standaloneSkills: return "Skills"
         }
     }
 
@@ -52,115 +53,289 @@ private struct ToolGroup: Identifiable {
         case .mcpProvider: return "cloud"
         case .memory: return "brain"
         case .builtIn: return "gearshape"
+        case .standaloneSkills: return "lightbulb"
         }
     }
 
-    var enabledCount: Int { tools.filter { $0.enabled }.count }
+    var pluginId: String? {
+        switch source {
+        case .plugin(let id, _), .sandboxPlugin(let id, _): return id
+        default: return nil
+        }
+    }
+
+    var totalCount: Int { tools.count + skills.count }
 }
 
-/// An installed plugin that can be toggled per-agent.
-private struct CompoundPluginGroup: Identifiable {
-    let pluginId: String
-    let name: String
-    let toolNames: [String]
-    let skillNames: [String]
-    let hasRoutes: Bool
+// MARK: - ViewModel
 
-    var id: String { "compound-\(pluginId)" }
-}
-
-// MARK: - Capabilities Selector View
-
-struct CapabilitiesSelectorView: View {
+@MainActor
+final class CapabilitiesSelectorViewModel: ObservableObject {
     let agentId: UUID
-    var isWorkMode: Bool = false
-    var isInline: Bool = false
+    let isWorkMode: Bool
 
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
-    @ObservedObject private var skillManager = SkillManager.shared
-    @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var sandboxPluginManager = SandboxPluginManager.shared
+    @Published private(set) var groups: [CapabilityGroup] = []
+    @Published private(set) var allTools: [ToolRegistry.ToolEntry] = []
+    @Published private(set) var allSkills: [Skill] = []
+    @Published private(set) var rows: [CapabilityRow] = []
+    @Published var searchText = ""
+    @Published var expandedGroups: Set<String> = []
 
-    @State private var selectedTab: CapabilityTab = .tools
-    @State private var searchText = ""
-    @State private var expandedGroups: Set<String> = []
-    @State private var cachedTools: [ToolRegistry.ToolEntry] = []
-    @State private var cachedGroups: [ToolGroup] = []
-    @State private var cachedCompoundPlugins: [CompoundPluginGroup] = []
+    private var cancellables = Set<AnyCancellable>()
 
-    @Environment(\.theme) private var theme
+    private let toolRegistry = ToolRegistry.shared
+    private let skillManager = SkillManager.shared
+    private let agentManager = AgentManager.shared
+    private let sandboxPluginManager = SandboxPluginManager.shared
 
-    /// Plugin tool names that conflict with built-in work tools (empty when not in work mode).
-    private var agentRestrictedTools: Set<String> {
+    init(agentId: UUID, isWorkMode: Bool) {
+        self.agentId = agentId
+        self.isWorkMode = isWorkMode
+
+        Publishers.Merge4(
+            toolRegistry.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            skillManager.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            sandboxPluginManager.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            Publishers.Merge(
+                NotificationCenter.default.publisher(for: .toolsListChanged).map { _ in () },
+                NotificationCenter.default.publisher(for: .skillsListChanged).map { _ in () }
+            ).eraseToAnyPublisher()
+        )
+        .debounce(for: .milliseconds(50), scheduler: DispatchQueue.main)
+        .sink { [weak self] _ in self?.rebuildCache() }
+        .store(in: &cancellables)
+
+        $searchText
+            .debounce(for: .milliseconds(150), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.rebuildRows() }
+            .store(in: &cancellables)
+
+        rebuildCache()
+    }
+
+    // MARK: - Derived State
+
+    var agentRestrictedTools: Set<String> {
         isWorkMode ? toolRegistry.workConflictingToolNames : []
     }
 
-    // MARK: - Data
+    var phasedLoading: Bool {
+        ChatConfigurationStore.load().phasedContextLoading
+    }
 
-    private func rebuildToolsCache() {
+    var filteredGroups: [CapabilityGroup] {
+        guard !searchText.isEmpty else { return groups }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return groups }
+
+        return groups.compactMap { group in
+            let groupNameMatches = group.displayName.localizedCaseInsensitiveContains(query)
+            let matchedTools = group.tools.filter {
+                $0.name.localizedCaseInsensitiveContains(query)
+                    || $0.description.localizedCaseInsensitiveContains(query)
+            }
+            let matchedSkills = group.skills.filter {
+                $0.name.localizedCaseInsensitiveContains(query)
+                    || $0.description.localizedCaseInsensitiveContains(query)
+            }
+
+            if groupNameMatches { return group }
+            if !matchedTools.isEmpty || !matchedSkills.isEmpty {
+                var filtered = group
+                filtered.tools = matchedTools
+                filtered.skills = matchedSkills
+                return filtered
+            }
+            return nil
+        }
+    }
+
+    var enabledToolCount: Int {
+        allTools.filter { $0.enabled }.count
+    }
+
+    var enabledSkillCount: Int {
+        allSkills.filter { isSkillEnabled($0.name) }.count
+    }
+
+    var totalEnabledCount: Int { enabledToolCount + enabledSkillCount }
+    var totalCount: Int { allTools.count + allSkills.count }
+
+    var totalTokenEstimate: Int {
+        let phased = phasedLoading
+        let toolTokens = allTools.filter { $0.enabled }.reduce(0) {
+            $0 + (phased ? $1.catalogEntryTokens : $1.estimatedTokens)
+        }
+        let skillTokens = allSkills.filter { isSkillEnabled($0.name) }.reduce(0) {
+            $0 + skillTokenEstimate($1)
+        }
+        return toolTokens + skillTokens
+    }
+
+    // MARK: - Queries
+
+    func isSkillEnabled(_ name: String) -> Bool {
+        if let overrides = agentManager.effectiveSkillOverrides(for: agentId),
+            let value = overrides[name]
+        {
+            return value
+        }
+        return skillManager.skill(named: name)?.enabled ?? false
+    }
+
+    func isGroupExpanded(_ groupId: String) -> Bool {
+        !searchText.isEmpty || expandedGroups.contains(groupId)
+    }
+
+    func enabledCount(for group: CapabilityGroup) -> Int {
+        let toolsEnabled = group.tools.filter { $0.enabled }.count
+        let skillsEnabled = group.skills.filter { isSkillEnabled($0.name) }.count
+        return toolsEnabled + skillsEnabled
+    }
+
+    func skillTokenEstimate(_ skill: Skill) -> Int {
+        if phasedLoading {
+            return max(5, (skill.name.count + skill.description.count + 6) / 4)
+        }
+        return max(5, (skill.name.count + skill.description.count + skill.instructions.count + 50) / 4)
+    }
+
+    var hasOverrides: Bool {
+        let agent = agentManager.agent(for: agentId)
+        return (agent?.enabledTools?.isEmpty == false)
+            || (agent?.enabledSkills?.isEmpty == false)
+            || (agent?.enabledPlugins?.isEmpty == false)
+    }
+
+    // MARK: - Actions
+
+    func toggleTool(_ name: String, enabled: Bool) {
+        agentManager.setToolEnabled(!enabled, tool: name, for: agentId)
+    }
+
+    func toggleSkill(_ name: String) {
+        agentManager.setSkillEnabled(!isSkillEnabled(name), skill: name, for: agentId)
+    }
+
+    func toggleGroup(_ groupId: String) {
+        expandedGroups.formSymmetricDifference([groupId])
+        rebuildRows()
+    }
+
+    func enableAll() {
+        let restricted = agentRestrictedTools
+        for group in groups {
+            if let pluginId = group.pluginId {
+                agentManager.setPluginEnabled(true, plugin: pluginId, for: agentId)
+            }
+            agentManager.enableAllTools(
+                for: agentId,
+                tools: group.tools.map { $0.name }.filter { !restricted.contains($0) }
+            )
+            agentManager.enableAllSkills(for: agentId, skills: group.skills.map { $0.name })
+        }
+    }
+
+    func disableAll() {
+        for group in groups {
+            if let pluginId = group.pluginId {
+                agentManager.setPluginEnabled(false, plugin: pluginId, for: agentId)
+            }
+            agentManager.disableAllTools(for: agentId, tools: group.tools.map { $0.name })
+            agentManager.disableAllSkills(for: agentId, skills: group.skills.map { $0.name })
+        }
+    }
+
+    func enableAllInGroup(_ group: CapabilityGroup) {
+        let restricted = agentRestrictedTools
+        if let pluginId = group.pluginId {
+            agentManager.setPluginEnabled(true, plugin: pluginId, for: agentId)
+        }
+        agentManager.enableAllTools(
+            for: agentId,
+            tools: group.tools.map { $0.name }.filter { !restricted.contains($0) }
+        )
+        agentManager.enableAllSkills(for: agentId, skills: group.skills.map { $0.name })
+    }
+
+    func disableAllInGroup(_ group: CapabilityGroup) {
+        if let pluginId = group.pluginId {
+            agentManager.setPluginEnabled(false, plugin: pluginId, for: agentId)
+        }
+        agentManager.disableAllTools(for: agentId, tools: group.tools.map { $0.name })
+        agentManager.disableAllSkills(for: agentId, skills: group.skills.map { $0.name })
+    }
+
+    func resetToDefaults() {
+        guard var agent = agentManager.agent(for: agentId) else { return }
+        agent.enabledTools = nil
+        agent.enabledSkills = nil
+        agent.enabledPlugins = nil
+        agentManager.update(agent)
+        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
+        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+    }
+
+    func openManagement() {
+        AppDelegate.shared?.showManagementWindow(initialTab: .tools)
+    }
+
+    // MARK: - Cache Rebuild
+
+    private func rebuildCache() {
         let overrides = agentManager.effectiveToolOverrides(for: agentId)
         let tools = toolRegistry.listSelectableCapabilityTools(withOverrides: overrides)
-        cachedTools = tools
+        allTools = tools
 
-        var groups: [ToolGroup] = []
-        var compoundPlugins: [CompoundPluginGroup] = []
-        var assignedNames: Set<String> = []
+        let allSkillsList = skillManager.skills
+        allSkills = allSkillsList
 
-        // Single pass over installed plugins: build tool groups and detect compound plugins
+        var builtGroups: [CapabilityGroup] = []
+        var assignedToolNames: Set<String> = []
+        var assignedSkillNames: Set<String> = []
+
         for plugin in PluginRepositoryService.shared.plugins where plugin.isInstalled {
             let pluginId = plugin.pluginId
             let displayName = plugin.displayName
             let specToolNames = (plugin.capabilities?.tools ?? []).map { $0.name }
-            let matched = tools.filter { specToolNames.contains($0.name) }
-
-            if !matched.isEmpty {
-                groups.append(ToolGroup(source: .plugin(id: pluginId, name: displayName), tools: matched))
-                assignedNames.formUnion(matched.map { $0.name })
-            }
-
+            let matchedTools = tools.filter { specToolNames.contains($0.name) }
             let pluginSkills = skillManager.pluginSkills(for: pluginId)
             let loadedPlugin = PluginManager.shared.loadedPlugin(for: pluginId)
             let hasRoutes = !(loadedPlugin?.routes.isEmpty ?? true) || loadedPlugin?.webConfig != nil
 
-            // Show plugin in the Plugins tab if it has tools, skills, or routes
-            if !specToolNames.isEmpty || !pluginSkills.isEmpty || hasRoutes {
-                compoundPlugins.append(
-                    CompoundPluginGroup(
-                        pluginId: pluginId,
-                        name: displayName,
-                        toolNames: specToolNames,
-                        skillNames: pluginSkills.map { $0.name },
+            if !matchedTools.isEmpty || !pluginSkills.isEmpty || hasRoutes {
+                builtGroups.append(
+                    CapabilityGroup(
+                        source: .plugin(id: pluginId, name: displayName),
+                        tools: matchedTools,
+                        skills: pluginSkills,
                         hasRoutes: hasRoutes
                     )
                 )
+                assignedToolNames.formUnion(matchedTools.map { $0.name })
+                assignedSkillNames.formUnion(pluginSkills.map { $0.name })
             }
         }
 
-        // Installed sandbox plugins: group tools and add to Plugins tab
         for installed in sandboxPluginManager.plugins(for: agentId.uuidString) where installed.status == .ready {
             let plugin = installed.plugin
-            let pluginToolNames = (plugin.tools ?? []).map { "\(plugin.id)_\($0.id)" }
-            let matched = tools.filter { $0.name.hasPrefix("\(plugin.id)_") && !assignedNames.contains($0.name) }
-
-            if !matched.isEmpty {
-                groups.append(ToolGroup(source: .sandboxPlugin(id: plugin.id, name: plugin.name), tools: matched))
-                assignedNames.formUnion(matched.map { $0.name })
+            let matched = tools.filter {
+                $0.name.hasPrefix("\(plugin.id)_") && !assignedToolNames.contains($0.name)
             }
 
-            if !pluginToolNames.isEmpty {
-                compoundPlugins.append(
-                    CompoundPluginGroup(
-                        pluginId: plugin.id,
-                        name: plugin.name,
-                        toolNames: pluginToolNames,
-                        skillNames: [],
+            if !matched.isEmpty {
+                builtGroups.append(
+                    CapabilityGroup(
+                        source: .sandboxPlugin(id: plugin.id, name: plugin.name),
+                        tools: matched,
+                        skills: [],
                         hasRoutes: false
                     )
                 )
+                assignedToolNames.formUnion(matched.map { $0.name })
             }
         }
 
-        // Group by connected MCP providers
         let providerManager = MCPProviderManager.shared
         for provider in providerManager.configuration.providers {
             guard providerManager.providerStates[provider.id]?.isConnected == true else { continue }
@@ -171,281 +346,141 @@ struct CapabilitiesSelectorView: View {
                 .replacingOccurrences(of: "-", with: "_")
                 .filter { $0.isLetter || $0.isNumber || $0 == "_" } + "_"
 
-            let matched = tools.filter { $0.name.hasPrefix(prefix) && !assignedNames.contains($0.name) }
+            let matched = tools.filter { $0.name.hasPrefix(prefix) && !assignedToolNames.contains($0.name) }
             if !matched.isEmpty {
-                groups.append(ToolGroup(source: .mcpProvider(id: provider.id, name: provider.name), tools: matched))
-                assignedNames.formUnion(matched.map { $0.name })
+                builtGroups.append(
+                    CapabilityGroup(
+                        source: .mcpProvider(id: provider.id, name: provider.name),
+                        tools: matched,
+                        skills: [],
+                        hasRoutes: false
+                    )
+                )
+                assignedToolNames.formUnion(matched.map { $0.name })
             }
         }
 
-        // Memory recall tools get their own group
         let memoryToolNames: Set<String> = [
             "search_working_memory", "search_conversations",
             "search_summaries", "search_graph",
         ]
-        let memoryTools = tools.filter { memoryToolNames.contains($0.name) && !assignedNames.contains($0.name) }
+        let memoryTools = tools.filter { memoryToolNames.contains($0.name) && !assignedToolNames.contains($0.name) }
         if !memoryTools.isEmpty {
-            groups.insert(ToolGroup(source: .memory, tools: memoryTools), at: 0)
-            assignedNames.formUnion(memoryTools.map { $0.name })
-        }
-
-        // Remaining tools go to Built-in
-        let remaining = tools.filter { !assignedNames.contains($0.name) }
-        if !remaining.isEmpty {
-            groups.append(ToolGroup(source: .builtIn, tools: remaining))
-        }
-
-        cachedGroups = groups
-        cachedCompoundPlugins = compoundPlugins
-    }
-
-    // MARK: - Plugins
-
-    private var filteredCompoundPlugins: [CompoundPluginGroup] {
-        guard !searchText.isEmpty else { return cachedCompoundPlugins }
-        return cachedCompoundPlugins.filter { SearchService.matches(query: searchText, in: $0.name) }
-    }
-
-    private var enabledCompoundPluginCount: Int {
-        cachedCompoundPlugins.filter { isCompoundPluginActive($0) }.count
-    }
-
-    private func isCompoundPluginActive(_ group: CompoundPluginGroup) -> Bool {
-        let pluginEnabled = agentManager.isPluginEnabled(group.pluginId, for: agentId)
-        let toolsOk = group.toolNames.allSatisfy { name in
-            cachedTools.first(where: { $0.name == name })?.enabled ?? false
-        }
-        let skillsOk = group.skillNames.allSatisfy { isSkillEnabled($0) }
-        if group.toolNames.isEmpty && group.skillNames.isEmpty {
-            return pluginEnabled
-        }
-        return pluginEnabled && toolsOk && skillsOk
-    }
-
-    private func toggleCompoundPlugin(_ group: CompoundPluginGroup) {
-        let isActive = isCompoundPluginActive(group)
-        if isActive {
-            agentManager.setPluginEnabled(false, plugin: group.pluginId, for: agentId)
-            agentManager.disableAllTools(for: agentId, tools: group.toolNames)
-            agentManager.disableAllSkills(for: agentId, skills: group.skillNames)
-        } else {
-            agentManager.setPluginEnabled(true, plugin: group.pluginId, for: agentId)
-            let restricted = agentRestrictedTools
-            agentManager.enableAllTools(for: agentId, tools: group.toolNames.filter { !restricted.contains($0) })
-            agentManager.enableAllSkills(for: agentId, skills: group.skillNames)
-        }
-    }
-
-    // MARK: - Tools
-
-    private var filteredGroups: [ToolGroup] {
-        guard !searchText.isEmpty else { return cachedGroups }
-        return cachedGroups.compactMap { group in
-            let groupMatches = SearchService.matches(query: searchText, in: group.displayName)
-            let matchedTools = group.tools.filter {
-                SearchService.matches(query: searchText, in: $0.name)
-                    || SearchService.matches(query: searchText, in: $0.description)
-            }
-            if groupMatches { return group }
-            if !matchedTools.isEmpty {
-                var filtered = group
-                filtered.tools = matchedTools
-                return filtered
-            }
-            return nil
-        }
-    }
-
-    private var enabledToolCount: Int {
-        cachedTools.filter { $0.enabled }.count
-    }
-
-    private func isGroupExpanded(_ groupId: String) -> Bool {
-        !searchText.isEmpty || expandedGroups.contains(groupId)
-    }
-
-    // MARK: - Skills
-
-    private var skills: [Skill] { skillManager.skills }
-
-    private var filteredSkills: [Skill] {
-        guard !searchText.isEmpty else { return skills }
-        return skills.filter {
-            SearchService.matches(query: searchText, in: $0.name)
-                || SearchService.matches(query: searchText, in: $0.description)
-        }
-    }
-
-    private var enabledSkillCount: Int {
-        skills.filter { isSkillEnabled($0.name) }.count
-    }
-
-    private func isSkillEnabled(_ name: String) -> Bool {
-        if let overrides = agentManager.effectiveSkillOverrides(for: agentId),
-            let value = overrides[name]
-        {
-            return value
-        }
-        return skillManager.skill(named: name)?.enabled ?? false
-    }
-
-    // MARK: - Counts & Tokens
-
-    private var totalEnabledCount: Int { enabledToolCount + enabledSkillCount }
-    private var totalCount: Int { cachedTools.count + skills.count }
-
-    private var phasedLoading: Bool {
-        ChatConfigurationStore.load().phasedContextLoading
-    }
-
-    private func skillTokenEstimate(_ skill: Skill) -> Int {
-        if phasedLoading {
-            return max(5, (skill.name.count + skill.description.count + 6) / 4)
-        }
-        return max(5, (skill.name.count + skill.description.count + skill.instructions.count + 50) / 4)
-    }
-
-    private var totalTokenEstimate: Int {
-        let toolTokens = cachedTools.filter { $0.enabled }.reduce(0) {
-            $0 + (phasedLoading ? $1.catalogEntryTokens : $1.estimatedTokens)
-        }
-        let skillTokens = skills.filter { isSkillEnabled($0.name) }.reduce(0) {
-            $0 + skillTokenEstimate($1)
-        }
-        return toolTokens + skillTokens
-    }
-
-    private var currentTabFilteredCount: Int {
-        switch selectedTab {
-        case .plugins: return filteredCompoundPlugins.count
-        case .tools: return filteredGroups.reduce(0) { $0 + $1.tools.count }
-        case .skills: return filteredSkills.count
-        }
-    }
-
-    /// Only show Plugins tab when compound plugins exist.
-    private var visibleTabs: [CapabilityTab] {
-        cachedCompoundPlugins.isEmpty ? [.tools, .skills] : CapabilityTab.allCases
-    }
-
-    // MARK: - Actions
-
-    private func toggleTool(_ name: String, enabled: Bool) {
-        agentManager.setToolEnabled(!enabled, tool: name, for: agentId)
-    }
-
-    private func toggleSkill(_ name: String) {
-        agentManager.setSkillEnabled(!isSkillEnabled(name), skill: name, for: agentId)
-    }
-
-    private func enableAll() {
-        let restricted = agentRestrictedTools
-        switch selectedTab {
-        case .plugins:
-            for group in cachedCompoundPlugins {
-                agentManager.setPluginEnabled(true, plugin: group.pluginId, for: agentId)
-                agentManager.enableAllTools(
-                    for: agentId,
-                    tools: group.toolNames.filter { !restricted.contains($0) }
-                )
-                agentManager.enableAllSkills(for: agentId, skills: group.skillNames)
-            }
-        case .tools:
-            agentManager.enableAllTools(
-                for: agentId,
-                tools: cachedTools.map { $0.name }.filter { !restricted.contains($0) }
+            builtGroups.insert(
+                CapabilityGroup(
+                    source: .memory,
+                    tools: memoryTools,
+                    skills: [],
+                    hasRoutes: false
+                ),
+                at: 0
             )
-        case .skills:
-            agentManager.enableAllSkills(for: agentId, skills: skills.map { $0.name })
+            assignedToolNames.formUnion(memoryTools.map { $0.name })
         }
-    }
 
-    private func disableAll() {
-        switch selectedTab {
-        case .plugins:
-            for group in cachedCompoundPlugins {
-                agentManager.setPluginEnabled(false, plugin: group.pluginId, for: agentId)
-                agentManager.disableAllTools(for: agentId, tools: group.toolNames)
-                agentManager.disableAllSkills(for: agentId, skills: group.skillNames)
-            }
-        case .tools:
-            agentManager.disableAllTools(for: agentId, tools: cachedTools.map { $0.name })
-        case .skills:
-            agentManager.disableAllSkills(for: agentId, skills: skills.map { $0.name })
+        let remainingTools = tools.filter { !assignedToolNames.contains($0.name) }
+        if !remainingTools.isEmpty {
+            builtGroups.append(
+                CapabilityGroup(
+                    source: .builtIn,
+                    tools: remainingTools,
+                    skills: [],
+                    hasRoutes: false
+                )
+            )
         }
+
+        let standaloneSkills = allSkillsList.filter { !assignedSkillNames.contains($0.name) }
+        if !standaloneSkills.isEmpty {
+            builtGroups.append(
+                CapabilityGroup(
+                    source: .standaloneSkills,
+                    tools: [],
+                    skills: standaloneSkills,
+                    hasRoutes: false
+                )
+            )
+        }
+
+        groups = builtGroups
+        rebuildRows()
     }
 
-    private func toggleGroup(_ group: ToolGroup) {
-        expandedGroups.formSymmetricDifference([group.id])
-    }
+    // MARK: - Flattened Rows
 
-    private func enableAllInGroup(_ group: ToolGroup) {
+    private func rebuildRows() {
+        var built: [CapabilityRow] = []
         let restricted = agentRestrictedTools
-        agentManager.enableAllTools(
-            for: agentId,
-            tools: group.tools.map { $0.name }.filter { !restricted.contains($0) }
-        )
-    }
+        let phased = phasedLoading
 
-    private func disableAllInGroup(_ group: ToolGroup) {
-        agentManager.disableAllTools(for: agentId, tools: group.tools.map { $0.name })
-    }
+        for group in filteredGroups {
+            let expanded = isGroupExpanded(group.id)
+            let enabled = enabledCount(for: group)
 
-    private func openManagement() {
-        switch selectedTab {
-        case .plugins, .tools:
-            AppDelegate.shared?.showManagementWindow(initialTab: .tools)
-        case .skills:
-            AppDelegate.shared?.showManagementWindow(initialTab: .skills)
+            built.append(
+                .groupHeader(
+                    id: group.id,
+                    name: group.displayName,
+                    icon: group.icon,
+                    enabledCount: enabled,
+                    totalCount: group.totalCount,
+                    isExpanded: expanded,
+                    toolCount: group.tools.count,
+                    skillCount: group.skills.count,
+                    hasRoutes: group.hasRoutes
+                )
+            )
+
+            if expanded {
+                for tool in group.tools {
+                    built.append(
+                        .tool(
+                            id: tool.name,
+                            name: tool.name,
+                            description: tool.description,
+                            enabled: tool.enabled,
+                            isAgentRestricted: restricted.contains(tool.name),
+                            catalogTokens: phased ? tool.catalogEntryTokens : tool.estimatedTokens,
+                            estimatedTokens: tool.estimatedTokens
+                        )
+                    )
+                }
+                for skill in group.skills {
+                    let enabled = isSkillEnabled(skill.name)
+                    built.append(
+                        .skill(
+                            id: skill.name,
+                            name: skill.name,
+                            description: skill.description,
+                            enabled: enabled,
+                            isBuiltIn: skill.isBuiltIn,
+                            isFromPlugin: skill.isFromPlugin,
+                            estimatedTokens: skillTokenEstimate(skill)
+                        )
+                    )
+                }
+            }
         }
+        rows = built
     }
+}
 
-    private func resetToDefaults() {
-        guard var agent = agentManager.agent(for: agentId) else { return }
-        switch selectedTab {
-        case .plugins:
-            agent.enabledTools = nil
-            agent.enabledSkills = nil
-            agent.enabledPlugins = nil
-        case .tools:
-            agent.enabledTools = nil
-        case .skills:
-            agent.enabledSkills = nil
-        }
-        agentManager.update(agent)
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
-    }
+// MARK: - Capabilities Selector View
 
-    private var hasOverrides: Bool {
-        let agent = agentManager.agent(for: agentId)
-        switch selectedTab {
-        case .plugins:
-            return (agent?.enabledTools?.isEmpty == false) || (agent?.enabledSkills?.isEmpty == false)
-                || (agent?.enabledPlugins?.isEmpty == false)
-        case .tools:
-            return agent?.enabledTools?.isEmpty == false
-        case .skills:
-            return agent?.enabledSkills?.isEmpty == false
-        }
-    }
+struct CapabilitiesSelectorView: View {
+    let agentId: UUID
+    var isWorkMode: Bool = false
+    var isInline: Bool = false
 
-    // MARK: - Tab Helpers
+    @StateObject private var vm: CapabilitiesSelectorViewModel
 
-    private func tabIcon(for tab: CapabilityTab) -> String {
-        switch tab {
-        case .plugins: return "puzzlepiece.extension"
-        case .tools: return "wrench.and.screwdriver"
-        case .skills: return "lightbulb"
-        }
-    }
+    @Environment(\.theme) private var theme
 
-    private func tabCountLabel(for tab: CapabilityTab) -> String {
-        switch tab {
-        case .plugins: return "\(enabledCompoundPluginCount)/\(cachedCompoundPlugins.count)"
-        case .tools: return "\(enabledToolCount)/\(cachedTools.count)"
-        case .skills: return "\(enabledSkillCount)/\(skills.count)"
-        }
+    init(agentId: UUID, isWorkMode: Bool = false, isInline: Bool = false) {
+        self.agentId = agentId
+        self.isWorkMode = isWorkMode
+        self.isInline = isInline
+        _vm = StateObject(wrappedValue: CapabilitiesSelectorViewModel(agentId: agentId, isWorkMode: isWorkMode))
     }
 
     // MARK: - Body
@@ -457,41 +492,20 @@ struct CapabilitiesSelectorView: View {
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
 
-            if currentTabFilteredCount == 0 {
+            if vm.rows.isEmpty {
                 emptyState
             } else {
                 itemList
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: selectedTab)
-        .onAppear {
-            rebuildToolsCache()
-            // Default to plugins tab when compound plugins exist
-            if !cachedCompoundPlugins.isEmpty {
-                selectedTab = .plugins
-            }
-        }
-        .onReceive(
-            Publishers.Merge(toolRegistry.objectWillChange, sandboxPluginManager.objectWillChange)
-        ) { _ in
-            DispatchQueue.main.async { rebuildToolsCache() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in rebuildToolsCache() }
-        .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in rebuildToolsCache() }
-        .onChange(of: cachedCompoundPlugins.count) { _, newCount in
-            // If plugins tab is selected but no compound plugins remain, switch to tools
-            if newCount == 0 && selectedTab == .plugins {
-                selectedTab = .tools
             }
         }
 
         if isInline {
             content
                 .frame(maxWidth: .infinity)
-                .frame(height: min(CGFloat(totalCount * 48 + 200), 600))
+                .frame(height: min(CGFloat(vm.totalCount * 48 + 200), 600))
         } else {
             content
-                .frame(width: 420, height: min(CGFloat(totalCount * 48 + 200), 540))
+                .frame(width: 420, height: min(CGFloat(vm.totalCount * 48 + 200), 540))
                 .background(popoverBackground)
                 .overlay(popoverBorder)
                 .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
@@ -532,11 +546,11 @@ struct CapabilitiesSelectorView: View {
 
                     Spacer()
 
-                    if totalEnabledCount > 0 {
-                        TokenBadge(count: totalTokenEstimate)
+                    if vm.totalEnabledCount > 0 {
+                        HeaderTokenBadge(count: vm.totalTokenEstimate)
                     }
 
-                    Text("\(totalEnabledCount)/\(totalCount)")
+                    Text("\(vm.totalEnabledCount)/\(vm.totalCount)")
                         .font(.system(size: 11, weight: .medium))
                         .foregroundColor(theme.secondaryText)
                         .padding(.horizontal, 8)
@@ -545,76 +559,27 @@ struct CapabilitiesSelectorView: View {
                 }
             }
 
-            // Tab selector
-            HStack(spacing: 0) {
-                ForEach(visibleTabs, id: \.self) { tab in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { selectedTab = tab }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: tabIcon(for: tab))
-                                .font(.system(size: 11))
-                            Text(tab.rawValue)
-                                .font(.system(size: 12, weight: .medium))
-                            Text("(\(tabCountLabel(for: tab)))")
-                                .font(.system(size: 10))
-                                .foregroundColor(
-                                    selectedTab == tab ? theme.primaryText.opacity(0.7) : theme.tertiaryText
-                                )
-                        }
-                        .foregroundColor(selectedTab == tab ? theme.primaryText : theme.secondaryText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                        .background(
-                            Group {
-                                if selectedTab == tab {
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .fill(theme.secondaryBackground)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                                .strokeBorder(theme.primaryBorder.opacity(0.12), lineWidth: 1)
-                                        )
-                                }
-                            }
-                        )
-                        .shadow(
-                            color: selectedTab == tab ? theme.shadowColor.opacity(0.08) : .clear,
-                            radius: 2,
-                            x: 0,
-                            y: 1
-                        )
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(3)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(theme.primaryBorder.opacity(0.1), lineWidth: 1)
-                    )
-            )
-
-            // Actions
             HStack(spacing: 8) {
-                CapabilityActionButton(title: "Enable All", action: enableAll)
-                CapabilityActionButton(title: "Disable All", action: disableAll)
+                CapabilityActionButton(title: "Enable All", action: vm.enableAll)
+                CapabilityActionButton(title: "Disable All", action: vm.disableAll)
 
-                if isInline && hasOverrides {
+                if isInline && vm.hasOverrides {
                     CapabilityActionButton(
                         title: "Reset to Defaults",
                         icon: "arrow.uturn.backward",
-                        action: resetToDefaults
+                        action: vm.resetToDefaults
                     )
                 }
 
                 Spacer()
 
-                CapabilityActionButton(title: "Manage", icon: "gearshape", isSecondary: true, action: openManagement)
-                    .help("Open \(selectedTab == .skills ? "Skills" : "Tools") management")
+                CapabilityActionButton(
+                    title: "Manage",
+                    icon: "gearshape",
+                    isSecondary: true,
+                    action: vm.openManagement
+                )
+                .help("Open tools & skills management")
             }
         }
         .padding(.horizontal, 14)
@@ -629,14 +594,14 @@ struct CapabilitiesSelectorView: View {
                 .font(.system(size: 13))
                 .foregroundColor(theme.tertiaryText)
 
-            TextField("Search \(selectedTab.rawValue.lowercased())...", text: $searchText)
+            TextField("Search capabilities...", text: $vm.searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(theme.primaryText)
 
-            if !searchText.isEmpty {
+            if !vm.searchText.isEmpty {
                 Button {
-                    searchText = ""
+                    vm.searchText = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
@@ -649,7 +614,7 @@ struct CapabilitiesSelectorView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
-        .animation(.easeOut(duration: 0.15), value: searchText.isEmpty)
+        .animation(.easeOut(duration: 0.15), value: vm.searchText.isEmpty)
     }
 
     // MARK: - Empty State
@@ -659,7 +624,7 @@ struct CapabilitiesSelectorView: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 24))
                 .foregroundColor(theme.tertiaryText)
-            Text("No \(selectedTab.rawValue.lowercased()) found")
+            Text("No capabilities found")
                 .font(.system(size: 13))
                 .foregroundColor(theme.secondaryText)
         }
@@ -667,116 +632,32 @@ struct CapabilitiesSelectorView: View {
         .padding()
     }
 
-    // MARK: - Flattened Rows
-
-    private var flattenedRows: [CapabilityRow] {
-        var rows: [CapabilityRow] = []
-        switch selectedTab {
-        case .plugins:
-            for group in filteredCompoundPlugins {
-                rows.append(
-                    .compoundPlugin(
-                        id: group.pluginId,
-                        name: group.name,
-                        toolCount: group.toolNames.count,
-                        skillCount: group.skillNames.count,
-                        hasRoutes: group.hasRoutes,
-                        isActive: isCompoundPluginActive(group)
-                    )
-                )
-            }
-
-        case .tools:
-            let restricted = agentRestrictedTools
-            for group in filteredGroups {
-                let expanded = isGroupExpanded(group.id)
-                rows.append(
-                    .groupHeader(
-                        id: group.id,
-                        name: group.displayName,
-                        icon: group.icon,
-                        enabledCount: group.enabledCount,
-                        totalCount: group.tools.count,
-                        isExpanded: expanded
-                    )
-                )
-                if expanded {
-                    let phased = phasedLoading
-                    for tool in group.tools {
-                        rows.append(
-                            .tool(
-                                id: tool.name,
-                                name: tool.name,
-                                description: tool.description,
-                                enabled: tool.enabled,
-                                isAgentRestricted: restricted.contains(tool.name),
-                                catalogTokens: phased ? tool.catalogEntryTokens : tool.estimatedTokens,
-                                estimatedTokens: tool.estimatedTokens
-                            )
-                        )
-                    }
-                }
-            }
-
-        case .skills:
-            for skill in filteredSkills {
-                let enabled = isSkillEnabled(skill.name)
-                rows.append(
-                    .skill(
-                        id: skill.name,
-                        name: skill.name,
-                        description: skill.description,
-                        enabled: enabled,
-                        isBuiltIn: skill.isBuiltIn,
-                        isFromPlugin: skill.isFromPlugin,
-                        estimatedTokens: skillTokenEstimate(skill)
-                    )
-                )
-            }
-        }
-        return rows
-    }
-
     // MARK: - Item List
 
     private var itemList: some View {
         CapabilitiesTableRepresentable(
-            rows: flattenedRows,
+            rows: vm.rows,
             theme: theme,
-            onToggleGroup: { groupId in
-                if let group = cachedGroups.first(where: { $0.id == groupId }) {
-                    toggleGroup(group)
+            onToggleGroup: { vm.toggleGroup($0) },
+            onEnableAllInGroup: { id in
+                if let group = vm.groups.first(where: { $0.id == id }) {
+                    vm.enableAllInGroup(group)
                 }
             },
-            onEnableAllInGroup: { groupId in
-                if let group = cachedGroups.first(where: { $0.id == groupId }) {
-                    enableAllInGroup(group)
+            onDisableAllInGroup: { id in
+                if let group = vm.groups.first(where: { $0.id == id }) {
+                    vm.disableAllInGroup(group)
                 }
             },
-            onDisableAllInGroup: { groupId in
-                if let group = cachedGroups.first(where: { $0.id == groupId }) {
-                    disableAllInGroup(group)
-                }
-            },
-            onToggleTool: { name, enabled in
-                toggleTool(name, enabled: enabled)
-            },
-            onToggleSkill: { name in
-                toggleSkill(name)
-            },
-            onToggleCompoundPlugin: { pluginId in
-                if let group = cachedCompoundPlugins.first(where: { $0.pluginId == pluginId }) {
-                    toggleCompoundPlugin(group)
-                }
-            }
+            onToggleTool: { vm.toggleTool($0, enabled: $1) },
+            onToggleSkill: { vm.toggleSkill($0) }
         )
     }
 }
 
 // MARK: - Token Badge (used in header)
 
-/// Token count badge (e.g. "~42 tokens").
-private struct TokenBadge: View {
+private struct HeaderTokenBadge: View {
     let count: Int
 
     @Environment(\.theme) private var theme
