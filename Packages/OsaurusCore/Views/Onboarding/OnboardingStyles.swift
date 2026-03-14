@@ -26,7 +26,7 @@ enum OnboardingLayout {
 
     /// Window size
     static let windowWidth: CGFloat = 500
-    static let windowHeight: CGFloat = 560
+    static let windowHeight: CGFloat = 650
 
     /// Button height for consistency
     static let buttonHeight: CGFloat = 44

@@ -114,54 +114,56 @@ struct OnboardingAPISetupView: View {
     // MARK: - Provider Selection View
 
     private var providerSelectionView: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: OnboardingStyle.headerTopPadding)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                Spacer().frame(height: OnboardingStyle.headerTopPadding)
 
-            // Back button
-            OnboardingBackButton(action: onBack)
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
-
-            Spacer().frame(height: 20)
-
-            // Headline
-            Text("Connect a provider")
-                .font(theme.font(size: 26, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 20)
-                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
-
-            Spacer().frame(height: 40)
-
-            // Provider cards
-            VStack(spacing: 12) {
-                ForEach(Array(Self.onboardingPresets.enumerated()), id: \.element.id) { index, provider in
-                    OnboardingProviderCard(preset: provider) {
-                        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
-                            selectedProvider = provider
-                        }
-                    }
+                // Back button
+                OnboardingBackButton(action: onBack)
+                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
                     .opacity(hasAppeared ? 1 : 0)
-                    .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17 + Double(index) * 0.05), value: hasAppeared)
+                    .animation(theme.springAnimation().delay(0.05), value: hasAppeared)
+
+                Spacer().frame(height: 20)
+
+                // Headline
+                Text("Connect a provider")
+                    .font(theme.font(size: 26, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+
+                Spacer().frame(height: 40)
+
+                // Provider cards
+                VStack(spacing: 12) {
+                    ForEach(Array(Self.onboardingPresets.enumerated()), id: \.element.id) { index, provider in
+                        OnboardingProviderCard(preset: provider) {
+                            withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+                                selectedProvider = provider
+                            }
+                        }
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 15)
+                        .animation(theme.springAnimation().delay(0.17 + Double(index) * 0.05), value: hasAppeared)
+                    }
                 }
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
+
+                Spacer().frame(height: 28)
+
+                // Footer
+                Text("Your key never leaves your device.")
+                    .font(theme.font(size: 13))
+                    .foregroundColor(theme.tertiaryText)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
+
+                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
             }
-            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-            Spacer().frame(height: 28)
-
-            // Footer
-            Text("Your key never leaves your device.")
-                .font(theme.font(size: 13))
-                .foregroundColor(theme.tertiaryText)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.4), value: hasAppeared)
-
-            Spacer()
         }
         .padding(.horizontal, 20)
     }
@@ -169,45 +171,47 @@ struct OnboardingAPISetupView: View {
     // MARK: - API Key Entry View (for known providers)
 
     private var apiKeyEntryView: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: OnboardingStyle.headerTopPadding)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                Spacer().frame(height: OnboardingStyle.headerTopPadding)
 
-            // Back button (custom - resets state)
-            backButton
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
+                // Back button (custom - resets state)
+                backButton
+                    .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
 
-            Spacer().frame(height: 30)
+                Spacer().frame(height: 30)
 
-            // Headline
-            Text("Connect \(selectedProvider?.name ?? "Provider")")
-                .font(theme.font(size: 26, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
+                // Headline
+                Text("Connect \(selectedProvider?.name ?? "Provider")")
+                    .font(theme.font(size: 26, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .multilineTextAlignment(.center)
 
-            Spacer().frame(height: 36)
+                Spacer().frame(height: 36)
 
-            // API Key field
-            OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
-                .onChange(of: apiKey) { _, _ in
-                    testResult = nil
-                }
-                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
-
-            Spacer().frame(height: 28)
-
-            // Help section
-            if let provider = selectedProvider, provider != .custom {
-                helpSection(for: provider)
+                // API Key field
+                OnboardingSecureField(placeholder: "sk-...", text: $apiKey, label: "API Key")
+                    .onChange(of: apiKey) { _, _ in
+                        testResult = nil
+                    }
                     .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
+
+                Spacer().frame(height: 28)
+
+                // Help section
+                if let provider = selectedProvider, provider != .custom {
+                    helpSection(for: provider)
+                        .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding + 5)
+                }
+
+                Spacer().frame(height: 40)
+
+                // Action buttons
+                actionButtons
+                    .frame(width: 200)
+
+                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
             }
-
-            Spacer()
-
-            // Action buttons
-            actionButtons
-                .frame(width: 200)
-
-            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
         }
         .padding(.horizontal, 20)
     }

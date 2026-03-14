@@ -51,8 +51,8 @@ struct OnboardingWelcomeView: View {
                         .frame(height: geometry.size.height * 0.42)
 
                     // Headline
-                    Text("Your AI. Your Mac. Your data.")
-                        .font(theme.font(size: 24, weight: .semibold))
+                    Text("Own your AI.")
+                        .font(theme.font(size: 28, weight: .bold))
                         .foregroundColor(theme.primaryText)
                         .multilineTextAlignment(.center)
                         .opacity(headlineVisible ? 1 : 0)
@@ -63,7 +63,7 @@ struct OnboardingWelcomeView: View {
 
                     // Body
                     Text(
-                        "Everything stays on your machine — conversations,\nworkflows, memories. Connect any provider or run models locally."
+                        "Agents, memory, tools, and identity that live on your Mac.\nModels are interchangeable — everything else compounds, stays with you."
                     )
                     .font(theme.font(size: 13))
                     .foregroundColor(theme.secondaryText)
@@ -88,6 +88,13 @@ struct OnboardingWelcomeView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard phase != .button else { return }
+            withAnimation(.easeOut(duration: 0.4)) {
+                phase = .button
+            }
+        }
         .onAppear {
             startAnimationSequence()
         }

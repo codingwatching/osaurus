@@ -32,6 +32,7 @@ private enum NavigationDirection {
 public struct OnboardingView: View {
     /// Callback when onboarding is complete
     let onComplete: () -> Void
+    let forceShowIdentity: Bool
 
     @Environment(\.theme) private var theme
     @State private var currentStep: OnboardingStep = .welcome
@@ -39,7 +40,8 @@ public struct OnboardingView: View {
     @State private var navigationDirection: NavigationDirection = .forward
     @State private var wantsWalkthrough = false
 
-    public init(onComplete: @escaping () -> Void) {
+    public init(forceShowIdentity: Bool = false, onComplete: @escaping () -> Void) {
+        self.forceShowIdentity = forceShowIdentity
         self.onComplete = onComplete
     }
 
@@ -215,7 +217,7 @@ public struct OnboardingView: View {
     }
 
     private func navigateToIdentityOrNext() {
-        if OsaurusIdentity.exists() {
+        if !forceShowIdentity && OsaurusIdentity.exists() {
             proceedAfterIdentity()
         } else {
             navigateTo(.identitySetup, direction: .forward)

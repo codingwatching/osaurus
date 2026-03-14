@@ -74,132 +74,134 @@ struct OnboardingChoosePathView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer().frame(height: OnboardingStyle.headerTopPadding + 15)
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 0) {
+                Spacer().frame(height: OnboardingStyle.headerTopPadding + 15)
 
-            // Headline
-            Text("How do you want to power Osaurus?")
-                .font(theme.font(size: 22, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 20)
-                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                // Headline
+                Text("How do you want to power Osaurus?")
+                    .font(theme.font(size: 22, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 20)
+                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
 
-            Spacer().frame(height: 30)
+                Spacer().frame(height: 30)
 
-            // Option cards
-            VStack(spacing: 12) {
-                // Apple Foundation option (shown first if available)
-                if foundationAvailable {
+                // Option cards
+                VStack(spacing: 12) {
+                    // Apple Foundation option (shown first if available)
+                    if foundationAvailable {
+                        OnboardingOptionCard(
+                            icon: OnboardingSetupPath.appleFoundation.icon,
+                            title: OnboardingSetupPath.appleFoundation.title,
+                            description: OnboardingSetupPath.appleFoundation.description,
+                            isSelected: selectedPath == .appleFoundation
+                        ) {
+                            withAnimation(theme.animationQuick()) {
+                                selectedPath = .appleFoundation
+                            }
+                        }
+                        .opacity(hasAppeared ? 1 : 0)
+                        .offset(y: hasAppeared ? 0 : 15)
+                        .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                    }
+
                     OnboardingOptionCard(
-                        icon: OnboardingSetupPath.appleFoundation.icon,
-                        title: OnboardingSetupPath.appleFoundation.title,
-                        description: OnboardingSetupPath.appleFoundation.description,
-                        isSelected: selectedPath == .appleFoundation
+                        icon: OnboardingSetupPath.local.icon,
+                        title: OnboardingSetupPath.local.title,
+                        description: OnboardingSetupPath.local.description,
+                        isSelected: selectedPath == .local
                     ) {
                         withAnimation(theme.animationQuick()) {
-                            selectedPath = .appleFoundation
+                            selectedPath = .local
                         }
                     }
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
-                }
+                    .animation(theme.springAnimation().delay(foundationAvailable ? 0.24 : 0.17), value: hasAppeared)
 
-                OnboardingOptionCard(
-                    icon: OnboardingSetupPath.local.icon,
-                    title: OnboardingSetupPath.local.title,
-                    description: OnboardingSetupPath.local.description,
-                    isSelected: selectedPath == .local
-                ) {
-                    withAnimation(theme.animationQuick()) {
-                        selectedPath = .local
+                    OnboardingOptionCard(
+                        icon: OnboardingSetupPath.apiProvider.icon,
+                        title: OnboardingSetupPath.apiProvider.title,
+                        description: OnboardingSetupPath.apiProvider.description,
+                        isSelected: selectedPath == .apiProvider
+                    ) {
+                        withAnimation(theme.animationQuick()) {
+                            selectedPath = .apiProvider
+                        }
                     }
+                    .opacity(hasAppeared ? 1 : 0)
+                    .offset(y: hasAppeared ? 0 : 15)
+                    .animation(theme.springAnimation().delay(foundationAvailable ? 0.31 : 0.24), value: hasAppeared)
+                }
+                .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
+
+                Spacer().frame(height: 18)
+
+                // Help popover button
+                Button {
+                    showHelpPopover.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 13))
+                        Text("What's the difference?")
+                            .font(theme.font(size: 13, weight: .medium))
+                    }
+                    .foregroundColor(theme.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showHelpPopover, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("What's the difference?")
+                            .font(theme.font(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+
+                        Text(helpContent)
+                            .font(theme.font(size: 13))
+                            .foregroundColor(theme.secondaryText)
+                            .lineSpacing(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(16)
+                    .frame(width: 320)
+                    .background(theme.primaryBackground)
                 }
                 .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 15)
-                .animation(theme.springAnimation().delay(foundationAvailable ? 0.24 : 0.17), value: hasAppeared)
+                .animation(theme.springAnimation().delay(foundationAvailable ? 0.38 : 0.32), value: hasAppeared)
 
-                OnboardingOptionCard(
-                    icon: OnboardingSetupPath.apiProvider.icon,
-                    title: OnboardingSetupPath.apiProvider.title,
-                    description: OnboardingSetupPath.apiProvider.description,
-                    isSelected: selectedPath == .apiProvider
-                ) {
-                    withAnimation(theme.animationQuick()) {
-                        selectedPath = .apiProvider
-                    }
-                }
+                Spacer()
+                    .frame(minHeight: 20)
+
+                // Continue button
+                OnboardingPrimaryButton(
+                    title: "Continue",
+                    action: {
+                        switch selectedPath {
+                        case .appleFoundation:
+                            onSelectFoundation()
+                        case .local:
+                            onSelectLocal()
+                        case .apiProvider:
+                            onSelectAPI()
+                        case .none:
+                            break
+                        }
+                    },
+                    isEnabled: selectedPath != nil
+                )
+                .frame(width: 180)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(theme.springAnimation().delay(foundationAvailable ? 0.31 : 0.24), value: hasAppeared)
+                .animation(theme.springAnimation().delay(foundationAvailable ? 0.47 : 0.4), value: hasAppeared)
+
+                Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
             }
-            .padding(.horizontal, OnboardingStyle.backButtonHorizontalPadding)
-
-            Spacer().frame(height: 18)
-
-            // Help popover button
-            Button {
-                showHelpPopover.toggle()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "questionmark.circle")
-                        .font(.system(size: 13))
-                    Text("What's the difference?")
-                        .font(theme.font(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $showHelpPopover, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("What's the difference?")
-                        .font(theme.font(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(helpContent)
-                        .font(theme.font(size: 13))
-                        .foregroundColor(theme.secondaryText)
-                        .lineSpacing(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(16)
-                .frame(width: 320)
-                .background(theme.primaryBackground)
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .animation(theme.springAnimation().delay(foundationAvailable ? 0.38 : 0.32), value: hasAppeared)
-
-            Spacer()
-                .frame(minHeight: 20)
-
-            // Continue button
-            OnboardingPrimaryButton(
-                title: "Continue",
-                action: {
-                    switch selectedPath {
-                    case .appleFoundation:
-                        onSelectFoundation()
-                    case .local:
-                        onSelectLocal()
-                    case .apiProvider:
-                        onSelectAPI()
-                    case .none:
-                        break
-                    }
-                },
-                isEnabled: selectedPath != nil
-            )
-            .frame(width: 180)
-            .opacity(hasAppeared ? 1 : 0)
-            .offset(y: hasAppeared ? 0 : 15)
-            .animation(theme.springAnimation().delay(foundationAvailable ? 0.47 : 0.4), value: hasAppeared)
-
-            Spacer().frame(height: OnboardingStyle.bottomButtonPadding)
+            .padding(.horizontal, 16)
         }
-        .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             // Default select Apple Foundation if available
