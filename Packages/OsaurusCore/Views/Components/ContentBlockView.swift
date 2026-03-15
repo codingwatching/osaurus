@@ -73,7 +73,15 @@ struct ContentBlockView: View, Equatable {
     }
     
     private func bubbleSize(for text: String, bubbleWidth: CGFloat) -> CGFloat {
-        let font = NSFont.systemFont(ofSize: CGFloat(theme.bodySize))
+        let fontSize = CGFloat(theme.bodySize)
+        let fontName = theme.primaryFontName
+        let font: NSFont
+        if fontName.isEmpty || fontName.lowercased().contains("sf pro") {
+            font = NSFont.systemFont(ofSize: fontSize)
+        } else {
+            font = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
+        }
+        
         let maxSize = NSSize(width: bubbleWidth - 32, height: .greatestFiniteMagnitude)
         let boundingRect = (text as NSString).boundingRect(
             with: maxSize,
@@ -81,8 +89,7 @@ struct ContentBlockView: View, Equatable {
             attributes: [.font: font],
             context: nil
         )
-        // Add horizontal padding and cap at bubbleWidth
-        return min(ceil(boundingRect.width) + 32 + 16, bubbleWidth)
+        return min(ceil(boundingRect.width) + 32, bubbleWidth)
     }
 
     // MARK: - Block Content
