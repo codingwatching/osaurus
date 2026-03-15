@@ -49,18 +49,8 @@ struct ContentBlockView: View, Equatable {
 
     @ViewBuilder
     private var messageBubbleBackground: some View {
-        if isUserMessage {
-            ZStack {
-                if theme.glassEnabled {
-                    RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                    .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
-            }
-        } else {
-            Color.clear
-        }
+        RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+            .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
     }
 
     var body: some View {
@@ -68,20 +58,18 @@ struct ContentBlockView: View, Equatable {
             Color.clear.frame(height: 16)
         } else {
             contentContainer
-                .background(messageBubbleBackground)
-                .clipShape(RoundedRectangle(cornerRadius: isUserMessage ? bubbleCornerRadius : 0, style: .continuous))
-                .overlay(userMessageBorder)
         }
     }
 
     // MARK: - Content Container
 
     private var contentContainer: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 0) {
             blockContent
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: isUserMessage ? .trailing : .leading)
+        .padding(.horizontal, isUserMessage ? 0 : 16)
     }
 
     // MARK: - Block Content
@@ -90,20 +78,25 @@ struct ContentBlockView: View, Equatable {
     private var blockContent: some View {
         switch block.kind {
         case let .header(role, name, _):
-            HeaderBlockContent(
-                turnId: block.turnId,
-                role: role,
-                name: name,
-                isTurnHovered: isTurnHovered,
-                onCopy: onCopy,
-                onRegenerate: onRegenerate,
-                onEdit: onEdit,
-                onDelete: onDelete,
-                isEditing: editingTurnId == block.turnId,
-                onCancelEdit: onCancelEdit
-            )
-            .padding(.top, 12)
-            .padding(.bottom, isLastInTurn ? 8 : 2)
+            if role == .assistant {
+                HeaderBlockContent(
+                    turnId: block.turnId,
+                    role: role,
+                    name: name,
+                    isTurnHovered: isTurnHovered,
+                    onCopy: onCopy,
+                    onRegenerate: onRegenerate,
+                    onEdit: onEdit,
+                    onDelete: onDelete,
+                    isEditing: editingTurnId == block.turnId,
+                    onCancelEdit: onCancelEdit
+                )
+                .padding(.top, 12)
+                .padding(.bottom, isLastInTurn ? 8 : 2)
+            } else {
+                EmptyView()
+                    .frame(height: 0)
+            }
 
         case let .paragraph(_, text, isStreaming, _):
             MarkdownMessageView(
@@ -132,35 +125,35 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, isLastInTurn ? 16 : 6)
 
         case let .userMessage(text, attachments):
-            HeaderBlockContent(
-                turnId: block.turnId,
-                role: .user,
-                name: "You",
-                isTurnHovered: isTurnHovered,
-                onCopy: onCopy,
-                onRegenerate: onRegenerate,
-                onEdit: onEdit,
-                onDelete: onDelete,
-                isEditing: editingTurnId == block.turnId,
-                onCancelEdit: onCancelEdit
-            )
-            .padding(.top, 12)
-            .padding(.bottom, 2)
-
+            // Images — outside bubble, right-aligned
             ForEach(attachments.filter(\.isImage)) { attachment in
                 if let data = attachment.imageData {
                     ImageThumbnail(imageData: data, baseWidth: width)
                         .padding(.top, 6)
-                        .padding(.bottom, (text.isEmpty && !attachments.hasDocuments) ? 16 : 6)
+                        .padding(.bottom, 6)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.trailing, 16)
                 }
             }
 
+            // Documents — outside bubble, right-aligned
             if attachments.hasDocuments {
                 DocumentAttachmentsRow(attachments: attachments.documents)
                     .padding(.top, 6)
-                    .padding(.bottom, text.isEmpty ? 16 : 6)
+                    .padding(.bottom, text.isEmpty ? 6 : 4)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
 
+            // Shared artifacts — outside bubble, right-aligned
+            if case let .sharedArtifact(artifact) = block.kind {
+                ArtifactCardView(artifact: artifact)
+                    .frame(maxWidth: min(width, 420))
+                    .padding(.top, 6)
+                    .padding(.bottom, 6)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            // Text — inside bubble
             if editingTurnId == block.turnId, let editText, let onConfirmEdit, let onCancelEdit {
                 InlineEditView(
                     text: editText,
@@ -170,16 +163,23 @@ struct ContentBlockView: View, Equatable {
                 .padding(.top, 4)
                 .padding(.bottom, 16)
             } else if !text.isEmpty {
+                let bubbleWidth = min(width * 0.75, 420)
                 MarkdownMessageView(
                     text: text,
-                    baseWidth: width,
+                    baseWidth: bubbleWidth - 32,
                     cacheKey: block.id,
                     isStreaming: false
                 )
-                .padding(.top, 4)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(messageBubbleBackground)
+                .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
+                .frame(maxWidth: bubbleWidth, alignment: .trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, 6)
+                .padding(.trailing, 16)
                 .padding(.bottom, 16)
             }
-
         case let .sharedArtifact(artifact):
             ArtifactCardView(artifact: artifact)
                 .frame(maxWidth: min(width, 420))
