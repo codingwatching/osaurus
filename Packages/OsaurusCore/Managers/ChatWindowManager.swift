@@ -308,14 +308,23 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Reuse the original window ID - windowState.windowId already matches
         let windowId = backgroundId
 
-        windows[windowId] = ChatWindowInfo(
+        let info = ChatWindowInfo(
             id: windowId,
             agentId: windowState.agentId,
             sessionId: nil,
             createdAt: Date()
         )
 
-        let window = configureNSWindow(windowId: windowId, windowState: windowState)
+        windows[windowId] = info
+
+        // Create the actual NSWindow reusing the existing window state
+        // After restoration, this is a regular window - if user closes while
+        // task is running, it will be re-detached through normal flow
+        let window = createNSWindowForBackgroundTask(
+            windowId: windowId,
+            windowState: windowState
+        )
+
         nsWindows[windowId] = window
         windowStates[windowId] = windowState
 
@@ -343,7 +352,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             createdAt: Date()
         )
 
-        let window = configureNSWindow(windowId: windowId, windowState: windowState)
+        let window = createNSWindowForBackgroundTask(windowId: windowId, windowState: windowState)
         nsWindows[windowId] = window
         windowStates[windowId] = windowState
 
@@ -351,6 +360,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         print("[ChatWindowManager] Created window \(windowId) for context \(context.id)")
         return windowId
+    }
+
+    /// Create an NSWindow for viewing a background task (reuses existing window state)
+    private func createNSWindowForBackgroundTask(
+        windowId: UUID,
+        windowState: ChatWindowState
+    ) -> NSWindow {
+        // Create ChatView with the existing window state
+        let chatView = ChatView(windowState: windowState)
+            .environment(\.theme, windowState.theme)
+
+        let hostingController = NSHostingController(rootView: chatView)
+
+        let panel = createChatPanel(windowId: windowId, windowState: windowState)
+        panel.contentViewController = hostingController
+        
+        applyWindowFramePersistence(panel: panel)
+
+        return panel
     }
 
     // MARK: - Private Helpers
@@ -368,21 +396,22 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
         windowStates[windowId] = windowState
 
-        let window = configureNSWindow(windowId: windowId, windowState: windowState)
-        return window
-    }
-
-    /// Common implementation for window configuration and layout
-    private func configureNSWindow(
-        windowId: UUID,
-        windowState: ChatWindowState
-    ) -> NSWindow {
         // Create ChatView with window state
         let chatView = ChatView(windowState: windowState)
             .environment(\.theme, windowState.theme)
 
         let hostingController = NSHostingController(rootView: chatView)
 
+        let panel = createChatPanel(windowId: windowId, windowState: windowState)
+        panel.contentViewController = hostingController
+
+        applyWindowFramePersistence(panel: panel)
+
+        return panel
+    }
+
+    /// Shared logic for creating the basic ChatPanel with its toolbar and delegate.
+    private func createChatPanel(windowId: UUID, windowState: ChatWindowState) -> ChatPanel {
         // Calculate centered position on active screen, with offset for multiple windows
         let defaultSize = NSSize(width: 800, height: 610)
         let mouse = NSEvent.mouseLocation
@@ -395,22 +424,19 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let initialRect: NSRect
         if let s = screen {
             let vf = s.visibleFrame
-            // Start from center, then offset down-right for each additional window
             let baseOrigin = NSPoint(
                 x: vf.midX - defaultSize.width / 2,
                 y: vf.midY - defaultSize.height / 2
             )
-            // Apply cascade: move right and down
             var origin = NSPoint(
                 x: baseOrigin.x + cascadeOffset,
                 y: baseOrigin.y - cascadeOffset
             )
-            // Ensure window stays within visible frame
             if origin.x + defaultSize.width > vf.maxX {
-                origin.x = vf.minX + 50  // Wrap back to left
+                origin.x = vf.minX + 50
             }
             if origin.y < vf.minY {
-                origin.y = vf.maxY - defaultSize.height - 50  // Wrap back to top
+                origin.y = vf.maxY - defaultSize.height - 50
             }
             initialRect = NSRect(origin: origin, size: defaultSize)
         } else {
@@ -449,13 +475,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.toolbar = toolbar
         panel.toolbarStyle = .unified
 
-        panel.contentViewController = hostingController
+        // Set up delegate for lifecycle events
+        let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
+        windowDelegates[windowId] = delegate
+        panel.delegate = delegate
+        
+        return panel
+    }
 
-        // Try to load saved frame for all windows to get the user's preferred size
+    /// Common method for window frame persistence and cascading.
+    private func applyWindowFramePersistence(panel: NSPanel) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let cascadeOffset = CGFloat(max(0, windows.count - 1)) * 25.0
+
+        // Try to load saved frame for ALL windows to get the user's preferred size
         _ = panel.setFrameUsingName(WindowFrameAutosaveKey.chat.rawValue)
 
         if windows.count > 1 {
-            // Recalculate origin for subsequent windows in case the size changed from defaultSize
+            // Recalculate origin for subsequent windows in case the size changed from default
             let currentSize = panel.frame.size
             if let s = screen {
                 let vf = s.visibleFrame
@@ -481,13 +519,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         if windows.count == 1 {
             panel.setFrameAutosaveName(WindowFrameAutosaveKey.chat.rawValue)
         }
-
-        // Set up delegate for lifecycle events
-        let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
-        windowDelegates[windowId] = delegate
-        panel.delegate = delegate
-
-        return panel
     }
 
     // Called by delegate when window becomes key
