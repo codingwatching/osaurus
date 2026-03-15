@@ -1443,8 +1443,8 @@ struct ChatView: View {
             minWidth: 800,
             idealWidth: 950,
             maxWidth: .infinity,
-            minHeight: session.turns.isEmpty ? 550 : 610,
-            idealHeight: session.turns.isEmpty ? 610 : 760,
+            minHeight: 610,
+            idealHeight: 760,
             maxHeight: .infinity
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -1477,9 +1477,6 @@ struct ChatView: View {
         }
         .onDisappear {
             cleanupKeyMonitor()
-        }
-        .onChange(of: session.turns.isEmpty) { _, newValue in
-            resizeWindowForContent(isEmpty: newValue)
         }
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
@@ -1751,29 +1748,6 @@ struct ChatView: View {
         if raw.lowercased() == "foundation" { return "Foundation" }
         if let last = raw.split(separator: "/").last { return String(last) }
         return raw
-    }
-
-    private func resizeWindowForContent(isEmpty: Bool) {
-        guard let window = ChatWindowManager.shared.getNSWindow(id: windowId) else { return }
-
-        let targetHeight: CGFloat = isEmpty ? 610 : 760
-        let currentFrame = window.frame
-
-        let currentCenterY = currentFrame.origin.y + (currentFrame.height / 2)
-        let currentCenterX = currentFrame.origin.x + (currentFrame.width / 2)
-
-        let newFrame = NSRect(
-            x: currentCenterX - (currentFrame.width / 2),
-            y: currentCenterY - (targetHeight / 2),
-            width: currentFrame.width,
-            height: targetHeight
-        )
-
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.3
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            window.animator().setFrame(newFrame, display: true)
-        })
     }
 
     // Key monitor for Esc to cancel voice or close window
