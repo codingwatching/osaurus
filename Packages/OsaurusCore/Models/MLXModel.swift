@@ -45,12 +45,25 @@ struct MLXModel: Identifiable, Codable {
 
     /// Formatted download size string (e.g., "3.9 GB")
     var formattedDownloadSize: String? {
-        guard let bytes = downloadSizeBytes else { return nil }
+        guard let bytes = totalSizeEstimateBytes else { return nil }
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
         formatter.allowedUnits = [.useGB, .useMB]
         formatter.includesUnit = true
         return formatter.string(fromByteCount: bytes)
+    }
+
+    /// Best estimate of the total model size in bytes.
+    /// Uses explicit downloadSizeBytes if available, otherwise estimates based on parameters/quantization.
+    var totalSizeEstimateBytes: Int64? {
+        if let bytes = downloadSizeBytes { return bytes }
+        
+        // Estimate based on params and quantization (without the runtime overhead multiplier)
+        if let params = parameterCountBillions {
+            return Int64(params * bytesPerParameter * 1024 * 1024 * 1024)
+        }
+        
+        return nil
     }
 
     /// Local directory where this model should be stored.
@@ -188,10 +201,70 @@ struct MLXModel: Identifiable, Codable {
         return vlmIndicators.contains { lowerId.contains($0) }
     }
 
+    /// Extracts the model family from the name/id (e.g., "Llama", "Qwen", "Gemma", "Phi")
+    var family: String {
+        let name = self.name.lowercased()
+        
+        // 1. Check for common families first (strong matches)
+        let strongMatches = [
+            "llama": "Llama",
+            "qwen": "Qwen",
+            "gemma": "Gemma",
+            "phi": "Phi",
+            "mistral": "Mistral",
+            "mixtral": "Mixtral",
+            "deepseek": "DeepSeek",
+            "nemotron": "Nemotron",
+            "command-r": "Command-R",
+            "grok": "Grok",
+            "yi": "Yi",
+            "falcon": "Falcon",
+            "internlm": "InternLM",
+            "stablelm": "StableLM",
+            "smollm": "SmolLM",
+            "hermes": "Hermes",
+            "liquid": "Liquid",
+            "lfm": "Liquid",
+            "starcoder": "StarCoder",
+            "granite": "Granite",
+            "exat": "Exat",
+            "opcoder": "OpCoder",
+            "opencoder": "OpenCoder"
+        ]
+        
+        for (key, value) in strongMatches {
+            if name.contains(key) { return value }
+        }
+        
+        // 2. Fallback heuristic: clean up the name and take the first part
+        // Remove common vendor prefixes
+        var cleaned = self.name
+        let prefixes = ["Meta-", "Google-", "Mistral-", "MistralAI-", "Microsoft-", "NousResearch-", "Qwen-", "DeepSeek-"]
+        for prefix in prefixes {
+            if cleaned.hasPrefix(prefix) {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+                break
+            }
+        }
+        
+        // Take first semantic part (before dash or dot)
+        let parts = cleaned.components(separatedBy: CharacterSet(charactersIn: "-. "))
+        if let first = parts.first, !first.isEmpty {
+            // Filter out junk or purely numeric parts
+            if first.rangeOfCharacter(from: .letters) != nil {
+                return first.capitalized
+            }
+        }
+        
+        return "Other"
+    }
+
     /// Model type enum for display purposes
-    enum ModelType: String {
+    enum ModelType: String, CaseIterable, Identifiable {
         case llm = "LLM"
         case vlm = "VLM"
+        
+        var id: String { rawValue }
     }
 
     /// Returns the model type based on heuristics

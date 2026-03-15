@@ -153,12 +153,10 @@ struct ModelPickerView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("Available Models")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
-
-            Spacer()
 
             Text("\(options.count)")
                 .font(.system(size: 11, weight: .medium))
@@ -166,6 +164,29 @@ struct ModelPickerView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 3)
                 .background(Capsule().fill(theme.secondaryBackground))
+
+            Spacer()
+
+            Button(action: {
+                onDismiss()
+                AppDelegate.shared?.showManagementWindow(initialTab: .models)
+            }) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .bold))
+                    Text("Add Model")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule()
+                        .strokeBorder(theme.accentColor.opacity(0.3), lineWidth: 1)
+                        .background(Capsule().fill(theme.accentColor.opacity(0.08)))
+                )
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

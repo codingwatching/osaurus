@@ -89,6 +89,13 @@ struct EditableTextView: NSViewRepresentable {
             }
         }
 
+        // Dynamically toggle scroller visibility without changing hasVerticalScroller
+        let needsScroller = textView.contentHeight > maxHeight
+        scrollView.verticalScroller?.isHidden = !needsScroller
+        
+        // Ensure scroll view tiles its subviews correctly
+        scrollView.tile()
+
         // Force layout update for height calculation
         textView.invalidateIntrinsicContentSize()
         scrollView.invalidateIntrinsicContentSize()
@@ -166,24 +173,27 @@ final class AutoSizingScrollView: NSScrollView {
 final class CustomNSTextView: NSTextView {
     var maxHeight: CGFloat = .infinity
 
-    // Enable auto-growing height
-    override var intrinsicContentSize: NSSize {
+    /// Total height required to display the content without scrolling
+    var contentHeight: CGFloat {
         guard let layoutManager = layoutManager, let textContainer = textContainer else {
-            return super.intrinsicContentSize
+            return super.intrinsicContentSize.height
         }
 
         layoutManager.ensureLayout(for: textContainer)
         let usedRect = layoutManager.usedRect(for: textContainer)
 
-        // Use single line height as minimum (compact when empty)
+        // Use single line height as minimum
         let lineHeight = font?.pointSize ?? 14
         let contentHeight = max(usedRect.height, lineHeight)
 
         // Add textContainerInset (top + bottom padding)
-        let totalHeight = contentHeight + textContainerInset.height * 2
+        return contentHeight + textContainerInset.height * 2
+    }
 
+    // Enable auto-growing height
+    override var intrinsicContentSize: NSSize {
         // Cap at maxHeight for scrolling behavior
-        let constrainedHeight = min(totalHeight, maxHeight)
+        let constrainedHeight = min(contentHeight, maxHeight)
 
         // We return noIntrinsicMetric for width so it fills available width
         return NSSize(width: NSView.noIntrinsicMetric, height: constrainedHeight)
