@@ -204,7 +204,7 @@ private struct MemoizedMarkdownView: View {
                     theme: theme,
                     cacheKey: segmentCacheKey
                 )
-                .frame(maxWidth: baseWidth, alignment: .leading)
+                .frame(minWidth: baseWidth, maxWidth: baseWidth, alignment: .leading)
 
             case .codeBlock(let code, let language):
                 CodeBlockView(code: code, language: language, baseWidth: baseWidth)

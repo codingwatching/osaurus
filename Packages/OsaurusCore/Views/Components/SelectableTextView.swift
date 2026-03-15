@@ -182,7 +182,7 @@ struct SelectableTextView: NSViewRepresentable {
         textView.isRichText = true
         textView.drawsBackground = false
         textView.backgroundColor = .clear
-        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.textContainerInset = .zero
 
         // Don't allow scrolling - we size to fit content
         textView.isVerticallyResizable = false
@@ -279,17 +279,15 @@ struct SelectableTextView: NSViewRepresentable {
         nsView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         guard let tc = nsView.textContainer, let lm = nsView.layoutManager else { return nil }
         lm.ensureLayout(for: tc)
-        let usedRect = lm.usedRect(for: tc)
-        let measuredWidth = ceil(usedRect.width)
-        let measuredHeight = ceil(usedRect.height) + nsView.textContainerInset.height * 2
+        let measured = ceil(lm.usedRect(for: tc).height) + 8
 
         coord.lastWidth = width
-        coord.lastMeasuredHeight = measuredHeight
+        coord.lastMeasuredHeight = measured
 
         if let key = cacheKey {
-            ThreadCache.shared.setHeight(measuredHeight, for: "\(key)-w\(Int(width))")
+            ThreadCache.shared.setHeight(measured, for: "\(key)-w\(Int(width))")
         }
-        return CGSize(width: min(measuredWidth, width), height: measuredHeight)
+        return CGSize(width: width, height: measured)
     }
 
     // MARK: - Incremental Updates

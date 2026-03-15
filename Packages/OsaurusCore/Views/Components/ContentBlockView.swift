@@ -49,8 +49,18 @@ struct ContentBlockView: View, Equatable {
 
     @ViewBuilder
     private var messageBubbleBackground: some View {
-        RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-            .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
+        if isUserMessage {
+            ZStack {
+                if theme.glassEnabled {
+                    RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
+                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+                    .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
+            }
+        } else {
+            Color.clear
+        }
     }
 
     var body: some View {
@@ -58,38 +68,20 @@ struct ContentBlockView: View, Equatable {
             Color.clear.frame(height: 16)
         } else {
             contentContainer
+                .background(messageBubbleBackground)
+                .clipShape(RoundedRectangle(cornerRadius: isUserMessage ? bubbleCornerRadius : 0, style: .continuous))
+                .overlay(userMessageBorder)
         }
     }
 
     // MARK: - Content Container
 
     private var contentContainer: some View {
-        VStack(alignment: isUserMessage ? .trailing : .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             blockContent
         }
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: isUserMessage ? .trailing : .leading)
-        .padding(.horizontal, isUserMessage ? 0 : 16)
-    }
-    
-    private func bubbleSize(for text: String, bubbleWidth: CGFloat) -> CGFloat {
-        let fontSize = CGFloat(theme.bodySize)
-        let fontName = theme.primaryFontName
-        let font: NSFont
-        if fontName.isEmpty || fontName.lowercased().contains("sf pro") {
-            font = NSFont.systemFont(ofSize: fontSize)
-        } else {
-            font = NSFont(name: fontName, size: fontSize) ?? NSFont.systemFont(ofSize: fontSize)
-        }
-        
-        let maxSize = NSSize(width: bubbleWidth - 32, height: .greatestFiniteMagnitude)
-        let boundingRect = (text as NSString).boundingRect(
-            with: maxSize,
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: font],
-            context: nil
-        )
-        return min(ceil(boundingRect.width) + 32, bubbleWidth)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
     }
 
     // MARK: - Block Content
@@ -98,25 +90,20 @@ struct ContentBlockView: View, Equatable {
     private var blockContent: some View {
         switch block.kind {
         case let .header(role, name, _):
-            if role == .assistant {
-                HeaderBlockContent(
-                    turnId: block.turnId,
-                    role: role,
-                    name: name,
-                    isTurnHovered: isTurnHovered,
-                    onCopy: onCopy,
-                    onRegenerate: onRegenerate,
-                    onEdit: onEdit,
-                    onDelete: onDelete,
-                    isEditing: editingTurnId == block.turnId,
-                    onCancelEdit: onCancelEdit
-                )
-                .padding(.top, 12)
-                .padding(.bottom, isLastInTurn ? 8 : 2)
-            } else {
-                EmptyView()
-                    .frame(height: 0)
-            }
+            HeaderBlockContent(
+                turnId: block.turnId,
+                role: role,
+                name: name,
+                isTurnHovered: isTurnHovered,
+                onCopy: onCopy,
+                onRegenerate: onRegenerate,
+                onEdit: onEdit,
+                onDelete: onDelete,
+                isEditing: editingTurnId == block.turnId,
+                onCancelEdit: onCancelEdit
+            )
+            .padding(.top, 12)
+            .padding(.bottom, isLastInTurn ? 8 : 2)
 
         case let .paragraph(_, text, isStreaming, _):
             MarkdownMessageView(
@@ -145,35 +132,35 @@ struct ContentBlockView: View, Equatable {
             .padding(.bottom, isLastInTurn ? 16 : 6)
 
         case let .userMessage(text, attachments):
-            // Images — outside bubble, right-aligned
+            HeaderBlockContent(
+                turnId: block.turnId,
+                role: .user,
+                name: "You",
+                isTurnHovered: isTurnHovered,
+                onCopy: onCopy,
+                onRegenerate: onRegenerate,
+                onEdit: onEdit,
+                onDelete: onDelete,
+                isEditing: editingTurnId == block.turnId,
+                onCancelEdit: onCancelEdit
+            )
+            .padding(.top, 12)
+            .padding(.bottom, 2)
+
             ForEach(attachments.filter(\.isImage)) { attachment in
                 if let data = attachment.imageData {
                     ImageThumbnail(imageData: data, baseWidth: width)
                         .padding(.top, 6)
-                        .padding(.bottom, 6)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
-                        .padding(.trailing, 16)
+                        .padding(.bottom, (text.isEmpty && !attachments.hasDocuments) ? 16 : 6)
                 }
             }
 
-            // Documents — outside bubble, right-aligned
             if attachments.hasDocuments {
                 DocumentAttachmentsRow(attachments: attachments.documents)
                     .padding(.top, 6)
-                    .padding(.bottom, text.isEmpty ? 6 : 4)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.bottom, text.isEmpty ? 16 : 6)
             }
 
-            // Shared artifacts — outside bubble, right-aligned
-            if case let .sharedArtifact(artifact) = block.kind {
-                ArtifactCardView(artifact: artifact)
-                    .frame(maxWidth: min(width, 420))
-                    .padding(.top, 6)
-                    .padding(.bottom, 6)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-
-            // Text — inside bubble
             if editingTurnId == block.turnId, let editText, let onConfirmEdit, let onCancelEdit {
                 InlineEditView(
                     text: editText,
@@ -183,23 +170,16 @@ struct ContentBlockView: View, Equatable {
                 .padding(.top, 4)
                 .padding(.bottom, 16)
             } else if !text.isEmpty {
-                let bubbleWidth = min(width * 0.75, 420)
-                let actualWidth = bubbleSize(for: text, bubbleWidth: bubbleWidth)
                 MarkdownMessageView(
                     text: text,
-                    baseWidth: actualWidth - 32,
+                    baseWidth: width,
                     cacheKey: block.id,
                     isStreaming: false
                 )
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(messageBubbleBackground)
-                .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
-                .frame(width: actualWidth)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.trailing, 16)
+                .padding(.top, 4)
                 .padding(.bottom, 16)
             }
+
         case let .sharedArtifact(artifact):
             ArtifactCardView(artifact: artifact)
                 .frame(maxWidth: min(width, 420))
@@ -438,22 +418,13 @@ private struct ImageThumbnail: View {
         min(baseWidth - 32, 560)
     }
 
-    private let maxThumbnailHeight: CGFloat = 300
-
     private func displaySize(for image: NSImage) -> CGSize {
         let size = image.size
         guard size.width > 0, size.height > 0 else {
-            return CGSize(width: 280, height: 210)
+            return CGSize(width: maxImageWidth, height: maxImageWidth * 0.75)
         }
-
-        let maxWidth: CGFloat = 280
-        let maxHeight: CGFloat = 200
-
-        let widthRatio = maxWidth / size.width
-        let heightRatio = maxHeight / size.height
-        let scale = min(widthRatio, heightRatio, 1.0)
-
-        return CGSize(width: size.width * scale, height: size.height * scale)
+        let width = min(size.width, maxImageWidth)
+        return CGSize(width: width, height: width * size.height / size.width)
     }
 
     var body: some View {
@@ -487,6 +458,7 @@ private struct ImageThumbnail: View {
                 }
         }
     }
+
 }
 
 // MARK: - Document Attachments Row

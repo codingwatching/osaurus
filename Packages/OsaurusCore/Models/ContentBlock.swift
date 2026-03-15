@@ -231,11 +231,9 @@ extension ContentBlock {
             let isFirstInGroup = turn.role != previousRole || turn.role == .user
 
             if isFirstInGroup, let prevId = previousTurnId {
-                // Only add spacer before assistant groups, not user messages
-                // (user messages have no header label so the spacer creates phantom space)
-                if turn.role != .user {
-                    blocks.append(.groupSpacer(afterTurnId: prevId, associatedWithTurnId: turn.id))
-                }
+                // Use the previous turn ID for the stable block ID (referencing the gap)
+                // BUT associate it with the current turn ID so it gets regenerated/included with the current turn during incremental updates
+                blocks.append(.groupSpacer(afterTurnId: prevId, associatedWithTurnId: turn.id))
             }
 
             // User messages are emitted as a single unified block
