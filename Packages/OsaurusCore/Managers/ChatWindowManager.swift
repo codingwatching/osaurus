@@ -628,11 +628,11 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItem, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+        [Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItem, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+        [Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
     }
 
     func toolbar(
