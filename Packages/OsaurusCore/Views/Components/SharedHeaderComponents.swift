@@ -47,23 +47,19 @@ struct ModeToggleButton: View {
 
     let currentMode: Mode
     var isDisabled: Bool = false
-    let action: () -> Void
+    let action: (Mode) -> Void
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
     @Namespace private var animation
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 0) {
-                segment(icon: "bubble.left.and.bubble.right", label: "Chat", isSelected: currentMode == .chat)
-                segment(icon: "bolt.fill", label: "Work", isSelected: currentMode == .work)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
+        HStack(spacing: 0) {
+            segment(icon: "bubble.left.and.bubble.right", label: "Chat", mode: .chat, isSelected: currentMode == .chat)
+            segment(icon: "bolt.fill", label: "Work", mode: .work, isSelected: currentMode == .work)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
         .opacity(isDisabled ? 0.4 : 1.0)
         .disabled(isDisabled)
         .help(
@@ -74,7 +70,7 @@ struct ModeToggleButton: View {
     }
 
     @ViewBuilder
-    private func segment(icon: String, label: String, isSelected: Bool) -> some View {
+    private func segment(icon: String, label: String, mode: Mode, isSelected: Bool) -> some View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 10, weight: .semibold))
             Text(label).font(.system(size: 11, weight: .semibold))
@@ -91,7 +87,9 @@ struct ModeToggleButton: View {
                     .matchedGeometryEffect(id: "modeIndicator", in: animation)
             }
         }
+        .contentShape(Rectangle())
         .animation(theme.springAnimation(), value: isSelected)
+        .onTapGesture { action(mode) }
     }
 }
 
