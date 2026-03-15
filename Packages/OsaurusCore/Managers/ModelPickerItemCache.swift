@@ -1,17 +1,17 @@
 //
-//  ModelOptionsCache.swift
+//  ModelPickerItemCache.swift
 //  osaurus
 //
-//  Global cache for model options shared across all views.
+//  Global cache for model picker items shared across all views.
 //
 
 import Foundation
 
 @MainActor
-final class ModelOptionsCache: ObservableObject {
-    static let shared = ModelOptionsCache()
+final class ModelPickerItemCache: ObservableObject {
+    static let shared = ModelPickerItemCache()
 
-    @Published private(set) var modelOptions: [ModelOption] = []
+    @Published private(set) var items: [ModelPickerItem] = []
     @Published private(set) var isLoaded = false
 
     private var observersRegistered = false
@@ -31,15 +31,15 @@ final class ModelOptionsCache: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     self?.invalidateCache()
-                    await self?.buildModelOptions()
+                    await self?.buildModelPickerItems()
                 }
             }
         }
     }
 
     @discardableResult
-    func buildModelOptions() async -> [ModelOption] {
-        var options: [ModelOption] = []
+    func buildModelPickerItems() async -> [ModelPickerItem] {
+        var options: [ModelPickerItem] = []
 
         if AppConfiguration.shared.foundationModelAvailable {
             options.append(.foundation())
@@ -67,13 +67,13 @@ final class ModelOptionsCache: ObservableObject {
             }
         }
 
-        modelOptions = options
+        items = options
         isLoaded = true
         return options
     }
 
     func prewarmModelCache() async {
-        await buildModelOptions()
+        await buildModelPickerItems()
     }
 
     func prewarmLocalModelsOnly() {
@@ -82,7 +82,7 @@ final class ModelOptionsCache: ObservableObject {
                 ModelManager.discoverLocalModels()
             }.value
 
-            var options: [ModelOption] = []
+            var options: [ModelPickerItem] = []
             if AppConfiguration.shared.foundationModelAvailable {
                 options.append(.foundation())
             }
@@ -90,13 +90,13 @@ final class ModelOptionsCache: ObservableObject {
                 options.append(.fromMLXModel(model))
             }
 
-            modelOptions = options
+            items = options
             isLoaded = true
         }
     }
 
     func invalidateCache() {
         isLoaded = false
-        modelOptions = []
+        items = []
     }
 }

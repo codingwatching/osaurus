@@ -123,13 +123,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
         // Pre-warm caches immediately for instant first window (no async deps)
         _ = SpeechConfigurationStore.load()
-        ModelOptionsCache.shared.prewarmLocalModelsOnly()
+        ModelPickerItemCache.shared.prewarmLocalModelsOnly()
 
         // Auto-connect to enabled providers, then update model cache with remote models
         Task { @MainActor in
             await MCPProviderManager.shared.connectEnabledProviders()
             await RemoteProviderManager.shared.connectEnabledProviders()
-            await ModelOptionsCache.shared.prewarmModelCache()
+            await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
         // Start plugin repository background refresh for update checking
@@ -918,7 +918,7 @@ extension AppDelegate {
             Self.onboardingWindow = nil
             // Invalidate model cache so fresh models are discovered
             // This ensures any models downloaded during onboarding are visible
-            ModelOptionsCache.shared.invalidateCache()
+            ModelPickerItemCache.shared.invalidateCache()
             // Open ChatView after onboarding completes
             self?.showChatOverlay()
         }

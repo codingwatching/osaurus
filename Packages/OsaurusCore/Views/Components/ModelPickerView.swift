@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ModelPickerView: View {
-    let options: [ModelOption]
+    let options: [ModelPickerItem]
     @Binding var selectedModel: String?
     let agentId: UUID?
     let onDismiss: () -> Void
@@ -16,7 +16,7 @@ struct ModelPickerView: View {
     @State private var searchText = ""
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var collapsedGroups: Set<String> = []
-    @State private var cachedGroupedOptions: [(source: ModelOption.Source, models: [ModelOption])] = []
+    @State private var cachedGroupedOptions: [(source: ModelPickerItem.Source, models: [ModelPickerItem])] = []
     @State private var cachedFlattenedRows: [ModelPickerRow] = []
     @Environment(\.theme) private var theme
 
@@ -24,7 +24,7 @@ struct ModelPickerView: View {
 
     private func recomputeRows() {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let groups: [(source: ModelOption.Source, models: [ModelOption])]
+        let groups: [(source: ModelPickerItem.Source, models: [ModelPickerItem])]
 
         if query.isEmpty {
             groups = cachedGroupedOptions
@@ -75,7 +75,7 @@ struct ModelPickerView: View {
         cachedFlattenedRows = rows
     }
 
-    private func toggleGroup(_ source: ModelOption.Source) {
+    private func toggleGroup(_ source: ModelPickerItem.Source) {
         let key = source.uniqueKey
         if collapsedGroups.contains(key) {
             collapsedGroups.remove(key)
@@ -247,7 +247,7 @@ struct ModelPickerView: View {
                 ModelPickerView(
                     options: [
                         .foundation(),
-                        ModelOption(
+                        ModelPickerItem(
                             id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
                             displayName: "Llama 3.2 3B Instruct 4bit",
                             source: .local,
@@ -255,7 +255,7 @@ struct ModelPickerView: View {
                             quantization: "4-bit",
                             isVLM: false
                         ),
-                        ModelOption(
+                        ModelPickerItem(
                             id: "mlx-community/Qwen2-VL-7B-Instruct-4bit",
                             displayName: "Qwen2 VL 7B Instruct 4bit",
                             source: .local,
@@ -263,12 +263,12 @@ struct ModelPickerView: View {
                             quantization: "4-bit",
                             isVLM: true
                         ),
-                        ModelOption(
+                        ModelPickerItem(
                             id: "openai/gpt-4o",
                             displayName: "gpt-4o",
                             source: .remote(providerName: "OpenAI", providerId: UUID())
                         ),
-                        ModelOption(
+                        ModelPickerItem(
                             id: "openai/gpt-3.5-turbo",
                             displayName: "gpt-3.5-turbo",
                             source: .remote(providerName: "OpenAI", providerId: UUID())

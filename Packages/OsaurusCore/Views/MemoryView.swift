@@ -41,7 +41,7 @@ struct MemoryView: View {
     @State private var agentMemoryCounts: [(agent: Agent, count: Int)] = []
     @State private var defaultAgentEntries: [MemoryEntry] = []
     @State private var defaultAgentSummaries: [ConversationSummary] = []
-    @State private var modelOptions: [ModelOption] = []
+    @State private var pickerItems: [ModelPickerItem] = []
 
     // MARK: UI State
 
@@ -149,8 +149,8 @@ struct MemoryView: View {
                 hasAppeared = true
             }
         }
-        .onReceive(ModelOptionsCache.shared.$modelOptions) { options in
-            modelOptions = options
+        .onReceive(ModelPickerItemCache.shared.$items) { options in
+            pickerItems = options
         }
         .sheet(isPresented: $showProfileEditor) {
             ProfileEditSheet(
@@ -595,11 +595,11 @@ struct MemoryView: View {
                             }
                         )
                     ) {
-                        if !modelOptions.contains(where: { $0.id == config.coreModelIdentifier }) {
+                        if !pickerItems.contains(where: { $0.id == config.coreModelIdentifier }) {
                             Text(config.coreModelIdentifier)
                                 .tag(config.coreModelIdentifier)
                         }
-                        ForEach(modelOptions) { option in
+                        ForEach(pickerItems) { option in
                             Text(option.displayName)
                                 .tag(option.id)
                         }

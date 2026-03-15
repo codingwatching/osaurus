@@ -1,14 +1,14 @@
 //
-//  ModelOption.swift
+//  ModelPickerItem.swift
 //  osaurus
 //
-//  Rich model option for the model picker with metadata and source information.
+//  Rich model picker item with metadata and source information.
 //
 
 import Foundation
 
-/// Represents a model option in the model picker with rich metadata
-struct ModelOption: Identifiable, Hashable {
+/// Represents a model in the model picker with rich metadata
+struct ModelPickerItem: Identifiable, Hashable {
     /// The source/provider of the model
     enum Source: Hashable {
         case foundation
@@ -95,10 +95,10 @@ struct ModelOption: Identifiable, Hashable {
 
 // MARK: - Factory Methods
 
-extension ModelOption {
-    /// Create a Foundation model option
-    static func foundation() -> ModelOption {
-        ModelOption(
+extension ModelPickerItem {
+    /// Create a Foundation model picker item
+    static func foundation() -> ModelPickerItem {
+        ModelPickerItem(
             id: "foundation",
             displayName: "Foundation",
             source: .foundation,
@@ -106,9 +106,9 @@ extension ModelOption {
         )
     }
 
-    /// Create a local MLX model option from an MLXModel
-    static func fromMLXModel(_ model: MLXModel) -> ModelOption {
-        ModelOption(
+    /// Create a local MLX model picker item from an MLXModel
+    static func fromMLXModel(_ model: MLXModel) -> ModelPickerItem {
+        ModelPickerItem(
             id: model.id,
             displayName: model.name,
             source: .local,
@@ -119,14 +119,14 @@ extension ModelOption {
         )
     }
 
-    /// Create a local MLX model option from just the model name (fallback)
-    static func fromLocalModelName(_ name: String, fullId: String) -> ModelOption {
+    /// Create a local MLX model picker item from just the model name (fallback)
+    static func fromLocalModelName(_ name: String, fullId: String) -> ModelPickerItem {
         // Try to extract metadata from the name
         let paramCount = extractParameterCount(from: fullId)
         let quant = extractQuantization(from: fullId)
         let isVLM = detectVLM(from: fullId)
 
-        return ModelOption(
+        return ModelPickerItem(
             id: fullId,
             displayName: formatDisplayName(name),
             source: .local,
@@ -136,12 +136,12 @@ extension ModelOption {
         )
     }
 
-    /// Create a remote provider model option
+    /// Create a remote provider model picker item
     static func fromRemoteModel(
         modelId: String,
         providerName: String,
         providerId: UUID
-    ) -> ModelOption {
+    ) -> ModelPickerItem {
         // Remote model IDs are prefixed like "provider-name/model-id"
         let displayName: String
         if let slashIndex = modelId.lastIndex(of: "/") {
@@ -150,7 +150,7 @@ extension ModelOption {
             displayName = modelId
         }
 
-        return ModelOption(
+        return ModelPickerItem(
             id: modelId,
             displayName: displayName,
             source: .remote(providerName: providerName, providerId: providerId)
@@ -241,10 +241,10 @@ extension ModelOption {
 
 // MARK: - Grouping
 
-extension Array where Element == ModelOption {
+extension Array where Element == ModelPickerItem {
     /// Group models by source for display in sections
-    func groupedBySource() -> [(source: ModelOption.Source, models: [ModelOption])] {
-        var groups: [ModelOption.Source: [ModelOption]] = [:]
+    func groupedBySource() -> [(source: ModelPickerItem.Source, models: [ModelPickerItem])] {
+        var groups: [ModelPickerItem.Source: [ModelPickerItem]] = [:]
 
         for model in self {
             groups[model.source, default: []].append(model)

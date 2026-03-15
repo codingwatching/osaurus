@@ -72,12 +72,12 @@ public final class ExecutionContext: ObservableObject {
 
     // MARK: - Execution
 
-    /// Load model options. Call before `start(prompt:)`.
+    /// Load picker items. Call before `start(prompt:)`.
     public func prepare() async {
-        await chatSession.refreshModelOptions()
+        await chatSession.refreshPickerItems()
 
         if let work = workSession {
-            work.modelOptions = chatSession.modelOptions
+            work.pickerItems = chatSession.pickerItems
             work.selectedModel = chatSession.selectedModel
         }
     }
