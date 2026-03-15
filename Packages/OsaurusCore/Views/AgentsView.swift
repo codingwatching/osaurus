@@ -662,7 +662,7 @@ struct AgentDetailView: View {
     @State private var showDeleteConfirm = false
     @State private var showRelayConfirmation = false
     @State private var copiedRelayURL = false
-    @State private var modelOptions: [ModelOption] = []
+    @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker = false
     @State private var selectedModel: String?
     @State private var showCreateSchedule = false
@@ -762,8 +762,8 @@ struct AgentDetailView: View {
             }
             withAnimation { hasAppeared = true }
         }
-        .onReceive(ModelOptionsCache.shared.$modelOptions) { options in
-            modelOptions = options
+        .onReceive(ModelPickerItemCache.shared.$items) { options in
+            pickerItems = options
         }
         .themedAlert(
             "Delete Agent",
@@ -1138,7 +1138,7 @@ struct AgentDetailView: View {
                     .buttonStyle(PlainButtonStyle())
                     .popover(isPresented: $showModelPicker, arrowEdge: .bottom) {
                         ModelPickerView(
-                            options: modelOptions,
+                            options: pickerItems,
                             selectedModel: Binding(
                                 get: { selectedModel },
                                 set: { newModel in

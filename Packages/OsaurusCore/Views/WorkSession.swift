@@ -306,14 +306,14 @@ public final class WorkSession: ObservableObject {
     /// Pending redirect: the next interrupted result continues execution with this message
     private var pendingRedirectMessage: String?
 
-    /// Model options
-    @Published var modelOptions: [ModelOption] = []
+    /// Available model picker items
+    @Published var pickerItems: [ModelPickerItem] = []
 
     /// Whether the currently selected model supports image attachments
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
         if model.lowercased() == "foundation" { return false }
-        guard let option = modelOptions.first(where: { $0.id == model }) else { return false }
+        guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
         if case .remote = option.source { return true }
         return option.isVLM
     }
@@ -425,7 +425,7 @@ public final class WorkSession: ObservableObject {
 
     private var executionTask: Task<Void, Never>?
     private var persistDebounceTask: Task<Void, Never>?
-    nonisolated(unsafe) private var modelOptionsCancellable: AnyCancellable?
+    nonisolated(unsafe) private var pickerItemsCancellable: AnyCancellable?
 
     /// The work engine instance for this session (each session owns its own engine)
     private let engine: WorkEngine
@@ -454,18 +454,18 @@ public final class WorkSession: ObservableObject {
         self.windowState = windowState
         self.engine = engine
 
-        // Initialize model options from ChatSession and subscribe to keep in sync
+        // Initialize picker items from ChatSession and subscribe to keep in sync
         // after provider changes (add/remove/enable/disable)
         if let windowState = windowState {
-            self.modelOptions = windowState.session.modelOptions
+            self.pickerItems = windowState.session.pickerItems
             self.selectedModel = windowState.session.selectedModel
 
-            modelOptionsCancellable = windowState.session.$modelOptions
+            pickerItemsCancellable = windowState.session.$pickerItems
                 .dropFirst()
                 .receive(on: RunLoop.main)
                 .sink { [weak self] updatedOptions in
                     guard let self = self else { return }
-                    self.modelOptions = updatedOptions
+                    self.pickerItems = updatedOptions
                     if let selected = self.selectedModel,
                         !updatedOptions.contains(where: { $0.id == selected })
                     {
@@ -482,7 +482,7 @@ public final class WorkSession: ObservableObject {
 
     deinit {
         print("[WorkSession] deinit – agentId: \(agentId)")
-        modelOptionsCancellable?.cancel()
+        pickerItemsCancellable?.cancel()
         executionTask?.cancel()
         persistDebounceTask?.cancel()
         let engineToCancel = engine

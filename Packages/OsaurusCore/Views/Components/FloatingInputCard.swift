@@ -18,7 +18,7 @@ struct FloatingInputCard: View {
     @Binding var isContinuousVoiceMode: Bool
     @Binding var voiceInputState: VoiceInputState
     @Binding var showVoiceOverlay: Bool
-    let modelOptions: [ModelOption]
+    let pickerItems: [ModelPickerItem]
     @Binding var activeModelOptions: [String: ModelOptionValue]
     let isStreaming: Bool
     let supportsImages: Bool
@@ -70,8 +70,8 @@ struct FloatingInputCard: View {
     @State private var showCapabilitiesPicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
-    // Cache model options to prevent popover refresh during streaming
-    @State private var cachedModelOptions: [ModelOption] = []
+    // Cache picker items to prevent popover refresh during streaming
+    @State private var cachedPickerItems: [ModelPickerItem] = []
     // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
     @State private var hasTools: Bool = false
     @State private var hasSkills: Bool = false
@@ -174,7 +174,7 @@ struct FloatingInputCard: View {
     var body: some View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
-            if (modelOptions.count > 1 || hasTools || hasSkills
+            if (pickerItems.count > 1 || hasTools || hasSkills
                 || displayContextTokens > 0) && !showVoiceOverlay
             {
                 selectorRow
@@ -669,7 +669,7 @@ struct FloatingInputCard: View {
     private var selectorRow: some View {
         HStack(spacing: 10) {
             // Model selector (when multiple models available)
-            if modelOptions.count > 1 {
+            if pickerItems.count > 1 {
                 modelSelectorChip
             }
 
@@ -772,9 +772,9 @@ struct FloatingInputCard: View {
 
     // MARK: - Model Selector
 
-    private var selectedModelOption: ModelOption? {
+    private var selectedPickerItem: ModelPickerItem? {
         guard let id = selectedModel else { return nil }
-        return modelOptions.first { $0.id == id }
+        return pickerItems.first { $0.id == id }
     }
 
     private var modelSelectorChip: some View {
@@ -787,7 +787,7 @@ struct FloatingInputCard: View {
                     .frame(width: 6, height: 6)
 
                 // Model name with metadata badges
-                if let option = selectedModelOption {
+                if let option = selectedPickerItem {
                     HStack(spacing: 4) {
                         Text(option.displayName)
                             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
@@ -827,7 +827,7 @@ struct FloatingInputCard: View {
         }
         .popover(isPresented: $showModelPicker, arrowEdge: .top) {
             ModelPickerView(
-                options: cachedModelOptions,
+                options: cachedPickerItems,
                 selectedModel: $selectedModel,
                 agentId: agentId,
                 onDismiss: dismissModelPicker
@@ -836,7 +836,7 @@ struct FloatingInputCard: View {
         .onChange(of: showModelPicker) { _, isShowing in
             if isShowing {
                 // Snapshot options when popover opens to prevent refresh during streaming
-                cachedModelOptions = modelOptions
+                cachedPickerItems = pickerItems
             }
         }
     }
@@ -2423,9 +2423,9 @@ private struct EndTaskButton: View {
                         isContinuousVoiceMode: $isContinuousVoiceMode,
                         voiceInputState: $voiceInputState,
                         showVoiceOverlay: $showVoiceOverlay,
-                        modelOptions: [
+                        pickerItems: [
                             .foundation(),
-                            ModelOption(
+                            ModelPickerItem(
                                 id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
                                 displayName: "Llama 3.2 3B Instruct 4bit",
                                 source: .local,

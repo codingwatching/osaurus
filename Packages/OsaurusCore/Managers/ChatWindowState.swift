@@ -278,7 +278,7 @@ final class ChatWindowState: ObservableObject {
         refreshSessions()
         refreshTheme()
         refreshAgentConfig()
-        await session.refreshModelOptions()
+        await session.refreshPickerItems()
     }
 
     // MARK: - Private

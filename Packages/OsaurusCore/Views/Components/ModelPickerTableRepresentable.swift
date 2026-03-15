@@ -30,7 +30,7 @@ enum ModelPickerRow: Equatable, Identifiable {
     case groupHeader(
         sourceKey: String,
         displayName: String,
-        sourceType: ModelOption.Source,
+        sourceType: ModelPickerItem.Source,
         count: Int,
         isExpanded: Bool
     )
@@ -635,7 +635,7 @@ extension ModelPickerTableRepresentable {
             accessibilityDescription: nil
         )?.withSymbolConfiguration(.init(pointSize: 8, weight: .medium))
 
-        private func sourceIcon(for source: ModelOption.Source) -> NSImage? {
+        private func sourceIcon(for source: ModelPickerItem.Source) -> NSImage? {
             switch source {
             case .foundation: return appleLogoIcon
             case .local: return internalDriveIcon

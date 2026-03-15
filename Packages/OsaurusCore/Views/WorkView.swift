@@ -74,7 +74,7 @@ struct WorkView: View {
                             isContinuousVoiceMode: $session.isContinuousVoiceMode,
                             voiceInputState: $session.voiceInputState,
                             showVoiceOverlay: $session.showVoiceOverlay,
-                            modelOptions: session.modelOptions,
+                            pickerItems: session.pickerItems,
                             activeModelOptions: .constant([:]),
                             isStreaming: session.isExecuting,
                             supportsImages: session.selectedModelSupportsImages,
@@ -283,7 +283,7 @@ struct WorkView: View {
 
     private var agentEmptyState: some View {
         WorkEmptyState(
-            hasModels: session.modelOptions.count > 0,
+            hasModels: session.pickerItems.count > 0,
             selectedModel: session.selectedModel,
             agents: windowState.agents,
             activeAgentId: windowState.agentId,
@@ -293,7 +293,7 @@ struct WorkView: View {
             },
             onUseFoundation: windowState.foundationModelAvailable
                 ? {
-                    session.selectedModel = session.modelOptions.first?.id ?? "foundation"
+                    session.selectedModel = session.pickerItems.first?.id ?? "foundation"
                 } : nil,
             onQuickAction: { prompt in
                 session.input = prompt

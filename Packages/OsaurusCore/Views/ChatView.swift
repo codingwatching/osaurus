@@ -20,7 +20,7 @@ final class ChatSession: ObservableObject {
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
-    @Published var modelOptions: [ModelOption] = []
+    @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
@@ -73,13 +73,13 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
 
     init() {
-        let cache = ModelOptionsCache.shared
+        let cache = ModelPickerItemCache.shared
         if cache.isLoaded {
-            modelOptions = cache.modelOptions
-            hasAnyModel = !cache.modelOptions.isEmpty
+            pickerItems = cache.items
+            hasAnyModel = !cache.items.isEmpty
             isDiscoveringModels = false
         } else {
-            modelOptions = []
+            pickerItems = []
             hasAnyModel = false
         }
 
@@ -88,7 +88,7 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshModelOptions() }
+            Task { @MainActor in await self?.refreshPickerItems() }
         }
 
         localModelsObserver = NotificationCenter.default.addObserver(
@@ -96,7 +96,7 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshModelOptions() }
+            Task { @MainActor in await self?.refreshPickerItems() }
         }
 
         // Auto-persist model selection changes
@@ -113,7 +113,7 @@ final class ChatSession: ObservableObject {
 
         if !cache.isLoaded {
             Task { [weak self] in
-                await self?.refreshModelOptions()
+                await self?.refreshPickerItems()
             }
         }
     }
@@ -130,24 +130,24 @@ final class ChatSession: ObservableObject {
         modelSelectionCancellable = nil
     }
 
-    /// Apply initial model selection after agentId is set (for cached model options)
+    /// Apply initial model selection after agentId is set (for cached picker items)
     func applyInitialModelSelection() {
-        guard selectedModel == nil, !modelOptions.isEmpty else { return }
+        guard selectedModel == nil, !pickerItems.isEmpty else { return }
         isLoadingModel = true
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
-        if let model = effectiveModel, modelOptions.contains(where: { $0.id == model }) {
+        if let model = effectiveModel, pickerItems.contains(where: { $0.id == model }) {
             selectedModel = model
         } else {
-            selectedModel = modelOptions.first?.id
+            selectedModel = pickerItems.first?.id
         }
         isLoadingModel = false
         Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
-    func refreshModelOptions() async {
-        let newOptions = await ModelOptionsCache.shared.buildModelOptions()
+    func refreshPickerItems() async {
+        let newOptions = await ModelPickerItemCache.shared.buildModelPickerItems()
         let newOptionIds = newOptions.map { $0.id }
-        let optionsChanged = modelOptions.map({ $0.id }) != newOptionIds
+        let optionsChanged = pickerItems.map({ $0.id }) != newOptionIds
 
         isDiscoveringModels = false
 
@@ -166,7 +166,7 @@ final class ChatSession: ObservableObject {
             newSelected = newOptionIds.first
         }
 
-        modelOptions = newOptions
+        pickerItems = newOptions
         isLoadingModel = true
         selectedModel = newSelected
         isLoadingModel = false
@@ -177,15 +177,15 @@ final class ChatSession: ObservableObject {
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
         if model.lowercased() == "foundation" { return false }
-        guard let option = modelOptions.first(where: { $0.id == model }) else { return false }
+        guard let option = pickerItems.first(where: { $0.id == model }) else { return false }
         if case .remote = option.source { return true }
         return option.isVLM
     }
 
-    /// Get the currently selected ModelOption
-    var selectedModelOption: ModelOption? {
+    /// Get the currently selected ModelPickerItem
+    var selectedPickerItem: ModelPickerItem? {
         guard let model = selectedModel else { return nil }
-        return modelOptions.first { $0.id == model }
+        return pickerItems.first { $0.id == model }
     }
 
     /// Flattened content blocks for efficient LazyVStack rendering
@@ -394,11 +394,11 @@ final class ChatSession: ObservableObject {
         isLoadingModel = true
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         if let defaultModel = effectiveModel,
-            modelOptions.contains(where: { $0.id == defaultModel })
+            pickerItems.contains(where: { $0.id == defaultModel })
         {
             selectedModel = defaultModel
         } else {
-            selectedModel = modelOptions.first?.id
+            selectedModel = pickerItems.first?.id
         }
         isLoadingModel = false
     }
@@ -475,18 +475,18 @@ final class ChatSession: ObservableObject {
         // Don't auto-persist when loading - this is restoring existing state
         isLoadingModel = true
         if let savedModel = data.selectedModel,
-            modelOptions.contains(where: { $0.id == savedModel })
+            pickerItems.contains(where: { $0.id == savedModel })
         {
             selectedModel = savedModel
         } else {
             // Fall back to agent's model, then global config, then first available
             let effectiveModel = AgentManager.shared.effectiveModel(for: data.agentId ?? Agent.defaultId)
             if let defaultModel = effectiveModel,
-                modelOptions.contains(where: { $0.id == defaultModel })
+                pickerItems.contains(where: { $0.id == defaultModel })
             {
                 selectedModel = defaultModel
             } else {
-                selectedModel = modelOptions.first?.id
+                selectedModel = pickerItems.first?.id
             }
         }
         isLoadingModel = false
@@ -1359,7 +1359,7 @@ struct ChatView: View {
                                     },
                                     onUseFoundation: windowState.foundationModelAvailable
                                         ? {
-                                            session.selectedModel = session.modelOptions.first?.id ?? "foundation"
+                                            session.selectedModel = session.pickerItems.first?.id ?? "foundation"
                                         } : nil,
                                     onQuickAction: { prompt in
                                         session.input = prompt
@@ -1384,7 +1384,7 @@ struct ChatView: View {
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
-                                modelOptions: observedSession.modelOptions,
+                                pickerItems: observedSession.pickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
@@ -1410,7 +1410,7 @@ struct ChatView: View {
                                 },
                                 onUseFoundation: windowState.foundationModelAvailable
                                     ? {
-                                        session.selectedModel = session.modelOptions.first?.id ?? "foundation"
+                                        session.selectedModel = session.pickerItems.first?.id ?? "foundation"
                                     } : nil,
                                 onQuickAction: { _ in },
                                 onSelectAgent: { newAgentId in
@@ -1421,7 +1421,7 @@ struct ChatView: View {
                                     // Don't reset onboarding - the user just finished it
                                     if !OnboardingService.shared.shouldShowOnboarding {
                                         Task { @MainActor in
-                                            await session.refreshModelOptions()
+                                            await session.refreshPickerItems()
                                         }
                                         return
                                     }
