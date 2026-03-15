@@ -43,6 +43,58 @@ final class ModelManager: NSObject, ObservableObject {
         let etaSeconds: Double?
     }
 
+    /// State for filtering the model list
+    struct ModelFilterState: Equatable {
+        var type: MLXModel.ModelType? = nil
+        var sizeCategory: SizeCategory? = nil
+        var family: String? = nil
+        var paramCategory: ParamCategory? = nil
+
+        enum SizeCategory: String, CaseIterable, Identifiable {
+            case small = "Small (<2 GB)"
+            case medium = "Medium (2-4 GB)"
+            case large = "Large (4 GB+)"
+            var id: String { rawValue }
+
+            func matches(bytes: Int64?) -> Bool {
+                guard let bytes = bytes else { return false }
+                let gb = Double(bytes) / (1024 * 1024 * 1024)
+                switch self {
+                case .small: return gb < 2.0
+                case .medium: return gb >= 2.0 && gb < 4.0
+                case .large: return gb >= 4.0
+                }
+            }
+        }
+
+        enum ParamCategory: String, CaseIterable, Identifiable {
+            case small = "<1B"
+            case medium = "1-3B"
+            case large = "3B+"
+            var id: String { rawValue }
+
+            func matches(billions: Double?) -> Bool {
+                guard let b = billions else { return false }
+                switch self {
+                case .small: return b < 1.0
+                case .medium: return b >= 1.0 && b <= 3.0
+                case .large: return b > 3.0
+                }
+            }
+        }
+
+        var isActive: Bool {
+            type != nil || sizeCategory != nil || family != nil || paramCategory != nil
+        }
+
+        mutating func reset() {
+            type = nil
+            sizeCategory = nil
+            family = nil
+            paramCategory = nil
+        }
+    }
+
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
     @Published var downloadStates: [String: DownloadState] = [:]

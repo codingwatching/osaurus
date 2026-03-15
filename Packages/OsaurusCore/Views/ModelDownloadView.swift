@@ -37,8 +37,12 @@ struct ModelDownloadView: View {
     /// Model to show in the detail sheet
     @State private var modelToShowDetails: MLXModel? = nil
 
-    /// Whether content has appeared (for entrance animation)
+    /// Content has appeared (for entrance animation)
     @State private var hasAppeared = false
+
+    /// Filter state
+    @State private var filterState = ModelManager.ModelFilterState()
+    @State private var showFilterPopover = false
 
     // MARK: - Deep Link Support
 
@@ -116,18 +120,48 @@ struct ModelDownloadView: View {
             title: "Models",
             subtitle: "\(completedDownloadedModelsCount) downloaded • \(modelManager.totalDownloadedSizeString)"
         ) {
-            // Download status indicator (shown when downloads are active)
-            if modelManager.activeDownloadsCount > 0 {
-                DownloadStatusIndicator(
-                    activeCount: modelManager.activeDownloadsCount,
-                    averageProgress: averageDownloadProgress,
-                    onTap: {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            selectedTab = .downloaded
+            HStack(spacing: 12) {
+                // Filter button
+                Button {
+                    showFilterPopover.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: filterState.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                            .font(.system(size: 13))
+                        Text("Filter")
+                            .font(.system(size: 13, weight: .medium))
+                        if filterState.isActive {
+                            Circle()
+                                .fill(theme.accentColor)
+                                .frame(width: 6, height: 6)
                         }
                     }
-                )
-                .transition(.scale.combined(with: .opacity))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(filterState.isActive ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5))
+                    )
+                    .foregroundColor(filterState.isActive ? theme.accentColor : theme.secondaryText)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .popover(isPresented: $showFilterPopover, arrowEdge: .top) {
+                    filterPopoverView
+                }
+
+                // Download status indicator (shown when downloads are active)
+                if modelManager.activeDownloadsCount > 0 {
+                    DownloadStatusIndicator(
+                        activeCount: modelManager.activeDownloadsCount,
+                        averageProgress: averageDownloadProgress,
+                        onTap: {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                selectedTab = .downloaded
+                            }
+                        }
+                    )
+                    .transition(.scale.combined(with: .opacity))
+                }
             }
         } tabsRow: {
             HeaderTabsRow(
@@ -143,6 +177,135 @@ struct ModelDownloadView: View {
                 searchText: $searchText,
                 searchPlaceholder: "Search models"
             )
+        }
+    }
+
+    // MARK: - Filter Popover
+
+    private var filterPopoverView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("Filters")
+                        .font(.system(size: 14, weight: .bold))
+                    Spacer()
+                    if filterState.isActive {
+                        Button {
+                            filterState.reset()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.counterclockwise")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("Reset")
+                                    .font(.system(size: 12, weight: .medium))
+                            }
+                        }
+                        .foregroundColor(.red)
+                        .buttonStyle(.plain)
+                    }                }
+                .padding(.bottom, 4)
+
+                Group {
+                    FilterSection(title: "Model Type") {
+                        HStack(spacing: 8) {
+                            FilterChip(label: "LLM", isSelected: filterState.type == .llm) {
+                                filterState.type = filterState.type == .llm ? nil : .llm
+                            }
+                            FilterChip(label: "VLM", isSelected: filterState.type == .vlm) {
+                                filterState.type = filterState.type == .vlm ? nil : .vlm
+                            }
+                        }
+                    }
+
+                    FilterSection(title: "Model Size") {
+                        FlowLayout(spacing: 8) {
+                            ForEach(ModelManager.ModelFilterState.SizeCategory.allCases) { cat in
+                                FilterChip(label: cat.rawValue, isSelected: filterState.sizeCategory == cat) {
+                                    filterState.sizeCategory = filterState.sizeCategory == cat ? nil : cat
+                                }
+                            }
+                        }
+                    }
+
+                    FilterSection(title: "Parameters") {
+                        HStack(spacing: 8) {
+                            ForEach(ModelManager.ModelFilterState.ParamCategory.allCases) { cat in
+                                FilterChip(label: cat.rawValue, isSelected: filterState.paramCategory == cat) {
+                                    filterState.paramCategory = filterState.paramCategory == cat ? nil : cat
+                                }
+                            }
+                        }
+                    }
+                    FilterSection(title: "Model Family") {
+                        let families = Array(Set(modelManager.availableModels.map { $0.family })).sorted()
+                        if families.isEmpty {
+                            Text("No families found")
+                                .font(.system(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                        } else {
+                            FlowLayout(spacing: 8) {
+                                ForEach(families, id: \.self) { fam in
+                                    FilterChip(label: fam, isSelected: filterState.family == fam) {
+                                        filterState.family = filterState.family == fam ? nil : fam
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .frame(width: 300)
+        .frame(maxHeight: 480)
+        .background(theme.primaryBackground)
+        .environment(\.theme, themeManager.currentTheme)
+    }
+
+    private struct FilterSection<Content: View>: View {
+        let title: String
+        @ViewBuilder let content: Content
+        @Environment(\.theme) private var theme
+
+        init(title: String, @ViewBuilder content: () -> Content) {
+            self.title = title
+            self.content = content()
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
+                    .textCase(.uppercase)
+                content
+            }
+        }
+    }
+
+    private struct FilterChip: View {
+        let label: String
+        let isSelected: Bool
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+
+        var body: some View {
+            Button(action: action) {
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(isSelected ? theme.accentColor : theme.tertiaryBackground.opacity(0.4))
+                    )
+                    .foregroundColor(isSelected ? .white : theme.secondaryText)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(theme.primaryBorder.opacity(isSelected ? 0 : 0.1), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -241,17 +404,38 @@ struct ModelDownloadView: View {
 
     // MARK: - Model Filtering
 
-    /// All available models filtered by current search text
+    /// Helper to apply current filter state to a list of models
+    private func applyFilters(to models: [MLXModel]) -> [MLXModel] {
+        models.filter { model in
+            // Type filter
+            if let type = filterState.type, model.modelType != type { return false }
+            
+            // Size filter
+            if let sizeCat = filterState.sizeCategory, !sizeCat.matches(bytes: model.totalSizeEstimateBytes) { return false }
+            
+            // Family filter
+            if let family = filterState.family, model.family != family { return false }
+            
+            // Params filter
+            if let paramCat = filterState.paramCategory, !paramCat.matches(billions: model.parameterCountBillions) { return false }
+            
+            return true
+        }
+    }
+
+    /// All available models filtered by current search text and filters
     private var filteredModels: [MLXModel] {
-        let filtered = SearchService.filterModels(modelManager.availableModels, with: searchText)
+        let searched = SearchService.filterModels(modelManager.availableModels, with: searchText)
+        let filtered = applyFilters(to: searched)
         return filtered.sorted { lhs, rhs in
             lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
         }
     }
 
-    /// Suggested (curated) models filtered by current search text
+    /// Suggested (curated) models filtered by current search text and filters
     private var filteredSuggestedModels: [MLXModel] {
-        let filtered = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
+        let searched = SearchService.filterModels(modelManager.suggestedModels, with: searchText)
+        let filtered = applyFilters(to: searched)
         return filtered.sorted { lhs, rhs in
             // Top suggestions first
             if lhs.isTopSuggestion != rhs.isTopSuggestion {
@@ -302,7 +486,9 @@ struct ModelDownloadView: View {
             }
         }
         // Apply search filter
-        let filtered = SearchService.filterModels(merged, with: searchText)
+        let searched = SearchService.filterModels(merged, with: searchText)
+        let filtered = applyFilters(to: searched)
+        
         // Sort: active first, then by name
         return filtered.sorted { lhs, rhs in
             let lhsActive: Bool = {
@@ -318,7 +504,7 @@ struct ModelDownloadView: View {
         }
     }
 
-    /// Count of completed (on-disk) downloaded models respecting current search
+    /// Count of completed (on-disk) downloaded models respecting current search and filters
     private var completedDownloadedModelsCount: Int {
         let combined = modelManager.suggestedModels + modelManager.availableModels
         var byLowerId: [String: MLXModel] = [:]
@@ -333,7 +519,8 @@ struct ModelDownloadView: View {
             }
         }
         let completed = byLowerId.values.filter { $0.isDownloaded }
-        let filtered = SearchService.filterModels(Array(completed), with: searchText)
+        let searched = SearchService.filterModels(Array(completed), with: searchText)
+        let filtered = applyFilters(to: searched)
         return filtered.count
     }
 
