@@ -128,10 +128,25 @@ struct ModelRowView: View {
         .onHover { hovering in
             isHovering = hovering
         }
+        .offset(y: hasAppeared ? 0 : 20)
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
-            let delay = Double(animationIndex) * 0.02
-            withAnimation(.easeOut(duration: 0.2).delay(delay)) {
+            if hasAppeared { return }
+            
+            // Refined stagger logic:
+            // 1. Initial items (0-10) get a standard linear stagger.
+            // 2. Scrolling items use a cyclic stagger (modulo) so they always 
+            //    animate relative to each other without accumulating long delays.
+            let delay: Double = {
+                if animationIndex < 10 {
+                    return Double(animationIndex) * 0.05
+                } else {
+                    // Maximum delay here is 0.02 + (5 * 0.03) = 0.17s
+                    return 0.02 + Double(animationIndex % 6) * 0.03
+                }
+            }()
+            
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.8).delay(delay)) {
                 hasAppeared = true
             }
         }
