@@ -726,7 +726,11 @@ private struct ChatToolbarModeToggleView: View {
         ModeToggleButton(
             currentMode: isWorkMode ? .work : .chat,
             isDisabled: !isWorkMode && !session.hasAnyModel,
-            action: { windowState.switchMode(to: isWorkMode ? .chat : .work) }
+            action: { tappedMode in
+                let current: ModeToggleButton.Mode = isWorkMode ? .work : .chat
+                guard tappedMode != current else { return }
+                windowState.switchMode(to: tappedMode == .work ? .work : .chat)
+            }
         )
         .environment(\.theme, windowState.theme)
     }
