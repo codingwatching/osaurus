@@ -437,6 +437,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.contentViewController = hostingController
         panel.setContentSize(defaultSize)
 
+        if windows.count == 1 {
+            panel.setFrameAutosaveName(WindowFrameAutosaveKey.chat.rawValue)
+        }
+
         let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
         windowDelegates[windowId] = delegate
         panel.delegate = delegate
@@ -535,6 +539,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         // Set size directly - let SwiftUI layout asynchronously for faster window appearance
         panel.setContentSize(defaultSize)
+
+        if windows.count == 1 {
+            panel.setFrameAutosaveName(WindowFrameAutosaveKey.chat.rawValue)
+        }
 
         // Set up delegate for lifecycle events
         let delegate = ChatWindowDelegate(windowId: windowId, manager: self)

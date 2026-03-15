@@ -138,7 +138,7 @@ struct ManagementView: View {
 
     var body: some View {
         sidebarNavigation
-            .frame(minWidth: 900, minHeight: 640)
+            .frame(minWidth: 900, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
             .background(theme.primaryBackground)
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.accentColor)

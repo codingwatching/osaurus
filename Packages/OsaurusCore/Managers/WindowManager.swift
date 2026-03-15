@@ -24,6 +24,12 @@ public enum WindowIdentifier: Hashable, CustomStringConvertible, Sendable {
     }
 }
 
+/// Strictly typed autosave names for window frame persistence
+public enum WindowFrameAutosaveKey: String, Sendable {
+    case chat = "ChatWindow"
+    case management = "ManagementWindow"
+}
+
 /// Configuration for creating a managed window
 public struct WindowConfiguration: Sendable {
     let identifier: WindowIdentifier
@@ -34,6 +40,7 @@ public struct WindowConfiguration: Sendable {
     let titleVisibility: NSWindow.TitleVisibility
     let isMovableByWindowBackground: Bool
     let hideStandardButtons: Set<NSWindow.ButtonType>
+    let autosaveKey: WindowFrameAutosaveKey?
 
     public static let chat = WindowConfiguration(
         identifier: .chat,
@@ -43,7 +50,8 @@ public struct WindowConfiguration: Sendable {
         titlebarAppearsTransparent: true,
         titleVisibility: .hidden,
         isMovableByWindowBackground: false,
-        hideStandardButtons: [.closeButton, .miniaturizeButton, .zoomButton]
+        hideStandardButtons: [.closeButton, .miniaturizeButton, .zoomButton],
+        autosaveKey: .chat
     )
 
     public static let management = WindowConfiguration(
@@ -54,7 +62,8 @@ public struct WindowConfiguration: Sendable {
         titlebarAppearsTransparent: true,
         titleVisibility: .hidden,
         isMovableByWindowBackground: true,
-        hideStandardButtons: []
+        hideStandardButtons: [],
+        autosaveKey: .management
     )
 }
 
@@ -300,6 +309,10 @@ public final class WindowManager: NSObject, ObservableObject {
         // Force set content size again to ensure we start with the intended size
         // This prevents the window from starting at 0x0 or wrong size if layoutSubtreeIfNeeded did something unexpected
         window.setContentSize(config.defaultSize)
+
+        if let autosaveKey = config.autosaveKey {
+            window.setFrameAutosaveName(autosaveKey.rawValue)
+        }
 
         // Register with manager
         register(window, as: config.identifier)

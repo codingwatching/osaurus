@@ -1002,7 +1002,9 @@ extension AppDelegate {
             }
             window.isReleasedWhenClosed = false
 
-            windowManager.show(.management)
+            // Set center to false so the window respects its saved position (via setFrameAutosaveName)
+            // instead of being manually centered by the WindowManager on every show.
+            windowManager.show(.management, center: false)
             NSLog("[Management] Created new window and presented")
         }
 
