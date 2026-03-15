@@ -279,15 +279,17 @@ struct SelectableTextView: NSViewRepresentable {
         nsView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         guard let tc = nsView.textContainer, let lm = nsView.layoutManager else { return nil }
         lm.ensureLayout(for: tc)
-        let measured = ceil(lm.usedRect(for: tc).height) + nsView.textContainerInset.height * 2
+        let usedRect = lm.usedRect(for: tc)
+        let measuredWidth = ceil(usedRect.width)
+        let measuredHeight = ceil(usedRect.height) + nsView.textContainerInset.height * 2
 
         coord.lastWidth = width
-        coord.lastMeasuredHeight = measured
+        coord.lastMeasuredHeight = measuredHeight
 
         if let key = cacheKey {
-            ThreadCache.shared.setHeight(measured, for: "\(key)-w\(Int(width))")
+            ThreadCache.shared.setHeight(measuredHeight, for: "\(key)-w\(Int(width))")
         }
-        return CGSize(width: width, height: measured)
+        return CGSize(width: min(measuredWidth, width), height: measuredHeight)
     }
 
     // MARK: - Incremental Updates

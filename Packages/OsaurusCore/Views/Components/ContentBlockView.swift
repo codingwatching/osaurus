@@ -71,6 +71,19 @@ struct ContentBlockView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: isUserMessage ? .trailing : .leading)
         .padding(.horizontal, isUserMessage ? 0 : 16)
     }
+    
+    private func bubbleSize(for text: String, bubbleWidth: CGFloat) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: CGFloat(theme.bodySize))
+        let maxSize = NSSize(width: bubbleWidth - 32, height: .greatestFiniteMagnitude)
+        let boundingRect = (text as NSString).boundingRect(
+            with: maxSize,
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: font],
+            context: nil
+        )
+        // Add horizontal padding and cap at bubbleWidth
+        return min(ceil(boundingRect.width) + 32 + 16, bubbleWidth)
+    }
 
     // MARK: - Block Content
 
@@ -164,9 +177,10 @@ struct ContentBlockView: View, Equatable {
                 .padding(.bottom, 16)
             } else if !text.isEmpty {
                 let bubbleWidth = min(width * 0.75, 420)
+                let actualWidth = bubbleSize(for: text, bubbleWidth: bubbleWidth)
                 MarkdownMessageView(
                     text: text,
-                    baseWidth: bubbleWidth - 32,
+                    baseWidth: actualWidth - 32,
                     cacheKey: block.id,
                     isStreaming: false
                 )
@@ -174,9 +188,8 @@ struct ContentBlockView: View, Equatable {
                 .padding(.vertical, 12)
                 .background(messageBubbleBackground)
                 .clipShape(RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous))
-                .frame(maxWidth: bubbleWidth, alignment: .trailing)
+                .frame(width: actualWidth)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .padding(.top, 6)
                 .padding(.trailing, 16)
                 .padding(.bottom, 16)
             }
