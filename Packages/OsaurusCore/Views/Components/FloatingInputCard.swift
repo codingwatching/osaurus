@@ -1114,7 +1114,7 @@ struct FloatingInputCard: View {
             // Bottom button bar with all action buttons
             buttonBar
                 .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.vertical, 12)
         }
         .fixedSize(horizontal: false, vertical: true)
         .background(cardBackground)
