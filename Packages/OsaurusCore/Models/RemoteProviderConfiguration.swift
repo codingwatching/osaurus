@@ -230,15 +230,21 @@ public struct RemoteProvider: Codable, Identifiable, Sendable, Equatable {
         if authType == .apiKey, let apiKey = getAPIKey(), !apiKey.isEmpty {
             switch providerType {
             case .anthropic:
-                headers["x-api-key"] = apiKey
+                if headers["x-api-key"] == nil {
+                    headers["x-api-key"] = apiKey
+                }
                 // Add required Anthropic version header if not already set
                 if headers["anthropic-version"] == nil {
                     headers["anthropic-version"] = "2023-06-01"
                 }
             case .gemini:
-                headers["x-goog-api-key"] = apiKey
+                if headers["x-goog-api-key"] == nil {
+                    headers["x-goog-api-key"] = apiKey
+                }
             case .openai, .openResponses:
-                headers["Authorization"] = "Bearer \(apiKey)"
+                if headers["Authorization"] == nil {
+                    headers["Authorization"] = "Bearer \(apiKey)"
+                }
             }
         }
 
