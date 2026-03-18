@@ -134,7 +134,8 @@ final class ChatWindowState: ObservableObject {
     /// Kicks off model warm-up for the window's currently selected local model.
     private func warmUpSelectedModel() {
         guard let model = session.selectedModel,
-              ModelManager.findInstalledModel(named: model) != nil else { return }
+            ModelManager.findInstalledModel(named: model) != nil
+        else { return }
         session.isWarmingModel = true
         session.warmupTask = Task { [weak session, agentId] in
             await MLXService.shared.warmUp(modelName: model, agentId: agentId)

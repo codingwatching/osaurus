@@ -786,6 +786,7 @@ struct FloatingInputCard: View {
                 Circle()
                     .fill(isWarmingModel ? Color.yellow : Color.green)
                     .frame(width: 6, height: 6)
+                    .help(isWarmingModel ? "Warming up model cache…" : "Model ready")
 
                 // Model name with metadata badges
                 if let option = selectedPickerItem {

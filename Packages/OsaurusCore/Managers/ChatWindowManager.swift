@@ -256,11 +256,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
     /// Returns the set of local model names currently selected across all open windows.
     func activeLocalModelNames() -> Set<String> {
-        Set(windowStates.values.compactMap { state in
-            guard let model = state.session.selectedModel,
-                  ModelManager.findInstalledModel(named: model) != nil else { return nil }
-            return model
-        })
+        Set(
+            windowStates.values.compactMap { state in
+                guard let model = state.session.selectedModel,
+                    ModelManager.findInstalledModel(named: model) != nil
+                else { return nil }
+                return model
+            }
+        )
     }
 
     /// Set a callback to be invoked when window is about to close (for session saving)
