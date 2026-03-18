@@ -13,7 +13,8 @@ struct StreamAccumulator {
     static func accumulate(
         events: AsyncStream<MLXLMCommon.Generation>,
         stopSequences: [String],
-        tools: [Tool]?
+        tools: [Tool]?,
+        generationTask: Task<Void, Never>? = nil
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let producerTask = Task {
@@ -45,6 +46,20 @@ struct StreamAccumulator {
                     continuation.yield(.toolInvocation(name: toolCall.function.name, argsJSON: argsString))
                     continuation.finish()
                     return
+                }
+                if let info = event.info {
+                    print(
+                        String(
+                            format: "[MLX] prompt: %d tokens %.1f tok/s (%.2fs) | gen: %d tokens %.1f tok/s (%.2fs)",
+                            info.promptTokenCount,
+                            info.promptTokensPerSecond,
+                            info.promptTime,
+                            info.generationTokenCount,
+                            info.tokensPerSecond,
+                            info.generateTime
+                        )
+                    )
+                    continue
                 }
                 guard let token = event.chunk, !token.isEmpty else { continue }
 
@@ -126,6 +141,9 @@ struct StreamAccumulator {
 
                 continuation.yield(.tokens(token))
                 emittedCount += token.count
+            }
+            if let generationTask {
+                await generationTask.value
             }
             continuation.finish()
         }

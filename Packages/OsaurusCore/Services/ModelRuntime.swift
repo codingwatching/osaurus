@@ -30,10 +30,18 @@ actor ModelRuntime {
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
-        init(name: String, container: ModelContainer, weightsSizeBytes: Int64) {
+        var weightReservation: WiredMemoryTicket?
+        var reservationActive = false
+        init(
+            name: String,
+            container: ModelContainer,
+            weightsSizeBytes: Int64,
+            weightReservation: WiredMemoryTicket? = nil
+        ) {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
+            self.weightReservation = weightReservation
         }
     }
 
@@ -68,7 +76,11 @@ actor ModelRuntime {
 
     // MARK: - Model lifecycle
 
-    func unload(name: String) {
+    func unload(name: String) async {
+        if let holder = modelCache[name], holder.reservationActive, let reservation = holder.weightReservation {
+            holder.reservationActive = false
+            _ = await reservation.end()
+        }
         kvCacheStore.invalidateModel(name)
 
         autoreleasepool {
@@ -78,19 +90,29 @@ actor ModelRuntime {
         loadingTasks.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
 
+        Memory.cacheLimit = mlxCacheLimit()
         Stream.gpu.synchronize()
         Memory.clearCache()
     }
 
     /// Unloads any loaded model not referenced by an active window.
-    func unloadModelsNotIn(_ activeNames: Set<String>) {
-        for name in modelCache.keys where !activeNames.contains(name) {
+    func unloadModelsNotIn(_ activeNames: Set<String>) async {
+        let toUnload = modelCache.keys.filter { !activeNames.contains($0) }
+        for name in toUnload {
             print("[ModelRuntime] GC: Unloading unused model \(name)")
-            unload(name: name)
+            await unload(name: name)
         }
     }
 
-    func clearAll() {
+    func clearAll() async {
+        let reservations: [WiredMemoryTicket] = modelCache.values.compactMap { holder in
+            guard holder.reservationActive, let reservation = holder.weightReservation else { return nil }
+            holder.reservationActive = false
+            return reservation
+        }
+        for reservation in reservations {
+            _ = await reservation.end()
+        }
         kvCacheStore.clearAll()
 
         autoreleasepool {
@@ -101,6 +123,7 @@ actor ModelRuntime {
         currentModelName = nil
         cachedConfig = nil
 
+        Memory.cacheLimit = 0
         Stream.gpu.synchronize()
         Memory.clearCache()
     }
@@ -116,7 +139,10 @@ actor ModelRuntime {
         kvCacheStore.prewarm(sessionId: sessionId, modelName: modelName, budgetBytes: budget)
     }
 
-    /// Invalidates the KV cache for a specific session (e.g., on session delete).
+    /// Invalidates the KV cache for a specific session (e.g., on window close).
+    /// Does NOT call Memory.clearCache() -- the freed arrays will be reclaimed
+    /// naturally once they exceed mlxCacheLimit. Flushing here would penalize
+    /// any generation still running on other windows.
     func invalidateSession(_ sessionId: String) {
         kvCacheStore.invalidate(sessionId: sessionId)
     }
@@ -204,14 +230,28 @@ actor ModelRuntime {
 
     private func getConfig() async -> RuntimeConfig {
         if let cached = cachedConfig { return cached }
-        let cfg = await RuntimeConfig.snapshot()
+        let totalWeights = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
+        let cfg = await RuntimeConfig.snapshot(modelWeightsBytes: totalWeights)
         cachedConfig = cfg
         return cfg
     }
 
     private func currentKVBudget() -> Int {
+        guard !modelCache.isEmpty else { return 0 }
         let modelBytes = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
         return KVCacheStore.computeBudget(modelWeightsBytes: modelBytes)
+    }
+
+    /// MLX freed-buffer cache limit sized for intermediate activation reuse.
+    /// Scales with model weight size (larger models have larger activations)
+    /// and is capped by a fraction of system RAM. Returns 0 when idle.
+    private func mlxCacheLimit() -> Int {
+        guard !modelCache.isEmpty else { return 0 }
+        let systemRAM = Int(ProcessInfo.processInfo.physicalMemory)
+        let totalWeights = Int(modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes })
+        let byModel = max(totalWeights / 4, 1 * 1024 * 1024 * 1024)
+        let bySystem = min(systemRAM / 8, 8 * 1024 * 1024 * 1024)
+        return min(byModel, bySystem)
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
@@ -223,7 +263,7 @@ actor ModelRuntime {
             let otherModels = modelCache.keys.filter { $0 != name }
             for other in otherModels {
                 print("[ModelRuntime] Enforcing strict policy: Unloading \(other)")
-                unload(name: other)
+                await unload(name: other)
             }
 
             let otherTasks = loadingTasks.keys.filter { $0 != name }
@@ -262,7 +302,15 @@ actor ModelRuntime {
             }
 
             let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
-            return SessionHolder(name: name, container: container, weightsSizeBytes: weightsBytes)
+            let workspaceMargin = min(Int(weightsBytes) / 5, 2 * 1024 * 1024 * 1024)
+            let budgetPolicy = WiredBudgetPolicy(baseBytes: Int(weightsBytes) + workspaceMargin)
+            let reservation = WiredMemoryTicket(size: Int(weightsBytes), policy: budgetPolicy, kind: .reservation)
+            return SessionHolder(
+                name: name,
+                container: container,
+                weightsSizeBytes: weightsBytes,
+                weightReservation: reservation
+            )
         }
 
         loadingTasks[name] = task
@@ -273,9 +321,13 @@ actor ModelRuntime {
             loadingTasks[name] = nil
             currentModelName = name
 
-            // Set memory limits based on model size
-            let budget = KVCacheStore.computeBudget(modelWeightsBytes: holder.weightsSizeBytes)
-            Memory.cacheLimit = budget
+            Memory.cacheLimit = mlxCacheLimit()
+
+            // Pin model weights in GPU memory via wired memory reservation
+            if let reservation = holder.weightReservation {
+                _ = await reservation.start()
+                holder.reservationActive = true
+            }
 
             return holder
         } catch {
@@ -296,7 +348,10 @@ actor ModelRuntime {
                     AgentManager.shared.effectiveSystemPrompt(for: agentId)
                 )
                 let cfg = MemoryConfigurationStore.load()
-                let specs = ToolRegistry.shared.chatSpecs(withOverrides: nil, mode: .none)
+                let execEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
+                let sandboxRunning = SandboxManager.State.shared.status == .running
+                let mode: WorkExecutionMode = (execEnabled && sandboxRunning) ? .sandbox : .none
+                let specs = ToolRegistry.shared.chatSpecs(withOverrides: nil, mode: mode)
                 return (sys, cfg, specs)
             }
 
@@ -320,7 +375,7 @@ actor ModelRuntime {
 
             let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
-            let (stream, cache) = try await MLXGenerationEngine.prepareAndGenerate(
+            let (stream, cache, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: { messages },
                 buildToolsSpec: { tokenizerTools },
@@ -330,6 +385,7 @@ actor ModelRuntime {
             )
 
             for await _ in stream {}
+            await genTask.value
 
             kvCacheStore.putPrefixCache(cache, modelName: modelName, hash: hash)
             print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
@@ -379,26 +435,52 @@ actor ModelRuntime {
         }()
 
         let capturedMessages = chatMessages
-        let (rawStream, cache) = try await MLXGenerationEngine.prepareAndGenerate(
-            container: holder.container,
-            buildChat: { capturedMessages },
-            buildToolsSpec: { ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice) },
-            generation: parameters,
-            runtime: cfg,
-            existingCache: existingCache
-        )
+        let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { capturedMessages }
+        let buildTools: @Sendable () -> [[String: any Sendable]]? = {
+            ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+        }
 
-        // Always store the cache so subsequent turns get a hot hit.
-        // Note: we don't saveToDisk here because the stream hasn't been consumed yet
-        // (tokens are generated lazily). The SSD copy would only contain the prefill.
-        // The cache will be persisted to SSD when evictToSSD runs during ensureBudget.
+        var rawStream: AsyncStream<MLXLMCommon.Generation>
+        var cache: [any KVCache]
+        var genTask: Task<Void, Never>
+
+        do {
+            (rawStream, cache, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                container: holder.container,
+                buildChat: buildChat,
+                buildToolsSpec: buildTools,
+                generation: parameters,
+                runtime: cfg,
+                existingCache: existingCache
+            )
+        } catch {
+            guard existingCache != nil else { throw error }
+            print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
+            if let sid = sessionId {
+                kvCacheStore.invalidate(sessionId: sid)
+            }
+            (rawStream, cache, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                container: holder.container,
+                buildChat: buildChat,
+                buildToolsSpec: buildTools,
+                generation: parameters,
+                runtime: cfg,
+                existingCache: nil
+            )
+        }
+
         if let sid = sessionId {
             kvCacheStore.putCache(sessionId: sid, cache: cache, modelName: modelName)
             let budget = currentKVBudget()
             kvCacheStore.ensureBudget(budget)
         }
 
-        return StreamAccumulator.accumulate(events: rawStream, stopSequences: stopSequences, tools: tools)
+        return StreamAccumulator.accumulate(
+            events: rawStream,
+            stopSequences: stopSequences,
+            tools: tools,
+            generationTask: genTask
+        )
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs

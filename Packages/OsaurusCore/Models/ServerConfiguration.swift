@@ -99,7 +99,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .numberOfThreads) ?? defaults.numberOfThreads
         self.backlog = try container.decodeIfPresent(Int32.self, forKey: .backlog) ?? defaults.backlog
         self.genTopP = try container.decodeIfPresent(Float.self, forKey: .genTopP) ?? defaults.genTopP
-        self.genKVBits = try container.decodeIfPresent(Int.self, forKey: .genKVBits)
+        self.genKVBits = try container.decodeIfPresent(Int.self, forKey: .genKVBits) ?? defaults.genKVBits
         self.genKVGroupSize =
             try container.decodeIfPresent(Int.self, forKey: .genKVGroupSize) ?? defaults.genKVGroupSize
         self.genQuantizedKVStart =

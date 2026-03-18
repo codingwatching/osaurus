@@ -596,7 +596,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowDelegates.removeValue(forKey: id)
         windowStates.removeValue(forKey: id)
 
+        let closedSessionId = windows[id]?.sessionId
         Task {
+            if let sid = closedSessionId {
+                await ModelRuntime.shared.invalidateSession(sid.uuidString)
+            }
             let active = self.activeLocalModelNames()
             await ModelRuntime.shared.unloadModelsNotIn(active)
         }

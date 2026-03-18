@@ -5,6 +5,7 @@
 //  Migrated to Swift 6 actors; delegates runtime state to ModelManager/ModelRuntime.
 //
 
+import Combine
 import Foundation
 
 /// Lightweight reference to a local MLX model (name + repo id)
@@ -56,17 +57,68 @@ actor MLXService: ToolCapableService {
             return nil
         }()
         guard let model = chosen else { return }
+
+        // Model warm-up is tool-agnostic -- always run immediately.
         await ModelRuntime.shared.warmUp(
             modelId: model.modelId,
             modelName: model.name,
             prefillChars: prefillChars,
             maxTokens: maxTokens
         )
+        guard !Task.isCancelled else { return }
+
+        // Prefix cache depends on the correct tool set. If sandbox is
+        // mid-launch, wait for it so the hash includes sandbox tools.
+        let effectiveAgentId = agentId ?? Agent.defaultId
+        let sandboxEnabled = await MainActor.run {
+            AgentManager.shared.effectiveAutonomousExec(for: effectiveAgentId)?.enabled == true
+        }
+        if sandboxEnabled {
+            let status = await MainActor.run { SandboxManager.State.shared.status }
+            if status == .starting {
+                await Self.awaitSandboxReady(timeout: 60)
+            }
+        }
+        guard !Task.isCancelled else { return }
+
         await ModelRuntime.shared.precomputeUIPrefix(
             modelId: model.modelId,
             modelName: model.name,
-            agentId: agentId ?? Agent.defaultId
+            agentId: effectiveAgentId
         )
+    }
+
+    /// Waits until sandbox leaves the `.starting` state or the timeout elapses.
+    private static func awaitSandboxReady(timeout: TimeInterval) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            Task { @MainActor in
+                var resumed = false
+                var cancellable: AnyCancellable?
+                var timeoutItem: DispatchWorkItem?
+
+                let finish: @MainActor () -> Void = {
+                    guard !resumed else { return }
+                    resumed = true
+                    cancellable?.cancel()
+                    timeoutItem?.cancel()
+                    continuation.resume()
+                }
+
+                cancellable = SandboxManager.State.shared.$status
+                    .dropFirst()
+                    .filter { $0 != .starting }
+                    .first()
+                    .sink { _ in finish() }
+
+                let item = DispatchWorkItem { finish() }
+                timeoutItem = item
+                DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: item)
+
+                if SandboxManager.State.shared.status != .starting {
+                    finish()
+                }
+            }
+        }
     }
 
     // MARK: - ModelService
