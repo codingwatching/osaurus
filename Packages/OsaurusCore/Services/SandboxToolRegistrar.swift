@@ -176,7 +176,10 @@ public final class SandboxToolRegistrar {
         ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: pluginId)
     }
 
-    private func handleContainerStatusChanged(_: ContainerStatus) async {
+    private func handleContainerStatusChanged(_ newStatus: ContainerStatus) async {
+        if newStatus == .running {
+            await SandboxPluginManager.shared.verifyAndRepairAllPlugins()
+        }
         await registerToolsForCurrentAgent()
     }
 }

@@ -592,7 +592,7 @@ struct DeltaToolCallFunction: Codable, Sendable {
 // MARK: - Generic JSON value for tool parameters
 
 /// Simple JSON value representation to carry arbitrary JSON schema/arguments
-public enum JSONValue: Codable, Sendable {
+public enum JSONValue: Codable, Sendable, Equatable {
     case string(String)
     case number(Double)
     case bool(Bool)

@@ -1466,6 +1466,9 @@ private struct SandboxPluginCard: View {
     let onDelete: () -> Void
 
     @State private var isHovered = false
+    @State private var showRollbackPopover = false
+    @State private var rollbackTarget: Int?
+    @State private var showRollbackAlert = false
 
     private var pluginColor: Color {
         hasOutdatedInstalls ? .orange : theme.accentColor
@@ -1498,12 +1501,20 @@ private struct SandboxPluginCard: View {
 
                         HStack(spacing: 6) {
                             if let version = plugin.version {
-                                Text("v\(version)")
-                                    .font(.system(size: 10, weight: .medium))
-                                    .foregroundColor(theme.tertiaryText)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(Capsule().fill(theme.tertiaryBackground))
+                                Button {
+                                    showRollbackPopover = true
+                                } label: {
+                                    Text("v\(version)")
+                                        .font(.system(size: 10, weight: .medium))
+                                        .foregroundColor(theme.tertiaryText)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(theme.tertiaryBackground))
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                                .popover(isPresented: $showRollbackPopover) {
+                                    rollbackPopover
+                                }
                             }
 
                             statusBadge
@@ -1562,6 +1573,65 @@ private struct SandboxPluginCard: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .alert(
+            "Rollback to v\(rollbackTarget ?? 0)?",
+            isPresented: $showRollbackAlert
+        ) {
+            Button("Cancel", role: .cancel) {}
+            Button("Rollback", role: .destructive) {
+                if let target = rollbackTarget {
+                    SandboxPluginLibrary.shared.rollback(id: plugin.id, to: target)
+                }
+            }
+        } message: {
+            Text("This will permanently remove all newer versions. You cannot undo this.")
+        }
+    }
+
+    // MARK: - Rollback Popover
+
+    private var rollbackPopover: some View {
+        let versions = SandboxPluginLibrary.shared.availableVersions(for: plugin.id)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Version History")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+
+            if versions.isEmpty {
+                Text("No previous versions")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            } else {
+                ForEach(versions) { entry in
+                    Button {
+                        rollbackTarget = entry.version
+                        showRollbackPopover = false
+                        showRollbackAlert = true
+                    } label: {
+                        HStack {
+                            Text("v\(entry.version)")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.primaryText)
+                            Spacer()
+                            if let date = entry.modifiedAt {
+                                Text(date, style: .date)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(theme.tertiaryText)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(theme.tertiaryBackground.opacity(0.5))
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+            }
+        }
+        .padding(12)
+        .frame(minWidth: 200)
     }
 
     // MARK: - Status Badge

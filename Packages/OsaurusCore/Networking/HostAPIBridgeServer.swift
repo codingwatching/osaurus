@@ -500,8 +500,10 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return .error(403, "Plugin creation is disabled for this agent")
         }
 
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         guard let data = body.data(using: .utf8),
-            var plugin = try? JSONDecoder().decode(SandboxPlugin.self, from: data)
+            var plugin = try? decoder.decode(SandboxPlugin.self, from: data)
         else {
             return .error(400, "Invalid plugin JSON")
         }

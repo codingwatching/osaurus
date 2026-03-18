@@ -67,7 +67,7 @@ public final class SandboxPluginManager: ObservableObject {
             )
             try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
 
-            if let deps = plugin.dependencies, !deps.isEmpty {
+            if plugin.dependencies != nil {
                 setProgress(
                     key: key,
                     InstallProgress(
@@ -76,17 +76,8 @@ public final class SandboxPluginManager: ObservableObject {
                         agentId: agentId
                     )
                 )
-                let depList = deps.joined(separator: " ")
-                let result = try await SandboxManager.shared.execAsRoot(
-                    command: "apk add --no-cache \(depList)",
-                    timeout: 300,
-                    streamToLogs: true,
-                    logSource: plugin.id
-                )
-                guard result.succeeded else {
-                    throw SandboxPluginError.dependencyInstallFailed(result.stderr)
-                }
             }
+            try await installSystemDependencies(for: plugin, agentName: agentName)
 
             setProgress(
                 key: key,
@@ -143,7 +134,7 @@ public final class SandboxPluginManager: ObservableObject {
                 // and are also available via `osaurus-host secrets get <name>`.
             }
 
-            if let setup = plugin.setup {
+            if plugin.setup != nil {
                 setProgress(
                     key: key,
                     InstallProgress(
@@ -152,18 +143,8 @@ public final class SandboxPluginManager: ObservableObject {
                         agentId: agentId
                     )
                 )
-                let result = try await SandboxManager.shared.execAsAgent(
-                    agentName,
-                    command: setup,
-                    pluginName: plugin.id,
-                    timeout: 300,
-                    streamToLogs: true,
-                    logSource: plugin.id
-                )
-                guard result.succeeded else {
-                    throw SandboxPluginError.setupFailed(result.stderr)
-                }
             }
+            try await runSetupCommand(for: plugin, agentName: agentName)
 
             installed.status = .ready
             updateInstalled(installed, for: agentId)
@@ -231,6 +212,86 @@ public final class SandboxPluginManager: ObservableObject {
     public func reinstall(plugin: SandboxPlugin, for agentId: String) async throws {
         try await uninstall(pluginId: plugin.id, from: agentId)
         try await install(plugin: plugin, for: agentId)
+    }
+
+    // MARK: - Verify & Repair
+
+    /// Re-installs ephemeral dependencies and re-runs setup for all `.ready`
+    /// plugins across all agents. Call after the container restarts so that
+    /// system packages and setup side effects lost with the rootfs are restored.
+    public func verifyAndRepairAllPlugins() async {
+        guard await SandboxManager.shared.status().isRunning else { return }
+
+        let snapshot = installedPlugins.flatMap { agentId, plugins in
+            plugins.filter { $0.status == .ready }.map { (agentId, $0.plugin) }
+        }
+        guard !snapshot.isEmpty else { return }
+
+        NSLog("[SandboxPluginManager] Verifying \(snapshot.count) installed plugin(s) after container start")
+
+        for (agentId, plugin) in snapshot {
+            await repairPlugin(plugin, for: agentId)
+        }
+    }
+
+    /// Re-installs system dependencies and re-runs the setup command for a
+    /// single plugin without re-seeding files (they persist on VirtioFS).
+    @discardableResult
+    public func repairPlugin(_ plugin: SandboxPlugin, for agentId: String) async -> Bool {
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
+        let pluginDir = OsaurusPaths.inContainerPluginDir(agentName, plugin.id)
+        let key = progressKey(plugin: plugin.id, agent: agentId)
+
+        setProgress(
+            key: key,
+            InstallProgress(pluginName: plugin.name, phase: "Verifying plugin...", agentId: agentId)
+        )
+        defer { clearProgress(key: key) }
+
+        do {
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+
+            let checkResult = try await SandboxManager.shared.execAsAgent(
+                agentName,
+                command: "test -d \(pluginDir)"
+            )
+            guard checkResult.succeeded else {
+                NSLog("[SandboxPluginManager] Plugin directory missing for '\(plugin.id)' (agent \(agentId))")
+                markPluginFailed(plugin.id, for: agentId)
+                return false
+            }
+
+            if plugin.dependencies != nil {
+                setProgress(
+                    key: key,
+                    InstallProgress(pluginName: plugin.name, phase: "Restoring system packages...", agentId: agentId)
+                )
+            }
+            try await installSystemDependencies(for: plugin, agentName: agentName)
+
+            if plugin.setup != nil {
+                setProgress(
+                    key: key,
+                    InstallProgress(pluginName: plugin.name, phase: "Re-running setup...", agentId: agentId)
+                )
+            }
+            try await runSetupCommand(for: plugin, agentName: agentName)
+
+            return true
+        } catch {
+            NSLog("[SandboxPluginManager] Repair failed for '\(plugin.id)': \(error.localizedDescription)")
+            markPluginFailed(plugin.id, for: agentId)
+            return false
+        }
+    }
+
+    private func markPluginFailed(_ pluginId: String, for agentId: String) {
+        guard var list = installedPlugins[agentId],
+            let index = list.firstIndex(where: { $0.id == pluginId })
+        else { return }
+        list[index].status = .failed
+        installedPlugins[agentId] = list
+        saveInstalled(for: agentId)
     }
 
     // MARK: - Outdated Detection
@@ -352,6 +413,35 @@ public final class SandboxPluginManager: ObservableObject {
             list.append(plugin)
         }
         installedPlugins[agentId] = list
+    }
+
+    private func installSystemDependencies(for plugin: SandboxPlugin, agentName: String) async throws {
+        guard let deps = plugin.dependencies, !deps.isEmpty else { return }
+        let depList = deps.joined(separator: " ")
+        let result = try await SandboxManager.shared.execAsRoot(
+            command: "apk add --no-cache \(depList)",
+            timeout: 300,
+            streamToLogs: true,
+            logSource: plugin.id
+        )
+        guard result.succeeded else {
+            throw SandboxPluginError.dependencyInstallFailed(result.stderr)
+        }
+    }
+
+    private func runSetupCommand(for plugin: SandboxPlugin, agentName: String) async throws {
+        guard let setup = plugin.setup else { return }
+        let result = try await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: setup,
+            pluginName: plugin.id,
+            timeout: 300,
+            streamToLogs: true,
+            logSource: plugin.id
+        )
+        guard result.succeeded else {
+            throw SandboxPluginError.setupFailed(result.stderr)
+        }
     }
 
     private func progressKey(plugin: String, agent: String) -> String {
