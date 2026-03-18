@@ -519,7 +519,7 @@ private struct RelaysSectionView: View {
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
 
-            let agents = agentManager.agents.filter { $0.agentAddress != nil }
+            let agents = agentManager.agents.filter { !$0.isBuiltIn }
 
             if agents.isEmpty {
                 HStack(spacing: 8) {
@@ -563,6 +563,11 @@ private struct RelaysSectionView: View {
             Text(
                 "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints."
             )
+        }
+        .task {
+            for agent in agentManager.agents where !agent.isBuiltIn && agent.agentAddress == nil {
+                try? agentManager.assignAddress(to: agent)
+            }
         }
     }
 
@@ -653,10 +658,15 @@ private struct RelaysSectionView: View {
                 .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
                 .labelsHidden()
             } else {
-                Text("Identity →")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .help("Set up this agent's identity in the Identity tab")
+                Button(action: {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .identity)
+                }) {
+                    Text("Identity →")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .help("Set up this agent's identity in the Identity tab")
             }
         }
         .padding(.horizontal, 12)
