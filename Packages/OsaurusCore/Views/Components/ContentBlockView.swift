@@ -11,7 +11,7 @@ import SwiftUI
 
 struct ContentBlockView: View, Equatable {
     let block: ContentBlock
-    let width: CGFloat  // Content width (already adjusted by parent)
+    let width: CGFloat
     let agentName: String
     var isTurnHovered: Bool = false
 
@@ -37,6 +37,9 @@ struct ContentBlockView: View, Equatable {
 
     private var isUserMessage: Bool { block.role == .user }
     private var isLastInTurn: Bool { block.position == .only || block.position == .last }
+
+    private static let containerHorizontalPadding: CGFloat = 16
+    private var innerWidth: CGFloat { width - Self.containerHorizontalPadding * 2 }
 
     // MARK: - Body
 
@@ -81,7 +84,7 @@ struct ContentBlockView: View, Equatable {
             blockContent
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Self.containerHorizontalPadding)
     }
 
     // MARK: - Block Content
@@ -108,7 +111,7 @@ struct ContentBlockView: View, Equatable {
         case let .paragraph(_, text, isStreaming, _):
             MarkdownMessageView(
                 text: text,
-                baseWidth: width,
+                baseWidth: innerWidth,
                 cacheKey: block.id,
                 isStreaming: isStreaming
             )
@@ -123,7 +126,7 @@ struct ContentBlockView: View, Equatable {
         case let .thinking(_, text, isStreaming):
             ThinkingBlockView(
                 thinking: text,
-                baseWidth: width,
+                baseWidth: innerWidth,
                 isStreaming: isStreaming,
                 thinkingLength: text.count,
                 blockId: block.id
@@ -149,7 +152,7 @@ struct ContentBlockView: View, Equatable {
 
             ForEach(attachments.filter(\.isImage)) { attachment in
                 if let data = attachment.imageData {
-                    ImageThumbnail(imageData: data, baseWidth: width)
+                    ImageThumbnail(imageData: data, baseWidth: innerWidth)
                         .padding(.top, 6)
                         .padding(.bottom, (text.isEmpty && !attachments.hasDocuments) ? 16 : 6)
                 }
@@ -172,7 +175,7 @@ struct ContentBlockView: View, Equatable {
             } else if !text.isEmpty {
                 MarkdownMessageView(
                     text: text,
-                    baseWidth: width,
+                    baseWidth: innerWidth,
                     cacheKey: block.id,
                     isStreaming: false
                 )
@@ -182,7 +185,7 @@ struct ContentBlockView: View, Equatable {
 
         case let .sharedArtifact(artifact):
             ArtifactCardView(artifact: artifact)
-                .frame(maxWidth: min(width, 420))
+                .frame(maxWidth: min(innerWidth, 420))
                 .padding(.top, 6)
                 .padding(.bottom, isLastInTurn ? 16 : 6)
 

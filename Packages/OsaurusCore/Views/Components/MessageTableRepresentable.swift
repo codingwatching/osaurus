@@ -177,7 +177,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         sv.autohidesScrollers = true
         sv.drawsBackground = false
         sv.contentView.drawsBackground = false
-        sv.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 24, right: 0)
+        sv.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 60, right: 0)
         return sv
     }
 }
