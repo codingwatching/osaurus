@@ -302,6 +302,7 @@ actor ModelRuntime {
             }
 
             let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
+            // Budget = weights + 20% workspace margin (capped at 2 GB) for activations
             let workspaceMargin = min(Int(weightsBytes) / 5, 2 * 1024 * 1024 * 1024)
             let budgetPolicy = WiredBudgetPolicy(baseBytes: Int(weightsBytes) + workspaceMargin)
             let reservation = WiredMemoryTicket(size: Int(weightsBytes), policy: budgetPolicy, kind: .reservation)
@@ -396,6 +397,10 @@ actor ModelRuntime {
 
     // MARK: - Driver helpers (actor-isolated)
 
+    /// Builds and returns an event stream for a single generation request.
+    /// If an existing session or prefix KV cache is available it is reused;
+    /// when a stale cache causes a shape mismatch the cache is invalidated
+    /// and the request is transparently retried with a fresh prefill.
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
         parameters: GenerationParameters,
