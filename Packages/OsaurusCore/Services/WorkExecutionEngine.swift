@@ -242,10 +242,10 @@ public actor WorkExecutionEngine {
         """
 
     /// Chat-mode sandbox guidance (no `complete_task` workflow).
-    static func chatSandboxPromptSection(compact: Bool = false) -> String {
+    static func chatSandboxPromptSection(compact: Bool = false, secretNames: [String] = []) -> String {
         let env = compact ? sandboxEnvironmentBlockCompact : sandboxEnvironmentBlock
         let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
-        return """
+        var section = """
 
             \(sandboxSectionHeading)
 
@@ -255,10 +255,12 @@ public actor WorkExecutionEngine {
             \(hints)
 
             """
+        section += secretsPromptBlock(secretNames)
+        return section
     }
 
     /// Work-mode sandbox guidance with build/verify pattern.
-    static func sandboxPromptSection(compact: Bool = false) -> String {
+    static func sandboxPromptSection(compact: Bool = false, secretNames: [String] = []) -> String {
         let env = compact ? sandboxEnvironmentBlockCompact : sandboxEnvironmentBlock
         let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
 
@@ -287,7 +289,19 @@ public actor WorkExecutionEngine {
             \(hints)
 
             """
+        section += secretsPromptBlock(secretNames)
         return section
+    }
+
+    private static func secretsPromptBlock(_ names: [String]) -> String {
+        guard !names.isEmpty else { return "" }
+        let list = names.sorted().map { "- `\($0)`" }.joined(separator: "\n")
+        return """
+            Configured secrets (available as environment variables):
+            \(list)
+            Access via `$NAME` in shell, `os.environ["NAME"]` in Python, or `process.env.NAME` in Node.
+
+            """
     }
 
     // MARK: - Reasoning Loop
@@ -646,7 +660,8 @@ public actor WorkExecutionEngine {
         issue: Issue,
         executionMode: WorkExecutionMode,
         skillInstructions: String? = nil,
-        compact: Bool = false
+        compact: Bool = false,
+        secretNames: [String] = []
     ) -> String {
         var prompt = base
         let desc = issue.description ?? ""
@@ -658,7 +673,7 @@ public actor WorkExecutionEngine {
 
         switch executionMode {
         case .hostFolder(let ctx): prompt += buildFolderContextSection(from: ctx)
-        case .sandbox: prompt += sandboxPromptSection(compact: compact)
+        case .sandbox: prompt += sandboxPromptSection(compact: compact, secretNames: secretNames)
         case .none: break
         }
 

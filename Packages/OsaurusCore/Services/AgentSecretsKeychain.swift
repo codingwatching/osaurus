@@ -90,6 +90,32 @@ public enum AgentSecretsKeychain {
         }
     }
 
+    // MARK: - Environment Safety
+
+    /// Env var names that must never be overridden by user-defined secrets.
+    private static let reservedEnvVarNames: Set<String> = [
+        "PATH", "HOME", "SHELL", "USER", "LOGNAME",
+        "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+        "VIRTUAL_ENV", "OSAURUS_PLUGIN",
+    ]
+
+    /// Returns agent secrets with reserved env var names stripped out.
+    static func getFilteredSecrets(agentId: UUID) -> [String: String] {
+        getAllSecrets(agentId: agentId).filter { !reservedEnvVarNames.contains($0.key) }
+    }
+
+    /// Returns merged agent + plugin secrets with reserved names stripped out.
+    /// Plugin secrets override agent secrets of the same name.
+    static func mergedSecretsEnvironment(agentId: UUID, pluginId: String) -> [String: String] {
+        var env = getFilteredSecrets(agentId: agentId)
+        let pluginSecrets =
+            ToolSecretsKeychain
+            .getAllSecrets(for: pluginId, agentId: agentId)
+            .filter { !reservedEnvVarNames.contains($0.key) }
+        env.merge(pluginSecrets) { _, new in new }
+        return env
+    }
+
     // MARK: - Private
 
     private static func allAccounts() -> [String] {

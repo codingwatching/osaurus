@@ -59,13 +59,13 @@ public actor SandboxMCPManager {
         mergedEnv.merge(spec.env ?? [:]) { _, new in new }
         mergedEnv["OSAURUS_PLUGIN"] = pluginId
 
-        let envString = mergedEnv.map { "\($0.key)='\($0.value)'" }.joined(separator: " ")
         let fullCommand =
-            "cd '\(pluginDir)' && \(envString) nohup \(spec.command) > /tmp/mcp-\(pluginId).log 2>&1 & echo $!"
+            "cd '\(pluginDir)' && nohup \(spec.command) > /tmp/mcp-\(pluginId).log 2>&1 & echo $!"
 
         let result = try await SandboxManager.shared.exec(
             user: "agent-\(agentName)",
             command: fullCommand,
+            env: mergedEnv,
             timeout: 15
         )
 
@@ -165,14 +165,10 @@ public actor SandboxMCPManager {
 
     // MARK: - Helpers
 
-    /// Resolve agent secrets + plugin secrets for the given Linux agent name.
     private func secretsEnvironment(agentName: String, pluginId: String) -> [String: String] {
         let linuxUser = "agent-\(agentName)"
-        guard let agentUUID = SandboxAgentMap.resolve(linuxName: linuxUser) else { return [:] }
-        var env = AgentSecretsKeychain.getAllSecrets(agentId: agentUUID)
-        let pluginSecrets = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentUUID)
-        env.merge(pluginSecrets) { _, new in new }
-        return env
+        guard let uuid = SandboxAgentMap.resolve(linuxName: linuxUser) else { return [:] }
+        return AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: pluginId)
     }
 
     private func processKey(agentName: String, pluginId: String) -> String {

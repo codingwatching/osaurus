@@ -349,11 +349,13 @@ public final class WorkSession: ObservableObject {
         )
 
         var breakdown = ContextTokenBreakdown()
+        let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
         let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: baseSystemPrompt,
             issue: issue,
             executionMode: executionMode,
-            skillInstructions: nil
+            skillInstructions: nil,
+            secretNames: secretNames
         )
         breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: prompt)
         breakdown.memory = windowState?.session.estimatedContextBreakdown.memory ?? 0

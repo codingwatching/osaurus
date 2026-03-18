@@ -144,7 +144,7 @@ public final class SandboxPluginManager: ObservableObject {
                     )
                 )
             }
-            try await runSetupCommand(for: plugin, agentName: agentName)
+            try await runSetupCommand(for: plugin, agentName: agentName, agentId: agentId)
 
             installed.status = .ready
             updateInstalled(installed, for: agentId)
@@ -275,7 +275,7 @@ public final class SandboxPluginManager: ObservableObject {
                     InstallProgress(pluginName: plugin.name, phase: "Re-running setup...", agentId: agentId)
                 )
             }
-            try await runSetupCommand(for: plugin, agentName: agentName)
+            try await runSetupCommand(for: plugin, agentName: agentName, agentId: agentId)
 
             return true
         } catch {
@@ -429,12 +429,14 @@ public final class SandboxPluginManager: ObservableObject {
         }
     }
 
-    private func runSetupCommand(for plugin: SandboxPlugin, agentName: String) async throws {
+    private func runSetupCommand(for plugin: SandboxPlugin, agentName: String, agentId: String) async throws {
         guard let setup = plugin.setup else { return }
+        let env = secretsEnvironment(agentId: agentId, pluginId: plugin.id)
         let result = try await SandboxManager.shared.execAsAgent(
             agentName,
             command: setup,
             pluginName: plugin.id,
+            env: env,
             timeout: 300,
             streamToLogs: true,
             logSource: plugin.id
@@ -442,6 +444,11 @@ public final class SandboxPluginManager: ObservableObject {
         guard result.succeeded else {
             throw SandboxPluginError.setupFailed(result.stderr)
         }
+    }
+
+    private func secretsEnvironment(agentId: String, pluginId: String) -> [String: String] {
+        guard let uuid = UUID(uuidString: agentId) else { return [:] }
+        return AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: pluginId)
     }
 
     private func progressKey(plugin: String, agent: String) -> String {
