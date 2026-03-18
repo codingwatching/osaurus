@@ -68,7 +68,7 @@ final class MessageCellView: NSTableCellView {
 
         let contentView = ContentBlockView(
             block: block,
-            width: width,
+            width: width - (horizontalPadding * 2),
             agentName: agentName,
             isTurnHovered: isTurnHovered,
             onCopy: onCopy,

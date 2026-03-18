@@ -767,15 +767,13 @@ private struct ChatToolbarModeToggleView: View {
     }
 }
 
-/// Title view showing Work Task or Model Badge, plus a Sandbox indicator when active.
+/// Title view showing a Sandbox indicator when active.
 private struct ChatToolbarTitleView: View {
     @ObservedObject var windowState: ChatWindowState
     @ObservedObject var session: ChatSession
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
-
-    private var isWorkMode: Bool { windowState.mode == .work }
 
     private var isSandboxLoading: Bool {
         sandboxState.status == .starting || sandboxState.isProvisioning
@@ -786,23 +784,17 @@ private struct ChatToolbarTitleView: View {
         guard agentManager.effectiveAutonomousExec(for: windowState.agentId)?.enabled == true else {
             return false
         }
-        if isWorkMode {
+        if windowState.mode == .work {
             return !folderContextService.hasActiveFolder
         }
         return true
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        Group {
             if showSandboxIndicator {
                 SandboxStatusIndicator(isLoading: isSandboxLoading)
                     .transition(.opacity)
-            }
-
-            if isWorkMode, let workSession = windowState.workSession {
-                WorkTaskTitleView(session: workSession)
-                    .frame(maxWidth: 260, alignment: .leading)
-                    .lineLimit(1)
             }
         }
         .animation(.easeInOut(duration: 0.2), value: showSandboxIndicator)
@@ -842,26 +834,6 @@ private struct ChatToolbarPinView: View {
     var body: some View {
         PinButton(windowId: windowState.windowId)
             .environment(\.theme, windowState.theme)
-    }
-}
-
-/// Work task title shown next to the mode toggle in work mode.
-private struct WorkTaskTitleView: View {
-    @ObservedObject var session: WorkSession
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Group {
-            if let task = session.currentTask {
-                Text(task.title)
-                    .padding(.horizontal, 16)
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-        }
     }
 }
 

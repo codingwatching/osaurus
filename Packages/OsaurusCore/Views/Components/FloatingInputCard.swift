@@ -668,7 +668,7 @@ struct FloatingInputCard: View {
     }
 
     private var selectorRow: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             // Model selector (when multiple models available)
             if pickerItems.count > 1 {
                 modelSelectorChip
@@ -951,14 +951,21 @@ struct FloatingInputCard: View {
         SelectorChip(isActive: showCapabilitiesPicker) {
             showCapabilitiesPicker.toggle()
         } content: {
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
                 Image(systemName: "sparkles")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                     .foregroundColor(theme.tertiaryText)
 
-                Text(capabilitiesDescription)
+                Text("Capabilities")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+
+                if totalEnabledCapabilities > 0 {
+                    Text("\(totalEnabledCapabilities)")
+                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .bold, design: .monospaced))
+                        .foregroundColor(theme.accentColor)
+                }
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
@@ -1033,7 +1040,7 @@ struct FloatingInputCard: View {
 
     @ViewBuilder
     private func folderChipContent(hasFolder: Bool, canEdit: Bool) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 4) {
             Image(systemName: hasFolder ? "folder.fill" : "folder.badge.plus")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 2))
                 .foregroundColor(hasFolder ? theme.accentColor : theme.tertiaryText)
@@ -1044,13 +1051,7 @@ struct FloatingInputCard: View {
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(canEdit ? theme.secondaryText : theme.tertiaryText)
                     .lineLimit(1)
-                    .truncationMode(.tail)
-
-                if context.projectType != .unknown {
-                    Text(context.projectType.displayName)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                }
+                    .truncationMode(.middle)
             } else if canEdit {
                 Text("Folder")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
@@ -1064,14 +1065,14 @@ struct FloatingInputCard: View {
             }
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(canEdit ? 0.8 : 0.5))
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(canEdit ? 0.6 : 0.4))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(canEdit ? 0.5 : 0.3), lineWidth: 1)
+            Capsule()
+                .strokeBorder(theme.primaryBorder.opacity(canEdit ? 0.4 : 0.2), lineWidth: 0.5)
         )
     }
 
@@ -1800,8 +1801,8 @@ private struct SelectorChip<Content: View>: View {
     var body: some View {
         Button(action: action) {
             content()
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
                 .background(chipBackground)
                 .clipShape(Capsule())
                 .overlay(chipBorder)

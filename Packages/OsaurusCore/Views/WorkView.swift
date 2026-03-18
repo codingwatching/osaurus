@@ -20,13 +20,13 @@ struct WorkView: View {
     @State private var isPinnedToBottom: Bool = true
     @State private var scrollToBottomTrigger: Int = 0
 
-    @State private var progressSidebarWidth: CGFloat = 280
+    @State private var progressSidebarWidth: CGFloat = 220
     @State private var isProgressSidebarCollapsed: Bool = false
     @State private var selectedArtifact: SharedArtifact?
     @State private var fileOperations: [WorkFileOperation] = []
 
-    private let minProgressSidebarWidth: CGFloat = 200
-    private let maxProgressSidebarWidth: CGFloat = 400
+    private let minProgressSidebarWidth: CGFloat = 180
+    private let maxProgressSidebarWidth: CGFloat = 340
 
     private var theme: ThemeProtocol { windowState.theme }
 
@@ -317,23 +317,24 @@ struct WorkView: View {
 
         return HStack(spacing: 0) {
             // Main chat area
-            VStack(spacing: 0) {
-                // Issue detail view with MessageThreadView
-                if session.selectedIssueId != nil && hasBlocks {
-                    issueDetailView(width: chatWidth)
-                } else if session.selectedIssueId != nil {
-                    // Selected issue but no blocks yet (loading or empty)
-                    issueEmptyDetailView
-                } else {
-                    noIssueSelectedView
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 0) {
+                    if session.selectedIssueId != nil && hasBlocks {
+                        issueDetailView(width: chatWidth)
+                    } else if session.selectedIssueId != nil {
+                        issueEmptyDetailView
+                    } else {
+                        noIssueSelectedView
+                    }
+
+                    if let error = session.errorMessage { errorView(error: error) }
+                    Spacer(minLength: 0)
                 }
 
                 if session.isExecuting {
                     agentProcessingIndicator
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
-
-                if let error = session.errorMessage { errorView(error: error) }
-                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
 
@@ -594,30 +595,17 @@ extension WorkView {
     // MARK: - Processing Indicator
 
     private var agentProcessingIndicator: some View {
-        HStack(spacing: 8) {
-            // Animated pulsing dot
+        HStack(spacing: 6) {
             Circle()
-                .fill(theme.accentColor)
-                .frame(width: 6, height: 6)
+                .fill(theme.accentColor.opacity(0.6))
+                .frame(width: 5, height: 5)
                 .modifier(WorkPulseModifier())
 
             Text("Working on it...")
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                .foregroundColor(theme.tertiaryText)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            Capsule()
-                .fill(theme.secondaryBackground.opacity(0.6))
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(theme.primaryBorder.opacity(0.2), lineWidth: 0.5)
-        )
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, Self.contentHorizontalPadding)
-        .padding(.top, 12)
+        .padding(.bottom, 12)
     }
 
     // MARK: - Error View
