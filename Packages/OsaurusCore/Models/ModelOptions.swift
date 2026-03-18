@@ -109,6 +109,7 @@ struct OpenAIReasoningProfile: ModelProfile {
             label: "Reasoning Effort",
             icon: "brain",
             kind: .segmented([
+                ModelOptionSegment(id: "minimal", label: "Minimal"),
                 ModelOptionSegment(id: "low", label: "Low"),
                 ModelOptionSegment(id: "medium", label: "Medium"),
                 ModelOptionSegment(id: "high", label: "High"),

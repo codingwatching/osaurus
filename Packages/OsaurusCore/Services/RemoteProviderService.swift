@@ -1351,22 +1351,26 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
     ) -> RemoteChatRequest {
-        let reasoning = parameters.modelOptions["reasoningEffort"]?.stringValue
-            .map { ReasoningConfig(effort: $0) }
+        let effortValue = parameters.modelOptions["reasoningEffort"]?.stringValue
+        let isOfficialOpenAI = provider.host.lowercased().contains("openai.com")
+        let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
         return RemoteChatRequest(
             model: model,
             messages: messages,
-            temperature: parameters.temperature,
+            // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
+            // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
+            temperature: isReasoningModel ? nil : parameters.temperature,
             max_completion_tokens: parameters.maxTokens,
             stream: stream,
-            top_p: parameters.topPOverride,
+            top_p: isReasoningModel ? nil : parameters.topPOverride,
             frequency_penalty: nil,
             presence_penalty: nil,
             stop: nil,
             tools: tools,
             tool_choice: toolChoice,
-            reasoning: reasoning,
+            reasoning_effort: effortValue,
+            reasoning: isOfficialOpenAI ? nil : effortValue.map { ReasoningConfig(effort: $0) },
             modelOptions: parameters.modelOptions,
             veniceParameters: buildVeniceParameters(from: parameters.modelOptions)
         )
@@ -1798,6 +1802,7 @@ private struct RemoteChatRequest: Encodable {
     var stop: [String]?
     let tools: [Tool]?
     let tool_choice: ToolChoiceOption?
+    let reasoning_effort: String?
     let reasoning: ReasoningConfig?
     let modelOptions: [String: ModelOptionValue]
     let veniceParameters: VeniceParameters?
@@ -1805,6 +1810,7 @@ private struct RemoteChatRequest: Encodable {
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, stream
         case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
+        case reasoning_effort
         case reasoning
         case veniceParameters = "venice_parameters"
     }
@@ -2256,8 +2262,9 @@ private struct RemoteChatRequest: Encodable {
             input = .items(inputItems)
         }
 
-        let reasoning = modelOptions["reasoningEffort"]?.stringValue
+        let reasoning = reasoning_effort
             .map { OpenResponsesReasoningConfig(effort: $0) }
+        let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
         return OpenResponsesRequest(
             model: model,
@@ -2265,9 +2272,9 @@ private struct RemoteChatRequest: Encodable {
             stream: stream,
             tools: openResponsesTools,
             tool_choice: openResponsesToolChoice,
-            temperature: temperature,
+            temperature: isReasoningModel ? nil : temperature,
             max_output_tokens: max_completion_tokens,
-            top_p: top_p,
+            top_p: isReasoningModel ? nil : top_p,
             instructions: instructions,
             previous_response_id: nil,
             metadata: nil,
