@@ -135,9 +135,6 @@ private extension SandboxPluginEditorView {
 
     var identitySection: some View {
         editorSection("Identity") {
-            labeledField("Version") {
-                editorTextField("e.g. 1.0.0", text: optionalBinding(\SandboxPlugin.version))
-            }
             labeledField("Author") {
                 editorTextField("Author name", text: optionalBinding(\SandboxPlugin.author))
             }
@@ -216,8 +213,8 @@ private extension SandboxPluginEditorView {
                 placeholder: "{ \"key\": \"value\" }",
                 minHeight: 80
             )
-            .onChange(of: metadataText) { newValue in
-                parseMetadataText(newValue)
+            .onChange(of: metadataText) {
+                parseMetadataText(metadataText)
             }
 
             if !metadataValid {
@@ -761,8 +758,8 @@ private struct DeferredRenameField: View {
             )
             .focused($isFocused)
             .onSubmit { commit() }
-            .onChange(of: isFocused) { focused in
-                if !focused { commit() }
+            .onChange(of: isFocused) {
+                if !isFocused { commit() }
             }
     }
 
