@@ -348,15 +348,21 @@ public final class RemoteProviderManager: ObservableObject {
         if authType == .apiKey, let apiKey = apiKey, !apiKey.isEmpty {
             switch providerType {
             case .anthropic:
-                testHeaders["x-api-key"] = apiKey
+                if testHeaders["x-api-key"] == nil {
+                    testHeaders["x-api-key"] = apiKey
+                }
                 // Add required Anthropic version header if not already set
                 if testHeaders["anthropic-version"] == nil {
                     testHeaders["anthropic-version"] = "2023-06-01"
                 }
             case .gemini:
-                testHeaders["x-goog-api-key"] = apiKey
+                if testHeaders["x-goog-api-key"] == nil {
+                    testHeaders["x-goog-api-key"] = apiKey
+                }
             case .openai, .openResponses:
-                testHeaders["Authorization"] = "Bearer \(apiKey)"
+                if testHeaders["Authorization"] == nil {
+                    testHeaders["Authorization"] = "Bearer \(apiKey)"
+                }
             }
         }
 
