@@ -206,6 +206,10 @@ final class ChatWindowState: ObservableObject {
     }
 
     func refreshWorkTasks() {
+        guard WorkDatabase.shared.isOpen else {
+            workTasks = []
+            return
+        }
         do {
             workTasks = try IssueStore.listTasks(agentId: agentId)
         } catch {
