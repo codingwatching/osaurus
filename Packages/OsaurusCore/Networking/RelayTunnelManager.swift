@@ -162,6 +162,10 @@ public final class RelayTunnelManager: ObservableObject {
         let enabled = configuration.enabledAgentIds
         guard !enabled.isEmpty else { return }
 
+        for id in enabled {
+            ensureAgentIdentity(id)
+        }
+
         let agents = AgentManager.shared.agents.filter { agent in
             enabled.contains(agent.id) && agent.agentAddress != nil && agent.agentIndex != nil
         }
@@ -525,6 +529,8 @@ public final class RelayTunnelManager: ObservableObject {
     // MARK: - Mid-Session Agent Management
 
     private func addAgentToTunnel(agentId: UUID) {
+        ensureAgentIdentity(agentId)
+
         guard let agent = AgentManager.shared.agent(for: agentId),
             let index = agent.agentIndex,
             let address = agent.agentAddress
@@ -577,6 +583,14 @@ public final class RelayTunnelManager: ObservableObject {
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         addressToAgentId.removeValue(forKey: lower)
+    }
+
+    /// Attempt to auto-assign a cryptographic identity if the agent is missing one.
+    private func ensureAgentIdentity(_ agentId: UUID) {
+        guard let agent = AgentManager.shared.agent(for: agentId),
+            agent.agentAddress == nil || agent.agentIndex == nil
+        else { return }
+        try? AgentManager.shared.assignAddress(to: agent)
     }
 
     // MARK: - Reconnect
