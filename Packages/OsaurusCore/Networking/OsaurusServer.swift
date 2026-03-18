@@ -16,10 +16,13 @@ public actor OsaurusServer: Sendable {
         public var host: String
         public var port: Int
         public var agentIndex: UInt32?
-        public init(host: String = "127.0.0.1", port: Int = 1337, agentIndex: UInt32? = nil) {
+        public var trustLoopback: Bool
+        public init(host: String = "127.0.0.1", port: Int = 1337, agentIndex: UInt32? = nil, trustLoopback: Bool = true)
+        {
             self.host = host
             self.port = port
             self.agentIndex = agentIndex
+            self.trustLoopback = trustLoopback
         }
     }
 
@@ -38,6 +41,7 @@ public actor OsaurusServer: Sendable {
         let group = MultiThreadedEventLoopGroup(numberOfThreads: threads)
 
         let validator = Self.buildValidator(agentIndex: config.agentIndex)
+        let trustLoopback = config.trustLoopback
 
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 256)
@@ -48,7 +52,8 @@ public actor OsaurusServer: Sendable {
                         HTTPHandler(
                             configuration: serverConfiguration,
                             apiKeyValidator: validator,
-                            eventLoop: channel.eventLoop
+                            eventLoop: channel.eventLoop,
+                            trustLoopback: trustLoopback
                         )
                     )
                 }

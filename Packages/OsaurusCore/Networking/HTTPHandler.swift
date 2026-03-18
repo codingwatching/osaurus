@@ -38,6 +38,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     private let configuration: ServerConfiguration
     private let apiKeyValidator: APIKeyValidator
     private let chatEngine: ChatEngineProtocol
+    private let trustLoopback: Bool
     private let _isChannelActive = SendableBool(false)
     private final class RequestState {
         var requestHead: HTTPRequestHead?
@@ -52,11 +53,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         configuration: ServerConfiguration,
         apiKeyValidator: APIKeyValidator = .empty,
         eventLoop: EventLoop,
-        chatEngine: ChatEngineProtocol = ChatEngine()
+        chatEngine: ChatEngineProtocol = ChatEngine(),
+        trustLoopback: Bool = true
     ) {
         self.configuration = configuration
         self.apiKeyValidator = apiKeyValidator
         self.chatEngine = chatEngine
+        self.trustLoopback = trustLoopback
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -137,7 +140,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Loopback connections (CLI / local tools) are trusted without a token.
             let publicPaths: Set<String> = ["/", "/health"]
             let isPluginRoute = path.hasPrefix("/plugins/")
-            let isLoopback = context.channel.remoteAddress?.isLoopback ?? false
+            let isLoopback = trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
             if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
@@ -2101,13 +2104,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let hop = makeHop(channel: context.channel, loop: loop)
             hop {
                 writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-                writerBound.value.writeRole(
-                    "assistant",
-                    model: model,
-                    responseId: responseId,
-                    created: created,
-                    context: ctx.value
-                )
             }
             // Capture for logging
             let logStartTime = startTime
@@ -2120,6 +2116,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             Task(priority: .userInitiated) {
                 do {
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
+
+                    // Compute prefix hash after enrichment so it matches the cache key
+                    let prefixHash: String = {
+                        let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
+                        let toolNames = (enrichedReq.tools ?? []).map { $0.function.name }
+                        return ModelRuntime.computePrefixHash(systemContent: sysContent, toolNames: toolNames)
+                    }()
+                    hop {
+                        writerBound.value.writeRole(
+                            "assistant",
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            prefixHash: prefixHash,
+                            context: ctx.value
+                        )
+                    }
+
                     let stream = try await chatEngine.streamChat(request: enrichedReq)
                     for try await delta in stream {
                         if StreamingToolHint.isSentinel(delta) { continue }
@@ -2256,7 +2270,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             Task(priority: .userInitiated) {
                 do {
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
-                    let resp = try await chatEngine.completeChat(request: enrichedReq)
+                    var resp = try await chatEngine.completeChat(request: enrichedReq)
+                    // Compute prefix hash after enrichment so it matches the cache key
+                    let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
+                    let toolNames = (enrichedReq.tools ?? []).map { $0.function.name }
+                    resp.prefix_hash = ModelRuntime.computePrefixHash(systemContent: sysContent, toolNames: toolNames)
                     let json = try JSONEncoder().encode(resp)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)

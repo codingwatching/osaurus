@@ -1,0 +1,352 @@
+//
+//  KVCacheStore.swift
+//  osaurus
+//
+//  Tiered KV cache management: hot RAM tier with LRU eviction backed by
+//  cold SSD tier using safetensors persistence. Keyed by session_id so
+//  multi-turn conversations skip redundant prefill.
+//
+
+import Foundation
+import MLX
+@preconcurrency import MLXLMCommon
+
+/// Manages per-session KV caches across a hot RAM tier and cold SSD tier.
+/// Must be used from within the `ModelRuntime` actor (not independently thread-safe).
+struct KVCacheStore {
+
+    // MARK: - Entry
+
+    final class Entry {
+        var cache: [any KVCache]?
+        var ssdPath: URL?
+        var modelName: String
+        var lastAccess: Date
+        var sizeBytes: Int
+        /// Set only for prefix cache entries; stores the hash that was used as
+        /// part of the composite key so callers can inspect which context is cached.
+        var contentHash: String?
+
+        init(
+            cache: [any KVCache]?,
+            ssdPath: URL? = nil,
+            modelName: String,
+            sizeBytes: Int,
+            contentHash: String? = nil
+        ) {
+            self.cache = cache
+            self.ssdPath = ssdPath
+            self.modelName = modelName
+            self.lastAccess = Date()
+            self.sizeBytes = sizeBytes
+            self.contentHash = contentHash
+        }
+    }
+
+    // MARK: - State
+
+    private var entries: [String: Entry] = [:]
+    private var lruOrder: [String] = []
+    private(set) var totalHotBytes: Int = 0
+
+    private let ssdCacheDir: URL = {
+        let dir = OsaurusPaths.cache().appendingPathComponent("kv", isDirectory: true)
+        OsaurusPaths.ensureExistsSilent(dir)
+        return dir
+    }()
+
+    /// Maximum total SSD cache size in bytes (default 4 GB)
+    private let maxSSDBytes: Int = 4 * 1024 * 1024 * 1024
+
+    // MARK: - Budget
+
+    /// Computes the available memory budget for KV caches based on system RAM,
+    /// currently loaded model weights, and a headroom reserve for the OS.
+    static func computeBudget(modelWeightsBytes: Int64) -> Int {
+        let systemRAM = Int(ProcessInfo.processInfo.physicalMemory)
+        let headroom = 4 * 1024 * 1024 * 1024
+        let budget = systemRAM - Int(modelWeightsBytes) - headroom
+        return max(512 * 1024 * 1024, budget)
+    }
+
+    // MARK: - Hot tier
+
+    /// Retrieves a hot cache for the given session, or restores it from SSD.
+    /// Returns `nil` on a complete miss (caller must do full prefill).
+    mutating func getCache(sessionId: String, modelName: String) -> [any KVCache]? {
+        guard let entry = entries[sessionId] else { return nil }
+
+        // Invalidate if model changed
+        if entry.modelName != modelName {
+            evictEntry(sessionId: sessionId, saveSSD: false)
+            return nil
+        }
+
+        // Hot hit
+        if let cache = entry.cache {
+            touchLRU(sessionId)
+            return cache
+        }
+
+        // Cold hit: restore from SSD
+        if let ssdPath = entry.ssdPath {
+            do {
+                let (cache, _) = try loadPromptCache(url: ssdPath)
+                entry.cache = cache
+                let bytes = Self.cacheBytes(cache)
+                entry.sizeBytes = bytes
+                totalHotBytes += bytes
+                entry.lastAccess = Date()
+                touchLRU(sessionId)
+                print("[KVCacheStore] Restored session \(sessionId.prefix(8)) from SSD (\(bytes / 1024)KB)")
+                return cache
+            } catch {
+                print("[KVCacheStore] Failed to load SSD cache for \(sessionId.prefix(8)): \(error)")
+                try? FileManager.default.removeItem(at: ssdPath)
+                entries.removeValue(forKey: sessionId)
+                lruOrder.removeAll { $0 == sessionId }
+                return nil
+            }
+        }
+
+        return nil
+    }
+
+    /// Stores or updates the hot cache for a session after generation.
+    mutating func putCache(sessionId: String, cache: [any KVCache], modelName: String) {
+        let bytes = Self.cacheBytes(cache)
+
+        if let existing = entries[sessionId] {
+            totalHotBytes -= existing.sizeBytes
+            existing.cache = cache
+            existing.sizeBytes = bytes
+            existing.lastAccess = Date()
+            existing.modelName = modelName
+            // Invalidate stale SSD copy so evictToSSD re-persists the updated cache
+            existing.ssdPath = nil
+        } else {
+            let entry = Entry(cache: cache, modelName: modelName, sizeBytes: bytes)
+            entries[sessionId] = entry
+        }
+
+        totalHotBytes += bytes
+        touchLRU(sessionId)
+    }
+
+    /// Ensures total hot cache bytes stay within the given budget by evicting
+    /// least-recently-used sessions to SSD.
+    mutating func ensureBudget(_ budgetBytes: Int) {
+        while totalHotBytes > budgetBytes, let coldest = lruOrder.last {
+            evictToSSD(sessionId: coldest)
+        }
+    }
+
+    /// Evicts a specific session's hot cache to SSD.
+    mutating func evictToSSD(sessionId: String) {
+        guard let entry = entries[sessionId], let cache = entry.cache else {
+            lruOrder.removeAll { $0 == sessionId }
+            return
+        }
+
+        // Save to SSD if not already persisted
+        if entry.ssdPath == nil {
+            let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
+            do {
+                try savePromptCache(url: url, cache: cache, metadata: ["model": entry.modelName])
+                entry.ssdPath = url
+                print("[KVCacheStore] Saved session \(sessionId.prefix(8)) to SSD (\(entry.sizeBytes / 1024)KB)")
+            } catch {
+                print("[KVCacheStore] Failed to save SSD cache: \(error)")
+            }
+        }
+
+        totalHotBytes -= entry.sizeBytes
+        entry.cache = nil
+        entry.sizeBytes = 0
+        lruOrder.removeAll { $0 == sessionId }
+
+        pruneSSDIfNeeded()
+    }
+
+    /// Saves the given session's cache to SSD synchronously.
+    mutating func saveToDisk(sessionId: String, cache: [any KVCache], modelName: String) {
+        let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
+        do {
+            try savePromptCache(url: url, cache: cache, metadata: ["model": modelName])
+            entries[sessionId]?.ssdPath = url
+            pruneSSDIfNeeded()
+        } catch {
+            print("[KVCacheStore] SSD save failed for \(sessionId.prefix(8)): \(error)")
+        }
+    }
+
+    /// Pre-warms a session by loading its SSD cache into RAM ahead of use.
+    mutating func prewarm(sessionId: String, modelName: String, budgetBytes: Int) {
+        guard let entry = entries[sessionId], entry.cache == nil, entry.ssdPath != nil else { return }
+        _ = getCache(sessionId: sessionId, modelName: modelName)
+        ensureBudget(budgetBytes)
+    }
+
+    // MARK: - Invalidation
+
+    /// Removes a session's cache entirely (RAM + SSD).
+    mutating func invalidate(sessionId: String) {
+        evictEntry(sessionId: sessionId, saveSSD: false)
+    }
+
+    /// Removes all caches for a given model (e.g., on model unload).
+    mutating func invalidateModel(_ modelName: String) {
+        let toRemove = entries.filter { $0.value.modelName == modelName }.map(\.key)
+        for sid in toRemove {
+            evictEntry(sessionId: sid, saveSSD: false)
+        }
+    }
+
+    /// Removes all caches.
+    mutating func clearAll() {
+        for sid in Array(entries.keys) {
+            evictEntry(sessionId: sid, saveSSD: false)
+        }
+    }
+
+    // MARK: - SSD maintenance
+
+    /// Evicts oldest SSD cache files when total disk usage exceeds the cap.
+    /// Clears `ssdPath` on any entry whose file was deleted.
+    mutating func pruneSSDIfNeeded() {
+        let fm = FileManager.default
+        guard
+            let items = try? fm.contentsOfDirectory(
+                at: ssdCacheDir,
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]
+            )
+        else { return }
+
+        var files = items.compactMap { url -> (URL, Int, Date)? in
+            guard url.pathExtension == "safetensors" else { return nil }
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+            return (url, values?.fileSize ?? 0, values?.contentModificationDate ?? .distantPast)
+        }
+
+        let totalSize = files.reduce(0) { $0 + $1.1 }
+        guard totalSize > maxSSDBytes else { return }
+
+        files.sort { $0.2 < $1.2 }
+        var freed = 0
+        var deletedURLs = Set<URL>()
+        let target = totalSize - maxSSDBytes
+        for (url, size, _) in files {
+            guard freed < target else { break }
+            try? fm.removeItem(at: url)
+            deletedURLs.insert(url)
+            freed += size
+        }
+
+        if freed > 0 {
+            for entry in entries.values where entry.ssdPath != nil {
+                if deletedURLs.contains(entry.ssdPath!) {
+                    entry.ssdPath = nil
+                }
+            }
+            print("[KVCacheStore] Pruned \(freed / 1024 / 1024)MB from SSD cache")
+        }
+    }
+
+    // MARK: - Content-aware prefix cache
+
+    /// Builds the cache key for a given model and content hash.
+    /// The hash is always 32 hex chars so `_` is an unambiguous delimiter
+    /// that is also safe for use in filenames (session IDs become path components).
+    static func prefixKey(modelName: String, hash: String) -> String {
+        "prefix_\(modelName)_\(hash)"
+    }
+
+    /// Returns a **fresh copy** of the prefix cache for this model + content hash.
+    /// Always loads from SSD so each caller gets independent KVCache objects
+    /// that won't corrupt the stored prefix when mutated during generation.
+    mutating func getPrefixCache(modelName: String, hash: String) -> [any KVCache]? {
+        let key = Self.prefixKey(modelName: modelName, hash: hash)
+        guard let entry = entries[key], entry.modelName == modelName else { return nil }
+        guard let ssdPath = entry.ssdPath else { return nil }
+        do {
+            let (cache, _) = try loadPromptCache(url: ssdPath)
+            return cache
+        } catch {
+            print("[KVCacheStore] Failed to load prefix cache from SSD: \(error)")
+            return nil
+        }
+    }
+
+    /// Stores a prefix cache keyed by model + content hash.
+    mutating func putPrefixCache(_ cache: [any KVCache], modelName: String, hash: String) {
+        let key = Self.prefixKey(modelName: modelName, hash: hash)
+        putCache(sessionId: key, cache: cache, modelName: modelName)
+        if let entry = entries[key] {
+            entry.contentHash = hash
+        }
+        saveToDisk(sessionId: key, cache: cache, modelName: modelName)
+    }
+
+    /// Returns true if a prefix cache exists for this model + content hash.
+    func hasPrefixCache(modelName: String, hash: String) -> Bool {
+        let key = Self.prefixKey(modelName: modelName, hash: hash)
+        return entries[key] != nil
+    }
+
+    // MARK: - Helpers
+
+    static func cacheBytes(_ cache: [any KVCache]) -> Int {
+        cache.flatMap(\.state).reduce(0) { $0 + $1.nbytes }
+    }
+
+    #if DEBUG
+        /// Test-only: injects a cache entry with a specified byte size, bypassing MLX
+        /// array creation which requires Metal. The entry has a hot cache reference
+        /// (a zero-byte KVCacheSimple) but reports `sizeBytes` for budget accounting.
+        mutating func _testPutSized(sessionId: String, modelName: String, sizeBytes: Int) {
+            if let existing = entries[sessionId] {
+                totalHotBytes -= existing.sizeBytes
+                existing.sizeBytes = sizeBytes
+                existing.cache = [KVCacheSimple()]
+                existing.modelName = modelName
+                existing.lastAccess = Date()
+                existing.ssdPath = nil
+            } else {
+                let entry = Entry(cache: [KVCacheSimple()], modelName: modelName, sizeBytes: sizeBytes)
+                entries[sessionId] = entry
+            }
+            totalHotBytes += sizeBytes
+            touchLRU(sessionId)
+        }
+    #endif
+
+    private mutating func touchLRU(_ sessionId: String) {
+        lruOrder.removeAll { $0 == sessionId }
+        lruOrder.insert(sessionId, at: 0)
+    }
+
+    private mutating func evictEntry(sessionId: String, saveSSD: Bool) {
+        guard let entry = entries[sessionId] else { return }
+
+        if saveSSD, entry.cache != nil, entry.ssdPath == nil {
+            let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
+            do {
+                try savePromptCache(url: url, cache: entry.cache!, metadata: ["model": entry.modelName])
+            } catch {
+                // best-effort
+            }
+        }
+
+        if entry.cache != nil {
+            totalHotBytes -= entry.sizeBytes
+        }
+
+        // Clean up SSD file
+        if let path = entry.ssdPath {
+            try? FileManager.default.removeItem(at: path)
+        }
+
+        entries.removeValue(forKey: sessionId)
+        lruOrder.removeAll { $0 == sessionId }
+    }
+}

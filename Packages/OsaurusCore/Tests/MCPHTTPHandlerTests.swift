@@ -42,6 +42,7 @@ struct MCPHTTPHandlerTests {
         // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { Task { @MainActor in ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) } }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -75,6 +76,7 @@ struct MCPHTTPHandlerTests {
         // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { Task { @MainActor in ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) } }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -115,6 +117,7 @@ struct MCPHTTPHandlerTests {
         // Register and enable a test tool
         await ToolRegistry.shared.register(EchoTool())
         await ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+        defer { Task { @MainActor in ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) } }
 
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }
@@ -182,7 +185,8 @@ private func startTestServer() async throws -> TestServer {
                     HTTPHandler(
                         configuration: .default,
                         apiKeyValidator: TestAuth.validator,
-                        eventLoop: channel.eventLoop
+                        eventLoop: channel.eventLoop,
+                        trustLoopback: false
                     )
                 )
             }

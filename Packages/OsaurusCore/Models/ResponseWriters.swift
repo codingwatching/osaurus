@@ -17,6 +17,7 @@ protocol ResponseWriter {
         model: String,
         responseId: String,
         created: Int,
+        prefixHash: String?,
         context: ChannelHandlerContext
     )
     func writeContent(
@@ -61,9 +62,10 @@ final class SSEResponseWriter: ResponseWriter {
         model: String,
         responseId: String,
         created: Int,
+        prefixHash: String? = nil,
         context: ChannelHandlerContext
     ) {
-        let chunk = ChatCompletionChunk(
+        var chunk = ChatCompletionChunk(
             id: responseId,
             created: created,
             model: model,
@@ -76,6 +78,7 @@ final class SSEResponseWriter: ResponseWriter {
             ],
             system_fingerprint: nil
         )
+        chunk.prefix_hash = prefixHash
         writeSSEChunk(chunk, context: context)
     }
 
@@ -294,6 +297,7 @@ final class NDJSONResponseWriter: ResponseWriter {
         model: String,
         responseId: String,
         created: Int,
+        prefixHash: String? = nil,
         context: ChannelHandlerContext
     ) {
         // NDJSON doesn't send separate role chunks - they're combined with content

@@ -208,7 +208,8 @@ private func startAuthTestServer(
                     HTTPHandler(
                         configuration: config,
                         apiKeyValidator: validator,
-                        eventLoop: channel.eventLoop
+                        eventLoop: channel.eventLoop,
+                        trustLoopback: false
                     )
                 )
             }

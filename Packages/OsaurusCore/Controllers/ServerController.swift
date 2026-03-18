@@ -107,7 +107,7 @@ final class ServerController: ObservableObject {
 
             let server = OsaurusServer()
             try await server.start(
-                .init(host: bindHost, port: configuration.port),
+                .init(host: bindHost, port: configuration.port, trustLoopback: !configuration.exposeToNetwork),
                 serverConfiguration: self.configuration
             )
             self.serverActor = server

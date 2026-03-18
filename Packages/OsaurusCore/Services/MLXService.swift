@@ -47,7 +47,7 @@ actor MLXService: ToolCapableService {
 
     // MARK: - Warm-up
 
-    func warmUp(modelName: String? = nil, prefillChars: Int = 0, maxTokens: Int = 1) async {
+    func warmUp(modelName: String? = nil, agentId: UUID? = nil, prefillChars: Int = 0, maxTokens: Int = 1) async {
         let chosen: LocalModelRef? = {
             if let name = modelName, let m = Self.findModel(named: name) { return m }
             if let first = Self.getAvailableModels().first, let m = Self.findModel(named: first) {
@@ -61,6 +61,11 @@ actor MLXService: ToolCapableService {
             modelName: model.name,
             prefillChars: prefillChars,
             maxTokens: maxTokens
+        )
+        await ModelRuntime.shared.precomputeUIPrefix(
+            modelId: model.modelId,
+            modelName: model.name,
+            agentId: agentId ?? Agent.defaultId
         )
     }
 

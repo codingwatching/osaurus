@@ -10,13 +10,13 @@ struct WorkEngineResumeTests {
     func provideClarification_resumesWithPreservedConversation() async throws {
         try await IssueManager.shared.initialize()
         let registry = ToolRegistry.shared
-        registry.register(NoopTestTool())
-        registry.setEnabled(true, for: "noop_test")
-        defer { registry.unregister(names: ["noop_test"]) }
+        registry.register(NoopResumeTestTool())
+        registry.setEnabled(true, for: "noop_resume_test")
+        defer { registry.unregister(names: ["noop_resume_test"]) }
 
         let chatEngine = RecordingWorkChatEngine(
             steps: [
-                .tool("noop_test", "{}"),
+                .tool("noop_resume_test", "{}"),
                 .tool("request_clarification", #"{"question":"SQLite or PostgreSQL?"}"#),
                 .tool("complete_task", #"{"summary":"done","success":true}"#),
             ]
@@ -27,7 +27,7 @@ struct WorkEngineResumeTests {
             query: "Build a database-backed API",
             model: "mock",
             systemPrompt: "Base",
-            tools: [noopToolSpec(), clarificationToolSpec(), completeTaskToolSpec()],
+            tools: [noopResumeToolSpec(), clarificationToolSpec(), completeTaskToolSpec()],
             executionMode: .none
         )
 
@@ -60,13 +60,13 @@ struct WorkEngineResumeTests {
         defer { ChatConfigurationStore.save(originalConfig) }
 
         let registry = ToolRegistry.shared
-        registry.register(NoopTestTool())
-        registry.setEnabled(true, for: "noop_test")
-        defer { registry.unregister(names: ["noop_test"]) }
+        registry.register(NoopResumeTestTool())
+        registry.setEnabled(true, for: "noop_resume_test")
+        defer { registry.unregister(names: ["noop_resume_test"]) }
 
         let chatEngine = RecordingWorkChatEngine(
             steps: [
-                .tool("noop_test", "{}"),
+                .tool("noop_resume_test", "{}"),
                 .tool("complete_task", #"{"summary":"wrapped up","success":true}"#),
             ]
         )
@@ -76,7 +76,7 @@ struct WorkEngineResumeTests {
             query: "Build and verify the service",
             model: "mock",
             systemPrompt: "Base",
-            tools: [noopToolSpec(), completeTaskToolSpec()],
+            tools: [noopResumeToolSpec(), completeTaskToolSpec()],
             executionMode: .none
         )
 
@@ -106,18 +106,18 @@ struct WorkEngineResumeTests {
         defer { ChatConfigurationStore.save(originalConfig) }
 
         let registry = ToolRegistry.shared
-        registry.register(NoopTestTool())
-        registry.setEnabled(true, for: "noop_test")
-        defer { registry.unregister(names: ["noop_test"]) }
+        registry.register(NoopResumeTestTool())
+        registry.setEnabled(true, for: "noop_resume_test")
+        defer { registry.unregister(names: ["noop_resume_test"]) }
 
-        let firstChatEngine = RecordingWorkChatEngine(steps: [.tool("noop_test", "{}")])
+        let firstChatEngine = RecordingWorkChatEngine(steps: [.tool("noop_resume_test", "{}")])
         let firstEngine = WorkEngine(executionEngine: WorkExecutionEngine(chatEngine: firstChatEngine))
 
         let paused = try await firstEngine.run(
             query: "Pause and recover this task",
             model: "mock",
             systemPrompt: "Base",
-            tools: [noopToolSpec(), completeTaskToolSpec()],
+            tools: [noopResumeToolSpec(), completeTaskToolSpec()],
             executionMode: .none
         )
 
@@ -140,7 +140,7 @@ struct WorkEngineResumeTests {
         #expect(
             lastMessages.contains(where: {
                 $0.role == "user"
-                    && ($0.content?.contains("fresh iteration budget") == true)
+                    && ($0.content?.contains(WorkEngine.freshBudgetContinuation) == true)
             })
         )
     }
@@ -204,20 +204,20 @@ private func clarificationToolSpec() -> Tool {
     )
 }
 
-private func noopToolSpec() -> Tool {
+private func noopResumeToolSpec() -> Tool {
     Tool(
         type: "function",
         function: ToolFunction(
-            name: "noop_test",
-            description: "No-op test tool.",
+            name: "noop_resume_test",
+            description: "No-op resume test tool.",
             parameters: .object(["type": .string("object")])
         )
     )
 }
 
-private struct NoopTestTool: OsaurusTool {
-    let name = "noop_test"
-    let description = "No-op test tool."
+private struct NoopResumeTestTool: OsaurusTool {
+    let name = "noop_resume_test"
+    let description = "No-op resume test tool."
     let parameters: JSONValue? = .object(["type": .string("object")])
 
     func execute(argumentsJSON _: String) async throws -> String {

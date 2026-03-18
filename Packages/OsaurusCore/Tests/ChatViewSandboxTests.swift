@@ -60,8 +60,8 @@ struct ChatViewSandboxTests {
             executionMode: .sandbox
         )
 
-        #expect(standardPrompt.contains("## Linux Sandbox Environment") == false)
-        #expect(sandboxPrompt.contains("## Linux Sandbox Environment"))
+        #expect(standardPrompt.contains(WorkExecutionEngine.sandboxSectionHeading) == false)
+        #expect(sandboxPrompt.contains(WorkExecutionEngine.sandboxSectionHeading))
         #expect(sandboxPrompt.contains("sandbox_run_script"))
     }
 

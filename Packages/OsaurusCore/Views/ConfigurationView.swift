@@ -354,45 +354,50 @@ struct ConfigurationView: View {
                                     SettingsSubsection(label: "KV Cache") {
                                         VStack(alignment: .leading, spacing: 12) {
                                             SettingsStepperField(
-                                                label: "Cache Bits",
-                                                help: "Quantization bits. Empty disables",
-                                                text: $tempKVBits,
-                                                range: 2 ... 8,
-                                                step: 1,
-                                                defaultValue: 4
-                                            )
-                                            SettingsStepperField(
-                                                label: "Group Size",
-                                                help: "KV quantization group size",
-                                                text: $tempKVGroup,
-                                                range: 1 ... 256,
-                                                step: 16,
-                                                defaultValue: 64
-                                            )
-                                            SettingsStepperField(
-                                                label: "Quantized Start",
-                                                help: "Starting layer for quantization",
-                                                text: $tempQuantStart,
-                                                range: 0 ... 1024,
-                                                step: 64,
-                                                defaultValue: 0
-                                            )
-                                            SettingsStepperField(
-                                                label: "Max Size",
+                                                label: "Max Context Length",
                                                 help: "Max KV cache size in tokens",
                                                 text: $tempMaxKV,
                                                 range: 1024 ... 131072,
                                                 step: 1024,
                                                 defaultValue: 8192
                                             )
-                                            SettingsStepperField(
-                                                label: "Prefill Step",
-                                                help: "Tokens per prefill chunk",
-                                                text: $tempPrefillStep,
-                                                range: 64 ... 2048,
-                                                step: 64,
-                                                defaultValue: 512
-                                            )
+                                            DisclosureGroup("Advanced") {
+                                                VStack(alignment: .leading, spacing: 12) {
+                                                    SettingsStepperField(
+                                                        label: "Cache Bits",
+                                                        help: "Quantization bits. Empty disables",
+                                                        text: $tempKVBits,
+                                                        range: 2 ... 8,
+                                                        step: 1,
+                                                        defaultValue: 4
+                                                    )
+                                                    SettingsStepperField(
+                                                        label: "Group Size",
+                                                        help: "KV quantization group size",
+                                                        text: $tempKVGroup,
+                                                        range: 1 ... 256,
+                                                        step: 16,
+                                                        defaultValue: 64
+                                                    )
+                                                    SettingsStepperField(
+                                                        label: "Quantized Start",
+                                                        help: "Starting layer for quantization",
+                                                        text: $tempQuantStart,
+                                                        range: 0 ... 1024,
+                                                        step: 64,
+                                                        defaultValue: 0
+                                                    )
+                                                    SettingsStepperField(
+                                                        label: "Prefill Step",
+                                                        help: "Tokens per prefill chunk",
+                                                        text: $tempPrefillStep,
+                                                        range: 64 ... 2048,
+                                                        step: 64,
+                                                        defaultValue: 512
+                                                    )
+                                                }
+                                                .padding(.top, 8)
+                                            }
                                         }
                                     }
 

@@ -30,7 +30,7 @@ struct WorkExecutionEngineTests {
         let long = String(repeating: "c", count: 20000)
         let result = await engine.truncateToolResult(long)
         #expect(result.count < 20000)
-        #expect(result.contains("[... 12000 characters omitted"))
+        #expect(result.contains(WorkExecutionEngine.truncationOmissionMarker))
         #expect(result.hasPrefix(String(repeating: "c", count: 6000)))
         #expect(result.hasSuffix(String(repeating: "c", count: 2000)))
     }
@@ -52,8 +52,8 @@ struct WorkExecutionEngineTests {
         #expect(decoded["exit_code"] as? Int == 1)
         #expect(decoded["stdout_truncated"] as? Bool == true)
         #expect(decoded["stderr_truncated"] as? Bool == true)
-        #expect((decoded["stdout"] as? String)?.contains("characters omitted") == true)
-        #expect((decoded["stderr"] as? String)?.contains("characters omitted") == true)
+        #expect((decoded["stdout"] as? String)?.contains(WorkExecutionEngine.truncationOmissionMarker) == true)
+        #expect((decoded["stderr"] as? String)?.contains(WorkExecutionEngine.truncationOmissionMarker) == true)
     }
 
     @Test func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
@@ -65,10 +65,10 @@ struct WorkExecutionEngineTests {
             executionMode: .sandbox
         )
 
-        #expect(prompt.contains("Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files"))
-        #expect(prompt.contains("Run tests or verification commands with `sandbox_exec`"))
-        #expect(prompt.contains("call `complete_task` with a concise summary"))
-        #expect(prompt.contains("sandbox_read_file` with `start_line`, `line_count`, or `tail_lines`"))
+        #expect(prompt.contains(WorkExecutionEngine.sandboxScaffoldGuidance))
+        #expect(prompt.contains(WorkExecutionEngine.sandboxVerifyGuidance))
+        #expect(prompt.contains("call `complete_task`"))
+        #expect(prompt.contains(WorkExecutionEngine.sandboxReadFileHint))
     }
 
     @Test @MainActor
@@ -128,8 +128,8 @@ struct WorkExecutionEngineTests {
             return
         }
         #expect(summary == "done")
-        #expect(statuses.contains("Budget: 5 of 15 iterations remaining"))
-        #expect(statuses.contains("Warning: 5 iterations remaining"))
+        #expect(statuses.contains(WorkExecutionEngine.budgetRemainingStatus(remaining: 5, total: 15)))
+        #expect(statuses.contains(WorkExecutionEngine.budgetWarningStatus(remaining: 5)))
     }
 
     @Test @MainActor

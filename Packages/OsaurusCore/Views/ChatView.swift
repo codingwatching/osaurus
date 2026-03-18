@@ -69,6 +69,8 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
+    @Published var isWarmingModel: Bool = false
+    var warmupTask: Task<Void, Never>?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
 
@@ -99,16 +101,29 @@ final class ChatSession: ObservableObject {
             Task { @MainActor in await self?.refreshPickerItems() }
         }
 
-        // Auto-persist model selection changes
+        // Auto-persist model selection and drive warm-up / GC
         modelSelectionCancellable =
             $selectedModel
-            .dropFirst()  // Skip initial value
+            .dropFirst()
             .removeDuplicates()
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
+                self.warmupTask?.cancel()
+                let isLocal = ModelManager.findInstalledModel(named: model) != nil
+                self.isWarmingModel = isLocal
+                self.warmupTask = Task { [weak self] in
+                    // Unload models no window references before warming the new one
+                    let active = ChatWindowManager.shared.activeLocalModelNames()
+                    await ModelRuntime.shared.unloadModelsNotIn(active)
+
+                    let aid = self?.agentId ?? Agent.defaultId
+                    await MLXService.shared.warmUp(modelName: model, agentId: aid)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run { self?.isWarmingModel = false }
+                }
             }
 
         if !cache.isLoaded {
@@ -371,6 +386,9 @@ final class ChatSession: ObservableObject {
 
     func reset() {
         stop()
+        warmupTask?.cancel()
+        warmupTask = nil
+        isWarmingModel = false
         turns.removeAll()
         input = ""
         pendingAttachments = []
@@ -465,6 +483,9 @@ final class ChatSession: ObservableObject {
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
         stop()
+        warmupTask?.cancel()
+        warmupTask = nil
+        isWarmingModel = false
         sessionId = data.id
         title = data.title
         createdAt = data.createdAt
@@ -846,6 +867,11 @@ final class ChatSession: ObservableObject {
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
 
+        // Cancel any in-progress warm-up to free the ModelContainer queue
+        warmupTask?.cancel()
+        warmupTask = nil
+        isWarmingModel = false
+
         if hasContent {
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
             isDirty = true
@@ -1021,7 +1047,7 @@ final class ChatSession: ObservableObject {
                         n: nil,
                         tools: toolSpecs.isEmpty ? nil : toolSpecs,
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
-                        session_id: nil
+                        session_id: sessionId?.uuidString
                     )
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     do {
@@ -1387,6 +1413,7 @@ struct ChatView: View {
                                 pickerItems: observedSession.pickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
+                                isWarmingModel: observedSession.isWarmingModel,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,

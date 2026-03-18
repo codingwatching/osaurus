@@ -17,6 +17,23 @@ public actor WorkExecutionEngine {
         self.chatEngine = chatEngine ?? ChatEngine(source: .chatUI)
     }
 
+    // MARK: - Prompt Constants
+
+    static let truncationOmissionMarker = "characters omitted"
+    static let sandboxSectionHeading = "## Linux Sandbox Environment"
+    static let sandboxScaffoldGuidance = "Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files"
+    static let sandboxVerifyGuidance = "Run tests or verification commands with `sandbox_exec`"
+    static let sandboxReadFileHint = "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
+    static let budgetWarningThreshold = 5
+
+    static func budgetRemainingStatus(remaining: Int, total: Int) -> String {
+        "Budget: \(remaining) of \(total) iterations remaining"
+    }
+
+    static func budgetWarningStatus(remaining: Int) -> String {
+        "Warning: \(remaining) iterations remaining"
+    }
+
     // MARK: - Tool Execution
 
     /// Maximum time (in seconds) to wait for a single tool execution before timing out.
@@ -146,7 +163,7 @@ public actor WorkExecutionEngine {
         let tail = String(result.suffix(tailSize))
         let omitted = result.count - headSize - tailSize
         return
-            "\(head)\n\n[... \(omitted) characters omitted — use `sandbox_read_file` (with start_line, line_count, or tail_lines) or `file_read` to inspect the full output ...]\n\n\(tail)"
+            "\(head)\n\n[... \(omitted) \(Self.truncationOmissionMarker) — use `sandbox_read_file` (with start_line, line_count, or tail_lines) or `file_read` to inspect the full output ...]\n\n\(tail)"
     }
 
     // MARK: - Folder Context
@@ -216,7 +233,7 @@ public actor WorkExecutionEngine {
         - Python deps: `sandbox_pip_install` — e.g. `{"packages": ["numpy"]}`.
         - Node deps: `sandbox_npm_install` — e.g. `{"packages": ["express"]}`.
         - System packages: `sandbox_install` — e.g. `{"packages": ["ffmpeg"]}`.
-        - Use `sandbox_read_file` with `start_line`/`line_count`/`tail_lines` to inspect large logs.
+        - Use \(sandboxReadFileHint) to inspect large logs.
         - The sandbox is disposable — experiment freely.
         """
 
@@ -230,7 +247,7 @@ public actor WorkExecutionEngine {
         let hints = compact ? sandboxRuntimeHintsCompact : sandboxRuntimeHints
         return """
 
-            ## Linux Sandbox Environment
+            \(sandboxSectionHeading)
 
             \(env)
             Files persist across messages.
@@ -247,7 +264,7 @@ public actor WorkExecutionEngine {
 
         var section = """
 
-            ## Linux Sandbox Environment
+            \(sandboxSectionHeading)
 
             \(env)
             Files persist across tasks.
@@ -258,9 +275,9 @@ public actor WorkExecutionEngine {
             section += """
                 For build/test tasks, follow this pattern:
                 1. Inspect the workspace and choose a stack.
-                2. Prefer one `sandbox_run_script` to scaffold or bulk-edit multiple files.
+                2. \(sandboxScaffoldGuidance).
                 3. Install project-specific dependencies with `sandbox_pip_install` or `sandbox_npm_install`.
-                4. Run tests or verification commands with `sandbox_exec`.
+                4. \(sandboxVerifyGuidance).
                 5. If verification fails, read the error carefully, fix the cause, and rerun.
 
                 """
@@ -386,7 +403,7 @@ public actor WorkExecutionEngine {
 
             if iteration > 1 && iteration % 10 == 0 {
                 let remaining = maxIterations - iteration
-                await onStatusUpdate("Budget: \(remaining) of \(maxIterations) iterations remaining")
+                await onStatusUpdate(Self.budgetRemainingStatus(remaining: remaining, total: maxIterations))
                 messages.append(
                     ChatMessage(
                         role: "user",
@@ -396,13 +413,13 @@ public actor WorkExecutionEngine {
                 )
             }
 
-            if iteration == maxIterations - 5 {
-                await onStatusUpdate("Warning: 5 iterations remaining")
+            if iteration == maxIterations - Self.budgetWarningThreshold {
+                await onStatusUpdate(Self.budgetWarningStatus(remaining: Self.budgetWarningThreshold))
                 messages.append(
                     ChatMessage(
                         role: "user",
                         content:
-                            "[System Notice] 5 iterations remaining. Finish current work and call `complete_task` with a summary. Create issues for anything unfinished."
+                            "[System Notice] \(Self.budgetWarningThreshold) iterations remaining. Finish current work and call `complete_task` with a summary. Create issues for anything unfinished."
                     )
                 )
             }
@@ -432,7 +449,7 @@ public actor WorkExecutionEngine {
                 n: nil,
                 tools: tools.isEmpty ? nil : tools,
                 tool_choice: nil,
-                session_id: nil
+                session_id: issue.id
             )
 
             // Stream response

@@ -20,7 +20,7 @@ struct HTTPStreamingWriterTests {
         // Simulate writes
         let ctx = try channel.embeddedContext()
         writer.writeHeaders(ctx, extraHeaders: nil)
-        writer.writeRole("assistant", model: "test-model", responseId: "id", created: 0, context: ctx)
+        writer.writeRole("assistant", model: "test-model", responseId: "id", created: 0, prefixHash: nil, context: ctx)
         writer.writeContent("hi", model: "test-model", responseId: "id", created: 0, context: ctx)
         writer.writeFinish("test-model", responseId: "id", created: 0, context: ctx)
         writer.writeEnd(ctx)

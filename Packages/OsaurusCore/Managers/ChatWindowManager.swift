@@ -254,6 +254,15 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowStates[id]
     }
 
+    /// Returns the set of local model names currently selected across all open windows.
+    func activeLocalModelNames() -> Set<String> {
+        Set(windowStates.values.compactMap { state in
+            guard let model = state.session.selectedModel,
+                  ModelManager.findInstalledModel(named: model) != nil else { return nil }
+            return model
+        })
+    }
+
     /// Set a callback to be invoked when window is about to close (for session saving)
     public func setCloseCallback(for windowId: UUID, callback: @escaping () -> Void) {
         sessionCallbacks[windowId] = callback
@@ -584,6 +593,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowDelegates.removeValue(forKey: id)
         windowStates.removeValue(forKey: id)
 
+        Task {
+            let active = self.activeLocalModelNames()
+            await ModelRuntime.shared.unloadModelsNotIn(active)
+        }
+
         // Sever NSWindow -> NSHostingController link so the SwiftUI view tree
         // and its @State storage are released even if the panel lingers briefly.
         nsWindows[id]?.contentViewController = nil
@@ -636,11 +650,17 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+        [
+            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem,
+            Self.pinItem,
+        ]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem, Self.pinItem]
+        [
+            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem,
+            Self.pinItem,
+        ]
     }
 
     func toolbar(

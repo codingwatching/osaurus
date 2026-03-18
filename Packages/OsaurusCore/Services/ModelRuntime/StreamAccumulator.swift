@@ -17,20 +17,22 @@ struct StreamAccumulator {
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
         let producerTask = Task {
-            // Bounded Rolling Buffer: efficiently manages the active text window
-            // This avoids O(N) memory growth and eliminates string reconstruction costs
             var rollingBuffer = ""
-            var bufferStartOffset = 0  // Tracks how many characters have been pruned
-            var emittedCount = 0  // Global count of emitted characters
+            var bufferStartOffset = 0
+            var emittedCount = 0
 
             let maxStopLen = stopSequences.map { $0.count }.max() ?? 0
             let shouldCheckStop = !stopSequences.isEmpty
-            // Tool detection needs ~5000 chars. We prune when buffer is roughly double that to amortize shifting costs.
             let maxBufferSize = 10_000
             let pruneToSize = 5_000
 
+            // Brace-depth tracking avoids expensive regex scans on every token.
+            // Only trigger tool detection when depth returns to zero after being positive.
+            let hasTools = tools != nil && !(tools?.isEmpty ?? true)
+            var braceDepth = 0
+            var seenOpenBrace = false
+
             for await event in events {
-                // Check for task cancellation to allow early termination
                 if Task.isCancelled {
                     continuation.finish()
                     return
@@ -48,28 +50,38 @@ struct StreamAccumulator {
 
                 rollingBuffer += token
 
-                // Prune buffer if needed (Amortized O(1))
                 if rollingBuffer.count > maxBufferSize {
                     let removeCount = rollingBuffer.count - pruneToSize
                     rollingBuffer.removeFirst(removeCount)
                     bufferStartOffset += removeCount
                 }
 
-                // Fallback: detect inline tool-call JSON in generated text
-                if let tools, !tools.isEmpty, token.contains("}") {
-                    // rollingBuffer already represents the active window, pass directly
-                    if let (name, argsJSON) = ToolDetection.detectInlineToolCall(in: rollingBuffer, tools: tools) {
-                        continuation.yield(.toolInvocation(name: name, argsJSON: argsJSON))
-                        continuation.finish()
-                        return
+                // Optimized tool detection: track brace depth to avoid scanning on every '}' token.
+                // Only run the expensive regex detection when we see a complete JSON object.
+                if hasTools {
+                    for ch in token {
+                        if ch == "{" {
+                            braceDepth += 1; seenOpenBrace = true
+                        } else if ch == "}" {
+                            braceDepth = max(0, braceDepth - 1)
+                        }
+                    }
+
+                    if seenOpenBrace && braceDepth == 0 {
+                        if let tools,
+                            let (name, argsJSON) = ToolDetection.detectInlineToolCall(in: rollingBuffer, tools: tools)
+                        {
+                            continuation.yield(.toolInvocation(name: name, argsJSON: argsJSON))
+                            continuation.finish()
+                            return
+                        }
+                        seenOpenBrace = false
                     }
                 }
 
                 if shouldCheckStop {
-                    // Check tail of the rolling buffer
                     let checkLen = maxStopLen + token.count + 1
 
-                    // Use bidirectional index calculation
                     let searchStart =
                         rollingBuffer.index(
                             rollingBuffer.endIndex,
@@ -82,24 +94,15 @@ struct StreamAccumulator {
                         guard let range = rollingBuffer.range(of: s, range: searchRange) else { return nil }
                         return (s, range)
                     }).min(by: { $0.1.lowerBound < $1.1.lowerBound }) {
-                        // Found a stop sequence
                         let stopRange = match.1
 
-                        // Calculate global index of the stop match
-                        // bufferIndex -> globalIndex = index + bufferStartOffset
                         let stopLocalIndex = rollingBuffer.distance(
                             from: rollingBuffer.startIndex,
                             to: stopRange.lowerBound
                         )
                         let stopGlobalIndex = bufferStartOffset + stopLocalIndex
 
-                        // Yield content before the stop sequence if it hasn't been emitted yet
                         if stopGlobalIndex > emittedCount {
-                            // Determine local range to yield
-                            // We want from [emittedCount] to [stopGlobalIndex]
-                            // But emittedCount might be before our current buffer (pruned)
-                            // So we start from max(emittedCount, bufferStartOffset)
-
                             let yieldGlobalStart = max(emittedCount, bufferStartOffset)
                             let yieldGlobalEnd = stopGlobalIndex
 
@@ -107,7 +110,6 @@ struct StreamAccumulator {
                                 let localStart = yieldGlobalStart - bufferStartOffset
                                 let localEnd = yieldGlobalEnd - bufferStartOffset
 
-                                // Safety checks for indices
                                 if localStart >= 0 && localEnd <= rollingBuffer.count {
                                     let startIdx = rollingBuffer.index(rollingBuffer.startIndex, offsetBy: localStart)
                                     let endIdx = rollingBuffer.index(rollingBuffer.startIndex, offsetBy: localEnd)
@@ -122,14 +124,12 @@ struct StreamAccumulator {
                     }
                 }
 
-                // No stop sequence found, yield the token
                 continuation.yield(.tokens(token))
                 emittedCount += token.count
             }
             continuation.finish()
         }
 
-        // Cancel producer task when consumer stops consuming
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
         }

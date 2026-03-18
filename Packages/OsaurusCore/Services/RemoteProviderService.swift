@@ -2262,7 +2262,8 @@ private struct RemoteChatRequest: Encodable {
             input = .items(inputItems)
         }
 
-        let reasoning = reasoning_effort
+        let reasoning =
+            reasoning_effort
             .map { OpenResponsesReasoningConfig(effort: $0) }
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
