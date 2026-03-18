@@ -54,10 +54,10 @@ public actor SandboxMCPManager {
         }
 
         let pluginDir = OsaurusPaths.inContainerPluginDir(agentName, pluginId)
-        var mergedEnv = env
-        for (k, v) in (spec.env ?? [:]) {
-            mergedEnv[k] = v
-        }
+        var mergedEnv = secretsEnvironment(agentName: agentName, pluginId: pluginId)
+        mergedEnv.merge(env) { _, new in new }
+        mergedEnv.merge(spec.env ?? [:]) { _, new in new }
+        mergedEnv["OSAURUS_PLUGIN"] = pluginId
 
         let envString = mergedEnv.map { "\($0.key)='\($0.value)'" }.joined(separator: " ")
         let fullCommand =
@@ -164,6 +164,16 @@ public actor SandboxMCPManager {
     }
 
     // MARK: - Helpers
+
+    /// Resolve agent secrets + plugin secrets for the given Linux agent name.
+    private func secretsEnvironment(agentName: String, pluginId: String) -> [String: String] {
+        let linuxUser = "agent-\(agentName)"
+        guard let agentUUID = SandboxAgentMap.resolve(linuxName: linuxUser) else { return [:] }
+        var env = AgentSecretsKeychain.getAllSecrets(agentId: agentUUID)
+        let pluginSecrets = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentUUID)
+        env.merge(pluginSecrets) { _, new in new }
+        return env
+    }
 
     private func processKey(agentName: String, pluginId: String) -> String {
         "\(agentName):\(pluginId)"

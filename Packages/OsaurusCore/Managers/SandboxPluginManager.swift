@@ -139,7 +139,8 @@ public final class SandboxPluginManager: ObservableObject {
                     )
                 )
                 // Secrets are prompted in the UI and stored in Keychain.
-                // They'll be injected as env vars at exec time via ToolSecretsKeychain.
+                // At exec time they are injected as env vars by SandboxPluginTool
+                // and are also available via `osaurus-host secrets get <name>`.
             }
 
             if let setup = plugin.setup {

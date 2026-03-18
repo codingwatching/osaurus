@@ -750,16 +750,29 @@
             PLUGIN="${OSAURUS_PLUGIN:-$(basename "$(pwd)")}"
             H="-H X-Osaurus-User:$USER -H X-Osaurus-Plugin:$PLUGIN"
 
+            _call() {
+              _tmp=$(mktemp)
+              _code=$(curl -s -o "$_tmp" -w '%{http_code}' --unix-socket "$SOCK" "$@")
+              if [ "$_code" -ge 400 ] 2>/dev/null || [ -z "$_code" ]; then
+                _err=$(jq -r '.error // empty' < "$_tmp" 2>/dev/null)
+                rm -f "$_tmp"
+                echo "osaurus-host: error ${_code:-000}: ${_err:-request failed}" >&2
+                exit 1
+              fi
+              cat "$_tmp"
+              rm -f "$_tmp"
+            }
+
             case "$1" in
               secrets)
                 case "$2" in
-                  get) curl -sf --unix-socket "$SOCK" $H "$API/secrets/$3" | jq -r '.value // empty' ;;
+                  get) _call $H "$API/secrets/$3" | jq -r '.value // empty' ;;
                   *) echo "Usage: osaurus-host secrets get <name>" >&2; exit 1 ;;
                 esac ;;
               config)
                 case "$2" in
-                  get) curl -sf --unix-socket "$SOCK" $H "$API/config/$3" | jq -r '.value // empty' ;;
-                  set) curl -sf --unix-socket "$SOCK" -X POST $H "$API/config/$3" -d "{\\"value\\":\\"$4\\"}" > /dev/null ;;
+                  get) _call $H "$API/config/$3" | jq -r '.value // empty' ;;
+                  set) _call -X POST $H "$API/config/$3" -d "{\\"value\\":\\"$4\\"}" > /dev/null ;;
                   *) echo "Usage: osaurus-host config get|set <key> [value]" >&2; exit 1 ;;
                 esac ;;
               inference)
@@ -767,29 +780,29 @@
                   chat)
                     shift 2; MSG=""
                     while [ $# -gt 0 ]; do case "$1" in -m) shift; MSG="$1" ;; esac; shift; done
-                    curl -sf --unix-socket "$SOCK" -X POST $H "$API/inference/chat" \
+                    _call -X POST $H "$API/inference/chat" \
                       -d "{\\"messages\\":[{\\"role\\":\\"user\\",\\"content\\":\\"$MSG\\"}]}" | jq -r '.content // empty' ;;
                   *) echo "Usage: osaurus-host inference chat -m <message>" >&2; exit 1 ;;
                 esac ;;
               agent)
                 case "$2" in
-                  dispatch) curl -sf --unix-socket "$SOCK" -X POST $H "$API/agent/dispatch" -d "{\\"agent_id\\":\\"$3\\",\\"task\\":\\"$4\\"}" ;;
+                  dispatch) _call -X POST $H "$API/agent/dispatch" -d "{\\"agent_id\\":\\"$3\\",\\"task\\":\\"$4\\"}" ;;
                   memory)
                     case "$3" in
-                      query) curl -sf --unix-socket "$SOCK" -X POST $H "$API/agent/memory/query" -d "{\\"query\\":\\"$4\\"}" ;;
-                      store) curl -sf --unix-socket "$SOCK" -X POST $H "$API/agent/memory/store" -d "{\\"content\\":\\"$4\\"}" ;;
+                      query) _call -X POST $H "$API/agent/memory/query" -d "{\\"query\\":\\"$4\\"}" ;;
+                      store) _call -X POST $H "$API/agent/memory/store" -d "{\\"content\\":\\"$4\\"}" ;;
                       *) echo "Usage: osaurus-host agent memory query|store <text>" >&2; exit 1 ;;
                     esac ;;
                   *) echo "Usage: osaurus-host agent dispatch|memory ..." >&2; exit 1 ;;
                 esac ;;
               events)
                 case "$2" in
-                  emit) curl -sf --unix-socket "$SOCK" -X POST $H "$API/events/emit" -d "{\\"type\\":\\"$3\\",\\"payload\\":${4:-{}}}" > /dev/null ;;
+                  emit) _call -X POST $H "$API/events/emit" -d "{\\"type\\":\\"$3\\",\\"payload\\":${4:-{}}}" > /dev/null ;;
                   *) echo "Usage: osaurus-host events emit <type> [payload]" >&2; exit 1 ;;
                 esac ;;
               plugin)
                 case "$2" in
-                  create) cat | curl -sf --unix-socket "$SOCK" -X POST $H "$API/plugin/create" -d @- ;;
+                  create) cat | _call -X POST $H "$API/plugin/create" -d @- ;;
                   *) echo "Usage: osaurus-host plugin create < plugin.json" >&2; exit 1 ;;
                 esac ;;
               log)
