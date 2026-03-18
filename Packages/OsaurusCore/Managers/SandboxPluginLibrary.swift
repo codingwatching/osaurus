@@ -22,18 +22,22 @@ public final class SandboxPluginLibrary: ObservableObject {
     // MARK: - CRUD
 
     public func save(_ plugin: SandboxPlugin) {
+        var pluginToSave = plugin
+        pluginToSave.modifiedAt = Date()
+
         let dir = OsaurusPaths.sandboxPluginLibrary()
         OsaurusPaths.ensureExistsSilent(dir)
-        let file = dir.appendingPathComponent("\(plugin.id).json")
+        let file = dir.appendingPathComponent("\(pluginToSave.id).json")
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(plugin) else { return }
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(pluginToSave) else { return }
         try? data.write(to: file, options: .atomic)
 
-        if let index = plugins.firstIndex(where: { $0.id == plugin.id }) {
-            plugins[index] = plugin
+        if let index = plugins.firstIndex(where: { $0.id == pluginToSave.id }) {
+            plugins[index] = pluginToSave
         } else {
-            plugins.append(plugin)
+            plugins.append(pluginToSave)
         }
     }
 
@@ -60,11 +64,13 @@ public final class SandboxPluginLibrary: ObservableObject {
         guard let plugin = plugin(id: pluginId) else { return nil }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         return try? encoder.encode(plugin)
     }
 
     public func importFromData(_ data: Data) throws -> SandboxPlugin {
         let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         let plugin = try decoder.decode(SandboxPlugin.self, from: data)
         let errors = plugin.validateFilePaths()
         guard errors.isEmpty else {
@@ -89,6 +95,7 @@ public final class SandboxPluginLibrary: ObservableObject {
 
         var loaded: [SandboxPlugin] = []
         let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         for file in files where file.pathExtension == "json" {
             guard let data = try? Data(contentsOf: file),
                 let plugin = try? decoder.decode(SandboxPlugin.self, from: data)

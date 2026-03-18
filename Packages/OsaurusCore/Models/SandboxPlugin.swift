@@ -35,6 +35,81 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
     public var secrets: [String]?
     public var events: SandboxEventsSpec?
     public var permissions: SandboxPermissions?
+    /// Catch-all for arbitrary JSON data from users or agents.
+    /// Unknown top-level keys encountered during decode are captured here automatically.
+    public var metadata: [String: JSONValue]?
+    /// Tracks when the plugin definition was last modified.
+    public var modifiedAt: Date?
+
+    // MARK: - Codable
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, version, author, source
+        case dependencies, setup, files, tools, mcp, daemon
+        case secrets, events, permissions, metadata, modifiedAt
+    }
+
+    private struct DynamicCodingKey: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
+    private static let knownKeyNames: Set<String> = [
+        "name", "description", "version", "author", "source",
+        "dependencies", "setup", "files", "tools", "mcp", "daemon",
+        "secrets", "events", "permissions", "metadata", "modifiedAt",
+    ]
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        description = try c.decode(String.self, forKey: .description)
+        version = try c.decodeIfPresent(String.self, forKey: .version)
+        author = try c.decodeIfPresent(String.self, forKey: .author)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        dependencies = try c.decodeIfPresent([String].self, forKey: .dependencies)
+        setup = try c.decodeIfPresent(String.self, forKey: .setup)
+        files = try c.decodeIfPresent([String: String].self, forKey: .files)
+        tools = try c.decodeIfPresent([SandboxToolSpec].self, forKey: .tools)
+        mcp = try c.decodeIfPresent(SandboxMCPSpec.self, forKey: .mcp)
+        daemon = try c.decodeIfPresent(SandboxDaemonSpec.self, forKey: .daemon)
+        secrets = try c.decodeIfPresent([String].self, forKey: .secrets)
+        events = try c.decodeIfPresent(SandboxEventsSpec.self, forKey: .events)
+        permissions = try c.decodeIfPresent(SandboxPermissions.self, forKey: .permissions)
+        modifiedAt = try c.decodeIfPresent(Date.self, forKey: .modifiedAt)
+
+        var meta = try c.decodeIfPresent([String: JSONValue].self, forKey: .metadata)
+        let dynamic = try decoder.container(keyedBy: DynamicCodingKey.self)
+        for key in dynamic.allKeys where !Self.knownKeyNames.contains(key.stringValue) {
+            if meta == nil { meta = [:] }
+            meta?[key.stringValue] = try dynamic.decode(JSONValue.self, forKey: key)
+        }
+        metadata = meta
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name)
+        try c.encode(description, forKey: .description)
+        try c.encodeIfPresent(version, forKey: .version)
+        try c.encodeIfPresent(author, forKey: .author)
+        try c.encodeIfPresent(source, forKey: .source)
+        try c.encodeIfPresent(dependencies, forKey: .dependencies)
+        try c.encodeIfPresent(setup, forKey: .setup)
+        try c.encodeIfPresent(files, forKey: .files)
+        try c.encodeIfPresent(tools, forKey: .tools)
+        try c.encodeIfPresent(mcp, forKey: .mcp)
+        try c.encodeIfPresent(daemon, forKey: .daemon)
+        try c.encodeIfPresent(secrets, forKey: .secrets)
+        try c.encodeIfPresent(events, forKey: .events)
+        try c.encodeIfPresent(permissions, forKey: .permissions)
+        try c.encodeIfPresent(metadata, forKey: .metadata)
+        try c.encodeIfPresent(modifiedAt, forKey: .modifiedAt)
+    }
+
+    // MARK: - Init
 
     public init(
         name: String,
@@ -50,7 +125,9 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
         daemon: SandboxDaemonSpec? = nil,
         secrets: [String]? = nil,
         events: SandboxEventsSpec? = nil,
-        permissions: SandboxPermissions? = nil
+        permissions: SandboxPermissions? = nil,
+        metadata: [String: JSONValue]? = nil,
+        modifiedAt: Date? = nil
     ) {
         self.name = name
         self.description = description
@@ -66,6 +143,8 @@ public struct SandboxPlugin: Codable, Sendable, Identifiable, Equatable {
         self.secrets = secrets
         self.events = events
         self.permissions = permissions
+        self.metadata = metadata
+        self.modifiedAt = modifiedAt
     }
 }
 
@@ -168,10 +247,14 @@ public struct SandboxPermissions: Codable, Sendable, Equatable {
 extension SandboxPlugin {
     /// Deterministic SHA-256 hash of the plugin's canonical JSON representation.
     /// Used to detect meaningful content changes between library and installed copies.
+    /// Excludes `modifiedAt` so that timestamps alone don't invalidate the hash.
     public var contentHash: String {
+        var copy = self
+        copy.modifiedAt = nil
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(self) else { return "" }
+        encoder.dateEncodingStrategy = .iso8601
+        guard let data = try? encoder.encode(copy) else { return "" }
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
     }
@@ -231,6 +314,7 @@ extension SandboxPlugin {
     public func exportJSON() throws -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(self)
         guard let json = String(data: data, encoding: .utf8) else {
             throw SandboxPluginDistributionError.encodingFailed
@@ -243,7 +327,9 @@ extension SandboxPlugin {
         guard let data = json.data(using: .utf8) else {
             throw SandboxPluginDistributionError.invalidJSON
         }
-        return try JSONDecoder().decode(SandboxPlugin.self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(SandboxPlugin.self, from: data)
     }
 
     /// Import from a URL (fetches JSON from a remote URL).
@@ -254,7 +340,9 @@ extension SandboxPlugin {
         else {
             throw SandboxPluginDistributionError.fetchFailed(url.absoluteString)
         }
-        return try JSONDecoder().decode(SandboxPlugin.self, from: data)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(SandboxPlugin.self, from: data)
     }
 
     /// Import from a GitHub repo URL (looks for osaurus.json at the root).

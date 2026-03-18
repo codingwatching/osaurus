@@ -18,8 +18,10 @@ struct SandboxPluginEditorView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var plugin: SandboxPlugin
-    @State private var collapsedSections: Set<String> = ["Files"]
+    @State private var collapsedSections: Set<String> = ["Files", "Metadata"]
     @State private var showSaveConfirmation = false
+    @State private var metadataText: String = ""
+    @State private var metadataValid: Bool = true
 
     private let isNew: Bool
     private let originalId: String
@@ -33,6 +35,7 @@ struct SandboxPluginEditorView: View {
         onDismiss: @escaping () -> Void
     ) {
         _plugin = State(initialValue: plugin)
+        _metadataText = State(initialValue: Self.serializeMetadata(plugin.metadata))
         self.isNew = isNew
         self.originalId = plugin.id
         self.onSave = onSave
@@ -65,6 +68,7 @@ private extension SandboxPluginEditorView {
                     setupSection
                     toolsSection
                     filesSection
+                    metadataSection
                 }
                 .padding(20)
             }
@@ -200,6 +204,33 @@ private extension SandboxPluginEditorView {
                 .buttonStyle(.bordered)
         }
     }
+
+    var metadataSection: some View {
+        editorSection("Metadata", itemCount: plugin.metadata?.count) {
+            Text("Custom JSON data preserved across exports and imports")
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+            codeField(
+                text: $metadataText,
+                placeholder: "{ \"key\": \"value\" }",
+                minHeight: 80
+            )
+            .onChange(of: metadataText) { newValue in
+                parseMetadataText(newValue)
+            }
+
+            if !metadataValid {
+                HStack(spacing: 4) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                    Text("Invalid JSON")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(theme.errorColor)
+            }
+        }
+    }
 }
 
 // MARK: - Tool Card & Parameters
@@ -278,12 +309,12 @@ private extension SandboxPluginEditorView {
             }
 
             labeledField("Name") {
-                editorTextField(
+                DeferredRenameField(
                     "parameter_name",
-                    text: parameterNameBinding(key: key, toolIndex: toolIndex),
-                    fontSize: 12,
-                    mono: true
-                )
+                    initialValue: key
+                ) { newKey in
+                    renameParameter(oldKey: key, newKey: newKey, toolIndex: toolIndex)
+                }
             }
             labeledField("Type") {
                 Picker("", selection: parameterTypeBinding(key: key, toolIndex: toolIndex)) {
@@ -323,13 +354,13 @@ private extension SandboxPluginEditorView {
                 Image(systemName: "doc.text")
                     .font(.system(size: 10))
                     .foregroundColor(theme.accentColor)
-                editorTextField(
+                DeferredRenameField(
                     "filename.ext",
-                    text: fileNameBinding(path: path),
-                    fontSize: 11,
-                    weight: .medium,
-                    mono: true
-                )
+                    initialValue: path,
+                    fontSize: 11
+                ) { newPath in
+                    renameFile(oldPath: path, newPath: newPath)
+                }
                 Button(action: { removeFile(path) }) {
                     Image(systemName: "minus.circle")
                         .font(.system(size: 12))
@@ -380,6 +411,7 @@ private extension SandboxPluginEditorView {
     var prettyJSON: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         guard let data = try? encoder.encode(plugin),
             let json = String(data: data, encoding: .utf8)
         else { return "{}" }
@@ -448,6 +480,33 @@ private extension SandboxPluginEditorView {
         plugin.files?.removeValue(forKey: oldPath)
         plugin.files?[newPath] = content
     }
+
+    static func serializeMetadata(_ metadata: [String: JSONValue]?) -> String {
+        guard let metadata, !metadata.isEmpty else { return "" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        guard let data = try? encoder.encode(metadata),
+            let json = String(data: data, encoding: .utf8)
+        else { return "" }
+        return json
+    }
+
+    func parseMetadataText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            plugin.metadata = nil
+            metadataValid = true
+            return
+        }
+        guard let data = trimmed.data(using: .utf8),
+            let parsed = try? JSONDecoder().decode([String: JSONValue].self, from: data)
+        else {
+            metadataValid = false
+            return
+        }
+        plugin.metadata = parsed
+        metadataValid = true
+    }
 }
 
 // MARK: - Bindings
@@ -500,18 +559,6 @@ private extension SandboxPluginEditorView {
         )
     }
 
-    func parameterNameBinding(key: String, toolIndex: Int) -> Binding<String> {
-        Binding(
-            get: { key },
-            set: { newKey in
-                let trimmed = newKey.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty && trimmed != key {
-                    renameParameter(oldKey: key, newKey: trimmed, toolIndex: toolIndex)
-                }
-            }
-        )
-    }
-
     func parameterTypeBinding(key: String, toolIndex: Int) -> Binding<String> {
         Binding(
             get: { plugin.tools?[toolIndex].parameters?[key]?.type ?? "string" },
@@ -523,16 +570,6 @@ private extension SandboxPluginEditorView {
         Binding(
             get: { plugin.tools?[toolIndex].parameters?[key]?.default != nil },
             set: { plugin.tools?[toolIndex].parameters?[key]?.default = $0 ? "" : nil }
-        )
-    }
-
-    func fileNameBinding(path: String) -> Binding<String> {
-        Binding(
-            get: { path },
-            set: { newPath in
-                let trimmed = newPath.trimmingCharacters(in: .whitespaces)
-                if !trimmed.isEmpty && trimmed != path { renameFile(oldPath: path, newPath: trimmed) }
-            }
         )
     }
 
@@ -674,6 +711,65 @@ private extension SandboxPluginEditorView {
             }
             Button(action: { binding.wrappedValue.append("") }) { Label("Add", systemImage: "plus") }
                 .buttonStyle(.bordered)
+        }
+    }
+}
+
+// MARK: - Deferred Rename Field
+
+/// A text field that buffers keystrokes locally and only commits the new value
+/// on Enter or focus loss. Prevents SwiftUI identity thrashing when the value
+/// is used as a `ForEach` id (e.g. dictionary keys for files / parameters).
+private struct DeferredRenameField: View {
+    @Environment(\.theme) private var theme
+
+    let placeholder: String
+    let initialValue: String
+    let fontSize: CGFloat
+    let weight: Font.Weight
+    let onCommit: (String) -> Void
+
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(
+        _ placeholder: String,
+        initialValue: String,
+        fontSize: CGFloat = 12,
+        weight: Font.Weight = .medium,
+        onCommit: @escaping (String) -> Void
+    ) {
+        self.placeholder = placeholder
+        self.initialValue = initialValue
+        self.fontSize = fontSize
+        self.weight = weight
+        self.onCommit = onCommit
+        _text = State(initialValue: initialValue)
+    }
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: fontSize, weight: weight, design: .monospaced))
+            .foregroundColor(theme.primaryText)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.inputBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1))
+            )
+            .focused($isFocused)
+            .onSubmit { commit() }
+            .onChange(of: isFocused) { focused in
+                if !focused { commit() }
+            }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty && trimmed != initialValue {
+            onCommit(trimmed)
         }
     }
 }
