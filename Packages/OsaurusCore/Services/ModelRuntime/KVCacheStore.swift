@@ -60,12 +60,13 @@ struct KVCacheStore {
 
     // MARK: - Budget
 
-    /// Computes the available memory budget for KV caches based on system RAM,
-    /// currently loaded model weights, and a headroom reserve for the OS.
+    /// Computes the available memory budget for hot KV session caches.
+    /// Uses half of the headroom after model weights to leave the other half
+    /// for OS, apps, MLX intermediates, and breathing room.
     static func computeBudget(modelWeightsBytes: Int64) -> Int {
         let systemRAM = Int(ProcessInfo.processInfo.physicalMemory)
-        let headroom = 4 * 1024 * 1024 * 1024
-        let budget = systemRAM - Int(modelWeightsBytes) - headroom
+        let available = systemRAM - Int(modelWeightsBytes)
+        let budget = available / 2
         return max(512 * 1024 * 1024, budget)
     }
 
@@ -277,7 +278,11 @@ struct KVCacheStore {
         }
     }
 
+    private static let maxPrefixCachesPerModel = 2
+
     /// Stores a prefix cache keyed by model + content hash.
+    /// Caps prefix entries to `maxPrefixCachesPerModel` per model, evicting
+    /// the oldest when the limit is exceeded.
     mutating func putPrefixCache(_ cache: [any KVCache], modelName: String, hash: String) {
         let key = Self.prefixKey(modelName: modelName, hash: hash)
         putCache(sessionId: key, cache: cache, modelName: modelName)
@@ -285,6 +290,21 @@ struct KVCacheStore {
             entry.contentHash = hash
         }
         saveToDisk(sessionId: key, cache: cache, modelName: modelName)
+        prunePrefixCaches(modelName: modelName, keepKey: key)
+    }
+
+    /// Evicts the oldest prefix caches for `modelName` that exceed the per-model cap.
+    private mutating func prunePrefixCaches(modelName: String, keepKey: String) {
+        let prefix = "prefix_\(modelName)_"
+        let prefixEntries =
+            entries
+            .filter { $0.key.hasPrefix(prefix) && $0.key != keepKey }
+            .sorted { $0.value.lastAccess < $1.value.lastAccess }
+        let excess = (prefixEntries.count + 1) - Self.maxPrefixCachesPerModel
+        guard excess > 0 else { return }
+        for entry in prefixEntries.prefix(excess) {
+            evictEntry(sessionId: entry.key, saveSSD: false)
+        }
     }
 
     /// Returns true if a prefix cache exists for this model + content hash.

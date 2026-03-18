@@ -26,7 +26,7 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.genTopP == defaults.genTopP)
         #expect(decoded.genKVGroupSize == defaults.genKVGroupSize)
         #expect(decoded.genQuantizedKVStart == defaults.genQuantizedKVStart)
-        #expect(decoded.genPrefillStepSize == defaults.genPrefillStepSize)
+        #expect(decoded.genPrefillStepSize == nil)
     }
 
     @Test @MainActor func storeRoundTrip_readsWhatWasWritten() async throws {

@@ -56,8 +56,8 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     public var genQuantizedKVStart: Int
     /// Maximum KV cache size (tokens); nil for unlimited
     public var genMaxKVSize: Int?
-    /// Prefill step size (tokens per prefill chunk)
-    public var genPrefillStepSize: Int
+    /// Prefill step size (tokens per prefill chunk); nil for auto-detect based on RAM
+    public var genPrefillStepSize: Int?
 
     /// List of allowed origins for CORS. Empty disables CORS. Use "*" to allow any origin.
     public var allowedOrigins: [String]
@@ -99,16 +99,14 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             try container.decodeIfPresent(Int.self, forKey: .numberOfThreads) ?? defaults.numberOfThreads
         self.backlog = try container.decodeIfPresent(Int32.self, forKey: .backlog) ?? defaults.backlog
         self.genTopP = try container.decodeIfPresent(Float.self, forKey: .genTopP) ?? defaults.genTopP
-        self.genKVBits = try container.decodeIfPresent(Int.self, forKey: .genKVBits)
+        self.genKVBits = try container.decodeIfPresent(Int.self, forKey: .genKVBits) ?? defaults.genKVBits
         self.genKVGroupSize =
             try container.decodeIfPresent(Int.self, forKey: .genKVGroupSize) ?? defaults.genKVGroupSize
         self.genQuantizedKVStart =
             try container.decodeIfPresent(Int.self, forKey: .genQuantizedKVStart)
             ?? defaults.genQuantizedKVStart
         self.genMaxKVSize = try container.decodeIfPresent(Int.self, forKey: .genMaxKVSize)
-        self.genPrefillStepSize =
-            try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
-            ?? defaults.genPrefillStepSize
+        self.genPrefillStepSize = try container.decodeIfPresent(Int.self, forKey: .genPrefillStepSize)
         self.allowedOrigins =
             try container.decodeIfPresent([String].self, forKey: .allowedOrigins)
             ?? defaults.allowedOrigins
@@ -130,7 +128,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genKVGroupSize: Int,
         genQuantizedKVStart: Int,
         genMaxKVSize: Int?,
-        genPrefillStepSize: Int,
+        genPrefillStepSize: Int?,
         allowedOrigins: [String] = [],
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
     ) {
@@ -166,7 +164,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genKVGroupSize: 64,
             genQuantizedKVStart: 0,
             genMaxKVSize: nil,
-            genPrefillStepSize: 1024,
+            genPrefillStepSize: nil,
             allowedOrigins: [],
             modelEvictionPolicy: .strictSingleModel
         )
