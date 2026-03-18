@@ -1051,6 +1051,7 @@ private struct SandboxProvisionSheet: View {
                     .buttonStyle(.plain)
                     .foregroundColor(theme.secondaryText)
                     .font(.system(size: 13, weight: .medium))
+                    .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
 
@@ -1069,6 +1070,7 @@ private struct SandboxProvisionSheet: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(20)
         }
@@ -1779,37 +1781,37 @@ private struct SandboxInstallSheet: View {
 
             Divider().foregroundColor(theme.cardBorder)
 
-            VStack(alignment: .leading, spacing: 20) {
-                SandboxPluginHeader(plugin: plugin)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    SandboxPluginHeader(plugin: plugin)
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("SELECT AGENTS")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(theme.secondaryText)
-                        .tracking(0.5)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("SELECT AGENTS")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(theme.secondaryText)
+                            .tracking(0.5)
 
-                    VStack(spacing: 0) {
-                        ForEach(agents, id: \.id) { agent in
-                            agentRow(agent: agent, isInstalled: installedAgentIds.contains(agent.id))
-                            if agent.id != agents.last?.id {
-                                Divider().foregroundColor(theme.cardBorder)
+                        VStack(spacing: 0) {
+                            ForEach(agents, id: \.id) { agent in
+                                agentRow(agent: agent, isInstalled: installedAgentIds.contains(agent.id))
+                                if agent.id != agents.last?.id {
+                                    Divider().foregroundColor(theme.cardBorder)
+                                }
                             }
                         }
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.inputBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
+                .padding(20)
             }
-            .padding(20)
-
-            Spacer()
 
             Divider().foregroundColor(theme.cardBorder)
 
@@ -1818,6 +1820,7 @@ private struct SandboxInstallSheet: View {
                     .buttonStyle(.plain)
                     .foregroundColor(theme.secondaryText)
                     .font(.system(size: 13, weight: .medium))
+                    .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
 
@@ -1843,6 +1846,7 @@ private struct SandboxInstallSheet: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(newSelectionCount == 0)
+                .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(20)
         }
@@ -1937,58 +1941,58 @@ private struct SandboxManageInstallsSheet: View {
 
             Divider().foregroundColor(theme.cardBorder)
 
-            VStack(alignment: .leading, spacing: 20) {
-                SandboxPluginHeader(plugin: plugin)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    SandboxPluginHeader(plugin: plugin)
 
-                if let error = errorMessage {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11))
-                        Text(error)
-                            .font(.system(size: 11))
-                            .lineLimit(2)
+                    if let error = errorMessage {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 11))
+                            Text(error)
+                                .font(.system(size: 11))
+                                .lineLimit(2)
+                        }
+                        .foregroundColor(theme.warningColor)
                     }
-                    .foregroundColor(theme.warningColor)
-                }
 
-                if agentInstalls.isEmpty {
-                    VStack(spacing: 8) {
-                        Text("Not installed on any agents")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("INSTALLED ON")
-                            .font(.system(size: 11, weight: .bold))
-                            .foregroundColor(theme.secondaryText)
-                            .tracking(0.5)
+                    if agentInstalls.isEmpty {
+                        VStack(spacing: 8) {
+                            Text("Not installed on any agents")
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("INSTALLED ON")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(theme.secondaryText)
+                                .tracking(0.5)
 
-                        VStack(spacing: 0) {
-                            ForEach(agentInstalls, id: \.0.id) { agent, installed, outdated in
-                                manageRow(agent: agent, installed: installed, isOutdated: outdated)
-                                if agent.id != agentInstalls.last?.0.id {
-                                    Divider().foregroundColor(theme.cardBorder)
+                            VStack(spacing: 0) {
+                                ForEach(agentInstalls, id: \.0.id) { agent, installed, outdated in
+                                    manageRow(agent: agent, installed: installed, isOutdated: outdated)
+                                    if agent.id != agentInstalls.last?.0.id {
+                                        Divider().foregroundColor(theme.cardBorder)
+                                    }
                                 }
                             }
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(theme.inputBackground)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(theme.inputBorder, lineWidth: 1)
+                                    )
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
                         }
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
                     }
                 }
+                .padding(20)
             }
-            .padding(20)
-
-            Spacer()
 
             Divider().foregroundColor(theme.cardBorder)
 
@@ -2006,6 +2010,7 @@ private struct SandboxManageInstallsSheet: View {
                             )
                     }
                     .buttonStyle(.plain)
+                    .keyboardShortcut(.return, modifiers: .command)
                 }
 
                 Spacer()
@@ -2014,6 +2019,7 @@ private struct SandboxManageInstallsSheet: View {
                     .buttonStyle(.plain)
                     .foregroundColor(theme.secondaryText)
                     .font(.system(size: 13, weight: .medium))
+                    .keyboardShortcut(.escape, modifiers: [])
             }
             .padding(20)
         }
