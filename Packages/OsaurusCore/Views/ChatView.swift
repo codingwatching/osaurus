@@ -826,7 +826,8 @@ final class ChatSession: ObservableObject {
         }
 
         guard executionMode.usesSandboxTools else { return prompt }
-        let sandboxSection = WorkExecutionEngine.chatSandboxPromptSection(compact: compact)
+        let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+        let sandboxSection = WorkExecutionEngine.chatSandboxPromptSection(compact: compact, secretNames: secretNames)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if prompt.isEmpty {
             return sandboxSection

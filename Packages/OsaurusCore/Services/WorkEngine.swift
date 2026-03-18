@@ -398,12 +398,19 @@ public actor WorkEngine {
             }
 
         let compact = SystemPromptBuilder.isLocalModel(model)
+        let secretNames: [String] = {
+            guard let name = sandboxAgentName,
+                let uuid = SandboxAgentMap.resolve(linuxName: name)
+            else { return [] }
+            return Array(AgentSecretsKeychain.getAllSecrets(agentId: uuid).keys)
+        }()
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             issue: issue,
             executionMode: resolvedExecutionMode,
             skillInstructions: skillInstructions,
-            compact: compact
+            compact: compact,
+            secretNames: secretNames
         )
 
         // Log execution started

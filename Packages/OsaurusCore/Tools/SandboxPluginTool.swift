@@ -84,9 +84,8 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
     private func buildExecEnvironment(from argumentsJSON: String) -> [String: String] {
         var env: [String: String] = [:]
 
-        if let agentUUID = UUID(uuidString: agentId) {
-            env.merge(AgentSecretsKeychain.getAllSecrets(agentId: agentUUID)) { _, new in new }
-            env.merge(ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentUUID)) { _, new in new }
+        if let uuid = UUID(uuidString: agentId) {
+            env = AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: pluginId)
         }
 
         env["OSAURUS_PLUGIN"] = pluginId

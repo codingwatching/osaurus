@@ -49,6 +49,7 @@ enum BuiltinSandboxTools {
         )
         registry.registerSandboxTool(
             SandboxExecTool(
+                agentId: agentId,
                 agentName: agentName,
                 home: home,
                 maxTimeout: config.commandTimeout,
@@ -58,6 +59,7 @@ enum BuiltinSandboxTools {
         )
         registry.registerSandboxTool(
             SandboxExecBackgroundTool(
+                agentId: agentId,
                 agentName: agentName,
                 home: home,
                 maxCommandsPerTurn: maxCmdsPerTurn
@@ -67,15 +69,16 @@ enum BuiltinSandboxTools {
         registry.registerSandboxTool(SandboxExecKillTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(SandboxInstallTool(agentName: agentName), runtimeManaged: true)
         registry.registerSandboxTool(
-            SandboxPipInstallTool(agentName: agentName, home: home),
+            SandboxPipInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
         registry.registerSandboxTool(
-            SandboxNpmInstallTool(agentName: agentName, home: home),
+            SandboxNpmInstallTool(agentId: agentId, agentName: agentName, home: home),
             runtimeManaged: true
         )
         registry.registerSandboxTool(
             SandboxRunScriptTool(
+                agentId: agentId,
                 agentName: agentName,
                 home: home,
                 maxTimeout: config.commandTimeout,
@@ -119,7 +122,11 @@ private func agentVenvPath(home: String) -> String {
     "\(home)/.venv"
 }
 
-private func agentShellEnvironment(home: String, cwd: String? = nil) -> [String: String] {
+private func agentShellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
+    var env: [String: String] = [:]
+    if let uuid = UUID(uuidString: agentId) {
+        env = AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
+    }
     let venvPath = agentVenvPath(home: home)
     var pathEntries: [String] = []
     if let cwd, !cwd.isEmpty {
@@ -127,10 +134,9 @@ private func agentShellEnvironment(home: String, cwd: String? = nil) -> [String:
     }
     pathEntries.append("\(venvPath)/bin")
     pathEntries.append(sandboxDefaultPATH)
-    return [
-        "VIRTUAL_ENV": venvPath,
-        "PATH": pathEntries.joined(separator: ":"),
-    ]
+    env["VIRTUAL_ENV"] = venvPath
+    env["PATH"] = pathEntries.joined(separator: ":")
+    return env
 }
 
 private func jsonResult(_ dict: [String: Any]) -> String {
@@ -617,6 +623,7 @@ private struct SandboxDeleteTool: OsaurusTool, @unchecked Sendable {
 private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_exec"
     let description = "Run a shell command in the agent's sandbox environment."
+    let agentId: String
     let agentName: String
     let home: String
     let maxTimeout: Int
@@ -672,7 +679,7 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
         let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: command,
-            env: agentShellEnvironment(home: home, cwd: cwd),
+            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
             cwd: cwd,
             timeout: TimeInterval(timeout),
             streamToLogs: true,
@@ -692,6 +699,7 @@ private struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
 private struct SandboxExecBackgroundTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_exec_background"
     let description = "Start a background process in the sandbox. Log output is written to the agent's home directory."
+    let agentId: String
     let agentName: String
     let home: String
     let maxCommandsPerTurn: Int
@@ -728,7 +736,7 @@ private struct SandboxExecBackgroundTool: OsaurusTool, @unchecked Sendable {
         let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: fullCmd,
-            env: agentShellEnvironment(home: home, cwd: cwd),
+            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
             timeout: 10,
             streamToLogs: true,
             logSource: agentName
@@ -821,6 +829,7 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_pip_install"
     let description =
         "Install Python packages via pip (runs as agent user). Example args: {\"packages\": [\"numpy\", \"flask\"]}"
+    let agentId: String
     let agentName: String
     let home: String
 
@@ -862,6 +871,7 @@ private struct SandboxPipInstallTool: OsaurusTool, @unchecked Sendable {
             agentName,
             command:
                 "test -x '\(venvPath)/bin/python3' || /usr/bin/python3 -m venv '\(venvPath)' && '\(venvPath)/bin/python3' -m pip install \(pkgList)",
+            env: agentShellEnvironment(agentId: agentId, home: home),
             timeout: 120,
             streamToLogs: true,
             logSource: "pip"
@@ -876,6 +886,7 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_npm_install"
     let description =
         "Install Node packages via npm (runs as agent user). Example args: {\"packages\": [\"express\", \"lodash\"]}"
+    let agentId: String
     let agentName: String
     let home: String
 
@@ -915,7 +926,7 @@ private struct SandboxNpmInstallTool: OsaurusTool, @unchecked Sendable {
         let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
             agentName,
             command: "npm install \(pkgList)",
-            env: agentShellEnvironment(home: home, cwd: home),
+            env: agentShellEnvironment(agentId: agentId, home: home, cwd: home),
             timeout: 120,
             streamToLogs: true,
             logSource: "npm"
@@ -931,6 +942,7 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
     let description =
         "Write and execute a script in the sandbox. Saves to a temp file and runs it. "
         + "Use for multi-step operations: file analysis, bulk edits, data processing, build scripts."
+    let agentId: String
     let agentName: String
     let home: String
     let maxTimeout: Int
@@ -995,7 +1007,7 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
         let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
             user: "agent-\(agentName)",
             command: command,
-            env: agentShellEnvironment(home: home, cwd: cwd),
+            env: agentShellEnvironment(agentId: agentId, home: home, cwd: cwd),
             timeout: TimeInterval(timeout),
             streamToLogs: true,
             logSource: agentName
