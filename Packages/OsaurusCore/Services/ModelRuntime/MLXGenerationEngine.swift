@@ -7,7 +7,7 @@
 
 import Foundation
 import MLXLLM
-import MLXLMCommon
+@preconcurrency import MLXLMCommon
 import CoreImage
 import MLXVLM
 
@@ -21,7 +21,7 @@ struct MLXGenerationEngine {
         return image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     }
 
-    private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
+    static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
                 switch userInputImage {
@@ -40,14 +40,25 @@ struct MLXGenerationEngine {
         }
     }
 
+    /// Holds the generation stream plus the caller-owned KV cache that was
+    /// passed into (or created for) `generate()`.  Because `[any KVCache]` is
+    /// not `Sendable`, we wrap it in an `@unchecked Sendable` box so it can
+    /// cross the `container.perform` boundary safely -- access is serialised
+    /// through the `ModelRuntime` actor.
+    final class CacheBox: @unchecked Sendable {
+        let cache: [any KVCache]
+        init(_ cache: [any KVCache]) { self.cache = cache }
+    }
+
     static func prepareAndGenerate(
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
-        runtime: RuntimeConfig
-    ) async throws -> AsyncStream<MLXLMCommon.Generation> {
-        let stream: AsyncStream<MLXLMCommon.Generation> = try await container.perform {
+        runtime: RuntimeConfig,
+        existingCache: [any KVCache]?
+    ) async throws -> (AsyncStream<MLXLMCommon.Generation>, [any KVCache]) {
+        let result: (AsyncStream<MLXLMCommon.Generation>, CacheBox) = try await container.perform {
             (context: MLXLMCommon.ModelContext) in
             let chat = preprocessImages(in: buildChat())
             let toolsSpec = buildToolsSpec()
@@ -90,13 +101,20 @@ struct MLXGenerationEngine {
             let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
             contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
 
-            return try MLXLMCommon.generate(
+            // Pre-create the cache when none exists so we own it and can
+            // persist it after generation.  When existingCache is provided,
+            // generate() updates it in-place (the main perf win).
+            let cache = existingCache ?? makePromptCache(model: context.model, parameters: parameters)
+
+            let stream = try MLXLMCommon.generate(
                 input: fullLMInput,
-                cache: nil,
+                cache: cache,
                 parameters: parameters,
                 context: contextWithEOS
             )
+
+            return (stream, CacheBox(cache))
         }
-        return stream
+        return (result.0, result.1.cache)
     }
 }

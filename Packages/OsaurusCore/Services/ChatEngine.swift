@@ -65,7 +65,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             maxTokens: maxTokens,
             topPOverride: request.top_p,
             repetitionPenalty: repPenalty,
-            modelOptions: request.modelOptions ?? [:]
+            modelOptions: request.modelOptions ?? [:],
+            sessionId: request.session_id,
+            cacheHint: request.cache_hint
         )
 
         // Candidate services and installed models (injected for testability)
@@ -268,7 +270,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             maxTokens: maxTokens,
             topPOverride: request.top_p,
             repetitionPenalty: repPenalty2,
-            modelOptions: request.modelOptions ?? [:]
+            modelOptions: request.modelOptions ?? [:],
+            sessionId: request.session_id,
+            cacheHint: request.cache_hint
         )
 
         let services = self.services

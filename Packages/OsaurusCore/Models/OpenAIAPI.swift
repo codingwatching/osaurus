@@ -350,14 +350,16 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// OpenAI tool_choice ("none" | "auto" | {"type":"function","function":{"name":...}})
     let tool_choice: ToolChoiceOption?
     /// Optional session identifier for KV cache reuse across turns
-    let session_id: String?
+    var session_id: String? = nil
+    /// Optional prefix cache hint for sharing a cached KV prefix across requests
+    var cache_hint: String? = nil
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
     var modelOptions: [String: ModelOptionValue]? = nil
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, stream, top_p
         case frequency_penalty, presence_penalty, stop, n
-        case tools, tool_choice, session_id
+        case tools, tool_choice, session_id, cache_hint
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -374,7 +376,8 @@ struct ChatCompletionRequest: Codable, Sendable {
             n: n,
             tools: tools,
             tool_choice: tool_choice,
-            session_id: session_id
+            session_id: session_id,
+            cache_hint: cache_hint
         )
         copy.modelOptions = modelOptions
         return copy
@@ -403,7 +406,11 @@ struct ChatCompletionResponse: Codable, Sendable {
     let model: String
     let choices: [ChatChoice]
     let usage: Usage
-    let system_fingerprint: String?
+    var system_fingerprint: String? = nil
+    /// Content hash of the system prompt + tool names used for this request.
+    /// API callers can pass this value back as `cache_hint` to reuse the
+    /// prefix KV cache on subsequent requests.
+    var prefix_hash: String? = nil
 }
 
 // MARK: - Streaming Response Structures
@@ -443,7 +450,9 @@ struct ChatCompletionChunk: Codable, Sendable {
     let created: Int
     let model: String
     let choices: [StreamChoice]
-    let system_fingerprint: String?
+    var system_fingerprint: String? = nil
+    /// Included only in the first chunk; see `ChatCompletionResponse.prefix_hash`.
+    var prefix_hash: String? = nil
 }
 
 // MARK: - Error Response

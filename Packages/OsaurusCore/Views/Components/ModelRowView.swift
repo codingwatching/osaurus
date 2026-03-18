@@ -132,10 +132,10 @@ struct ModelRowView: View {
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
             if hasAppeared { return }
-            
+
             // High-frequency stagger logic:
             // 1. Initial items (0-10) get a polished cascade (40ms steps).
-            // 2. Scrolling items use a micro-stagger (max 40ms total) to ensure 
+            // 2. Scrolling items use a micro-stagger (max 40ms total) to ensure
             //    instant responsiveness while maintaining the 'liquid' ripple effect.
             let delay: Double = {
                 if animationIndex < 10 {
@@ -146,7 +146,7 @@ struct ModelRowView: View {
                     return 0.01 + Double(animationIndex % 4) * 0.01
                 }
             }()
-            
+
             withAnimation(.spring(response: 0.38, dampingFraction: 0.82).delay(delay)) {
                 hasAppeared = true
             }

@@ -57,12 +57,12 @@ struct MLXModel: Identifiable, Codable {
     /// Uses explicit downloadSizeBytes if available, otherwise estimates based on parameters/quantization.
     var totalSizeEstimateBytes: Int64? {
         if let bytes = downloadSizeBytes { return bytes }
-        
+
         // Estimate based on params and quantization (without the runtime overhead multiplier)
         if let params = parameterCountBillions {
             return Int64(params * bytesPerParameter * 1024 * 1024 * 1024)
         }
-        
+
         return nil
     }
 
@@ -204,7 +204,7 @@ struct MLXModel: Identifiable, Codable {
     /// Extracts the model family from the name/id (e.g., "Llama", "Qwen", "Gemma", "Phi")
     var family: String {
         let name = self.name.lowercased()
-        
+
         // 1. Check for common families first (strong matches)
         let strongMatches = [
             "llama": "Llama",
@@ -229,24 +229,26 @@ struct MLXModel: Identifiable, Codable {
             "granite": "Granite",
             "exat": "Exat",
             "opcoder": "OpCoder",
-            "opencoder": "OpenCoder"
+            "opencoder": "OpenCoder",
         ]
-        
+
         for (key, value) in strongMatches {
             if name.contains(key) { return value }
         }
-        
+
         // 2. Fallback heuristic: clean up the name and take the first part
         // Remove common vendor prefixes
         var cleaned = self.name
-        let prefixes = ["Meta-", "Google-", "Mistral-", "MistralAI-", "Microsoft-", "NousResearch-", "Qwen-", "DeepSeek-"]
+        let prefixes = [
+            "Meta-", "Google-", "Mistral-", "MistralAI-", "Microsoft-", "NousResearch-", "Qwen-", "DeepSeek-",
+        ]
         for prefix in prefixes {
             if cleaned.hasPrefix(prefix) {
                 cleaned = String(cleaned.dropFirst(prefix.count))
                 break
             }
         }
-        
+
         // Take first semantic part (before dash or dot)
         let parts = cleaned.components(separatedBy: CharacterSet(charactersIn: "-. "))
         if let first = parts.first, !first.isEmpty {
@@ -255,7 +257,7 @@ struct MLXModel: Identifiable, Codable {
                 return first.capitalized
             }
         }
-        
+
         return "Other"
     }
 
@@ -263,7 +265,7 @@ struct MLXModel: Identifiable, Codable {
     enum ModelType: String, CaseIterable, Identifiable {
         case llm = "LLM"
         case vlm = "VLM"
-        
+
         var id: String { rawValue }
     }
 

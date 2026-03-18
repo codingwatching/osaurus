@@ -21,6 +21,7 @@ struct FloatingInputCard: View {
     let pickerItems: [ModelPickerItem]
     @Binding var activeModelOptions: [String: ModelOptionValue]
     let isStreaming: Bool
+    var isWarmingModel: Bool = false
     let supportsImages: Bool
     /// Current estimated context token count for the session
     let estimatedContextTokens: Int
@@ -783,8 +784,9 @@ struct FloatingInputCard: View {
         } content: {
             HStack(spacing: 6) {
                 Circle()
-                    .fill(Color.green)
+                    .fill(isWarmingModel ? Color.yellow : Color.green)
                     .frame(width: 6, height: 6)
+                    .help(isWarmingModel ? "Warming up model cache…" : "Model ready")
 
                 // Model name with metadata badges
                 if let option = selectedPickerItem {

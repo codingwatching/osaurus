@@ -10,6 +10,8 @@ import Foundation
 
 /// Main coordinator for work execution
 public actor WorkEngine {
+    static let freshBudgetContinuation = "Continue with the task. You have a fresh iteration budget."
+
     /// The execution engine
     private let executionEngine: WorkExecutionEngine
 
@@ -238,7 +240,7 @@ public actor WorkEngine {
         } else {
             appendUserMessage(
                 to: &session,
-                content: "Continue with the task. You have a fresh iteration budget."
+                content: Self.freshBudgetContinuation
             )
         }
         activeSession = session

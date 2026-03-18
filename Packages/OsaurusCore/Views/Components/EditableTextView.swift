@@ -92,7 +92,7 @@ struct EditableTextView: NSViewRepresentable {
         // Dynamically toggle scroller visibility without changing hasVerticalScroller
         let needsScroller = textView.contentHeight > maxHeight
         scrollView.verticalScroller?.isHidden = !needsScroller
-        
+
         // Ensure scroll view tiles its subviews correctly
         scrollView.tile()
 

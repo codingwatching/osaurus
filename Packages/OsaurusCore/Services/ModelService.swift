@@ -16,19 +16,28 @@ struct GenerationParameters: Sendable {
     let repetitionPenalty: Float?
     /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
     let modelOptions: [String: ModelOptionValue]
+    /// Session identifier for KV cache reuse across turns
+    let sessionId: String?
+    /// Explicit prefix cache key override (API callers can use this to share a
+    /// prefix cache across requests with varying system prompts).
+    let cacheHint: String?
 
     init(
         temperature: Float?,
         maxTokens: Int,
         topPOverride: Float? = nil,
         repetitionPenalty: Float? = nil,
-        modelOptions: [String: ModelOptionValue] = [:]
+        modelOptions: [String: ModelOptionValue] = [:],
+        sessionId: String? = nil,
+        cacheHint: String? = nil
     ) {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.topPOverride = topPOverride
         self.repetitionPenalty = repetitionPenalty
         self.modelOptions = modelOptions
+        self.sessionId = sessionId
+        self.cacheHint = cacheHint
     }
 }
 

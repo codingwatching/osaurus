@@ -91,6 +91,7 @@ final class ChatWindowState: ObservableObject {
             self?.refreshSessionsDebounced()
         }
 
+        warmUpSelectedModel()
         setupNotificationObservers()
     }
 
@@ -121,12 +122,26 @@ final class ChatWindowState: ObservableObject {
             refreshWorkTasks()
         }
 
+        warmUpSelectedModel()
         setupNotificationObservers()
     }
 
     deinit {
         print("[ChatWindowState] deinit – windowId: \(windowId)")
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    /// Kicks off model warm-up for the window's currently selected local model.
+    private func warmUpSelectedModel() {
+        guard let model = session.selectedModel,
+            ModelManager.findInstalledModel(named: model) != nil
+        else { return }
+        session.isWarmingModel = true
+        session.warmupTask = Task { [weak session, agentId] in
+            await MLXService.shared.warmUp(modelName: model, agentId: agentId)
+            guard !Task.isCancelled else { return }
+            await MainActor.run { session?.isWarmingModel = false }
+        }
     }
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
@@ -209,6 +224,11 @@ final class ChatWindowState: ObservableObject {
         } else {
             session.load(from: sessionData)
         }
+
+        // Pre-warm the KV cache for this session so it's ready when the user types
+        let sid = sessionData.id.uuidString
+        let model = session.selectedModel ?? "default"
+        Task { await ModelRuntime.shared.prewarmSession(sessionId: sid, modelName: model) }
 
         // Update theme if session has different agent
         let sessionAgentId = sessionData.agentId ?? Agent.defaultId

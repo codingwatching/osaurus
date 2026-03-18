@@ -265,6 +265,33 @@ curl http://127.0.0.1:1337/v1/chat/completions \
 
 Keep `session_id` stable per conversation and per model.
 
+### Prefix Caching and `cache_hint`
+
+The server maintains a content-aware **prefix cache** keyed by a hash of the system prompt and tool definitions. When consecutive requests share the same context, the KV cache from the prefix is reused, skipping redundant prefill computation.
+
+The computed `prefix_hash` is returned in every response (both streaming chunks and non-streaming):
+
+```json
+{ "prefix_hash": "a1b2c3d4e5f67890..." }
+```
+
+To explicitly control prefix cache matching, pass `cache_hint` in the request body. When provided, the server uses this value as the cache key instead of computing one:
+
+```bash
+curl http://127.0.0.1:1337/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "llama-3.2-3b-instruct",
+    "cache_hint": "a1b2c3d4e5f67890",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello"}
+    ]
+  }'
+```
+
+This is useful for API clients that want to guarantee cache hits across requests with identical context.
+
 ### Chat Templates
 
 Osaurus defers chat templating to MLX `ChatSession`, which uses the model's configuration to format prompts. System messages are combined and passed as `instructions`; user content is supplied as the prompt to `respond/streamResponse`.
@@ -616,10 +643,10 @@ Example response:
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.
 
-2. **Performance**: The first request to a model may take longer as the model needs to be loaded into memory.
+2. **Performance**: The first request to a model may take longer as the model needs to be loaded into memory. Subsequent requests benefit from the KV cache (session reuse) and prefix cache (shared system prompt context).
 
-3. **Memory Usage**: Models are cached in memory after loading. Use the ModelManager UI to manage which models are downloaded.
+3. **Memory Management**: Models are loaded into memory on demand and automatically unloaded when no chat window references them. The KV cache uses a tiered system: active sessions live in RAM, and least-recently-used sessions are evicted to SSD when the memory budget is exceeded. Configure the eviction policy in Settings > Local Inference > Model Management.
 
 4. **GPU Acceleration**: MLX automatically uses Apple Silicon GPU acceleration when available.
 
-5. **Context Length**: Each model has different context length limitations. Refer to the model documentation for specifics.
+5. **Context Length**: Each model has different context length limitations. The max KV cache size (configurable in Settings > Local Inference) controls the token budget for local models.

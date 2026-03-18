@@ -309,6 +309,11 @@ public final class WorkSession: ObservableObject {
     /// Available model picker items
     @Published var pickerItems: [ModelPickerItem] = []
 
+    /// Forwarded from the parent ChatSession's warm-up state.
+    var isWarmingModel: Bool {
+        windowState?.session.isWarmingModel ?? false
+    }
+
     /// Whether the currently selected model supports image attachments
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }

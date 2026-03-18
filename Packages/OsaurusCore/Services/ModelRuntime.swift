@@ -6,10 +6,11 @@
 //
 
 import CoreImage
+import CryptoKit
 import Foundation
 import MLX
 import MLXLLM
-import MLXLMCommon
+@preconcurrency import MLXLMCommon
 import MLXVLM
 
 // Force MLXVLM to be linked by referencing VLMModelFactory
@@ -36,8 +37,6 @@ actor ModelRuntime {
         }
     }
 
-    // No explicit concurrency gate; underlying MLX containers are used directly.
-
     // MARK: - Singleton
 
     static let shared = ModelRuntime()
@@ -47,6 +46,8 @@ actor ModelRuntime {
     private var modelCache: [String: SessionHolder] = [:]
     private var loadingTasks: [String: Task<SessionHolder, Error>] = [:]
     private var currentModelName: String?
+    private var kvCacheStore = KVCacheStore()
+    private var cachedConfig: RuntimeConfig?
 
     private init() {}
 
@@ -65,8 +66,11 @@ actor ModelRuntime {
         }
     }
 
+    // MARK: - Model lifecycle
+
     func unload(name: String) {
-        // Remove from cache within autoreleasepool to encourage immediate ARC deallocation
+        kvCacheStore.invalidateModel(name)
+
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
         }
@@ -74,34 +78,57 @@ actor ModelRuntime {
         loadingTasks.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
 
-        // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
         Memory.clearCache()
     }
 
+    /// Unloads any loaded model not referenced by an active window.
+    func unloadModelsNotIn(_ activeNames: Set<String>) {
+        for name in modelCache.keys where !activeNames.contains(name) {
+            print("[ModelRuntime] GC: Unloading unused model \(name)")
+            unload(name: name)
+        }
+    }
+
     func clearAll() {
-        // Remove all models within autoreleasepool to encourage immediate ARC deallocation
+        kvCacheStore.clearAll()
+
         autoreleasepool {
             modelCache.removeAll()
         }
         for task in loadingTasks.values { task.cancel() }
         loadingTasks.removeAll()
         currentModelName = nil
+        cachedConfig = nil
 
-        // Synchronize GPU stream to ensure all operations complete, then release Metal buffer pool
         Stream.gpu.synchronize()
         Memory.clearCache()
     }
 
+    /// Invalidates the cached RuntimeConfig so the next request reads fresh values.
+    func invalidateConfig() {
+        cachedConfig = nil
+    }
+
+    /// Pre-warms a session's KV cache by loading it from SSD into RAM.
+    func prewarmSession(sessionId: String, modelName: String) {
+        let budget = currentKVBudget()
+        kvCacheStore.prewarm(sessionId: sessionId, modelName: modelName, budgetBytes: budget)
+    }
+
+    /// Invalidates the KV cache for a specific session (e.g., on session delete).
+    func invalidateSession(_ sessionId: String) {
+        kvCacheStore.invalidate(sessionId: sessionId)
+    }
+
+    // MARK: - Warm-up
+
     func warmUp(modelId: String, modelName: String, prefillChars: Int = 0, maxTokens: Int = 1) async {
-        let warmupContent: String =
-            prefillChars > 0
-            ? String(repeating: "A", count: max(1, prefillChars))
-            : String(repeating: "A", count: 1024)
-        let messages = [Message(role: .user, content: warmupContent)]
+        guard !Task.isCancelled else { return }
+        let content = String(repeating: "A", count: prefillChars > 0 ? max(1, prefillChars) : 1024)
         do {
             let stream = try await deltasStream(
-                messages: messages,
+                messages: [Message(role: .user, content: content)],
                 modelId: modelId,
                 modelName: modelName,
                 temperature: 0.0,
@@ -110,10 +137,16 @@ actor ModelRuntime {
                 tools: nil,
                 toolChoice: nil
             )
-            for await _ in stream { /* no-op */  }
-        } catch {
-            // Best-effort warm-up; ignore errors
-        }
+            for await _ in stream where !Task.isCancelled {}
+        } catch {}
+    }
+
+    /// Precomputes the prefix KV cache using current UI context (memory, agent
+    /// prompt, tools) so that new conversations start with a warm cache.
+    func precomputeUIPrefix(modelId: String, modelName: String, agentId: UUID) async {
+        guard !Task.isCancelled else { return }
+        guard let holder = try? await loadContainer(id: modelId, name: modelName) else { return }
+        await precomputePrefixCache(holder: holder, agentId: agentId)
     }
 
     func deltasStream(
@@ -145,14 +178,12 @@ actor ModelRuntime {
                     modelName: modelName
                 )
                 for try await ev in events {
-                    // Check for task cancellation to allow early termination
                     if Task.isCancelled {
                         break
                     }
                     if case .tokens(let s) = ev, !s.isEmpty {
                         continuation.yield(s)
                     } else {
-                        // Ignore tool invocations for plain deltas API; finish early.
                         break
                     }
                 }
@@ -160,13 +191,10 @@ actor ModelRuntime {
                 // ignore errors; best-effort warm-up / streaming
             }
             continuation.finish()
-            ModelRuntime.releaseGenerationMemory()
         }
 
-        // Cancel producer task when consumer stops consuming
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
-            ModelRuntime.releaseGenerationMemory()
         }
 
         return stream
@@ -174,30 +202,30 @@ actor ModelRuntime {
 
     // MARK: - Internals
 
-    /// Release GPU memory pooled by MLX after generation completes.
-    /// Synchronizes the GPU stream first to ensure all operations finish,
-    /// then frees unused Metal buffers from the allocator cache.
-    private nonisolated static func releaseGenerationMemory() {
-        Stream.gpu.synchronize()
-        Memory.clearCache()
+    private func getConfig() async -> RuntimeConfig {
+        if let cached = cachedConfig { return cached }
+        let cfg = await RuntimeConfig.snapshot()
+        cachedConfig = cfg
+        return cfg
+    }
+
+    private func currentKVBudget() -> Int {
+        let modelBytes = modelCache.values.reduce(Int64(0)) { $0 + $1.weightsSizeBytes }
+        return KVCacheStore.computeBudget(modelWeightsBytes: modelBytes)
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
-        // 1. Check cache
         if let existing = modelCache[name] { return existing }
 
-        // Check eviction policy
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
 
         if policy == .strictSingleModel {
-            // Enforce single-model policy: Unload all other models to free memory
             let otherModels = modelCache.keys.filter { $0 != name }
             for other in otherModels {
                 print("[ModelRuntime] Enforcing strict policy: Unloading \(other)")
                 unload(name: other)
             }
 
-            // Also cancel any other pending loading tasks
             let otherTasks = loadingTasks.keys.filter { $0 != name }
             for other in otherTasks {
                 print("[ModelRuntime] Cancelling pending load for \(other)")
@@ -205,14 +233,11 @@ actor ModelRuntime {
                 loadingTasks.removeValue(forKey: other)
             }
         } else {
-            // Flexible policy: Only warn if multiple large models are loaded
-            // We could implement LRU here in the future if needed
             if !modelCache.isEmpty {
                 print("[ModelRuntime] Loading \(name) alongside existing models (Flexible Policy)")
             }
         }
 
-        // 2. Check in-flight loading tasks (deduplication)
         if let existingTask = loadingTasks[name] {
             return try await existingTask.value
         }
@@ -225,18 +250,14 @@ actor ModelRuntime {
             )
         }
 
-        // 3. Start new loading task
         let task = Task<SessionHolder, Error> {
-            // Check if this is a VLM model and use the appropriate factory
             let isVLM = ModelManager.isVisionModel(at: localURL)
             let container: ModelContainer
 
             if isVLM {
-                // Use VLMModelFactory explicitly for vision models
                 let configuration = ModelConfiguration(directory: localURL)
                 container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
             } else {
-                // Use default loading for LLM models
                 container = try await loadModelContainer(directory: localURL)
             }
 
@@ -251,6 +272,11 @@ actor ModelRuntime {
             modelCache[name] = holder
             loadingTasks[name] = nil
             currentModelName = name
+
+            // Set memory limits based on model size
+            let budget = KVCacheStore.computeBudget(modelWeightsBytes: holder.weightsSizeBytes)
+            Memory.cacheLimit = budget
+
             return holder
         } catch {
             loadingTasks[name] = nil
@@ -258,9 +284,60 @@ actor ModelRuntime {
         }
     }
 
+    /// Builds a prefix KV cache from the full context (memory + system prompt +
+    /// tools) and stores it keyed by a content hash so that UI and API requests
+    /// with the same context get a warm start on new conversations.
+    private func precomputePrefixCache(holder: SessionHolder, agentId: UUID) async {
+        let modelName = holder.name
+
+        do {
+            let (systemBase, memCfg, toolSpecs) = await MainActor.run {
+                let sys = SystemPromptBuilder.effectiveBasePrompt(
+                    AgentManager.shared.effectiveSystemPrompt(for: agentId)
+                )
+                let cfg = MemoryConfigurationStore.load()
+                let specs = ToolRegistry.shared.chatSpecs(withOverrides: nil, mode: .none)
+                return (sys, cfg, specs)
+            }
+
+            let memCtx = await MemoryContextAssembler.assembleContext(
+                agentId: agentId.uuidString,
+                config: memCfg
+            )
+
+            let systemContent = SystemPromptBuilder.prependMemoryContext(memCtx, to: systemBase)
+            let toolNames = toolSpecs.map { $0.function.name }
+            let tokenizerTools = Self.makeTokenizerTools(tools: toolSpecs, toolChoice: .auto)
+
+            let hash = Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
+            guard !kvCacheStore.hasPrefixCache(modelName: modelName, hash: hash) else { return }
+
+            let runtimeCfg = await getConfig()
+            let messages: [MLXLMCommon.Chat.Message] = [
+                .init(role: .system, content: systemContent, images: [], videos: []),
+                .init(role: .user, content: "Hi", images: [], videos: []),
+            ]
+
+            let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
+
+            let (_, cache) = try await MLXGenerationEngine.prepareAndGenerate(
+                container: holder.container,
+                buildChat: { messages },
+                buildToolsSpec: { tokenizerTools },
+                generation: params,
+                runtime: runtimeCfg,
+                existingCache: nil
+            )
+
+            kvCacheStore.putPrefixCache(cache, modelName: modelName, hash: hash)
+            print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
+        } catch {
+            print("[ModelRuntime] Failed to pre-compute prefix cache: \(error)")
+        }
+    }
+
     // MARK: - Driver helpers (actor-isolated)
 
-    // Unified generation: engine setup + stream accumulation to typed events
     private func generateEventStream(
         chatBuilder: @Sendable () -> [MLXLMCommon.Chat.Message],
         parameters: GenerationParameters,
@@ -270,16 +347,56 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        let cfg = await RuntimeConfig.snapshot()
+        let cfg = await getConfig()
         let holder = try await loadContainer(id: modelId, name: modelName)
-        let events = try await MLXGenerationEngine.prepareAndGenerate(
+
+        // Compute a content hash from the generation inputs for prefix cache lookup.
+        // An explicit cache_hint from the API overrides the computed hash.
+        let sessionId = parameters.sessionId
+        let chatMessages = chatBuilder()
+        let toolNames = (tools ?? []).map { $0.function.name }
+        let prefixHash =
+            parameters.cacheHint
+            ?? Self.computePrefixHash(
+                systemContent: chatMessages.first(where: { $0.role == .system })?.content ?? "",
+                toolNames: toolNames
+            )
+
+        // Look up existing KV cache for this session, or fall back to a
+        // hash-keyed prefix cache for a warm start on new conversations.
+        // nonisolated(unsafe) suppresses the Sendable check for [any KVCache] which
+        // doesn't conform to Sendable but is safe here because access is serialized
+        // through the ModelRuntime actor and ModelContainer.perform.
+        nonisolated(unsafe) let existingCache: [any KVCache]? = {
+            if let sid = sessionId {
+                if let sessionCache = kvCacheStore.getCache(sessionId: sid, modelName: modelName) {
+                    return sessionCache
+                }
+            }
+            return kvCacheStore.getPrefixCache(modelName: modelName, hash: prefixHash)
+        }()
+
+        let capturedMessages = chatMessages
+        let (rawStream, cache) = try await MLXGenerationEngine.prepareAndGenerate(
             container: holder.container,
-            buildChat: chatBuilder,
+            buildChat: { capturedMessages },
             buildToolsSpec: { ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice) },
             generation: parameters,
-            runtime: cfg
+            runtime: cfg,
+            existingCache: existingCache
         )
-        return StreamAccumulator.accumulate(events: events, stopSequences: stopSequences, tools: tools)
+
+        // Always store the cache so subsequent turns get a hot hit.
+        // Note: we don't saveToDisk here because the stream hasn't been consumed yet
+        // (tokens are generated lazily). The SSD copy would only contain the prefill.
+        // The cache will be persisted to SSD when evictToSSD runs during ensureBudget.
+        if let sid = sessionId {
+            kvCacheStore.putCache(sessionId: sid, cache: cache, modelName: modelName)
+            let budget = currentKVBudget()
+            kvCacheStore.ensureBudget(budget)
+        }
+
+        return StreamAccumulator.accumulate(events: rawStream, stopSequences: stopSequences, tools: tools)
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
@@ -303,21 +420,14 @@ actor ModelRuntime {
             modelId: modelId,
             modelName: modelName
         )
-        do {
-            for try await ev in events {
-                switch ev {
-                case .tokens(let s):
-                    accumulated += s
-                case .toolInvocation(let name, let argsJSON):
-                    ModelRuntime.releaseGenerationMemory()
-                    throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
-                }
+        for try await ev in events {
+            switch ev {
+            case .tokens(let s):
+                accumulated += s
+            case .toolInvocation(let name, let argsJSON):
+                throw ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
             }
-        } catch {
-            ModelRuntime.releaseGenerationMemory()
-            throw error
         }
-        ModelRuntime.releaseGenerationMemory()
         return accumulated
     }
 
@@ -343,42 +453,48 @@ actor ModelRuntime {
         let producerTask = Task {
             do {
                 for try await ev in events {
-                    // Check for task cancellation to allow early termination
                     if Task.isCancelled {
                         continuation.finish()
-                        ModelRuntime.releaseGenerationMemory()
                         return
                     }
                     switch ev {
                     case .tokens(let s):
                         if !s.isEmpty { continuation.yield(s) }
                     case .toolInvocation(let name, let argsJSON):
+                        continuation.yield(StreamingToolHint.encode(name))
                         continuation.finish(
                             throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )
-                        ModelRuntime.releaseGenerationMemory()
                         return
                     }
                 }
                 continuation.finish()
             } catch {
-                // Handle cancellation gracefully
                 if Task.isCancelled {
                     continuation.finish()
                 } else {
                     continuation.finish(throwing: error)
                 }
             }
-            ModelRuntime.releaseGenerationMemory()
         }
 
-        // Cancel producer task when consumer stops consuming
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
-            ModelRuntime.releaseGenerationMemory()
         }
 
         return stream
+    }
+
+    // MARK: - Static helpers (nonisolated)
+
+    nonisolated static func computePrefixHash(
+        systemContent: String,
+        toolNames: [String]
+    ) -> String {
+        let tools = toolNames.sorted().joined(separator: "\0")
+        let combined = systemContent + "\0" + tools
+        let digest = SHA256.hash(data: Data(combined.utf8))
+        return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
     nonisolated static func makeGenerateParameters(
@@ -442,9 +558,6 @@ actor ModelRuntime {
         }
     }
 
-    // Map OpenAI ChatMessage history to MLX Chat.Message array, preserving tool results
-    // by converting them into user-labeled text so the model can reason over outputs.
-    // Also extracts images from multimodal content parts for VLM support.
     nonisolated static func mapOpenAIChatToMLX(
         _ msgs: [ChatMessage]
     ) -> [MLXLMCommon.Chat.Message] {
@@ -458,7 +571,6 @@ actor ModelRuntime {
         var out: [MLXLMCommon.Chat.Message] = []
         out.reserveCapacity(max(6, msgs.count))
         for m in msgs {
-            // Extract images from content parts for VLM support
             let images = extractImageSources(from: m)
 
             switch m.role {
@@ -471,7 +583,6 @@ actor ModelRuntime {
                     MLXLMCommon.Chat.Message(role: .user, content: m.content ?? "", images: images, videos: [])
                 )
             case "assistant":
-                // If assistant only signaled tool calls without textual content, drop it.
                 if let calls = m.tool_calls, !calls.isEmpty, m.content == nil || m.content?.isEmpty == true {
                     break
                 } else {
@@ -497,19 +608,15 @@ actor ModelRuntime {
         return out
     }
 
-    /// Extract image sources from ChatMessage content parts for VLM models
     nonisolated private static func extractImageSources(
         from message: ChatMessage
     ) -> [MLXLMCommon.UserInput.Image] {
-        // Get image URLs from content parts
         let imageUrls = message.imageUrls
         guard !imageUrls.isEmpty else { return [] }
 
         var sources: [MLXLMCommon.UserInput.Image] = []
         for urlString in imageUrls {
-            // Handle data URLs (base64-encoded images)
             if urlString.hasPrefix("data:image/") {
-                // Parse data URL: data:image/png;base64,<base64data>
                 if let commaIndex = urlString.firstIndex(of: ",") {
                     let base64String = String(urlString[urlString.index(after: commaIndex)...])
                     if let imageData = Data(base64Encoded: base64String),
@@ -519,14 +626,11 @@ actor ModelRuntime {
                     }
                 }
             } else if let url = URL(string: urlString) {
-                // Handle regular URLs
                 sources.append(.url(url))
             }
         }
         return sources
     }
-
-    // MARK: - Inline tool-call fallback detection moved to ToolDetection.swift
 
     private static func computeWeightsSizeBytes(at url: URL) -> Int64 {
         let fm = FileManager.default

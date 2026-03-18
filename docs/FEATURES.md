@@ -141,14 +141,24 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Services/MLXService.swift` — MLX model loading and management
-- `Services/ModelRuntime/` — Generation engine, streaming, tool detection
+- `Services/MLXService.swift` — MLX model loading, warm-up orchestration
+- `Services/ModelRuntime/` — Generation engine, streaming, KV cache management, tool detection
+- `Services/ModelRuntime/KVCacheStore.swift` — Tiered KV cache (hot RAM + cold SSD) with LRU eviction
 - `Services/ModelService.swift` — Model lifecycle management
+
+**Runtime behavior:**
+
+- **Window-scoped warm-up** — Models are loaded and prefix-cached when a chat window opens, not at app launch. Each window warms its own model independently, using the window's agent context (system prompt, memory, tools) for the prefix cache.
+- **Smart unloading** — When a user switches to a remote model or closes a window, a GC pass checks all open windows and unloads any local model no longer referenced. The warm-up indicator (yellow dot) signals when a model is loading.
+- **Tiered KV cache** — Active session caches live in RAM (hot tier). When the memory budget is exceeded, least-recently-used sessions are evicted to SSD as `.safetensors` files and restored on demand. Prefix caches are content-hashed so changes to the system prompt or tools automatically invalidate them.
+- **Model eviction policy** — Configurable in Settings > Local Inference > Model Management. "Strict (One Model)" keeps only one model loaded (default). "Flexible (Multi Model)" allows concurrent models for high-RAM systems.
 
 **Configuration:**
 
 - Model storage: `~/MLXModels` (override with `OSU_MODELS_DIR`)
 - Default port: `1337` (override with `OSU_PORT`)
+- KV cache SSD storage: `~/.osaurus/cache/kv/`
+- Settings: Top P, Max Context Length, and advanced KV cache quantization options (collapsed by default)
 
 ---
 

@@ -126,8 +126,11 @@ struct ModelDownloadView: View {
                     showFilterPopover.toggle()
                 } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: filterState.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-                            .font(.system(size: 13))
+                        Image(
+                            systemName: filterState.isActive
+                                ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
+                        )
+                        .font(.system(size: 13))
                         Text("Filter")
                             .font(.system(size: 13, weight: .medium))
                         if filterState.isActive {
@@ -140,7 +143,10 @@ struct ModelDownloadView: View {
                     .padding(.vertical, 7)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(filterState.isActive ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5))
+                            .fill(
+                                filterState.isActive
+                                    ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5)
+                            )
                     )
                     .foregroundColor(filterState.isActive ? theme.accentColor : theme.secondaryText)
                 }
@@ -202,7 +208,8 @@ struct ModelDownloadView: View {
                         }
                         .foregroundColor(.red)
                         .buttonStyle(.plain)
-                    }                }
+                    }
+                }
                 .padding(.bottom, 4)
 
                 Group {
@@ -409,16 +416,20 @@ struct ModelDownloadView: View {
         models.filter { model in
             // Type filter
             if let type = filterState.type, model.modelType != type { return false }
-            
+
             // Size filter
-            if let sizeCat = filterState.sizeCategory, !sizeCat.matches(bytes: model.totalSizeEstimateBytes) { return false }
-            
+            if let sizeCat = filterState.sizeCategory, !sizeCat.matches(bytes: model.totalSizeEstimateBytes) {
+                return false
+            }
+
             // Family filter
             if let family = filterState.family, model.family != family { return false }
-            
+
             // Params filter
-            if let paramCat = filterState.paramCategory, !paramCat.matches(billions: model.parameterCountBillions) { return false }
-            
+            if let paramCat = filterState.paramCategory, !paramCat.matches(billions: model.parameterCountBillions) {
+                return false
+            }
+
             return true
         }
     }
@@ -488,7 +499,7 @@ struct ModelDownloadView: View {
         // Apply search filter
         let searched = SearchService.filterModels(merged, with: searchText)
         let filtered = applyFilters(to: searched)
-        
+
         // Sort: active first, then by name
         return filtered.sorted { lhs, rhs in
             let lhsActive: Bool = {

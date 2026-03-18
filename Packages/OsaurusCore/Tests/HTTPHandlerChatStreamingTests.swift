@@ -239,7 +239,8 @@ private func startTestServer(with engine: ChatEngineProtocol) async throws -> Te
                         configuration: .default,
                         apiKeyValidator: TestAuth.validator,
                         eventLoop: channel.eventLoop,
-                        chatEngine: engine
+                        chatEngine: engine,
+                        trustLoopback: false
                     )
                 )
             }
