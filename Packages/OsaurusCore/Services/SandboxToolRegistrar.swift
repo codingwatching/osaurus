@@ -80,26 +80,38 @@ public final class SandboxToolRegistrar {
 
     // MARK: - Registration
 
-    /// Unregisters all sandbox tools, then re-registers builtin + plugin
-    /// tools for the current active agent only when the container is running.
-    /// This ensures sandbox tools are never exposed in the LLM context when
-    /// the sandbox is unavailable.
+    /// Unregisters all sandbox tools and re-registers them for the current
+    /// active agent. Plugin tool specs are registered eagerly from disk;
+    /// builtin sandbox tools require the container to be running.
     public func registerToolsForCurrentAgent() async {
         await registerTools(for: AgentManager.shared.activeAgent.id)
     }
 
     /// Re-register sandbox tools for a specific agent. Chat sessions use this to
     /// avoid depending on whichever agent is globally active.
+    ///
+    /// Plugin tool specs are registered eagerly from disk metadata so that the
+    /// KV prefix cache hash is correct even before the container starts.
+    /// Builtin sandbox tools and agent provisioning still require the container.
     public func registerTools(for agentId: UUID) async {
         ToolRegistry.shared.unregisterAllSandboxTools()
 
+        let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
+        let agentIdStr = agent.id.uuidString
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentIdStr)
+        let plugins = SandboxPluginManager.shared.plugins(for: agentIdStr)
+
+        for installed in plugins where installed.status == .ready {
+            ToolRegistry.shared.registerSandboxPluginTools(
+                plugin: installed.plugin,
+                agentId: agentIdStr,
+                agentName: agentName
+            )
+        }
+
         guard SandboxManager.State.shared.status == .running else { return }
 
-        let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
-        let agentId = agent.id.uuidString
         let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
-        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
-        let plugins = SandboxPluginManager.shared.plugins(for: agentId)
         let needsProvisioning = (execConfig?.enabled == true) || plugins.contains { $0.status == .ready }
 
         if needsProvisioning {
@@ -112,18 +124,10 @@ public final class SandboxToolRegistrar {
         }
 
         BuiltinSandboxTools.register(
-            agentId: agentId,
+            agentId: agentIdStr,
             agentName: agentName,
             config: execConfig
         )
-
-        for installed in plugins where installed.status == .ready {
-            ToolRegistry.shared.registerSandboxPluginTools(
-                plugin: installed.plugin,
-                agentId: agentId,
-                agentName: agentName
-            )
-        }
     }
 
     private func ensureProvisioned(agentId: UUID) async throws {

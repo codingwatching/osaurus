@@ -320,7 +320,7 @@ actor ModelRuntime {
 
             let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
-            let (_, cache) = try await MLXGenerationEngine.prepareAndGenerate(
+            let (stream, cache) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: { messages },
                 buildToolsSpec: { tokenizerTools },
@@ -328,6 +328,8 @@ actor ModelRuntime {
                 runtime: runtimeCfg,
                 existingCache: nil
             )
+
+            for await _ in stream {}
 
             kvCacheStore.putPrefixCache(cache, modelName: modelName, hash: hash)
             print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
