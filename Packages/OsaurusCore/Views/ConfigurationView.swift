@@ -369,7 +369,7 @@ struct ConfigurationView: View {
                                                         text: $tempKVBits,
                                                         range: 2 ... 8,
                                                         step: 1,
-                                                        defaultValue: 4
+                                                        defaultValue: 8
                                                     )
                                                     SettingsStepperField(
                                                         label: "Group Size",
@@ -381,7 +381,7 @@ struct ConfigurationView: View {
                                                     )
                                                     SettingsStepperField(
                                                         label: "Quantized Start",
-                                                        help: "Starting layer for quantization",
+                                                        help: "Token offset to begin quantization",
                                                         text: $tempQuantStart,
                                                         range: 0 ... 1024,
                                                         step: 64,
@@ -605,9 +605,7 @@ struct ConfigurationView: View {
             configuration.genQuantizedKVStart == defaults.genQuantizedKVStart
             ? "" : String(configuration.genQuantizedKVStart)
         tempMaxKV = configuration.genMaxKVSize.map(String.init) ?? ""
-        tempPrefillStep =
-            configuration.genPrefillStepSize == defaults.genPrefillStepSize
-            ? "" : String(configuration.genPrefillStepSize)
+        tempPrefillStep = configuration.genPrefillStepSize.map(String.init) ?? ""
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
 
@@ -711,14 +709,7 @@ struct ConfigurationView: View {
         }
 
         configuration.genMaxKVSize = Int(tempMaxKV)
-
-        let trimmedPrefill = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedPrefill.isEmpty {
-            configuration.genPrefillStepSize = defaults.genPrefillStepSize
-        } else {
-            configuration.genPrefillStepSize =
-                Int(trimmedPrefill) ?? defaults.genPrefillStepSize
-        }
+        configuration.genPrefillStepSize = Int(tempPrefillStep)
 
         // Save eviction policy
         configuration.modelEvictionPolicy = tempEvictionPolicy
