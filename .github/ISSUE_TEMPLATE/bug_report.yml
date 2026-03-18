@@ -32,16 +32,36 @@ body:
         1. ...
         2. ...
         3. ...
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider type
+      options:
+        - Local model (MLX)
+        - Remote provider
+        - MCP provider
+        - Not applicable
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model name
+      placeholder: e.g., Llama 3 8B, GPT-4o, Qwen 2.5
   - type: input
     id: version
     attributes:
       label: Osaurus version / commit
       placeholder: e.g., v0.1.0 or commit SHA
+    validations:
+      required: true
   - type: input
     id: macos
     attributes:
       label: macOS version
       placeholder: e.g., 15.5 (Sequoia)
+    validations:
+      required: true
   - type: input
     id: chip
     attributes:

@@ -6,6 +6,32 @@ body:
     attributes:
       value: |
         Thanks for suggesting an improvement! Please share as much context as you can.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Chat / conversation
+        - Model management
+        - Tools / plugins
+        - Skills
+        - Memory
+        - Agents
+        - MCP server
+        - Remote providers
+        - UI / UX
+        - Performance
+        - Documentation
+        - Other
+    validations:
+      required: true
   - type: textarea
     id: problem
     attributes:
@@ -30,3 +56,9 @@ body:
     attributes:
       label: Additional context
       description: Screenshots, prior art, links
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to submit a PR for this feature

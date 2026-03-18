@@ -19,8 +19,10 @@ categories:
     labels:
       - "documentation"
       - "docs"
-change-template: "- $TITLE" # Removed @$AUTHOR to hide authors
+change-template: "- $TITLE (#$NUMBER) by @$AUTHOR"
 change-title-escapes: '\<*_&'
+no-contributors-template: "- @$AUTHOR"
+contributor-change-template: "- @$AUTHOR made their first contribution in #$NUMBER"
 version-resolver:
   major:
     labels:
@@ -36,6 +38,12 @@ template: |
   ## What's Changed
 
   $CHANGES
+
+  ## New Contributors
+
+  $CONTRIBUTORS
+
+  **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
 exclude-labels:
   - "skip-changelog"
   - "released"
