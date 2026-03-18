@@ -4,7 +4,7 @@
 //
 //  Wraps a sandbox plugin tool spec as an OsaurusTool.
 //  Translates LLM tool calls into `container exec` commands with
-//  parameters passed as PARAM_* environment variables.
+//  agent/plugin secrets and PARAM_* arguments as environment variables.
 //
 
 import Foundation
@@ -44,7 +44,7 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
             return encodeResult(stdout: "", stderr: "Sandbox container is not running", exitCode: 1)
         }
 
-        let env = buildEnvVars(from: argumentsJSON)
+        let env = buildExecEnvironment(from: argumentsJSON)
 
         let result = try await SandboxManager.shared.execAsAgent(
             agentName,
@@ -63,10 +63,25 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
         )
     }
 
-    // MARK: - Parameter Handling
+    // MARK: - Environment
 
-    /// Build PARAM_* environment variables from the JSON arguments.
-    private func buildEnvVars(from argumentsJSON: String) -> [String: String] {
+    /// Build the full execution environment: agent secrets, plugin secrets,
+    /// OSAURUS_PLUGIN, and PARAM_* from the tool arguments.
+    /// PARAM_* vars always win over secrets of the same name.
+    private func buildExecEnvironment(from argumentsJSON: String) -> [String: String] {
+        var env: [String: String] = [:]
+
+        if let agentUUID = UUID(uuidString: agentId) {
+            env.merge(AgentSecretsKeychain.getAllSecrets(agentId: agentUUID)) { _, new in new }
+            env.merge(ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentUUID)) { _, new in new }
+        }
+
+        env["OSAURUS_PLUGIN"] = pluginId
+        env.merge(buildParamVars(from: argumentsJSON)) { _, new in new }
+        return env
+    }
+
+    private func buildParamVars(from argumentsJSON: String) -> [String: String] {
         guard let args = parseArguments(argumentsJSON) else { return [:] }
 
         var env: [String: String] = [:]
