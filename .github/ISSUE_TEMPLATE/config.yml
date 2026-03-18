@@ -4,8 +4,8 @@ contact_links:
     url: https://github.com/osaurus-ai/osaurus/security/policy
     about: Please report security issues privately using our security policy
   - name: Questions and support
-    url: https://github.com/osaurus-ai/osaurus/blob/main/SUPPORT.md
-    about: How to get help and ask questions
+    url: https://github.com/osaurus-ai/osaurus/discussions
+    about: Ask questions and get help from the community
   - name: Discord community
     url: https://discord.gg/dinoki
     about: Join the community for general discussion and support
