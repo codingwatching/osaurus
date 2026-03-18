@@ -172,6 +172,12 @@ final class CapabilitiesSelectorViewModel: ObservableObject {
         return toolTokens + skillTokens
     }
 
+    private let toolCountWarningThreshold = 25
+
+    var showToolCountWarning: Bool {
+        enabledToolCount >= toolCountWarningThreshold
+    }
+
     // MARK: - Queries
 
     func isSkillEnabled(_ name: String) -> Bool {
@@ -488,6 +494,9 @@ struct CapabilitiesSelectorView: View {
     var body: some View {
         let content = VStack(spacing: 0) {
             header
+            if vm.showToolCountWarning {
+                toolCountWarningBanner
+            }
             Divider().background(theme.primaryBorder.opacity(0.3))
             searchField
             Divider().background(theme.primaryBorder.opacity(0.3))
@@ -552,10 +561,16 @@ struct CapabilitiesSelectorView: View {
 
                     Text("\(vm.totalEnabledCount)/\(vm.totalCount)")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(vm.showToolCountWarning ? theme.warningColor : theme.secondaryText)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
-                        .background(Capsule().fill(theme.secondaryBackground))
+                        .background(
+                            Capsule().fill(
+                                vm.showToolCountWarning
+                                    ? theme.warningColor.opacity(0.12)
+                                    : theme.secondaryBackground
+                            )
+                        )
                 }
             }
 
@@ -615,6 +630,32 @@ struct CapabilitiesSelectorView: View {
         .padding(.vertical, 10)
         .background(theme.secondaryBackground.opacity(theme.isDark ? 0.4 : 0.5))
         .animation(.easeOut(duration: 0.15), value: vm.searchText.isEmpty)
+    }
+
+    // MARK: - Tool Count Warning
+
+    private var toolCountWarningBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13))
+                .foregroundColor(theme.warningColor)
+
+            Text("Too many tools may cause hallucinations and increase token usage. Disable tools you don't need.")
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     // MARK: - Empty State
