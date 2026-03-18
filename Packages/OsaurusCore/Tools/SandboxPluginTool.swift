@@ -44,6 +44,19 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
             return encodeResult(stdout: "", stderr: "Sandbox container is not running", exitCode: 1)
         }
 
+        let pluginDir = OsaurusPaths.inContainerPluginDir(agentName, pluginId)
+        let dirCheck = try await SandboxManager.shared.execAsAgent(
+            agentName,
+            command: "test -d \(pluginDir)"
+        )
+        if !dirCheck.succeeded {
+            return encodeResult(
+                stdout: "",
+                stderr: "Plugin '\(pluginId)' is not available in the sandbox. Try reinstalling the plugin.",
+                exitCode: 1
+            )
+        }
+
         let env = buildExecEnvironment(from: argumentsJSON)
 
         let result = try await SandboxManager.shared.execAsAgent(
