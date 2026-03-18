@@ -45,13 +45,9 @@ public final class TranscriptionModeService: ObservableObject {
 
     // MARK: - Private State
 
-    /// Previously typed text (for diff-based typing)
     private var lastTypedText: String = ""
-
-    /// Cancellables for Combine subscriptions
-    private var cancellables = Set<AnyCancellable>()
-
-    /// Global key monitor for Esc key
+    private var configCancellables = Set<AnyCancellable>()
+    private var transcriptionCancellables = Set<AnyCancellable>()
     private var escKeyMonitor: Any?
 
     private init() {
@@ -61,21 +57,18 @@ public final class TranscriptionModeService: ObservableObject {
 
     // MARK: - Public API
 
-    /// Initialize the service and register hotkey if enabled
     public func initialize() {
         loadConfiguration()
         registerHotkeyIfNeeded()
 
-        // Listen for configuration changes
         NotificationCenter.default.publisher(for: .transcriptionConfigurationChanged)
             .sink { [weak self] _ in
                 self?.loadConfiguration()
                 self?.registerHotkeyIfNeeded()
             }
-            .store(in: &cancellables)
+            .store(in: &configCancellables)
     }
 
-    /// Toggle transcription mode (called by hotkey)
     public func toggle() {
         switch state {
         case .idle:
@@ -83,26 +76,21 @@ public final class TranscriptionModeService: ObservableObject {
         case .transcribing:
             stopTranscription()
         case .starting, .stopping:
-            // Ignore toggle while transitioning
             break
         case .error:
-            // Reset and try again
             state = .idle
             startTranscription()
         }
     }
 
-    /// Start transcription
     public func startTranscription() {
         switch state {
-        case .idle: break
-        case .error: break
+        case .idle, .error: break
         default:
             print("[TranscriptionMode] Cannot start: already in state \(state)")
             return
         }
 
-        // Check accessibility permission
         keyboardService.checkAccessibilityPermission()
         guard keyboardService.hasAccessibilityPermission else {
             state = .error("Accessibility permission required")
@@ -110,7 +98,6 @@ public final class TranscriptionModeService: ObservableObject {
             return
         }
 
-        // Check if model is available
         guard speechService.isModelLoaded || SpeechModelManager.shared.selectedModel != nil else {
             state = .error("No speech model available")
             return
@@ -118,22 +105,14 @@ public final class TranscriptionModeService: ObservableObject {
 
         state = .starting
         lastTypedText = ""
-
-        // Show overlay
         overlayService.show()
-
-        // Start Esc key monitoring
         startEscKeyMonitoring()
 
-        // Start speech transcription
         Task {
             do {
                 try await speechService.startStreamingTranscription()
                 state = .transcribing
-
-                // Subscribe to transcription updates
                 subscribeToTranscriptionUpdates()
-
                 print("[TranscriptionMode] Started transcription")
             } catch {
                 state = .error(error.localizedDescription)
@@ -144,38 +123,19 @@ public final class TranscriptionModeService: ObservableObject {
         }
     }
 
-    /// Stop transcription and finalize
     public func stopTranscription() {
         guard state == .transcribing || state == .starting else { return }
 
         state = .stopping
-
-        // Stop Esc key monitoring
         stopEscKeyMonitoring()
+        transcriptionCancellables.removeAll()
 
-        // Unsubscribe from updates
-        cancellables.removeAll()
-
-        // Re-add configuration listener
-        NotificationCenter.default.publisher(for: .transcriptionConfigurationChanged)
-            .sink { [weak self] _ in
-                self?.loadConfiguration()
-                self?.registerHotkeyIfNeeded()
-            }
-            .store(in: &cancellables)
-
-        // Stop speech transcription
         Task {
             _ = await speechService.stopStreamingTranscription()
             speechService.clearTranscription()
-
-            // Hide overlay
             overlayService.hide()
-
-            // Reset state
             lastTypedText = ""
             state = .idle
-
             print("[TranscriptionMode] Stopped transcription")
         }
     }
@@ -211,32 +171,24 @@ public final class TranscriptionModeService: ObservableObject {
     }
 
     private func subscribeToTranscriptionUpdates() {
-        // Subscribe to current transcription changes
-        speechService.$currentTranscription
-            .sink { [weak self] _ in
-                self?.handleTranscriptionUpdate()
-            }
-            .store(in: &cancellables)
-
-        // Subscribe to confirmed transcription changes
         speechService.$confirmedTranscription
-            .sink { [weak self] _ in
+            .combineLatest(speechService.$currentTranscription)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _, _ in
                 self?.handleTranscriptionUpdate()
             }
-            .store(in: &cancellables)
+            .store(in: &transcriptionCancellables)
 
-        // Subscribe to audio level for overlay
         speechService.$audioLevel
             .sink { [weak self] level in
                 self?.overlayService.updateAudioLevel(level)
             }
-            .store(in: &cancellables)
+            .store(in: &transcriptionCancellables)
     }
 
     private func handleTranscriptionUpdate() {
         guard state == .transcribing else { return }
 
-        // Get the full current transcription
         let fullText: String
         if speechService.confirmedTranscription.isEmpty {
             fullText = speechService.currentTranscription
@@ -246,12 +198,12 @@ public final class TranscriptionModeService: ObservableObject {
             fullText = speechService.confirmedTranscription + " " + speechService.currentTranscription
         }
 
-        // Calculate what needs to be typed
         typeNewText(fullText)
     }
 
+    /// Diff-based typing: compares `fullText` against `lastTypedText` and
+    /// issues only the minimal keystrokes (append, delete, or correct) needed.
     private func typeNewText(_ fullText: String) {
-        // If the new text starts with what we've already typed, just type the new part
         if fullText.hasPrefix(lastTypedText) {
             let newPart = String(fullText.dropFirst(lastTypedText.count))
             if !newPart.isEmpty {
@@ -259,14 +211,12 @@ public final class TranscriptionModeService: ObservableObject {
                 lastTypedText = fullText
             }
         } else if lastTypedText.hasPrefix(fullText) {
-            // Text was reduced (correction) - delete the difference
             let charsToDelete = lastTypedText.count - fullText.count
             if charsToDelete > 0 {
                 keyboardService.typeBackspace(count: charsToDelete)
                 lastTypedText = fullText
             }
         } else {
-            // Text diverged - find common prefix and correct
             let commonPrefixLength = zip(lastTypedText, fullText).prefix(while: { $0 == $1 }).count
             let charsToDelete = lastTypedText.count - commonPrefixLength
             let newPart = String(fullText.dropFirst(commonPrefixLength))
@@ -286,10 +236,8 @@ public final class TranscriptionModeService: ObservableObject {
     private func startEscKeyMonitoring() {
         stopEscKeyMonitoring()
 
-        // Monitor for Esc key globally to cancel/stop transcription
         escKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // Esc key code is 53
-            if event.keyCode == 53 {
+            if event.keyCode == 53 {  // Esc
                 Task { @MainActor in
                     self?.stopTranscription()
                 }
