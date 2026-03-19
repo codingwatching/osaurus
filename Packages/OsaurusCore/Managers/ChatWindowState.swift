@@ -360,7 +360,7 @@ final class ChatWindowState: ObservableObject {
                 }
             }
         )
-        // Refresh theme when current agent is updated
+        // Refresh theme and config (system prompt, token cache) when current agent is updated
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .agentUpdated,
@@ -369,7 +369,10 @@ final class ChatWindowState: ObservableObject {
             ) { [weak self] notification in
                 let updatedId = notification.object as? UUID
                 Task { @MainActor in
-                    if let self, updatedId == self.agentId { self.refreshTheme() }
+                    if let self, updatedId == self.agentId {
+                        self.refreshTheme()
+                        self.refreshAgentConfig()
+                    }
                 }
             }
         )

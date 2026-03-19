@@ -131,7 +131,7 @@ final class ChatSession: ObservableObject {
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
-                
+
                 // Use a task to ensure this happens on the main actor
                 Task { @MainActor in
                     self.triggerWarmup()
@@ -174,12 +174,12 @@ final class ChatSession: ObservableObject {
     @MainActor
     func triggerWarmup() {
         guard let model = self.selectedModel else { return }
-        
+
         self.warmupTask?.cancel()
-        
+
         let isLocal = ModelManager.findInstalledModel(named: model) != nil
         self.isWarmingModel = isLocal
-        
+
         self.warmupTask = Task { [weak self] in
             // Unload models no window references before warming the new one
             let active = await MainActor.run { ChatWindowManager.shared.activeLocalModelNames() }
@@ -1507,8 +1507,8 @@ struct ChatView: View {
             minWidth: 800,
             idealWidth: 950,
             maxWidth: .infinity,
-            minHeight: 610,
-            idealHeight: 760,
+            minHeight: 575,
+            idealHeight: 610,
             maxHeight: .infinity
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))

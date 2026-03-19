@@ -533,6 +533,16 @@ public final class WorkSession: ObservableObject {
                 }
         }
 
+        AgentManager.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
+        WorkFolderContextService.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
         // Initialize database and issue manager
         Task { [weak self] in
             await self?.initialize()

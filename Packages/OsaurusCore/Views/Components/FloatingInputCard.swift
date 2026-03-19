@@ -51,8 +51,6 @@ struct FloatingInputCard: View {
     var canResume: Bool = false
     /// Cumulative token usage for work mode
     var cumulativeTokens: Int? = nil
-    /// Hide context indicator in empty states
-    var hideContextIndicator: Bool = false
     /// Compact mode (sidebar open) - hides secondary chip content
     var isCompact: Bool = false
 
@@ -703,7 +701,7 @@ struct FloatingInputCard: View {
             Spacer()
 
             // Context size indicator (right-aligned)
-            if !hideContextIndicator && (displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0) {
+            if displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0 {
                 contextIndicatorChip
             }
         }
@@ -714,7 +712,7 @@ struct FloatingInputCard: View {
     @ViewBuilder
     private var contextIndicatorChip: some View {
         // In work mode, show cumulative usage; in chat mode, show context estimate
-        if let cumulative = cumulativeTokens, workInputState != nil {
+        if let cumulative = cumulativeTokens, cumulative > 0, workInputState != nil {
             // Work mode: show cumulative tokens used
             HStack(spacing: 4) {
                 Text("\(formatTokenCount(cumulative))")
@@ -1148,7 +1146,7 @@ struct FloatingInputCard: View {
     // MARK: - Folder Context Chip (Work Mode)
 
     /// Empty mode = no active task, folder can be changed
-    private var isAgentEmptyMode: Bool { hideContextIndicator }
+    private var isAgentEmptyMode: Bool { workInputState == .noTask }
 
     private var folderContextChip: some View {
         let hasFolder = folderContextService.hasActiveFolder
