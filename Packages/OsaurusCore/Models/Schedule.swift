@@ -25,6 +25,8 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
     case monthly(dayOfMonth: Int, hour: Int, minute: Int)
     /// Run yearly on a specific month and day at a specific time
     case yearly(month: Int, day: Int, hour: Int, minute: Int)
+    /// Run based on a cron expression (e.g., "15 0,7 * * 1-5")
+    case cron(expression: String)
 
     // MARK: - Display Helpers
 
@@ -60,6 +62,9 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
             let monthName = calendar.monthSymbols[month - 1]
             let suffix = daySuffix(day)
             return "Yearly on \(monthName) \(day)\(suffix) at \(timeString(hour: hour, minute: minute))"
+
+        case .cron(let expression):
+            return "Cron: \(expression)"
         }
     }
 
@@ -80,6 +85,8 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
             return "Monthly"
         case .yearly:
             return "Yearly"
+        case .cron:
+            return "Cron"
         }
     }
 
@@ -93,6 +100,7 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
         case .weekly: return .weekly
         case .monthly: return .monthly
         case .yearly: return .yearly
+        case .cron: return .cron
         }
     }
 
@@ -220,6 +228,9 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
                 return calendar.date(from: components)
             }
             return candidate
+
+        case .cron(let expression):
+            return CronParser(expression)?.nextDate(after: referenceDate)
         }
     }
 
@@ -277,6 +288,7 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
     case weekly = "Weekly"
     case monthly = "Monthly"
     case yearly = "Yearly"
+    case cron = "Cron Expression"
 
     public var icon: String {
         switch self {
@@ -287,6 +299,7 @@ public enum ScheduleFrequencyType: String, CaseIterable, Sendable {
         case .weekly: return "calendar.badge.clock"
         case .monthly: return "calendar"
         case .yearly: return "calendar.badge.exclamationmark"
+        case .cron: return "terminal"
         }
     }
 }
