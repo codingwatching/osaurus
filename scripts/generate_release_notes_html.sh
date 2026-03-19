@@ -10,25 +10,17 @@ if [ ! -s RELEASE_NOTES.md ]; then
   printf '%s\n' "${CHANGELOG:-}" > RELEASE_NOTES.md
 fi
 
-# Install markdown converter quietly (best effort)
-python3 -m pip install --user markdown >/dev/null 2>&1 || true
+# Install markdown converter in a venv (PEP 668 blocks --user on macOS 14+)
+python3 -m venv /tmp/md-venv
+/tmp/md-venv/bin/pip install markdown >/dev/null 2>&1
 
-python3 - "$VERSION" << 'PY'
-import os, pathlib, sys
+/tmp/md-venv/bin/python3 - "$VERSION" << 'PY'
+import markdown, pathlib, sys
 version = sys.argv[1]
-try:
-    import markdown
-except Exception:
-    markdown = None
 
 md_path = pathlib.Path('RELEASE_NOTES.md')
 md_text = md_path.read_text(encoding='utf-8') if md_path.exists() else ''
-
-if markdown is not None:
-    body_html = markdown.markdown(md_text, extensions=['extra'])
-else:
-    import html
-    body_html = '<pre style="white-space: pre-wrap">' + html.escape(md_text) + '</pre>'
+body_html = markdown.markdown(md_text, extensions=['extra'])
 
 template = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>Osaurus {version} Release Notes</title>
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">

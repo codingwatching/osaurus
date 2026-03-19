@@ -36,20 +36,13 @@ if [ ! -f "updates/arm64/Osaurus-${VERSION}.html" ]; then
   echo "Reconstructing release notes HTML files..."
   : "${CHANGELOG:?CHANGELOG is required to reconstruct release notes}"
   printf '%s\n' "$CHANGELOG" > RELEASE_NOTES.md
-  python3 -m pip install --user markdown >/dev/null 2>&1 || true
-  python3 - << 'PY'
-import os, pathlib
-try:
-    import markdown
-except Exception:
-    markdown = None
+  python3 -m venv /tmp/md-venv 2>/dev/null || true
+  /tmp/md-venv/bin/pip install markdown >/dev/null 2>&1
+  /tmp/md-venv/bin/python3 - << 'PY'
+import markdown, os, pathlib
 version = os.environ.get('VERSION', '')
 md_text = pathlib.Path('RELEASE_NOTES.md').read_text(encoding='utf-8')
-if markdown is not None:
-    body_html = markdown.markdown(md_text, extensions=['extra'])
-else:
-    import html
-    body_html = '<pre style="white-space: pre-wrap">' + html.escape(md_text) + '</pre>'
+body_html = markdown.markdown(md_text, extensions=['extra'])
 template = f"""<!doctype html><html><head><meta charset=\"utf-8\"><title>Osaurus {version} Release Notes</title>
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
 <style>
