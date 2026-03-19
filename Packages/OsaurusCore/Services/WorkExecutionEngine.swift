@@ -169,7 +169,7 @@ public actor WorkExecutionEngine {
     // MARK: - Folder Context
 
     /// Builds the folder context section for prompts when a folder is selected
-    private static func buildFolderContextSection(from folderContext: WorkFolderContext?) -> String {
+    static func buildFolderContextSection(from folderContext: WorkFolderContext?) -> String {
         guard let folder = folderContext else {
             return ""
         }
@@ -473,6 +473,13 @@ public actor WorkExecutionEngine {
             do {
                 let stream = try await chatEngine.streamChat(request: request)
                 for try await delta in stream {
+                    if await shouldInterrupt() {
+                        return .interrupted(
+                            messages: messages,
+                            iteration: iteration,
+                            totalToolCalls: totalToolCalls
+                        )
+                    }
                     if let toolName = StreamingToolHint.decode(delta) {
                         await onToolHint(toolName)
                         continue
@@ -657,22 +664,20 @@ public actor WorkExecutionEngine {
     /// Builds the complete work-mode system prompt for reasoning loop execution.
     static func buildAgentSystemPrompt(
         base: String,
-        issue: Issue,
         executionMode: WorkExecutionMode,
         skillInstructions: String? = nil,
         compact: Bool = false,
         secretNames: [String] = []
     ) -> String {
         var prompt = base
-        let desc = issue.description ?? ""
 
         prompt +=
             compact
-            ? workModeCompact(title: issue.title, description: desc)
-            : workModeFull(title: issue.title, description: desc)
+            ? workModeCompact()
+            : workModeFull()
 
         switch executionMode {
-        case .hostFolder(let ctx): prompt += buildFolderContextSection(from: ctx)
+        case .hostFolder: break  // Moved to user message
         case .sandbox: prompt += sandboxPromptSection(compact: compact, secretNames: secretNames)
         case .none: break
         }
@@ -684,14 +689,13 @@ public actor WorkExecutionEngine {
         return prompt
     }
 
-    private static func workModeCompact(title: String, description: String) -> String {
+    private static func workModeCompact() -> String {
         """
 
 
         # Work Mode
 
-        **Goal:** \(title)
-        \(description)
+        You are executing a task for the user. The goal and context will be provided in the user's first message.
 
         ## Instructions
 
@@ -705,16 +709,13 @@ public actor WorkExecutionEngine {
         """
     }
 
-    private static func workModeFull(title: String, description: String) -> String {
+    private static func workModeFull() -> String {
         """
 
 
         # Work Mode
 
-        You are executing a task for the user. Your goal:
-
-        **\(title)**
-        \(description)
+        You are executing a task for the user. The goal and context will be provided in the user's first message.
 
         ## How to Work
 

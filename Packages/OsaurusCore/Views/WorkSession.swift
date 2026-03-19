@@ -352,7 +352,6 @@ public final class WorkSession: ObservableObject {
         let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
         let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: baseSystemPrompt,
-            issue: issue,
             executionMode: executionMode,
             skillInstructions: nil,
             secretNames: secretNames

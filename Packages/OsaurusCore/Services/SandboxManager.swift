@@ -816,6 +816,7 @@
             let status = _status
             Task { @MainActor in
                 State.shared.status = status
+                NotificationCenter.default.post(name: .toolsListChanged, object: nil)
             }
         }
 

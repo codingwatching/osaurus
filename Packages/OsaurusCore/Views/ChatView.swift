@@ -101,6 +101,22 @@ final class ChatSession: ObservableObject {
             Task { @MainActor in await self?.refreshPickerItems() }
         }
 
+        NotificationCenter.default.addObserver(
+            forName: .toolsListChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.triggerWarmup()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .skillsListChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.triggerWarmup()
+        }
+
         // Auto-persist model selection and drive warm-up / GC
         modelSelectionCancellable =
             $selectedModel
@@ -157,6 +173,23 @@ final class ChatSession: ObservableObject {
         }
         isLoadingModel = false
         Task { [weak self] in await self?.refreshMemoryTokens() }
+    }
+
+    private func triggerWarmup() {
+        Task { @MainActor [weak self] in
+            guard let self = self, let model = self.selectedModel else { return }
+            let isLocal = ModelManager.findInstalledModel(named: model) != nil
+            if isLocal {
+                self.isWarmingModel = true
+                self.warmupTask?.cancel()
+                self.warmupTask = Task { [weak self] in
+                    let aid = await MainActor.run { self?.agentId ?? Agent.defaultId }
+                    await MLXService.shared.warmUp(modelName: model, agentId: aid)
+                    guard !Task.isCancelled else { return }
+                    await MainActor.run { self?.isWarmingModel = false }
+                }
+            }
+        }
     }
 
     func refreshPickerItems() async {

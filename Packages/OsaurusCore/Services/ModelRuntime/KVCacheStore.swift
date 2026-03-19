@@ -19,6 +19,7 @@ struct KVCacheStore {
 
     final class Entry {
         var cache: [any KVCache]?
+        var tokens: [Int]?
         var ssdPath: URL?
         var modelName: String
         var lastAccess: Date
@@ -29,12 +30,14 @@ struct KVCacheStore {
 
         init(
             cache: [any KVCache]?,
+            tokens: [Int]? = nil,
             ssdPath: URL? = nil,
             modelName: String,
             sizeBytes: Int,
             contentHash: String? = nil
         ) {
             self.cache = cache
+            self.tokens = tokens
             self.ssdPath = ssdPath
             self.modelName = modelName
             self.lastAccess = Date()
@@ -74,59 +77,63 @@ struct KVCacheStore {
 
     /// Retrieves a hot cache for the given session, or restores it from SSD.
     /// Returns `nil` on a complete miss (caller must do full prefill).
-    mutating func getCache(sessionId: String, modelName: String) -> [any KVCache]? {
-        guard let entry = entries[sessionId] else { return nil }
+    mutating func getCache(sessionId: String, modelName: String) -> ([any KVCache]?, [Int]?) {
+        guard let entry = entries[sessionId] else { return (nil, nil) }
 
         // Invalidate if model changed
         if entry.modelName != modelName {
             evictEntry(sessionId: sessionId, saveSSD: false)
-            return nil
+            return (nil, nil)
         }
 
         // Hot hit
         if let cache = entry.cache {
             touchLRU(sessionId)
-            return cache
+            return (cache, entry.tokens)
         }
 
         // Cold hit: restore from SSD
         if let ssdPath = entry.ssdPath {
             do {
-                let (cache, _) = try loadPromptCache(url: ssdPath)
+                let (cache, metadata) = try loadPromptCache(url: ssdPath)
                 entry.cache = cache
+                if let tokensStr = metadata["tokens"], let data = tokensStr.data(using: .utf8) {
+                    entry.tokens = try? JSONDecoder().decode([Int].self, from: data)
+                }
                 let bytes = Self.cacheBytes(cache)
                 entry.sizeBytes = bytes
                 totalHotBytes += bytes
                 entry.lastAccess = Date()
                 touchLRU(sessionId)
                 print("[KVCacheStore] Restored session \(sessionId.prefix(8)) from SSD (\(bytes / 1024)KB)")
-                return cache
+                return (cache, entry.tokens)
             } catch {
                 print("[KVCacheStore] Failed to load SSD cache for \(sessionId.prefix(8)): \(error)")
                 try? FileManager.default.removeItem(at: ssdPath)
                 entries.removeValue(forKey: sessionId)
                 lruOrder.removeAll { $0 == sessionId }
-                return nil
+                return (nil, nil)
             }
         }
 
-        return nil
+        return (nil, nil)
     }
 
     /// Stores or updates the hot cache for a session after generation.
-    mutating func putCache(sessionId: String, cache: [any KVCache], modelName: String) {
+    mutating func putCache(sessionId: String, cache: [any KVCache], tokens: [Int]?, modelName: String) {
         let bytes = Self.cacheBytes(cache)
 
         if let existing = entries[sessionId] {
             totalHotBytes -= existing.sizeBytes
             existing.cache = cache
+            existing.tokens = tokens
             existing.sizeBytes = bytes
             existing.lastAccess = Date()
             existing.modelName = modelName
             // Invalidate stale SSD copy so evictToSSD re-persists the updated cache
             existing.ssdPath = nil
         } else {
-            let entry = Entry(cache: cache, modelName: modelName, sizeBytes: bytes)
+            let entry = Entry(cache: cache, tokens: tokens, modelName: modelName, sizeBytes: bytes)
             entries[sessionId] = entry
         }
 
@@ -153,7 +160,13 @@ struct KVCacheStore {
         if entry.ssdPath == nil {
             let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
             do {
-                try savePromptCache(url: url, cache: cache, metadata: ["model": entry.modelName])
+                var metadata = ["model": entry.modelName]
+                if let tokens = entry.tokens, let data = try? JSONEncoder().encode(tokens),
+                    let str = String(data: data, encoding: .utf8)
+                {
+                    metadata["tokens"] = str
+                }
+                try savePromptCache(url: url, cache: cache, metadata: metadata)
                 entry.ssdPath = url
                 print("[KVCacheStore] Saved session \(sessionId.prefix(8)) to SSD (\(entry.sizeBytes / 1024)KB)")
             } catch {
@@ -170,10 +183,16 @@ struct KVCacheStore {
     }
 
     /// Saves the given session's cache to SSD synchronously.
-    mutating func saveToDisk(sessionId: String, cache: [any KVCache], modelName: String) {
+    mutating func saveToDisk(sessionId: String, cache: [any KVCache], tokens: [Int]?, modelName: String) {
         let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
         do {
-            try savePromptCache(url: url, cache: cache, metadata: ["model": modelName])
+            var metadata = ["model": modelName]
+            if let tokens = tokens, let data = try? JSONEncoder().encode(tokens),
+                let str = String(data: data, encoding: .utf8)
+            {
+                metadata["tokens"] = str
+            }
+            try savePromptCache(url: url, cache: cache, metadata: metadata)
             entries[sessionId]?.ssdPath = url
             pruneSSDIfNeeded()
         } catch {
@@ -265,16 +284,19 @@ struct KVCacheStore {
     /// Returns a **fresh copy** of the prefix cache for this model + content hash.
     /// Always loads from SSD so each caller gets independent KVCache objects
     /// that won't corrupt the stored prefix when mutated during generation.
-    mutating func getPrefixCache(modelName: String, hash: String) -> [any KVCache]? {
+    mutating func getPrefixCache(modelName: String, hash: String) -> ([any KVCache]?, [Int]?) {
         let key = Self.prefixKey(modelName: modelName, hash: hash)
-        guard let entry = entries[key], entry.modelName == modelName else { return nil }
-        guard let ssdPath = entry.ssdPath else { return nil }
+        guard let entry = entries[key], entry.modelName == modelName else { return (nil, nil) }
+        guard let ssdPath = entry.ssdPath else { return (nil, nil) }
         do {
-            let (cache, _) = try loadPromptCache(url: ssdPath)
-            return cache
+            let (cache, metadata) = try loadPromptCache(url: ssdPath)
+            if entry.tokens == nil, let tokensStr = metadata["tokens"], let data = tokensStr.data(using: .utf8) {
+                entry.tokens = try? JSONDecoder().decode([Int].self, from: data)
+            }
+            return (cache, entry.tokens)
         } catch {
             print("[KVCacheStore] Failed to load prefix cache from SSD: \(error)")
-            return nil
+            return (nil, nil)
         }
     }
 
@@ -283,13 +305,13 @@ struct KVCacheStore {
     /// Stores a prefix cache keyed by model + content hash.
     /// Caps prefix entries to `maxPrefixCachesPerModel` per model, evicting
     /// the oldest when the limit is exceeded.
-    mutating func putPrefixCache(_ cache: [any KVCache], modelName: String, hash: String) {
+    mutating func putPrefixCache(_ cache: [any KVCache], tokens: [Int]?, modelName: String, hash: String) {
         let key = Self.prefixKey(modelName: modelName, hash: hash)
-        putCache(sessionId: key, cache: cache, modelName: modelName)
+        putCache(sessionId: key, cache: cache, tokens: tokens, modelName: modelName)
         if let entry = entries[key] {
             entry.contentHash = hash
         }
-        saveToDisk(sessionId: key, cache: cache, modelName: modelName)
+        saveToDisk(sessionId: key, cache: cache, tokens: tokens, modelName: modelName)
         prunePrefixCaches(modelName: modelName, keepKey: key)
     }
 

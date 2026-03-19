@@ -344,7 +344,7 @@ actor ModelRuntime {
         let modelName = holder.name
 
         do {
-            let (systemBase, memCfg, toolSpecs) = await MainActor.run {
+            let configs = await MainActor.run {
                 let sys = SystemPromptBuilder.effectiveBasePrompt(
                     AgentManager.shared.effectiveSystemPrompt(for: agentId)
                 )
@@ -352,44 +352,62 @@ actor ModelRuntime {
                 let execEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
                 let sandboxRunning = SandboxManager.State.shared.status == .running
                 let mode: WorkExecutionMode = (execEnabled && sandboxRunning) ? .sandbox : .none
-                let specs = ToolRegistry.shared.chatSpecs(withOverrides: nil, mode: mode)
-                return (sys, cfg, specs)
+
+                let chatSpecs = ToolRegistry.shared.chatSpecs(withOverrides: nil, mode: mode)
+                let workSpecs = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: mode)
+
+                let compact = SystemPromptBuilder.isLocalModel(modelName)
+                let workSys = WorkExecutionEngine.buildAgentSystemPrompt(
+                    base: sys,
+                    executionMode: mode,
+                    skillInstructions: nil,
+                    compact: compact,
+                    secretNames: []
+                )
+
+                return [
+                    (sys, cfg, chatSpecs, "Chat"),
+                    (workSys, cfg, workSpecs, "Work"),
+                ]
             }
 
-            let memCtx = await MemoryContextAssembler.assembleContext(
-                agentId: agentId.uuidString,
-                config: memCfg
-            )
+            for (systemBase, memCfg, toolSpecs, label) in configs {
+                let memCtx = await MemoryContextAssembler.assembleContext(
+                    agentId: agentId.uuidString,
+                    config: memCfg
+                )
 
-            let systemContent = SystemPromptBuilder.prependMemoryContext(memCtx, to: systemBase)
-            let toolNames = toolSpecs.map { $0.function.name }
-            let tokenizerTools = Self.makeTokenizerTools(tools: toolSpecs, toolChoice: .auto)
+                let systemContent = SystemPromptBuilder.prependMemoryContext(memCtx, to: systemBase)
+                let toolNames = toolSpecs.map { $0.function.name }
+                let tokenizerTools = Self.makeTokenizerTools(tools: toolSpecs, toolChoice: .auto)
 
-            let hash = Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
-            guard !kvCacheStore.hasPrefixCache(modelName: modelName, hash: hash) else { return }
+                let hash = Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
+                guard !kvCacheStore.hasPrefixCache(modelName: modelName, hash: hash) else { continue }
 
-            let runtimeCfg = await getConfig()
-            let messages: [MLXLMCommon.Chat.Message] = [
-                .init(role: .system, content: systemContent, images: [], videos: []),
-                .init(role: .user, content: "Hi", images: [], videos: []),
-            ]
+                let runtimeCfg = await getConfig()
+                let messages: [MLXLMCommon.Chat.Message] = [
+                    .init(role: .system, content: systemContent, images: [], videos: []),
+                    .init(role: .user, content: "Hi", images: [], videos: []),
+                ]
 
-            let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
+                let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
-            let (stream, cache, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
-                container: holder.container,
-                buildChat: { messages },
-                buildToolsSpec: { tokenizerTools },
-                generation: params,
-                runtime: runtimeCfg,
-                existingCache: nil
-            )
+                let (stream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                    container: holder.container,
+                    buildChat: { messages },
+                    buildToolsSpec: { tokenizerTools },
+                    generation: params,
+                    runtime: runtimeCfg,
+                    existingCache: nil,
+                    cachedTokens: nil
+                )
 
-            for await _ in stream {}
-            await genTask.value
+                for await _ in stream {}
+                await genTask.value
 
-            kvCacheStore.putPrefixCache(cache, modelName: modelName, hash: hash)
-            print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
+                kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
+                print("[ModelRuntime] Prefix cached for \(modelName) (\(label) mode, hash: \(hash.prefix(8)))")
+            }
         } catch {
             print("[ModelRuntime] Failed to pre-compute prefix cache: \(error)")
         }
@@ -430,14 +448,16 @@ actor ModelRuntime {
         // nonisolated(unsafe) suppresses the Sendable check for [any KVCache] which
         // doesn't conform to Sendable but is safe here because access is serialized
         // through the ModelRuntime actor and ModelContainer.perform.
-        nonisolated(unsafe) let existingCache: [any KVCache]? = {
+        nonisolated(unsafe) let existingCacheInfo: ([any KVCache]?, [Int]?) = {
             if let sid = sessionId {
-                if let sessionCache = kvCacheStore.getCache(sessionId: sid, modelName: modelName) {
-                    return sessionCache
-                }
+                let (sessionCache, tokens) = kvCacheStore.getCache(sessionId: sid, modelName: modelName)
+                if sessionCache != nil { return (sessionCache, tokens) }
             }
             return kvCacheStore.getPrefixCache(modelName: modelName, hash: prefixHash)
         }()
+
+        nonisolated(unsafe) let existingCache = existingCacheInfo.0
+        let cachedTokens = existingCacheInfo.1
 
         let capturedMessages = chatMessages
         let buildChat: @Sendable () -> [MLXLMCommon.Chat.Message] = { capturedMessages }
@@ -447,16 +467,18 @@ actor ModelRuntime {
 
         var rawStream: AsyncStream<MLXLMCommon.Generation>
         var cache: [any KVCache]
+        var newTokens: [Int]
         var genTask: Task<Void, Never>
 
         do {
-            (rawStream, cache, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+            (rawStream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
                 runtime: cfg,
-                existingCache: existingCache
+                existingCache: existingCache,
+                cachedTokens: cachedTokens
             )
         } catch {
             guard existingCache != nil else { throw error }
@@ -464,18 +486,19 @@ actor ModelRuntime {
             if let sid = sessionId {
                 kvCacheStore.invalidate(sessionId: sid)
             }
-            (rawStream, cache, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+            (rawStream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
                 generation: parameters,
                 runtime: cfg,
-                existingCache: nil
+                existingCache: nil,
+                cachedTokens: nil
             )
         }
 
         if let sid = sessionId {
-            kvCacheStore.putCache(sessionId: sid, cache: cache, modelName: modelName)
+            kvCacheStore.putCache(sessionId: sid, cache: cache, tokens: newTokens, modelName: modelName)
             let budget = currentKVBudget()
             kvCacheStore.ensureBudget(budget)
         }
