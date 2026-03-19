@@ -104,6 +104,7 @@ struct MLXGenerationEngine {
 
                 let cache = existingCache ?? makePromptCache(model: context.model, parameters: parameters)
 
+                // withError converts MLX C++ errors (e.g. shape mismatches from stale caches) to catchable Swift errors
                 let iterator = try withError {
                     try TokenIterator(
                         input: fullLMInput,

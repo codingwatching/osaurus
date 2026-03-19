@@ -643,10 +643,10 @@ Example response:
 
 1. **Model Availability**: Only models that have been downloaded through the Osaurus UI will be available via the API.
 
-2. **Performance**: The first request to a model may take longer as the model needs to be loaded into memory. Subsequent requests benefit from the KV cache (session reuse) and prefix cache (shared system prompt context).
+2. **Performance**: The first request to a model loads it into memory and pins its weights in GPU memory; subsequent requests skip this step. Generation settings (prefill step size, max KV cache size, KV cache quantization) are auto-tuned based on system RAM and model size when not explicitly configured in Settings. Prefix caching is available to API clients via `cache_hint` / `prefix_hash`, but prefix caches are only precomputed by the UI warm-up flow — API requests read existing prefix caches but do not create new ones. Use `session_id` for multi-turn KV cache reuse across requests.
 
-3. **Memory Management**: Models are loaded into memory on demand and automatically unloaded when no chat window references them. The KV cache uses a tiered system: active sessions live in RAM, and least-recently-used sessions are evicted to SSD when the memory budget is exceeded. Configure the eviction policy in Settings > Local Inference > Model Management.
+3. **Memory Management**: Models are loaded into memory on demand and automatically unloaded when no chat window references them. The KV cache uses a tiered system: active session caches live in RAM (hot tier) with LRU eviction to SSD as `.safetensors` files (cold tier). The hot-tier memory budget is half of the headroom after model weights, with a 512 MB floor. The MLX freed-buffer cache is auto-sized proportional to model weight size and capped by system RAM. Configure the eviction policy in Settings > Local Inference > Model Management.
 
-4. **GPU Acceleration**: MLX automatically uses Apple Silicon GPU acceleration when available.
+4. **GPU Acceleration**: MLX uses Apple Silicon unified memory for GPU-accelerated inference. Model weights are pinned in GPU memory via `WiredMemoryTicket` on load to prevent paging during generation.
 
-5. **Context Length**: Each model has different context length limitations. The max KV cache size (configurable in Settings > Local Inference) controls the token budget for local models.
+5. **Context Length**: Each model has different context length limitations. The max KV cache size is configurable in Settings > Local Inference, but auto-scales by RAM tier when not set (8k tokens on <24 GB, 16k on 24–48 GB, 32k on 48–96 GB, 64k on 96 GB+). KV cache quantization (8-bit) auto-enables when headroom after model weights is under 16 GB to reduce memory pressure.

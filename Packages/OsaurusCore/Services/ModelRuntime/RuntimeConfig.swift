@@ -15,6 +15,9 @@ struct RuntimeConfig: Sendable {
     let maxKV: Int?
     let prefillStep: Int
 
+    /// Captures a generation config snapshot. User settings from ServerConfiguration
+    /// take precedence; nil/unset values fall through to auto-detection based on
+    /// system RAM and model weight size, then to hardcoded defaults.
     static func snapshot(modelWeightsBytes: Int64 = 0) async -> RuntimeConfig {
         let cfg = await ServerController.sharedConfiguration()
         let userKVBits = cfg?.genKVBits
