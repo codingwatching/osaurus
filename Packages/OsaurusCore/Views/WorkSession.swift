@@ -334,8 +334,6 @@ public final class WorkSession: ObservableObject {
     }
 
     func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
-        guard let issue else { return .zero }
-
         let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
             windowState?.cachedSystemPrompt
                 ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
@@ -362,6 +360,27 @@ public final class WorkSession: ObservableObject {
         breakdown.skills = ContextBudgetManager.estimateTokens(for: skillInstructions)
 
         var conversationTokens = 0
+
+        // Add the initial message context (folder tree, task details) to the conversation tokens
+        var firstMessageContent = ""
+        switch executionMode {
+        case .hostFolder(let ctx):
+            firstMessageContent += WorkExecutionEngine.buildFolderContextSection(from: ctx)
+        default: break
+        }
+
+        if let issue {
+            if let context = issue.context, !context.contains("[Selected Capabilities]") {
+                firstMessageContent += "\n[Prior Context]:\n\(context)\n"
+            }
+            firstMessageContent += "\n**Goal:** \(issue.title)\n"
+            if let desc = issue.description {
+                firstMessageContent += "\(desc)\n"
+            }
+        }
+
+        conversationTokens += ContextBudgetManager.estimateTokens(for: firstMessageContent)
+
         for turn in currentTurns {
             if !turn.contentIsEmpty {
                 conversationTokens += max(1, turn.contentLength / 4)

@@ -106,7 +106,9 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.triggerWarmup() }
+            Task { @MainActor in
+                self?.triggerWarmup()
+            }
         }
 
         NotificationCenter.default.addObserver(
@@ -114,7 +116,9 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.triggerWarmup() }
+            Task { @MainActor in
+                self?.triggerWarmup()
+            }
         }
 
         // Auto-persist model selection and drive warm-up / GC
@@ -175,19 +179,18 @@ final class ChatSession: ObservableObject {
         Task { [weak self] in await self?.refreshMemoryTokens() }
     }
 
+    @MainActor
     private func triggerWarmup() {
-        Task { @MainActor [weak self] in
-            guard let self = self, let model = self.selectedModel else { return }
-            let isLocal = ModelManager.findInstalledModel(named: model) != nil
-            if isLocal {
-                self.isWarmingModel = true
-                self.warmupTask?.cancel()
-                self.warmupTask = Task { [weak self] in
-                    let aid = await MainActor.run { self?.agentId ?? Agent.defaultId }
-                    await MLXService.shared.warmUp(modelName: model, agentId: aid)
-                    guard !Task.isCancelled else { return }
-                    await MainActor.run { self?.isWarmingModel = false }
-                }
+        guard let model = self.selectedModel else { return }
+        let isLocal = ModelManager.findInstalledModel(named: model) != nil
+        if isLocal {
+            self.isWarmingModel = true
+            self.warmupTask?.cancel()
+            self.warmupTask = Task { [weak self] in
+                let aid = await MainActor.run { self?.agentId ?? Agent.defaultId }
+                await MLXService.shared.warmUp(modelName: model, agentId: aid)
+                guard !Task.isCancelled else { return }
+                await MainActor.run { self?.isWarmingModel = false }
             }
         }
     }
