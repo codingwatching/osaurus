@@ -385,12 +385,53 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         let hostingController = NSHostingController(rootView: chatView)
 
-        // Calculate centered position on active screen
+        let panel = createChatPanel(windowId: windowId, windowState: windowState)
+        panel.contentViewController = hostingController
+        
+        applyWindowFramePersistence(panel: panel)
+
+        return panel
+    }
+
+    // MARK: - Private Helpers
+
+    private func createNSWindow(
+        windowId: UUID,
+        agentId: UUID,
+        sessionData: ChatSessionData?
+    ) -> NSWindow {
+        // Create per-window state container (isolates from shared singletons)
+        let windowState = ChatWindowState(
+            windowId: windowId,
+            agentId: agentId,
+            sessionData: sessionData
+        )
+        windowStates[windowId] = windowState
+
+        // Create ChatView with window state
+        let chatView = ChatView(windowState: windowState)
+            .environment(\.theme, windowState.theme)
+
+        let hostingController = NSHostingController(rootView: chatView)
+
+        let panel = createChatPanel(windowId: windowId, windowState: windowState)
+        panel.contentViewController = hostingController
+
+        applyWindowFramePersistence(panel: panel)
+
+        return panel
+    }
+
+    /// Shared logic for creating the basic ChatPanel with its toolbar and delegate.
+    private func createChatPanel(windowId: UUID, windowState: ChatWindowState) -> ChatPanel {
+        // Calculate centered position on active screen, with offset for multiple windows
         let defaultSize = NSSize(width: 800, height: 610)
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
 
-        let cascadeOffset = CGFloat(windows.count) * 25.0
+        // Cascade offset based on number of existing windows (25pt per window)
+        // Use count - 1 so the first window starts at the base position
+        let cascadeOffset = CGFloat(max(0, windows.count - 1)) * 25.0
 
         let initialRect: NSRect
         if let s = screen {
@@ -446,122 +487,50 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.toolbar = toolbar
         panel.toolbarStyle = .unified
 
-        panel.contentViewController = hostingController
-        panel.setContentSize(defaultSize)
-
-        if windows.count == 1 {
-            panel.setFrameAutosaveName(WindowFrameAutosaveKey.chat.rawValue)
-        }
-
-        let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
-        windowDelegates[windowId] = delegate
-        panel.delegate = delegate
-
-        return panel
-    }
-
-    // MARK: - Private Helpers
-
-    private func createNSWindow(
-        windowId: UUID,
-        agentId: UUID,
-        sessionData: ChatSessionData?
-    ) -> NSWindow {
-        // Create per-window state container (isolates from shared singletons)
-        let windowState = ChatWindowState(
-            windowId: windowId,
-            agentId: agentId,
-            sessionData: sessionData
-        )
-        windowStates[windowId] = windowState
-
-        // Create ChatView with window state
-        let chatView = ChatView(windowState: windowState)
-            .environment(\.theme, windowState.theme)
-
-        let hostingController = NSHostingController(rootView: chatView)
-
-        // Calculate centered position on active screen, with offset for multiple windows
-        let defaultSize = NSSize(width: 800, height: 610)
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-
-        // Cascade offset based on number of existing windows (25pt per window)
-        let cascadeOffset = CGFloat(windows.count) * 25.0
-
-        let initialRect: NSRect
-        if let s = screen {
-            let vf = s.visibleFrame
-            // Start from center, then offset down-right for each additional window
-            let baseOrigin = NSPoint(
-                x: vf.midX - defaultSize.width / 2,
-                y: vf.midY - defaultSize.height / 2
-            )
-            // Apply cascade: move right and down
-            var origin = NSPoint(
-                x: baseOrigin.x + cascadeOffset,
-                y: baseOrigin.y - cascadeOffset
-            )
-            // Ensure window stays within visible frame
-            if origin.x + defaultSize.width > vf.maxX {
-                origin.x = vf.minX + 50  // Wrap back to left
-            }
-            if origin.y < vf.minY {
-                origin.y = vf.maxY - defaultSize.height - 50  // Wrap back to top
-            }
-            initialRect = NSRect(origin: origin, size: defaultSize)
-        } else {
-            initialRect = NSRect(origin: .zero, size: defaultSize)
-        }
-
-        // Create panel (like original chat window)
-        let panel = ChatPanel(
-            contentRect: initialRect,
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.animationBehavior = .none
-        panel.becomesKeyOnlyIfNeeded = false
-        panel.hidesOnDeactivate = false
-        panel.worksWhenModal = true
-        panel.isReleasedWhenClosed = false
-
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = false
-        panel.acceptsMouseMovedEvents = true
-        panel.appearance = NSAppearance(named: windowState.theme.isDark ? .darkAqua : .aqua)
-
-        let toolbar = NSToolbar(identifier: "ChatToolbar")
-        toolbar.allowsUserCustomization = false
-        toolbar.autosavesConfiguration = false
-
-        let toolbarDelegate = ChatToolbarDelegate(windowState: windowState, session: windowState.session)
-        toolbar.delegate = toolbarDelegate
-        panel.chatToolbarDelegate = toolbarDelegate
-        panel.toolbar = toolbar
-        panel.toolbarStyle = .unified
-
-        panel.contentViewController = hostingController
-
-        // Set size directly - let SwiftUI layout asynchronously for faster window appearance
-        panel.setContentSize(defaultSize)
-
-        if windows.count == 1 {
-            panel.setFrameAutosaveName(WindowFrameAutosaveKey.chat.rawValue)
-        }
-
         // Set up delegate for lifecycle events
         let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
         windowDelegates[windowId] = delegate
         panel.delegate = delegate
-
+        
         return panel
+    }
+
+    /// Common method for window frame persistence and cascading.
+    private func applyWindowFramePersistence(panel: NSPanel) {
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let cascadeOffset = CGFloat(max(0, windows.count - 1)) * 25.0
+
+        // Try to load saved frame for ALL windows to get the user's preferred size
+        _ = panel.setFrameUsingName(WindowFrameAutosaveKey.chat.rawValue)
+
+        if windows.count > 1 {
+            // Recalculate origin for subsequent windows in case the size changed from default
+            let currentSize = panel.frame.size
+            if let s = screen {
+                let vf = s.visibleFrame
+                let baseOrigin = NSPoint(
+                    x: vf.midX - currentSize.width / 2,
+                    y: vf.midY - currentSize.height / 2
+                )
+                var origin = NSPoint(
+                    x: baseOrigin.x + cascadeOffset,
+                    y: baseOrigin.y - cascadeOffset
+                )
+                if origin.x + currentSize.width > vf.maxX {
+                    origin.x = vf.minX + 50
+                }
+                if origin.y < vf.minY {
+                    origin.y = vf.maxY - currentSize.height - 50
+                }
+                panel.setFrameOrigin(origin)
+            }
+        }
+
+        // Only the first window will save its changes back to the slot
+        if windows.count == 1 {
+            panel.setFrameAutosaveName(WindowFrameAutosaveKey.chat.rawValue)
+        }
     }
 
     // Called by delegate when window becomes key
