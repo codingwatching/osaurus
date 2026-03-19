@@ -228,7 +228,13 @@
             case .stopped, .notProvisioned:
                 _status = .starting
                 syncStatus()
-                try await provision()
+                do {
+                    try await provision()
+                } catch {
+                    _status = .stopped
+                    syncStatus()
+                    throw error
+                }
             }
         }
 

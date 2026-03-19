@@ -131,18 +131,10 @@ final class ChatSession: ObservableObject {
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
-                self.warmupTask?.cancel()
-                let isLocal = ModelManager.findInstalledModel(named: model) != nil
-                self.isWarmingModel = isLocal
-                self.warmupTask = Task { [weak self] in
-                    // Unload models no window references before warming the new one
-                    let active = ChatWindowManager.shared.activeLocalModelNames()
-                    await ModelRuntime.shared.unloadModelsNotIn(active)
-
-                    let aid = self?.agentId ?? Agent.defaultId
-                    await MLXService.shared.warmUp(modelName: model, agentId: aid)
-                    guard !Task.isCancelled else { return }
-                    await MainActor.run { self?.isWarmingModel = false }
+                
+                // Use a task to ensure this happens on the main actor
+                Task { @MainActor in
+                    self.triggerWarmup()
                 }
             }
 
@@ -180,18 +172,25 @@ final class ChatSession: ObservableObject {
     }
 
     @MainActor
-    private func triggerWarmup() {
+    func triggerWarmup() {
         guard let model = self.selectedModel else { return }
+        
+        self.warmupTask?.cancel()
+        
         let isLocal = ModelManager.findInstalledModel(named: model) != nil
-        if isLocal {
-            self.isWarmingModel = true
-            self.warmupTask?.cancel()
-            self.warmupTask = Task { [weak self] in
+        self.isWarmingModel = isLocal
+        
+        self.warmupTask = Task { [weak self] in
+            // Unload models no window references before warming the new one
+            let active = await MainActor.run { ChatWindowManager.shared.activeLocalModelNames() }
+            await ModelRuntime.shared.unloadModelsNotIn(active)
+
+            if isLocal {
                 let aid = await MainActor.run { self?.agentId ?? Agent.defaultId }
                 await MLXService.shared.warmUp(modelName: model, agentId: aid)
-                guard !Task.isCancelled else { return }
-                await MainActor.run { self?.isWarmingModel = false }
             }
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.isWarmingModel = false }
         }
     }
 

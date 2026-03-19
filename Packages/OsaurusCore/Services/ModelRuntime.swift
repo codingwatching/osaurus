@@ -56,6 +56,7 @@ actor ModelRuntime {
     private var currentModelName: String?
     private var kvCacheStore = KVCacheStore()
     private var cachedConfig: RuntimeConfig?
+    private var activeGenerationTask: Task<Void, Never>?
 
     private init() {}
 
@@ -372,6 +373,9 @@ actor ModelRuntime {
             }
 
             for (systemBase, memCfg, toolSpecs, label) in configs {
+                _ = await activeGenerationTask?.value
+                guard !Task.isCancelled else { break }
+
                 let memCtx = await MemoryContextAssembler.assembleContext(
                     agentId: agentId.uuidString,
                     config: memCfg
@@ -401,9 +405,12 @@ actor ModelRuntime {
                     existingCache: nil,
                     cachedTokens: nil
                 )
+                activeGenerationTask = genTask
 
                 for await _ in stream {}
                 await genTask.value
+
+                guard !Task.isCancelled else { break }
 
                 kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
                 print("[ModelRuntime] Prefix cached for \(modelName) (\(label) mode, hash: \(hash.prefix(8)))")
@@ -428,6 +435,9 @@ actor ModelRuntime {
         modelId: String,
         modelName: String
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        _ = await activeGenerationTask?.value
+        if Task.isCancelled { throw CancellationError() }
+
         let cfg = await getConfig()
         let holder = try await loadContainer(id: modelId, name: modelName)
 
@@ -496,6 +506,8 @@ actor ModelRuntime {
                 cachedTokens: nil
             )
         }
+
+        activeGenerationTask = genTask
 
         if let sid = sessionId {
             kvCacheStore.putCache(sessionId: sid, cache: cache, tokens: newTokens, modelName: modelName)
