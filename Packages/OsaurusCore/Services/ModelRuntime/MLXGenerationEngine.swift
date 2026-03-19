@@ -57,9 +57,10 @@ struct MLXGenerationEngine {
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         generation: GenerationParameters,
         runtime: RuntimeConfig,
-        existingCache: [any KVCache]?
-    ) async throws -> (AsyncStream<MLXLMCommon.Generation>, [any KVCache], Task<Void, Never>) {
-        let result: (AsyncStream<MLXLMCommon.Generation>, CacheBox, Task<Void, Never>) =
+        existingCache: [any KVCache]?,
+        cachedTokens: [Int]?
+    ) async throws -> (AsyncStream<MLXLMCommon.Generation>, [any KVCache], [Int], Task<Void, Never>) {
+        let result: (AsyncStream<MLXLMCommon.Generation>, CacheBox, [Int], Task<Void, Never>) =
             try await container.perform { (context: MLXLMCommon.ModelContext) in
                 let chat = preprocessImages(in: buildChat())
                 let toolsSpec = buildToolsSpec()
@@ -102,26 +103,77 @@ struct MLXGenerationEngine {
                 let extra: Set<String> = Set(["</end_of_turn>", "<end_of_turn>", "<|end|>", "<eot>"])
                 contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
 
-                let cache = existingCache ?? makePromptCache(model: context.model, parameters: parameters)
+                let newPromptTokens = fullLMInput.text.tokens.asArray(Int.self)
+                var cache: [any KVCache]
+                var effectiveInput = fullLMInput
+
+                if let existingCache = existingCache, let cachedTokens = cachedTokens, fullLMInput.image == nil,
+                    fullLMInput.video == nil
+                {
+                    // Find common prefix length
+                    var commonPrefixLength = zip(newPromptTokens, cachedTokens).prefix(while: { $0 == $1 }).count
+
+                    // We must pass at least 1 token to the model to start generation
+                    if commonPrefixLength == newPromptTokens.count && commonPrefixLength > 0 {
+                        commonPrefixLength -= 1
+                    }
+
+                    // Trim cache if needed
+                    let cacheOffset = existingCache.first?.offset ?? 0
+                    if commonPrefixLength > cacheOffset {
+                        commonPrefixLength = cacheOffset
+                    }
+
+                    if commonPrefixLength < cacheOffset {
+                        let toTrim = cacheOffset - commonPrefixLength
+                        if canTrimPromptCache(existingCache) {
+                            for layerCache in existingCache {
+                                _ = layerCache.trim(toTrim)
+                            }
+                            cache = existingCache
+                        } else {
+                            // If cache cannot be trimmed, we must discard it
+                            cache = makePromptCache(model: context.model, parameters: parameters)
+                            commonPrefixLength = 0
+                        }
+                    } else {
+                        cache = existingCache
+                    }
+
+                    // Slice input to only evaluate new tokens
+                    if commonPrefixLength > 0 && commonPrefixLength < newPromptTokens.count && !cache.isEmpty
+                        && cache[0].offset > 0
+                    {
+                        let newTokens = MLXArray(Array(newPromptTokens[commonPrefixLength...]))
+                        effectiveInput = LMInput(
+                            text: .init(tokens: newTokens),
+                            image: fullLMInput.image,
+                            video: fullLMInput.video
+                        )
+                    }
+                } else {
+                    // Cannot reuse cache (e.g. VLM with images, or no cached tokens)
+                    cache = makePromptCache(model: context.model, parameters: parameters)
+                }
 
                 // withError converts MLX C++ errors (e.g. shape mismatches from stale caches) to catchable Swift errors
                 let iterator = try withError {
                     try TokenIterator(
-                        input: fullLMInput,
+                        input: effectiveInput,
                         model: contextWithEOS.model,
                         cache: cache,
                         parameters: parameters
                     )
                 }
                 let (stream, genTask) = MLXLMCommon.generateTask(
-                    promptTokenCount: fullLMInput.text.tokens.size,
+                    promptTokenCount: newPromptTokens.count,
                     modelConfiguration: contextWithEOS.configuration,
                     tokenizer: contextWithEOS.tokenizer,
                     iterator: iterator
                 )
 
-                return (stream, CacheBox(cache), genTask)
+                return (stream, CacheBox(cache), newPromptTokens, genTask)
             }
-        return (result.0, result.1.cache, result.2)
+        return (result.0, result.1.cache, result.2, result.3)
     }
 }

@@ -6,7 +6,7 @@
 //  Tracks current task, active issue, and execution progress.
 //
 
-import Combine
+@preconcurrency import Combine
 import Foundation
 import SwiftUI
 
@@ -310,9 +310,7 @@ public final class WorkSession: ObservableObject {
     @Published var pickerItems: [ModelPickerItem] = []
 
     /// Forwarded from the parent ChatSession's warm-up state.
-    var isWarmingModel: Bool {
-        windowState?.session.isWarmingModel ?? false
-    }
+    @Published var isWarmingModel: Bool = false
 
     /// Whether the currently selected model supports image attachments
     var selectedModelSupportsImages: Bool {
@@ -334,8 +332,6 @@ public final class WorkSession: ObservableObject {
     }
 
     func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
-        guard let issue else { return .zero }
-
         let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
             windowState?.cachedSystemPrompt
                 ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
@@ -352,7 +348,6 @@ public final class WorkSession: ObservableObject {
         let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
         let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: baseSystemPrompt,
-            issue: issue,
             executionMode: executionMode,
             skillInstructions: nil,
             secretNames: secretNames
@@ -363,6 +358,27 @@ public final class WorkSession: ObservableObject {
         breakdown.skills = ContextBudgetManager.estimateTokens(for: skillInstructions)
 
         var conversationTokens = 0
+
+        // Add the initial message context (folder tree, task details) to the conversation tokens
+        var firstMessageContent = ""
+        switch executionMode {
+        case .hostFolder(let ctx):
+            firstMessageContent += WorkExecutionEngine.buildFolderContextSection(from: ctx)
+        default: break
+        }
+
+        if let issue {
+            if let context = issue.context, !context.contains("[Selected Capabilities]") {
+                firstMessageContent += "\n[Prior Context]:\n\(context)\n"
+            }
+            firstMessageContent += "\n**Goal:** \(issue.title)\n"
+            if let desc = issue.description {
+                firstMessageContent += "\(desc)\n"
+            }
+        }
+
+        conversationTokens += ContextBudgetManager.estimateTokens(for: firstMessageContent)
+
         for turn in currentTurns {
             if !turn.contentIsEmpty {
                 conversationTokens += max(1, turn.contentLength / 4)
@@ -432,7 +448,10 @@ public final class WorkSession: ObservableObject {
 
     private var executionTask: Task<Void, Never>?
     private var persistDebounceTask: Task<Void, Never>?
+    private var cancellables = Set<AnyCancellable>()
     nonisolated(unsafe) private var pickerItemsCancellable: AnyCancellable?
+    nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
+    nonisolated(unsafe) private var warmingModelCancellable: AnyCancellable?
 
     /// The work engine instance for this session (each session owns its own engine)
     private let engine: WorkEngine
@@ -466,6 +485,7 @@ public final class WorkSession: ObservableObject {
         if let windowState = windowState {
             self.pickerItems = windowState.session.pickerItems
             self.selectedModel = windowState.session.selectedModel
+            self.isWarmingModel = windowState.session.isWarmingModel
 
             pickerItemsCancellable = windowState.session.$pickerItems
                 .dropFirst()
@@ -479,7 +499,49 @@ public final class WorkSession: ObservableObject {
                         self.selectedModel = updatedOptions.first?.id
                     }
                 }
+
+            modelSelectionCancellable = windowState.session.$selectedModel
+                .receive(on: RunLoop.main)
+                .sink { [weak self] model in
+                    if self?.selectedModel != model {
+                        self?.selectedModel = model
+                    }
+                }
+
+            // Also listen to our own changes to sync back to ChatSession
+            // This ensures warmup logic triggers when changed from Work mode
+            $selectedModel
+                .dropFirst()
+                .removeDuplicates()
+                .sink { [weak self] newModel in
+                    guard let self = self, let model = newModel else { return }
+                    if self.windowState?.session.selectedModel != model {
+                        self.windowState?.session.selectedModel = model
+                        Task { @MainActor in
+                            self.windowState?.session.triggerWarmup()
+                        }
+                    }
+                }
+                .store(in: &cancellables)
+
+            warmingModelCancellable = windowState.session.$isWarmingModel
+                .receive(on: RunLoop.main)
+                .sink { [weak self] isWarming in
+                    if self?.isWarmingModel != isWarming {
+                        self?.isWarmingModel = isWarming
+                    }
+                }
         }
+
+        AgentManager.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+
+        WorkFolderContextService.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
 
         // Initialize database and issue manager
         Task { [weak self] in
@@ -490,6 +552,8 @@ public final class WorkSession: ObservableObject {
     deinit {
         print("[WorkSession] deinit – agentId: \(agentId)")
         pickerItemsCancellable?.cancel()
+        modelSelectionCancellable?.cancel()
+        warmingModelCancellable?.cancel()
         executionTask?.cancel()
         persistDebounceTask?.cancel()
         let engineToCancel = engine

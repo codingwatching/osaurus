@@ -50,7 +50,9 @@ actor MLXService: ToolCapableService {
 
     func warmUp(modelName: String? = nil, agentId: UUID? = nil, prefillChars: Int = 0, maxTokens: Int = 1) async {
         let chosen: LocalModelRef? = {
-            if let name = modelName, let m = Self.findModel(named: name) { return m }
+            if let name = modelName {
+                return Self.findModel(named: name)
+            }
             if let first = Self.getAvailableModels().first, let m = Self.findModel(named: first) {
                 return m
             }

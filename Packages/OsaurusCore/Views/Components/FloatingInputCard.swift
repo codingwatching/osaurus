@@ -51,8 +51,6 @@ struct FloatingInputCard: View {
     var canResume: Bool = false
     /// Cumulative token usage for work mode
     var cumulativeTokens: Int? = nil
-    /// Hide context indicator in empty states
-    var hideContextIndicator: Bool = false
     /// Compact mode (sidebar open) - hides secondary chip content
     var isCompact: Bool = false
 
@@ -689,21 +687,21 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            // Sandbox toggle (visible when sandbox is available on this system)
-            if isSandboxAvailable {
+            // Sandbox toggle (visible when sandbox is available on this system, hidden when folder context is active)
+            if isSandboxAvailable && !folderContextService.hasActiveFolder {
                 sandboxToggleChip
             }
 
-            // Folder context selector (work mode only)
-            // Show if: has folder selected, OR in empty mode (can select folder)
-            if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
+            // Folder context selector (work mode only, hidden when sandbox is enabled)
+            if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) && !isSandboxEnabled
+            {
                 folderContextChip
             }
 
             Spacer()
 
             // Context size indicator (right-aligned)
-            if !hideContextIndicator && (displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0) {
+            if displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0 {
                 contextIndicatorChip
             }
         }
@@ -714,7 +712,7 @@ struct FloatingInputCard: View {
     @ViewBuilder
     private var contextIndicatorChip: some View {
         // In work mode, show cumulative usage; in chat mode, show context estimate
-        if let cumulative = cumulativeTokens, workInputState != nil {
+        if let cumulative = cumulativeTokens, cumulative > 0, workInputState != nil {
             // Work mode: show cumulative tokens used
             HStack(spacing: 4) {
                 Text("\(formatTokenCount(cumulative))")
@@ -794,10 +792,11 @@ struct FloatingInputCard: View {
             showModelPicker.toggle()
         } content: {
             HStack(spacing: 6) {
+                let isLocal = selectedPickerItem?.source == .local
                 Circle()
-                    .fill(isWarmingModel ? Color.yellow : Color.green)
+                    .fill(isLocal && isWarmingModel ? Color.yellow : Color.green)
                     .frame(width: 6, height: 6)
-                    .help(isWarmingModel ? "Warming up model cache…" : "Model ready")
+                    .help(isLocal && isWarmingModel ? "Warming up model cache…" : "Model ready")
 
                 // Model name with metadata badges
                 if let option = selectedPickerItem {
@@ -1147,7 +1146,7 @@ struct FloatingInputCard: View {
     // MARK: - Folder Context Chip (Work Mode)
 
     /// Empty mode = no active task, folder can be changed
-    private var isAgentEmptyMode: Bool { hideContextIndicator }
+    private var isAgentEmptyMode: Bool { workInputState == .noTask }
 
     private var folderContextChip: some View {
         let hasFolder = folderContextService.hasActiveFolder
@@ -1261,27 +1260,23 @@ struct FloatingInputCard: View {
 
     private var inputCard: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Queued message banner (work mode, when message is queued)
             if let queuedMessage = pendingQueuedMessage {
                 queuedMessageBanner(message: queuedMessage)
                     .padding(.horizontal, 12)
-                    .padding(.top, 10)
+                    .padding(.top, 8)
             }
 
-            // Inline pending attachments (compact, inside the card)
             if !pendingAttachments.isEmpty {
                 inlinePendingAttachmentsPreview
                     .padding(.horizontal, 12)
                     .padding(.top, 10)
             }
 
-            // Clean text input area (no overlapping buttons)
             textInputArea
                 .padding(.horizontal, 12)
                 .padding(.top, pendingAttachments.isEmpty ? 10 : 6)
                 .padding(.bottom, 6)
 
-            // Bottom button bar with all action buttons
             buttonBar
                 .padding(.horizontal, 12)
                 .padding(.vertical, 12)
@@ -1400,8 +1395,8 @@ struct FloatingInputCard: View {
                 return "What do you want done?"
             case .executing:
                 return pendingQueuedMessage != nil
-                    ? "Message queued..."
-                    : "⏎ to queue, ⇧⏎ to send now..."
+                    ? "Message queued"
+                    : "Queue a follow-up message..."
             case .idle:
                 return "What's next?"
             }
@@ -1454,10 +1449,8 @@ struct FloatingInputCard: View {
 
     private var buttonBar: some View {
         HStack(spacing: 8) {
-            // Left side buttons
             HStack(spacing: 6) {
                 mediaButton
-
                 if isVoiceAvailable && !isStreaming {
                     voiceInputButton
                 }
@@ -1465,10 +1458,10 @@ struct FloatingInputCard: View {
 
             Spacer()
 
-            // Right side - keyboard hint + action buttons + send
             HStack(spacing: 8) {
-                keyboardHint
-
+                if workInputState == nil {
+                    keyboardHint
+                }
                 if isStreaming {
                     stopButton
                 } else if canResume && localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1484,67 +1477,49 @@ struct FloatingInputCard: View {
 
     // MARK: - Action Buttons
 
-    /// Queued message banner showing the message text with Send Now and dismiss buttons
     private func queuedMessageBanner(message: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "clock")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.accentColor)
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Text("Queued:")
+                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                    .foregroundColor(theme.tertiaryText)
 
-            Text("Queued")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                .foregroundColor(theme.accentColor)
+                Text(message)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
+                    .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
 
-            Text(message)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .regular))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(2)
+                Spacer()
 
-            Spacer()
-
-            if onSendNow != nil {
-                Button {
-                    text = message
-                    onSendNow?()
-                } label: {
-                    HStack(spacing: 3) {
-                        Image(systemName: "bolt.fill")
-                            .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .bold))
+                if onSendNow != nil {
+                    Button {
+                        text = message
+                        onSendNow?()
+                    } label: {
                         Text("Send Now")
-                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+                            .foregroundColor(theme.accentColor)
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule().fill(theme.accentColor)
-                    )
+                    .buttonStyle(.plain)
+                    .help("Interrupt and send immediately")
+                }
+
+                Button {
+                    onClearQueued?()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                        .foregroundColor(theme.tertiaryText)
                 }
                 .buttonStyle(.plain)
-                .help("Interrupt and send immediately")
+                .help("Clear queued message")
             }
+            .padding(.vertical, 6)
 
-            Button {
-                onClearQueued?()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 20, height: 20)
-                    .background(theme.tertiaryBackground.opacity(0.5))
-                    .clipShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .help("Clear queued message")
+            Divider()
+                .opacity(0.3)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(theme.accentColor.opacity(0.06))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 0.5)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var mediaButton: some View {

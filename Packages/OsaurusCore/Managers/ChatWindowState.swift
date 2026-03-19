@@ -133,15 +133,8 @@ final class ChatWindowState: ObservableObject {
 
     /// Kicks off model warm-up for the window's currently selected local model.
     private func warmUpSelectedModel() {
-        guard let model = session.selectedModel,
-            ModelManager.findInstalledModel(named: model) != nil
-        else { return }
-        session.isWarmingModel = true
-        session.warmupTask = Task { [weak session, agentId] in
-            await MLXService.shared.warmUp(modelName: model, agentId: agentId)
-            guard !Task.isCancelled else { return }
-            await MainActor.run { session?.isWarmingModel = false }
-        }
+        // Defer to ChatSession's warmup logic to ensure consistency
+        session.triggerWarmup()
     }
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
@@ -367,7 +360,7 @@ final class ChatWindowState: ObservableObject {
                 }
             }
         )
-        // Refresh theme when current agent is updated
+        // Refresh theme and config (system prompt, token cache) when current agent is updated
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .agentUpdated,
@@ -376,7 +369,10 @@ final class ChatWindowState: ObservableObject {
             ) { [weak self] notification in
                 let updatedId = notification.object as? UUID
                 Task { @MainActor in
-                    if let self, updatedId == self.agentId { self.refreshTheme() }
+                    if let self, updatedId == self.agentId {
+                        self.refreshTheme()
+                        self.refreshAgentConfig()
+                    }
                 }
             }
         )

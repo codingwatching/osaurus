@@ -385,7 +385,7 @@ public actor WorkEngine {
             {
                 existing.messages
             } else {
-                buildInitialMessages(issue: issue, images: images)
+                buildInitialMessages(issue: issue, images: images, executionMode: resolvedExecutionMode)
             }
         activeSession =
             if attemptResume,
@@ -406,7 +406,6 @@ public actor WorkEngine {
         }()
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
-            issue: issue,
             executionMode: resolvedExecutionMode,
             skillInstructions: skillInstructions,
             compact: compact,
@@ -661,18 +660,39 @@ public actor WorkEngine {
         }
     }
 
-    private func buildInitialMessages(issue: Issue, images: [Data]) -> [ChatMessage] {
+    private func buildInitialMessages(issue: Issue, images: [Data], executionMode: WorkExecutionMode) -> [ChatMessage] {
         var messages: [ChatMessage] = []
 
-        if let context = issue.context, !context.contains("[Selected Capabilities]") {
-            messages.append(ChatMessage(role: "user", content: "[Prior Context]:\n\(context)"))
+        var firstMessageContent = ""
+
+        switch executionMode {
+        case .hostFolder(let ctx):
+            firstMessageContent += WorkExecutionEngine.buildFolderContextSection(from: ctx)
+        default:
+            break
         }
 
-        let userQuery = issue.description ?? issue.title
+        if let context = issue.context, !context.contains("[Selected Capabilities]") {
+            firstMessageContent += "\n[Prior Context]:\n\(context)\n"
+        }
+
+        firstMessageContent += "\n**Goal:** \(issue.title)\n"
+        if let desc = issue.description {
+            firstMessageContent += "\(desc)\n"
+        }
+
         if images.isEmpty {
-            messages.append(ChatMessage(role: "user", content: userQuery))
+            messages.append(
+                ChatMessage(role: "user", content: firstMessageContent.trimmingCharacters(in: .whitespacesAndNewlines))
+            )
         } else {
-            messages.append(ChatMessage(role: "user", text: userQuery, imageData: images))
+            messages.append(
+                ChatMessage(
+                    role: "user",
+                    text: firstMessageContent.trimmingCharacters(in: .whitespacesAndNewlines),
+                    imageData: images
+                )
+            )
         }
 
         return messages

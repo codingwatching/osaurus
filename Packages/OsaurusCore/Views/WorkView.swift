@@ -94,8 +94,7 @@ struct WorkView: View {
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,
-                            cumulativeTokens: session.cumulativeTokens,
-                            hideContextIndicator: session.currentTask == nil
+                            cumulativeTokens: session.cumulativeTokens
                         )
                     }
                 }

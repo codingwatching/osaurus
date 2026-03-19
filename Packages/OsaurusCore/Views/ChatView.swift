@@ -101,6 +101,26 @@ final class ChatSession: ObservableObject {
             Task { @MainActor in await self?.refreshPickerItems() }
         }
 
+        NotificationCenter.default.addObserver(
+            forName: .toolsListChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.triggerWarmup()
+            }
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .skillsListChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.triggerWarmup()
+            }
+        }
+
         // Auto-persist model selection and drive warm-up / GC
         modelSelectionCancellable =
             $selectedModel
@@ -111,18 +131,10 @@ final class ChatSession: ObservableObject {
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
-                self.warmupTask?.cancel()
-                let isLocal = ModelManager.findInstalledModel(named: model) != nil
-                self.isWarmingModel = isLocal
-                self.warmupTask = Task { [weak self] in
-                    // Unload models no window references before warming the new one
-                    let active = ChatWindowManager.shared.activeLocalModelNames()
-                    await ModelRuntime.shared.unloadModelsNotIn(active)
 
-                    let aid = self?.agentId ?? Agent.defaultId
-                    await MLXService.shared.warmUp(modelName: model, agentId: aid)
-                    guard !Task.isCancelled else { return }
-                    await MainActor.run { self?.isWarmingModel = false }
+                // Use a task to ensure this happens on the main actor
+                Task { @MainActor in
+                    self.triggerWarmup()
                 }
             }
 
@@ -157,6 +169,29 @@ final class ChatSession: ObservableObject {
         }
         isLoadingModel = false
         Task { [weak self] in await self?.refreshMemoryTokens() }
+    }
+
+    @MainActor
+    func triggerWarmup() {
+        guard let model = self.selectedModel else { return }
+
+        self.warmupTask?.cancel()
+
+        let isLocal = ModelManager.findInstalledModel(named: model) != nil
+        self.isWarmingModel = isLocal
+
+        self.warmupTask = Task { [weak self] in
+            // Unload models no window references before warming the new one
+            let active = await MainActor.run { ChatWindowManager.shared.activeLocalModelNames() }
+            await ModelRuntime.shared.unloadModelsNotIn(active)
+
+            if isLocal {
+                let aid = await MainActor.run { self?.agentId ?? Agent.defaultId }
+                await MLXService.shared.warmUp(modelName: model, agentId: aid)
+            }
+            guard !Task.isCancelled else { return }
+            await MainActor.run { self?.isWarmingModel = false }
+        }
     }
 
     func refreshPickerItems() async {
@@ -1472,8 +1507,8 @@ struct ChatView: View {
             minWidth: 800,
             idealWidth: 950,
             maxWidth: .infinity,
-            minHeight: 610,
-            idealHeight: 760,
+            minHeight: 575,
+            idealHeight: 610,
             maxHeight: .infinity
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))

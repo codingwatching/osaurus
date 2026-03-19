@@ -269,21 +269,22 @@ extension AgentManager {
         let wasEnabled = effectiveAutonomousExec(for: agentId)?.enabled ?? false
         let willBeEnabled = config?.enabled ?? false
 
-        if willBeEnabled && !wasEnabled {
-            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
-        }
-
+        // Save config first so the UI reflects the new state immediately
+        // (enables loading indicator while provisioning runs).
         if agentId == Agent.defaultId {
             var chatConfig = ChatConfigurationStore.load()
             chatConfig.defaultAutonomousExec = config
             ChatConfigurationStore.save(chatConfig)
             NotificationCenter.default.post(name: .agentUpdated, object: agentId)
-            return
+        } else {
+            guard var agent = agent(for: agentId) else { return }
+            agent.autonomousExec = config
+            update(agent)
         }
 
-        guard var agent = agent(for: agentId) else { return }
-        agent.autonomousExec = config
-        update(agent)
+        if willBeEnabled && !wasEnabled {
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
+        }
     }
 
     /// Get the effective system prompt for an agent (combining with global if needed)

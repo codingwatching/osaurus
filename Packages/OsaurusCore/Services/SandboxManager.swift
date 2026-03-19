@@ -228,7 +228,13 @@
             case .stopped, .notProvisioned:
                 _status = .starting
                 syncStatus()
-                try await provision()
+                do {
+                    try await provision()
+                } catch {
+                    _status = .stopped
+                    syncStatus()
+                    throw error
+                }
             }
         }
 
@@ -816,6 +822,7 @@
             let status = _status
             Task { @MainActor in
                 State.shared.status = status
+                NotificationCenter.default.post(name: .toolsListChanged, object: nil)
             }
         }
 
