@@ -53,12 +53,15 @@ struct FloatingInputCard: View {
     var cumulativeTokens: Int? = nil
     /// Hide context indicator in empty states
     var hideContextIndicator: Bool = false
+    /// Compact mode (sidebar open) - hides secondary chip content
+    var isCompact: Bool = false
 
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
     @ObservedObject private var skillManager = SkillManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
+    @ObservedObject private var sandboxState = SandboxManager.State.shared
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -71,6 +74,8 @@ struct FloatingInputCard: View {
     @State private var showCapabilitiesPicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
+    @State private var isSandboxHovered = false
+    @State private var sandboxPulse = false
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
     // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
@@ -176,7 +181,7 @@ struct FloatingInputCard: View {
         VStack(spacing: 12) {
             // Model and tool selector chips (always visible)
             if (pickerItems.count > 1 || hasTools || hasSkills
-                || displayContextTokens > 0) && !showVoiceOverlay
+                || displayContextTokens > 0 || isSandboxAvailable) && !showVoiceOverlay
             {
                 selectorRow
                     .padding(.top, 8)
@@ -684,21 +689,23 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
+            // Sandbox toggle (visible when sandbox is available on this system)
+            if isSandboxAvailable {
+                sandboxToggleChip
+            }
+
             // Folder context selector (work mode only)
             // Show if: has folder selected, OR in empty mode (can select folder)
             if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
                 folderContextChip
             }
 
-            // Context size indicator
+            Spacer()
+
+            // Context size indicator (right-aligned)
             if !hideContextIndicator && (displayContextTokens > 0 || (cumulativeTokens ?? 0) > 0) {
                 contextIndicatorChip
             }
-
-            Spacer()
-
-            // Keyboard hint
-            keyboardHint
         }
     }
 
@@ -714,9 +721,11 @@ struct FloatingInputCard: View {
                     .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.accentColor)
 
-                Text("used")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                if !isCompact {
+                    Text("used")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                }
             }
             .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
         } else {
@@ -732,9 +741,11 @@ struct FloatingInputCard: View {
                         .foregroundColor(theme.tertiaryText)
                 }
 
-                Text("tokens")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                if !isCompact {
+                    Text("tokens")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
+                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                }
             }
             .onHover { hovering in
                 contextHoverTask?.cancel()
@@ -803,8 +814,7 @@ struct FloatingInputCard: View {
                                 .foregroundColor(theme.accentColor)
                         }
 
-                        // Show parameter count badge
-                        if let params = option.parameterCount {
+                        if !isCompact, let params = option.parameterCount {
                             Text(params)
                                 .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .medium))
                                 .foregroundColor(.blue.opacity(0.8))
@@ -974,6 +984,163 @@ struct FloatingInputCard: View {
         }
         .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
             CapabilitiesSelectorView(agentId: effectiveAgentId, isWorkMode: workInputState != nil)
+        }
+    }
+
+    // MARK: - Sandbox Toggle Chip
+
+    private var isSandboxAvailable: Bool {
+        sandboxState.availability.isAvailable
+    }
+
+    private var isSandboxEnabled: Bool {
+        agentManager.effectiveAutonomousExec(for: effectiveAgentId)?.enabled == true
+    }
+
+    private var isSandboxLoading: Bool {
+        isSandboxEnabled && (sandboxState.status == .starting || sandboxState.isProvisioning)
+    }
+
+    private var isSandboxRunning: Bool {
+        sandboxState.status.isRunning
+    }
+
+    private func toggleSandbox() {
+        let currentConfig = agentManager.effectiveAutonomousExec(for: effectiveAgentId)
+        var newConfig = currentConfig ?? .default
+        newConfig.enabled.toggle()
+        Task {
+            try? await agentManager.updateAutonomousExec(newConfig, for: effectiveAgentId)
+        }
+    }
+
+    private var sandboxHelpText: String {
+        if isSandboxLoading {
+            return "Sandbox is starting up…"
+        } else if isSandboxEnabled && isSandboxRunning {
+            return "Sandbox is active — click to disable. Right-click for settings."
+        } else if isSandboxEnabled {
+            return "Sandbox enabled — container not running"
+        } else {
+            return "Enable Sandbox for autonomous code execution"
+        }
+    }
+
+    private var sandboxToggleChip: some View {
+        Button(action: toggleSandbox) {
+            HStack(spacing: 5) {
+                if isSandboxLoading {
+                    ProgressView()
+                        .controlSize(.mini)
+                        .scaleEffect(0.6)
+                        .frame(width: 8, height: 8)
+                        .tint(Color.orange)
+                } else if isSandboxEnabled && isSandboxRunning {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
+                }
+
+                Image(systemName: isSandboxEnabled ? "shippingbox.fill" : "shippingbox")
+                    .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                    .foregroundColor(
+                        isSandboxEnabled && isSandboxRunning
+                            ? Color.green
+                            : (isSandboxLoading ? Color.orange : theme.tertiaryText)
+                    )
+
+                Text("Sandbox")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(
+                        isSandboxEnabled
+                            ? (isSandboxRunning ? theme.primaryText : theme.secondaryText)
+                            : theme.tertiaryText
+                    )
+                    .lineLimit(1)
+                    .opacity(isSandboxLoading ? (sandboxPulse ? 0.4 : 1.0) : 1.0)
+                    .animation(
+                        isSandboxLoading
+                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+                            : .default,
+                        value: sandboxPulse
+                    )
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(sandboxChipBackground)
+            .clipShape(Capsule())
+            .overlay(sandboxChipBorder)
+            .shadow(
+                color: isSandboxEnabled && isSandboxRunning
+                    ? Color.green.opacity(0.12)
+                    : (isSandboxHovered ? theme.accentColor.opacity(0.1) : .clear),
+                radius: 4,
+                x: 0,
+                y: 1
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isSandboxLoading)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isSandboxHovered = hovering
+            }
+        }
+        .help(sandboxHelpText)
+        .contextMenu {
+            Button("Open Sandbox Settings") {
+                AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
+            }
+        }
+        .task(id: isSandboxLoading) { sandboxPulse = isSandboxLoading }
+    }
+
+    @ViewBuilder
+    private var sandboxChipBackground: some View {
+        ZStack {
+            Capsule()
+                .fill(theme.secondaryBackground.opacity(isSandboxHovered || isSandboxEnabled ? 0.95 : 0.8))
+
+            if isSandboxEnabled && isSandboxRunning {
+                Capsule()
+                    .fill(Color.green.opacity(isSandboxHovered ? 0.14 : 0.08))
+            } else if isSandboxLoading {
+                Capsule()
+                    .fill(Color.orange.opacity(0.06))
+            } else if isSandboxHovered {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [theme.accentColor.opacity(0.06), Color.clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sandboxChipBorder: some View {
+        if isSandboxEnabled && isSandboxRunning {
+            Capsule()
+                .strokeBorder(Color.green.opacity(isSandboxHovered ? 0.4 : 0.25), lineWidth: 1)
+        } else if isSandboxLoading {
+            Capsule()
+                .strokeBorder(Color.orange.opacity(isSandboxHovered ? 0.35 : 0.2), lineWidth: 1)
+        } else {
+            Capsule()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.glassEdgeLight.opacity(isSandboxHovered ? 0.25 : 0.15),
+                            theme.primaryBorder.opacity(isSandboxHovered ? 0.2 : 0.12),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         }
     }
 
@@ -1289,10 +1456,8 @@ struct FloatingInputCard: View {
         HStack(spacing: 8) {
             // Left side buttons
             HStack(spacing: 6) {
-                // Attachment button (images + documents)
                 mediaButton
 
-                // Voice input button (when available and not streaming)
                 if isVoiceAvailable && !isStreaming {
                     voiceInputButton
                 }
@@ -1300,8 +1465,10 @@ struct FloatingInputCard: View {
 
             Spacer()
 
-            // Right side - Stop/Resume/End button + Send button
+            // Right side - keyboard hint + action buttons + send
             HStack(spacing: 8) {
+                keyboardHint
+
                 if isStreaming {
                     stopButton
                 } else if canResume && localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

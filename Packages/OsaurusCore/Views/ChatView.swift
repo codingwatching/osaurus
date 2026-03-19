@@ -1422,7 +1422,8 @@ struct ChatView: View {
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
                                 agentId: windowState.agentId,
-                                windowId: windowState.windowId
+                                windowId: windowState.windowId,
+                                isCompact: windowState.showSidebar
                             )
                         } else {
                             // No models empty state
@@ -1651,8 +1652,6 @@ struct ChatView: View {
     // MARK: - Header
 
     private var chatHeader: some View {
-        // Interactive titlebar controls are hosted in the window's `NSToolbar`.
-        // Keep a spacer here so content starts below the titlebar.
         Color.clear
             .frame(height: 52)
             .allowsHitTesting(false)

@@ -2459,7 +2459,7 @@ struct ScheduleEditorSheet: View {
             cronExpression = expression
         }
     }
-    
+
     private func buildFrequency() -> ScheduleFrequency {
         switch frequencyType {
         case .once:

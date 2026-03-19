@@ -93,60 +93,6 @@ struct ModeToggleButton: View {
     }
 }
 
-// MARK: - Sandbox Status Indicator
-
-/// A clickable status label styled to sit alongside the mode toggle,
-/// using matching typography so it reads as part of the same toolbar group.
-/// Tapping opens the Sandbox settings tab.
-struct SandboxStatusIndicator: View {
-    var isLoading: Bool = false
-
-    @Environment(\.theme) private var theme
-    @State private var pulse = false
-    @State private var isHovering = false
-
-    private var helpText: String {
-        isLoading
-            ? "Sandbox is starting up — click to open Sandbox settings."
-            : "Sandbox is active — click to open Sandbox settings."
-    }
-
-    var body: some View {
-        Button {
-            AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
-        } label: {
-            HStack(spacing: 5) {
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.mini)
-                        .scaleEffect(0.65)
-                        .frame(width: 11, height: 11)
-                        .tint(theme.tertiaryText)
-                } else {
-                    Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                }
-
-                Text("Sandbox")
-                    .font(.system(size: 11, weight: .semibold))
-                    .opacity(isLoading ? (pulse ? 0.35 : 1.0) : 1.0)
-                    .animation(
-                        isLoading ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true) : .default,
-                        value: pulse
-                    )
-            }
-            .foregroundColor(isHovering ? theme.primaryText : theme.tertiaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .animation(.easeInOut(duration: 0.15), value: isHovering)
-        .help(helpText)
-        .task(id: isLoading) { pulse = isLoading }
-    }
-}
-
 // MARK: - Settings Button
 
 struct SettingsButton: View {
