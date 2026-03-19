@@ -689,14 +689,14 @@ struct FloatingInputCard: View {
                 capabilitiesSelectorChip
             }
 
-            // Sandbox toggle (visible when sandbox is available on this system)
-            if isSandboxAvailable {
+            // Sandbox toggle (visible when sandbox is available on this system, hidden when folder context is active)
+            if isSandboxAvailable && !folderContextService.hasActiveFolder {
                 sandboxToggleChip
             }
 
-            // Folder context selector (work mode only)
-            // Show if: has folder selected, OR in empty mode (can select folder)
-            if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) {
+            // Folder context selector (work mode only, hidden when sandbox is enabled)
+            if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) && !isSandboxEnabled
+            {
                 folderContextChip
             }
 
