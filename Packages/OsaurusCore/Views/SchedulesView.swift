@@ -1512,6 +1512,7 @@ struct ScheduleEditorSheet: View {
     @State private var selectedMonth = 1
     @State private var selectedDay = 1
     @State private var selectedDate = Date()
+    @State private var cronExpression = "0 9 * * *"
     @State private var hasAppeared = false
     @Namespace private var modeNamespace
 
@@ -1961,7 +1962,46 @@ struct ScheduleEditorSheet: View {
             monthlyOptions
         case .yearly:
             yearlyOptions
+        case .cron:
+            cronOptions
         }
+    }
+
+    private var cronOptions: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Cron Expression")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+
+                ScheduleTextField(
+                    placeholder: "e.g., 15 0,7 * * 1-5",
+                    text: $cronExpression,
+                    icon: "terminal"
+                )
+            }
+
+            Text("Format: minute hour day-of-month month day-of-week")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            Text("Supports standard 5 field format with * , - and / operators")
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+
+            if let nextRun = CronParser(cronExpression)?.nextDate(after: Date()) {
+                schedulePreview(text: "Next run: \(formattedDate(nextRun))")
+            } else {
+                schedulePreview(text: "Invalid cron expression", isError: true)
+            }
+        }
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 
     private var onceOptions: some View {
@@ -2301,19 +2341,19 @@ struct ScheduleEditorSheet: View {
     }
 
     // Helper view for schedule preview
-    private func schedulePreview(text: String) -> some View {
+    private func schedulePreview(text: String, isError: Bool = false) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "repeat")
+            Image(systemName: isError ? "exclamationmark.triangle.fill" : "repeat")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(isError ? theme.errorColor : theme.accentColor)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Schedule")
+                Text(isError ? "Error" : "Schedule")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(isError ? theme.errorColor : theme.tertiaryText)
                 Text(text)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .foregroundColor(isError ? theme.errorColor : theme.primaryText)
             }
 
             Spacer()
@@ -2321,10 +2361,10 @@ struct ScheduleEditorSheet: View {
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(theme.accentColor.opacity(0.08))
+                .fill((isError ? theme.errorColor : theme.accentColor).opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                        .stroke((isError ? theme.errorColor : theme.accentColor).opacity(0.2), lineWidth: 1)
                 )
         )
     }
@@ -2415,9 +2455,11 @@ struct ScheduleEditorSheet: View {
             selectedDay = day
             selectedHour = hour
             selectedMinute = minute
+        case .cron(let expression):
+            cronExpression = expression
         }
     }
-
+    
     private func buildFrequency() -> ScheduleFrequency {
         switch frequencyType {
         case .once:
@@ -2434,6 +2476,8 @@ struct ScheduleEditorSheet: View {
             return .monthly(dayOfMonth: selectedDayOfMonth, hour: selectedHour, minute: selectedMinute)
         case .yearly:
             return .yearly(month: selectedMonth, day: selectedDay, hour: selectedHour, minute: selectedMinute)
+        case .cron:
+            return .cron(expression: cronExpression)
         }
     }
 
