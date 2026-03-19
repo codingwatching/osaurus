@@ -14,7 +14,7 @@ public struct CronParser: Sendable {
     private let dayOfMonth: Set<Int>
     private let month: Set<Int>
     private let dayOfWeek: Set<Int>
-    
+
     // whether dayOfMonth or dayOfWeek are restricted (not '*')
     private let domRestricted: Bool
     private let dowRestricted: Bool
@@ -26,10 +26,11 @@ public struct CronParser: Sendable {
         guard components.count == 5 else { return nil }
 
         guard let m = Self.parseField(components[0], min: 0, max: 59),
-              let h = Self.parseField(components[1], min: 0, max: 23),
-              let dom = Self.parseField(components[2], min: 1, max: 31),
-              let mon = Self.parseField(components[3], min: 1, max: 12),
-              let dow = Self.parseField(components[4], min: 0, max: 6) else { // 0=Sunday, 6=Saturday
+            let h = Self.parseField(components[1], min: 0, max: 23),
+            let dom = Self.parseField(components[2], min: 1, max: 31),
+            let mon = Self.parseField(components[3], min: 1, max: 12),
+            let dow = Self.parseField(components[4], min: 0, max: 6)
+        else {  // 0=Sunday, 6=Saturday
             return nil
         }
 
@@ -38,7 +39,7 @@ public struct CronParser: Sendable {
         self.dayOfMonth = dom
         self.month = mon
         self.dayOfWeek = dow
-        
+
         self.domRestricted = components[2] != "*"
         self.dowRestricted = components[4] != "*"
     }
@@ -46,66 +47,66 @@ public struct CronParser: Sendable {
     /// calculate the next matching date after the reference date
     public func nextDate(after referenceDate: Date) -> Date? {
         let calendar = Calendar.current
-        
+
         // start checking from the next minute
         guard let start = calendar.date(byAdding: .minute, value: 1, to: referenceDate) else { return nil }
-        
+
         // truncate to the minute
         var components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: start)
         components.second = 0
         guard var current = calendar.date(from: components) else { return nil }
-        
+
         // limit search to 5 years to prevent infinite loops
         let limit = calendar.date(byAdding: .year, value: 5, to: current)!
-        
+
         while current < limit {
             let comps = calendar.dateComponents([.month, .day, .hour, .minute, .weekday], from: current)
-            
+
             // 1. check Month
             guard let m = comps.month, month.contains(m) else {
                 guard let next = calendar.date(byAdding: .month, value: 1, to: current) else { return nil }
                 current = firstOfNextMonth(next, calendar: calendar)
                 continue
             }
-            
+
             // 2. check Day (standard cron logic: if both DOM and DOW are restricted, it's an OR)
             let d = comps.day!
             // calendar weekday is 1-7 (sun-sat), cron is 0-6
             let w = comps.weekday! - 1
-            
+
             let domMatch = dayOfMonth.contains(d)
             let dowMatch = dayOfWeek.contains(w)
-            
+
             let dayMatch: Bool
             if domRestricted && dowRestricted {
                 dayMatch = domMatch || dowMatch
             } else {
                 dayMatch = domMatch && dowMatch
             }
-            
+
             if !dayMatch {
                 guard let next = calendar.date(byAdding: .day, value: 1, to: current) else { return nil }
                 current = firstOfNextDay(next, calendar: calendar)
                 continue
             }
-            
+
             // 3. check Hour
             guard let h = comps.hour, hour.contains(h) else {
                 guard let next = calendar.date(byAdding: .hour, value: 1, to: current) else { return nil }
                 current = firstOfNextHour(next, calendar: calendar)
                 continue
             }
-            
+
             // 4. check Minute
             guard let minVal = comps.minute, minute.contains(minVal) else {
                 guard let next = calendar.date(byAdding: .minute, value: 1, to: current) else { return nil }
                 current = next
                 continue
             }
-            
+
             return current
         }
-        
+
         return nil
     }
 
@@ -140,25 +141,25 @@ public struct CronParser: Sendable {
     private static func parseField(_ field: String, min: Int, max: Int) -> Set<Int>? {
         var result = Set<Int>()
         let parts = field.split(separator: ",")
-        
+
         for part in parts {
             let partStr = String(part)
             if partStr == "*" {
-                for i in min...max { result.insert(i) }
+                for i in min ... max { result.insert(i) }
             } else if partStr.contains("/") {
                 let stepParts = partStr.split(separator: "/")
                 guard stepParts.count == 2 else { return nil }
                 let rangeStr = String(stepParts[0])
                 guard let step = Int(stepParts[1]) else { return nil }
-                
+
                 let range: ClosedRange<Int>
                 if rangeStr == "*" {
-                    range = min...max
+                    range = min ... max
                 } else {
                     guard let r = parseRange(rangeStr, min: min, max: max) else { return nil }
                     range = r
                 }
-                
+
                 var i = range.lowerBound
                 while i <= range.upperBound {
                     result.insert(i)
@@ -170,7 +171,7 @@ public struct CronParser: Sendable {
                 return nil
             }
         }
-        
+
         return result.isEmpty ? nil : result
     }
 
@@ -178,11 +179,12 @@ public struct CronParser: Sendable {
         let parts = rangeStr.split(separator: "-")
         if parts.count == 1 {
             guard let val = Int(parts[0]), val >= min, val <= max else { return nil }
-            return val...val
+            return val ... val
         } else if parts.count == 2 {
             guard let start = Int(parts[0]), let end = Int(parts[1]),
-                  start >= min, end <= max, start <= end else { return nil }
-            return start...end
+                start >= min, end <= max, start <= end
+            else { return nil }
+            return start ... end
         }
         return nil
     }

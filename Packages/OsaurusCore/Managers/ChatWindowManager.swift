@@ -387,7 +387,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
         panel.contentViewController = hostingController
-        
+
         applyWindowFramePersistence(panel: panel)
 
         return panel
@@ -491,7 +491,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
         windowDelegates[windowId] = delegate
         panel.delegate = delegate
-        
+
         return panel
     }
 
@@ -612,7 +612,6 @@ private final class ChatPanel: NSPanel {
 private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     private static let sidebarItem = NSToolbarItem.Identifier("ChatToolbar.sidebar")
     private static let modeToggleItem = NSToolbarItem.Identifier("ChatToolbar.modeToggle")
-    private static let titleItem = NSToolbarItem.Identifier("ChatToolbar.title")
     private static let actionItem = NSToolbarItem.Identifier("ChatToolbar.action")
     private static let pinItem = NSToolbarItem.Identifier("ChatToolbar.pin")
 
@@ -627,14 +626,14 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem,
+            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, .flexibleSpace, Self.actionItem,
             Self.pinItem,
         ]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [
-            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, Self.titleItem, .flexibleSpace, Self.actionItem,
+            Self.sidebarItem, .flexibleSpace, Self.modeToggleItem, .flexibleSpace, Self.actionItem,
             Self.pinItem,
         ]
     }
@@ -659,13 +658,6 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
                 identifier: itemIdentifier,
                 rootView:
                     ChatToolbarModeToggleView(windowState: windowState, session: session)
-            )
-
-        case Self.titleItem:
-            return makeHostingItem(
-                identifier: itemIdentifier,
-                rootView:
-                    ChatToolbarTitleView(windowState: windowState, session: session)
             )
 
         case Self.actionItem:
@@ -701,7 +693,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
 
 // MARK: - Toolbar Item Views
 
-/// Sidebar toggle button. Observes windowState for reactive theme updates.
+/// Sidebar toggle button.
 private struct ChatToolbarSidebarView: View {
     @ObservedObject var windowState: ChatWindowState
 
@@ -736,41 +728,6 @@ private struct ChatToolbarModeToggleView: View {
                 windowState.switchMode(to: tappedMode == .work ? .work : .chat)
             }
         )
-        .environment(\.theme, windowState.theme)
-    }
-}
-
-/// Title view showing a Sandbox indicator when active.
-private struct ChatToolbarTitleView: View {
-    @ObservedObject var windowState: ChatWindowState
-    @ObservedObject var session: ChatSession
-    @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var folderContextService = WorkFolderContextService.shared
-    @ObservedObject private var sandboxState = SandboxManager.State.shared
-
-    private var isSandboxLoading: Bool {
-        sandboxState.status == .starting || sandboxState.isProvisioning
-    }
-
-    private var showSandboxIndicator: Bool {
-        guard sandboxState.status.isRunning || isSandboxLoading else { return false }
-        guard agentManager.effectiveAutonomousExec(for: windowState.agentId)?.enabled == true else {
-            return false
-        }
-        if windowState.mode == .work {
-            return !folderContextService.hasActiveFolder
-        }
-        return true
-    }
-
-    var body: some View {
-        Group {
-            if showSandboxIndicator {
-                SandboxStatusIndicator(isLoading: isSandboxLoading)
-                    .transition(.opacity)
-            }
-        }
-        .animation(.easeInOut(duration: 0.2), value: showSandboxIndicator)
         .environment(\.theme, windowState.theme)
     }
 }
