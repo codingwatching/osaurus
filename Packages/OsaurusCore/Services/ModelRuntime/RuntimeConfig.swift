@@ -66,9 +66,9 @@ struct RuntimeConfig: Sendable {
     private static func defaultPrefillStep() -> Int {
         let ramGB = ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)
         switch ramGB {
-        case 0 ..< 24: return 512
-        case 24 ..< 64: return 1024
-        default: return 2048
+        case 0 ..< 24: return 1024
+        case 24 ..< 64: return 2048
+        default: return 4096
         }
     }
 }

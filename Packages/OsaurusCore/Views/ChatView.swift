@@ -106,7 +106,7 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.triggerWarmup()
+            Task { @MainActor in self?.triggerWarmup() }
         }
 
         NotificationCenter.default.addObserver(
@@ -114,7 +114,7 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.triggerWarmup()
+            Task { @MainActor in self?.triggerWarmup() }
         }
 
         // Auto-persist model selection and drive warm-up / GC
