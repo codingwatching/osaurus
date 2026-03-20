@@ -9,7 +9,7 @@ For each sample in locomo10.json, this script:
   4. POSTs them to the Osaurus /memory/ingest endpoint
 
 Usage:
-    python scripts/ingest_locomo.py [--data path/to/locomo10.json] [--base-url http://localhost:1337]
+    python scripts/benchmark/ingest_locomo.py [--data path/to/locomo10.json] [--base-url http://localhost:1337]
 """
 
 import argparse

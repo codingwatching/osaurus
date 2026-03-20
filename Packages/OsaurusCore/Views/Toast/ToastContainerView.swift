@@ -30,7 +30,7 @@ final class ToastPassThroughView: NSView {
 /// Note: Background tasks are now rendered by the NotchView (via NotchWindowController),
 /// not by this container. This only handles regular toasts.
 public struct ToastContainerView: View {
-    @ObservedObject private var toastManager = ToastManager.shared
+    private var toastManager = ToastManager.shared
     @Environment(\.theme) private var theme
 
     public init() {}

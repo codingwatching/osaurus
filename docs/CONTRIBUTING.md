@@ -29,6 +29,76 @@ Build and run:
 
 Project layout and API overview are in `README.md`. For a complete feature inventory, see [FEATURES.md](FEATURES.md).
 
+## Architecture guide
+
+### Layer definitions
+
+The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each layer has a specific role and set of rules.
+
+**Models** — Pure data. No logic, no side effects, no singletons.
+
+- Structs, enums, Codable types, API DTOs, configuration types
+- Organized into domain subfolders: `API/`, `Chat/`, `Agent/`, `Configuration/`, `Plugin/`, `Memory/`, `Voice/`, `Theme/`, `Tool/`, `Work/`, `Schedule/`, `Watcher/`
+- Rule: if it has `@Published` or `static let shared`, it does not belong here
+
+**Services** — Business logic. Not observable. Not UI-aware.
+
+- Swift `actor` for concurrent work (ChatEngine, MemoryService, WorkEngine)
+- Stateless `struct` for pure functions (Router, PromptBuilder)
+- Organized into domain subfolders: `Chat/`, `Inference/`, `ModelRuntime/`, `MCP/`, `Memory/`, `Sandbox/`, `Voice/`, `Provider/`, `Plugin/`, `Keychain/`
+- Rule: services do NOT conform to `ObservableObject` or `@Observable`
+- Rule: if it drives UI directly, it is a Manager, not a Service
+- Naming: suffix with `Service` or `Engine`
+
+**Managers** — UI state. Observable. Main actor.
+
+- `@MainActor` classes with `@Observable` (preferred) or `ObservableObject`
+- Own published properties that SwiftUI views bind to
+- Coordinate Services, Stores, and other Managers
+- Grouped into `Chat/`, `Model/`, `Plugin/` subfolders; remaining at root
+- Rule: managers always run on `@MainActor`
+- Naming: suffix with `Manager`
+
+**Views** — SwiftUI. Organized by feature, not by type.
+
+- Each feature has its own subfolder: `Chat/`, `Agent/`, `Model/`, `Plugin/`, `Memory/`, `Voice/`, `Work/`, `Settings/`, `Theme/`, `Skill/`, `Toast/`, `Schedule/`, `Watcher/`, `Identity/`, `Sandbox/`, `Insights/`, `Onboarding/`, `Management/`
+- `Common/` holds only generic, reusable primitives (buttons, layouts, glass effects)
+- A view that only makes sense in one feature goes in that feature's folder
+
+**Networking** — HTTP server, NIO, routing, relay tunnels, server controller.
+
+**Storage** — SQLite databases and file persistence.
+
+**Tools** — MCP tool definitions, registry, and plugin ABI.
+
+**Identity** — Cryptographic keys and access control.
+
+**Utils** — Cross-cutting helpers with no domain knowledge.
+
+### Where to put new code
+
+| You're adding...            | Put it in...                                      |
+| --------------------------- | ------------------------------------------------- |
+| A new data type or DTO      | `Models/{domain}/`                                |
+| Backend logic (no UI)       | `Services/{domain}/` as an actor                  |
+| UI state that views observe | `Managers/` as `@MainActor` observable class       |
+| A new screen or panel       | `Views/{feature}/`                                |
+| A reusable UI widget        | `Views/Common/`                                   |
+| A new MCP tool              | `Tools/`                                          |
+| A new test                  | `Tests/{matching-source-directory}/`              |
+
+### Naming conventions
+
+| Pattern                    | Name suffix           | Example                            |
+| -------------------------- | --------------------- | ---------------------------------- |
+| Observable UI state holder | `Manager`             | `AgentManager`, `ToastManager`     |
+| Actor-based business logic | `Service` or `Engine` | `MemoryService`, `ChatEngine`      |
+| Stateless logic            | `Service` or none     | `PromptBuilder`, `SearchService`   |
+| JSON file persistence      | `Store`               | `AgentStore`, `ScheduleStore`      |
+| SQLite persistence         | `Database`            | `MemoryDatabase`, `WorkDatabase`   |
+| SwiftUI view               | `View`                | `ChatView`, `AgentsView`           |
+| Test file                  | `Tests` suffix        | `ChatEngineTests`, `MemoryTests`   |
+
 ### Tool calling (developer notes)
 
 - OpenAI‑compatible DTOs live in `Models/OpenAIAPI.swift` (`Tool`, `ToolFunction`, `ToolCall`, `DeltaToolCall`, etc.).
@@ -52,7 +122,7 @@ Project layout and API overview are in `README.md`. For a complete feature inven
 
 ### Testing
 
-- Add or update tests in `osaurusTests/` where reasonable
+- Add or update tests in `Packages/OsaurusCore/Tests/` where reasonable
 - Ensure the project builds and tests pass in Xcode before submitting
 
 ### Commit and PR guidelines

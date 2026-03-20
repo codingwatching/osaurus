@@ -100,9 +100,9 @@ struct ManagementView: View {
     @ObservedObject private var repoService = PluginRepositoryService.shared
     @ObservedObject private var remoteProviderManager = RemoteProviderManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var skillManager = SkillManager.shared
-    @ObservedObject private var scheduleManager = ScheduleManager.shared
-    @ObservedObject private var watcherManager = WatcherManager.shared
+    private var skillManager = SkillManager.shared
+    private var scheduleManager = ScheduleManager.shared
+    private var watcherManager = WatcherManager.shared
     @ObservedObject private var modelManager = ModelManager.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
     @ObservedObject private var sandboxPluginLibrary = SandboxPluginLibrary.shared

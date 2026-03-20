@@ -135,3 +135,6 @@ private_key.txt
 
 # Benchmarks (cloned repos — setup via `make bench-setup`)
 benchmarks/
+
+# Generated benchmark/test output
+results/

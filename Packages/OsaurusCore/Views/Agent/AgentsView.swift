@@ -335,7 +335,7 @@ struct AgentsView: View {
 private struct AgentCard: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var scheduleManager = ScheduleManager.shared
+    private var scheduleManager = ScheduleManager.shared
 
     let agent: Agent
     let isActive: Bool
@@ -345,6 +345,26 @@ private struct AgentCard: View {
     let onDuplicate: () -> Void
     let onExport: () -> Void
     let onDelete: () -> Void
+
+    init(
+        agent: Agent,
+        isActive: Bool,
+        animationDelay: Double,
+        hasAppeared: Bool,
+        onSelect: @escaping () -> Void,
+        onDuplicate: @escaping () -> Void,
+        onExport: @escaping () -> Void,
+        onDelete: @escaping () -> Void
+    ) {
+        self.agent = agent
+        self.isActive = isActive
+        self.animationDelay = animationDelay
+        self.hasAppeared = hasAppeared
+        self.onSelect = onSelect
+        self.onDuplicate = onDuplicate
+        self.onExport = onExport
+        self.onDelete = onDelete
+    }
 
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
@@ -629,8 +649,8 @@ private enum DetailTab: String, CaseIterable {
 struct AgentDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
-    @ObservedObject private var scheduleManager = ScheduleManager.shared
-    @ObservedObject private var watcherManager = WatcherManager.shared
+    private var scheduleManager = ScheduleManager.shared
+    private var watcherManager = WatcherManager.shared
     @ObservedObject private var relayManager = RelayTunnelManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -640,6 +660,20 @@ struct AgentDetailView: View {
     let onExport: (Agent) -> Void
     let onDelete: (Agent) -> Void
     let showSuccess: (String) -> Void
+
+    init(
+        agent: Agent,
+        onBack: @escaping () -> Void,
+        onExport: @escaping (Agent) -> Void,
+        onDelete: @escaping (Agent) -> Void,
+        showSuccess: @escaping (String) -> Void
+    ) {
+        self.agent = agent
+        self.onBack = onBack
+        self.onExport = onExport
+        self.onDelete = onDelete
+        self.showSuccess = showSuccess
+    }
 
     // MARK: - Editable State
 

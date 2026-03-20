@@ -222,6 +222,34 @@ open osaurus.xcworkspace
 
 Build and run the `osaurus` target. Requires Xcode 16+ and macOS 15.5+.
 
+## Project Structure
+
+```
+osaurus/
+├── App/                          # macOS app target (SwiftUI entry point, assets, entitlements)
+├── Packages/
+│   ├── OsaurusCore/              # Core library — all app logic
+│   │   ├── Models/               # Data types, DTOs, configuration stores
+│   │   ├── Services/             # Business logic (actors and stateless types)
+│   │   ├── Managers/             # UI-facing state holders (@MainActor, observable)
+│   │   ├── Views/                # SwiftUI views, organized by feature
+│   │   ├── Networking/           # HTTP server, routing, relay
+│   │   ├── Storage/              # SQLite databases
+│   │   ├── Identity/             # Cryptographic identity and access keys
+│   │   ├── Tools/                # MCP tools, plugin ABI, tool registry
+│   │   ├── Work/                 # Work mode execution context and file ops
+│   │   ├── Utils/                # Cross-cutting utilities
+│   │   └── Tests/                # Unit and integration tests
+│   ├── OsaurusCLI/               # CLI (osaurus command)
+│   └── OsaurusRepository/        # Plugin registry and installation
+├── docs/                         # Feature guides and documentation
+├── scripts/                      # Build, release, and benchmark scripts
+├── sandbox/                      # Sandbox VM Dockerfile
+└── assets/                       # DMG packaging assets
+```
+
+See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for the architecture guide and layer definitions.
+
 ## Contributing
 
 Osaurus is actively developed and we welcome contributions: bug fixes, new plugins, documentation, UI/UX improvements, and testing.

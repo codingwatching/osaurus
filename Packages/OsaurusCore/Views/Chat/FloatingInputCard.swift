@@ -54,9 +54,67 @@ struct FloatingInputCard: View {
     /// Compact mode (sidebar open) - hides secondary chip content
     var isCompact: Bool = false
 
+    init(
+        text: Binding<String>,
+        selectedModel: Binding<String?>,
+        pendingAttachments: Binding<[Attachment]>,
+        isContinuousVoiceMode: Binding<Bool>,
+        voiceInputState: Binding<VoiceInputState>,
+        showVoiceOverlay: Binding<Bool>,
+        pickerItems: [ModelPickerItem],
+        activeModelOptions: Binding<[String: ModelOptionValue]>,
+        isStreaming: Bool,
+        isWarmingModel: Bool = false,
+        supportsImages: Bool,
+        estimatedContextTokens: Int,
+        contextBreakdown: ContextTokenBreakdown = .zero,
+        onSend: @escaping () -> Void,
+        onStop: @escaping () -> Void,
+        focusTrigger: Int = 0,
+        agentId: UUID? = nil,
+        windowId: UUID? = nil,
+        workInputState: WorkInputState? = nil,
+        pendingQueuedMessage: String? = nil,
+        onClearQueued: (() -> Void)? = nil,
+        onSendNow: (() -> Void)? = nil,
+        onEndTask: (() -> Void)? = nil,
+        onResume: (() -> Void)? = nil,
+        canResume: Bool = false,
+        cumulativeTokens: Int? = nil,
+        isCompact: Bool = false
+    ) {
+        self._text = text
+        self._selectedModel = selectedModel
+        self._pendingAttachments = pendingAttachments
+        self._isContinuousVoiceMode = isContinuousVoiceMode
+        self._voiceInputState = voiceInputState
+        self._showVoiceOverlay = showVoiceOverlay
+        self.pickerItems = pickerItems
+        self._activeModelOptions = activeModelOptions
+        self.isStreaming = isStreaming
+        self.isWarmingModel = isWarmingModel
+        self.supportsImages = supportsImages
+        self.estimatedContextTokens = estimatedContextTokens
+        self.contextBreakdown = contextBreakdown
+        self.onSend = onSend
+        self.onStop = onStop
+        self.focusTrigger = focusTrigger
+        self.agentId = agentId
+        self.windowId = windowId
+        self.workInputState = workInputState
+        self.pendingQueuedMessage = pendingQueuedMessage
+        self.onClearQueued = onClearQueued
+        self.onSendNow = onSendNow
+        self.onEndTask = onEndTask
+        self.onResume = onResume
+        self.canResume = canResume
+        self.cumulativeTokens = cumulativeTokens
+        self.isCompact = isCompact
+    }
+
     // Observe managers for reactive updates
     @ObservedObject private var toolRegistry = ToolRegistry.shared
-    @ObservedObject private var skillManager = SkillManager.shared
+    private var skillManager = SkillManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
@@ -175,9 +233,8 @@ struct FloatingInputCard: View {
         return Date().timeIntervalSince(lastSpeechTime)
     }
 
-    var body: some View {
+    private var mainContent: some View {
         VStack(spacing: 12) {
-            // Model and tool selector chips (always visible)
             if (pickerItems.count > 1 || hasTools || hasSkills
                 || displayContextTokens > 0 || isSandboxAvailable) && !showVoiceOverlay
             {
@@ -186,9 +243,7 @@ struct FloatingInputCard: View {
                     .padding(.horizontal, 20)
             }
 
-            // Switch between regular input and voice overlay
             if showVoiceOverlay {
-                // Voice input overlay - replaces the input card
                 VoiceInputOverlay(
                     state: $voiceInputState,
                     audioLevel: speechService.audioLevel,
@@ -212,7 +267,6 @@ struct FloatingInputCard: View {
                     )
                 )
             } else {
-                // Main input card (with inline images)
                 inputCard
                     .padding(.horizontal, 20)
                     .padding(.bottom, 20)
@@ -228,159 +282,161 @@ struct FloatingInputCard: View {
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
-        .onAppear {
-            localText = text
+    }
 
-            // Focus immediately when view appears
-            isFocused = true
+    var body: some View {
+        mainContent
+            .onAppear {
+                localText = text
 
-            // Initialize cached tool/skill availability
-            hasTools = !toolRegistry.listTools().isEmpty
-            hasSkills = !skillManager.skills.isEmpty
+                // Focus immediately when view appears
+                isFocused = true
 
-            // Load voice config (cached after first load)
-            loadVoiceConfig()
+                // Initialize cached tool/skill availability
+                hasTools = !toolRegistry.listTools().isEmpty
+                hasSkills = !skillManager.skills.isEmpty
 
-            if speechService.isRecording {
-                if voiceInputState == .idle {
-                    voiceInputState = .recording
-                    lastVoiceActivityTime = Date()
-                    resetPauseDetectionForRecording()
-                }
-                if !showVoiceOverlay {
-                    showVoiceOverlay = true
-                }
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
-            // Start voice input when triggered by VAD - enable continuous mode
-            // Only respond if this notification targets our window
-            guard let targetWindowId = notification.object as? UUID,
-                targetWindowId == windowId
-            else {
-                return
-            }
+                // Load voice config (cached after first load)
+                loadVoiceConfig()
 
-            if isVoiceAvailable && !showVoiceOverlay && !isStreaming {
-                print(
-                    "[FloatingInputCard] Received .startVoiceInputInChat notification for window \(windowId?.uuidString ?? "nil")"
-                )
-                isContinuousVoiceMode = true
-                lastVoiceActivityTime = Date()
-                startVoiceInput()
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
-            // Reload voice config when settings change
-            loadVoiceConfig()
-        }
-        .onChange(of: isStreaming) { wasStreaming, nowStreaming in
-            // When AI finishes responding and we're in continuous voice mode, restart voice input
-            if wasStreaming && !nowStreaming && isContinuousVoiceMode {
-                print("[FloatingInputCard] AI response finished in continuous mode - restarting voice")
-                // Reset silence timeout for the new turn
-                lastVoiceActivityTime = Date()
-
-                // Small delay to let UI settle
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
-                    if isContinuousVoiceMode && isVoiceAvailable && !showVoiceOverlay {
-                        startVoiceInput()
+                if speechService.isRecording {
+                    if voiceInputState == .idle {
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                    }
+                    if !showVoiceOverlay {
+                        showVoiceOverlay = true
                     }
                 }
             }
-        }
-        .onDisappear {
-            // Stop any active voice recording, but check if we should keep continuous mode
-            if isVoiceActive {
-                print("[FloatingInputCard] onDisappear: Stopping active voice recording")
-                // Don't use cancelVoiceInput() here as it forces continuous mode off.
-                // Instead, just stop recording but preserve the mode.
-                Task {
-                    _ = await speechService.stopStreamingTranscription()
-                    speechService.clearTranscription()
+            .onReceive(NotificationCenter.default.publisher(for: .startVoiceInputInChat)) { notification in
+                // Start voice input when triggered by VAD - enable continuous mode
+                // Only respond if this notification targets our window
+                guard let targetWindowId = notification.object as? UUID,
+                    targetWindowId == windowId
+                else {
+                    return
                 }
-                voiceInputState = .idle
-                showVoiceOverlay = false
-            }
-        }
-        .onChange(of: text) { _, newValue in
-            // Sync from binding when it changes externally (e.g., quick actions)
-            if newValue != localText {
-                localText = newValue
-            }
-        }
-        .onChange(of: focusTrigger) { _, _ in
-            isFocused = true
-        }
-        .onChange(of: speechService.isRecording) { _, isRecording in
-            print(
-                "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
-            )
-            // Sync voice state with service
-            if isRecording {
-                if voiceInputState == .idle && showVoiceOverlay {
-                    voiceInputState = .recording
+
+                if isVoiceAvailable && !showVoiceOverlay && !isStreaming {
+                    print(
+                        "[FloatingInputCard] Received .startVoiceInputInChat notification for window \(windowId?.uuidString ?? "nil")"
+                    )
+                    isContinuousVoiceMode = true
                     lastVoiceActivityTime = Date()
-                    resetPauseDetectionForRecording()
-                    print("[FloatingInputCard] Recording confirmed - voice input ready")
-                } else if voiceInputState == .idle {
-                    print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
-                    voiceInputState = .recording
-                    lastVoiceActivityTime = Date()
-                    resetPauseDetectionForRecording()
+                    startVoiceInput()
                 }
-            } else {
-                // If service stopped recording (e.g. via Esc key in ChatView), sync local state
-                if voiceInputState != .idle {
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
+                // Reload voice config when settings change
+                loadVoiceConfig()
+            }
+            .onChange(of: isStreaming) { wasStreaming, nowStreaming in
+                // When AI finishes responding and we're in continuous voice mode, restart voice input
+                if wasStreaming && !nowStreaming && isContinuousVoiceMode {
+                    print("[FloatingInputCard] AI response finished in continuous mode - restarting voice")
+                    // Reset silence timeout for the new turn
+                    lastVoiceActivityTime = Date()
+
+                    // Small delay to let UI settle
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms
+                        if isContinuousVoiceMode && isVoiceAvailable && !showVoiceOverlay {
+                            startVoiceInput()
+                        }
+                    }
+                }
+            }
+            .onDisappear {
+                // Stop any active voice recording, but check if we should keep continuous mode
+                if isVoiceActive {
+                    print("[FloatingInputCard] onDisappear: Stopping active voice recording")
+                    // Don't use cancelVoiceInput() here as it forces continuous mode off.
+                    // Instead, just stop recording but preserve the mode.
+                    Task {
+                        _ = await speechService.stopStreamingTranscription()
+                        speechService.clearTranscription()
+                    }
                     voiceInputState = .idle
                     showVoiceOverlay = false
                 }
             }
-        }
-        .onChange(of: speechService.isSpeechDetected) { _, detected in
-            if detected && voiceInputState == .recording {
-                hasDetectedSpeechThisTurn = true
-                lastSpeechTime = Date()
+            .onChange(of: text) { _, newValue in
+                // Sync from binding when it changes externally (e.g., quick actions)
+                if newValue != localText {
+                    localText = newValue
+                }
             }
-        }
-        .onChange(of: speechService.currentTranscription) { _, newValue in
-            // When new transcription arrives, user is speaking
-            if voiceInputState == .recording && !newValue.isEmpty {
-                hasDetectedSpeechThisTurn = true
-                lastSpeechTime = Date()
+            .onChange(of: focusTrigger) { _, _ in
+                isFocused = true
             }
-        }
-        .onChange(of: speechService.confirmedTranscription) { _, newValue in
-            // When confirmed transcription changes, user was speaking
-            if voiceInputState == .recording && !newValue.isEmpty {
-                hasDetectedSpeechThisTurn = true
-                lastSpeechTime = Date()
+            .onChange(of: speechService.isRecording) { _, isRecording in
+                print(
+                    "[FloatingInputCard] isRecording changed to: \(isRecording). voiceInputState: \(voiceInputState), showVoiceOverlay: \(showVoiceOverlay)"
+                )
+                // Sync voice state with service
+                if isRecording {
+                    if voiceInputState == .idle && showVoiceOverlay {
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                        print("[FloatingInputCard] Recording confirmed - voice input ready")
+                    } else if voiceInputState == .idle {
+                        print("[FloatingInputCard] External recording detected. Overlay: \(showVoiceOverlay)")
+                        voiceInputState = .recording
+                        lastVoiceActivityTime = Date()
+                        resetPauseDetectionForRecording()
+                    }
+                } else {
+                    // If service stopped recording (e.g. via Esc key in ChatView), sync local state
+                    if voiceInputState != .idle {
+                        voiceInputState = .idle
+                        showVoiceOverlay = false
+                    }
+                }
             }
-        }
-        .onChange(of: voiceInputState) { _, newState in
-            if newState == .recording {
-                resetPauseDetectionForRecording()
+            .onChange(of: speechService.isSpeechDetected) { _, detected in
+                if detected && voiceInputState == .recording {
+                    hasDetectedSpeechThisTurn = true
+                    lastSpeechTime = Date()
+                }
             }
-        }
-        .onReceive(pauseDetectionTimer) { _ in
-            guard showVoiceOverlay else { return }
-            checkForPause()
-            checkForSilenceTimeout()
-            handlePauseCountdown()
-        }
-        .onReceive(toolRegistry.objectWillChange) { _ in
-            DispatchQueue.main.async {
-                let newValue = !toolRegistry.listTools().isEmpty
-                if newValue != hasTools { hasTools = newValue }
+            .onChange(of: speechService.currentTranscription) { _, newValue in
+                // When new transcription arrives, user is speaking
+                if voiceInputState == .recording && !newValue.isEmpty {
+                    hasDetectedSpeechThisTurn = true
+                    lastSpeechTime = Date()
+                }
             }
-        }
-        .onReceive(skillManager.objectWillChange) { _ in
-            DispatchQueue.main.async {
+            .onChange(of: speechService.confirmedTranscription) { _, newValue in
+                // When confirmed transcription changes, user was speaking
+                if voiceInputState == .recording && !newValue.isEmpty {
+                    hasDetectedSpeechThisTurn = true
+                    lastSpeechTime = Date()
+                }
+            }
+            .onChange(of: voiceInputState) { _, newState in
+                if newState == .recording {
+                    resetPauseDetectionForRecording()
+                }
+            }
+            .onReceive(pauseDetectionTimer) { _ in
+                guard showVoiceOverlay else { return }
+                checkForPause()
+                checkForSilenceTimeout()
+                handlePauseCountdown()
+            }
+            .onReceive(toolRegistry.objectWillChange) { _ in
+                DispatchQueue.main.async {
+                    let newValue = !toolRegistry.listTools().isEmpty
+                    if newValue != hasTools { hasTools = newValue }
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in
                 let newValue = !skillManager.skills.isEmpty
                 if newValue != hasSkills { hasSkills = newValue }
             }
-        }
     }
 
     // MARK: - Voice Input Methods
