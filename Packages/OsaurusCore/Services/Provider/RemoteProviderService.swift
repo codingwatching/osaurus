@@ -244,6 +244,7 @@ public actor RemoteProviderService: ToolCapableService {
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
+                var sseEventData = ""
                 var utf8Buffer = Data()
                 let maxUtf8BufferSize = 1024
                 let byteRef = ByteIteratorRef(bytes.makeAsyncIterator())
@@ -277,14 +278,11 @@ public actor RemoteProviderService: ToolCapableService {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
-                        // Skip empty lines
-                        guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
-                            continue
-                        }
-
-                        // Parse SSE data line
-                        if line.hasPrefix("data: ") {
-                            let dataContent = String(line.dropFirst(6))
+                        // SSE event boundary: blank line dispatches accumulated data
+                        if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                            guard !sseEventData.isEmpty else { continue }
+                            let dataContent = sseEventData
+                            sseEventData = ""
 
                             // Check for stream end (OpenAI format)
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
@@ -563,77 +561,16 @@ public actor RemoteProviderService: ToolCapableService {
                                     )
                                 }
                             }
+                            continue
                         }
+
+                        Self.accumulateSSELine(line, into: &sseEventData)
                     }
                 }
 
-                // Handle leftover buffer content (e.g. if the stream ended without a newline)
+                // Flush remaining buffer into SSE event accumulator
                 if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
-                    let line = buffer
-                    if line.hasPrefix("data: ") {
-                        let dataContent = String(line.dropFirst(6))
-
-                        if let jsonData = dataContent.data(using: .utf8) {
-                            do {
-                                if providerType == .gemini {
-                                    let chunk = try JSONDecoder().decode(
-                                        GeminiGenerateContentResponse.self,
-                                        from: jsonData
-                                    )
-
-                                    if let parts = chunk.candidates?.first?.content?.parts {
-                                        for part in parts {
-                                            if part.thought == true { continue }
-
-                                            switch part.content {
-                                            case .text(let text):
-                                                if accumulatedToolCalls.isEmpty, !text.isEmpty {
-                                                    let output = Self.encodeTextWithSignature(
-                                                        text,
-                                                        signature: part.thoughtSignature
-                                                    )
-                                                    for seq in stopSequences {
-                                                        if let range = output.range(of: seq) {
-                                                            continuation.yield(String(output[..<range.lowerBound]))
-                                                            continuation.finish()
-                                                            return
-                                                        }
-                                                    }
-                                                    continuation.yield(output)
-                                                }
-                                            case .functionCall(let funcCall):
-                                                let idx = accumulatedToolCalls.count
-                                                let argsData = try? JSONSerialization.data(
-                                                    withJSONObject: (funcCall.args ?? [:]).mapValues { $0.value }
-                                                )
-                                                let argsString =
-                                                    argsData.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                                                accumulatedToolCalls[idx] = (
-                                                    id: "gemini-\(UUID().uuidString.prefix(8))",
-                                                    name: funcCall.name,
-                                                    args: argsString,
-                                                    thoughtSignature: funcCall.thoughtSignature
-                                                )
-                                            case .inlineData(let imageData):
-                                                if accumulatedToolCalls.isEmpty {
-                                                    continuation.yield(
-                                                        Self.imageMarkdown(
-                                                            imageData,
-                                                            thoughtSignature: part.thoughtSignature
-                                                        )
-                                                    )
-                                                }
-                                            case .functionResponse:
-                                                break
-                                            }
-                                        }
-                                    }
-                                }
-                            } catch {
-                                // Leftover buffer parse failures are non-fatal
-                            }
-                        }
-                    }
+                    Self.accumulateSSELine(buffer, into: &sseEventData)
                 }
 
                 // Emit any accumulated tool calls at stream end
@@ -793,6 +730,7 @@ public actor RemoteProviderService: ToolCapableService {
 
                 // Parse SSE stream with UTF-8 decoding and inactivity timeout
                 var buffer = ""
+                var sseEventData = ""
                 var utf8Buffer = Data()
                 let maxUtf8BufferSize = 1024
                 let byteRef = ByteIteratorRef(bytes.makeAsyncIterator())
@@ -826,12 +764,11 @@ public actor RemoteProviderService: ToolCapableService {
                         let line = String(buffer[..<newlineIndex])
                         buffer = String(buffer[buffer.index(after: newlineIndex)...])
 
-                        guard !line.trimmingCharacters(in: .whitespaces).isEmpty else {
-                            continue
-                        }
-
-                        if line.hasPrefix("data: ") {
-                            let dataContent = String(line.dropFirst(6))
+                        // SSE event boundary: blank line dispatches accumulated data
+                        if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                            guard !sseEventData.isEmpty else { continue }
+                            let dataContent = sseEventData
+                            sseEventData = ""
 
                             if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls) {
@@ -1167,8 +1104,16 @@ public actor RemoteProviderService: ToolCapableService {
                                     )
                                 }
                             }
+                            continue
                         }
+
+                        Self.accumulateSSELine(line, into: &sseEventData)
                     }
+                }
+
+                // Flush remaining buffer into SSE event accumulator
+                if !buffer.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Self.accumulateSSELine(buffer, into: &sseEventData)
                 }
 
                 // Emit any accumulated tool call data at stream end
@@ -1248,6 +1193,21 @@ public actor RemoteProviderService: ToolCapableService {
             let first = try await group.next()!
             group.cancelAll()
             return first
+        }
+    }
+
+    /// Accumulate a single SSE line into the event data buffer.
+    /// Handles `data:` lines, ignores other SSE fields (`event:`, `id:`, comments),
+    /// and appends bare continuation lines when we're mid-event.
+    @inline(__always)
+    private static func accumulateSSELine(_ line: String, into eventData: inout String) {
+        if line.hasPrefix("data: ") {
+            let content = String(line.dropFirst(6))
+            eventData = eventData.isEmpty ? content : eventData + "\n" + content
+        } else if line.hasPrefix("event:") || line.hasPrefix("id:") || line.hasPrefix(":") {
+            // Other SSE fields - ignore
+        } else if !eventData.isEmpty {
+            eventData += "\n" + line
         }
     }
 
