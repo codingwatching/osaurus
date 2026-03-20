@@ -313,9 +313,6 @@ public final class WorkSession: ObservableObject {
     /// Available model picker items
     @Published var pickerItems: [ModelPickerItem] = []
 
-    /// Forwarded from the parent ChatSession's warm-up state.
-    @Published var isWarmingModel: Bool = false
-
     /// Whether the currently selected model supports image attachments
     var selectedModelSupportsImages: Bool {
         guard let model = selectedModel else { return false }
@@ -455,7 +452,6 @@ public final class WorkSession: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     nonisolated(unsafe) private var pickerItemsCancellable: AnyCancellable?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
-    nonisolated(unsafe) private var warmingModelCancellable: AnyCancellable?
 
     /// The work engine instance for this session (each session owns its own engine)
     private let engine: WorkEngine
@@ -489,7 +485,6 @@ public final class WorkSession: ObservableObject {
         if let windowState = windowState {
             self.pickerItems = windowState.session.pickerItems
             self.selectedModel = windowState.session.selectedModel
-            self.isWarmingModel = windowState.session.isWarmingModel
 
             pickerItemsCancellable = windowState.session.$pickerItems
                 .dropFirst()
@@ -512,8 +507,7 @@ public final class WorkSession: ObservableObject {
                     }
                 }
 
-            // Also listen to our own changes to sync back to ChatSession
-            // This ensures warmup logic triggers when changed from Work mode
+            // Sync model selection back to ChatSession when changed from Work mode
             $selectedModel
                 .dropFirst()
                 .removeDuplicates()
@@ -521,20 +515,9 @@ public final class WorkSession: ObservableObject {
                     guard let self = self, let model = newModel else { return }
                     if self.windowState?.session.selectedModel != model {
                         self.windowState?.session.selectedModel = model
-                        Task { @MainActor in
-                            self.windowState?.session.triggerWarmup()
-                        }
                     }
                 }
                 .store(in: &cancellables)
-
-            warmingModelCancellable = windowState.session.$isWarmingModel
-                .receive(on: RunLoop.main)
-                .sink { [weak self] isWarming in
-                    if self?.isWarmingModel != isWarming {
-                        self?.isWarmingModel = isWarming
-                    }
-                }
         }
 
         AgentManager.shared.objectWillChange
@@ -557,7 +540,6 @@ public final class WorkSession: ObservableObject {
         print("[WorkSession] deinit – agentId: \(agentId)")
         pickerItemsCancellable?.cancel()
         modelSelectionCancellable?.cancel()
-        warmingModelCancellable?.cancel()
         executionTask?.cancel()
         persistDebounceTask?.cancel()
         let engineToCancel = engine

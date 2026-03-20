@@ -200,13 +200,6 @@ struct KVCacheStore {
         }
     }
 
-    /// Pre-warms a session by loading its SSD cache into RAM ahead of use.
-    mutating func prewarm(sessionId: String, modelName: String, budgetBytes: Int) {
-        guard let entry = entries[sessionId], entry.cache == nil, entry.ssdPath != nil else { return }
-        _ = getCache(sessionId: sessionId, modelName: modelName)
-        ensureBudget(budgetBytes)
-    }
-
     // MARK: - Invalidation
 
     /// Removes a session's cache entirely (RAM + SSD).

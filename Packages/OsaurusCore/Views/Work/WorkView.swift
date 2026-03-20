@@ -72,7 +72,6 @@ struct WorkView: View {
                             pickerItems: session.pickerItems,
                             activeModelOptions: .constant([:]),
                             isStreaming: session.isExecuting,
-                            isWarmingModel: session.isWarmingModel,
                             supportsImages: session.selectedModelSupportsImages,
                             estimatedContextTokens: session.estimatedContextTokens,
                             contextBreakdown: session.estimatedContextBreakdown,
