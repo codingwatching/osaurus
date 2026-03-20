@@ -233,7 +233,7 @@ public actor WorkExecutionEngine {
         sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
 
         **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for \
-        multi-line scripts (python, bash, node). You MUST pass the script code directly in the `script` parameter. **CRITICAL: NEVER use literal newlines in the `script` parameter. You MUST escape all newlines as `\\n` to ensure valid JSON.** For single shell commands use \
+        multi-line scripts (python, bash, node). For single shell commands use \
         `sandbox_exec`. For background processes use `sandbox_exec_background`. \
         Set `timeout` for long operations (default 60 s scripts, 30 s exec, max 300 s).
         """

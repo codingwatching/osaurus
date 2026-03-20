@@ -336,7 +336,7 @@ struct WorkFileWriteTool: OsaurusTool, PermissionedTool {
             "content": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "Content to write to the file. MUST be provided inline as a string. CRITICAL: You MUST escape all newlines as \\n. Literal newlines will break the JSON parser."
+                    "Content to write to the file"
                 ),
             ]),
         ]),
@@ -777,13 +777,13 @@ struct WorkFileEditTool: OsaurusTool, PermissionedTool {
             "old_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The exact text to find and replace (must uniquely match one location in the file). MUST be provided inline as a string. CRITICAL: Escape newlines as \\n."
+                    "The exact text to find and replace (must uniquely match one location in the file)"
                 ),
             ]),
             "new_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The text to replace it with. MUST be provided inline as a string. CRITICAL: Escape newlines as \\n."
+                    "The replacement text"
                 ),
             ]),
         ]),
