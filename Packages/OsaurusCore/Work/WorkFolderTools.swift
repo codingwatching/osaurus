@@ -325,7 +325,7 @@ struct WorkFileReadTool: OsaurusTool {
 struct WorkFileWriteTool: OsaurusTool, PermissionedTool {
     let name = "file_write"
     let description =
-        "Create a new file or overwrite an existing file with the provided content. Parent directories will be created if they don't exist."
+        "Create a new file or overwrite an existing file with the provided content. Parent directories will be created if they don't exist. You MUST provide the file contents in the `content` parameter."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -335,7 +335,9 @@ struct WorkFileWriteTool: OsaurusTool, PermissionedTool {
             ]),
             "content": .object([
                 "type": .string("string"),
-                "description": .string("Content to write to the file"),
+                "description": .string(
+                    "Content to write to the file. MUST be provided inline as a string. CRITICAL: You MUST escape all newlines as \\n. Literal newlines will break the JSON parser."
+                ),
             ]),
         ]),
         "required": .array([.string("path"), .string("content")]),
@@ -764,7 +766,7 @@ struct WorkFileMetadataTool: OsaurusTool {
 struct WorkFileEditTool: OsaurusTool, PermissionedTool {
     let name = "file_edit"
     let description =
-        "Edit a file by replacing specific text. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed to ensure uniqueness. The tool will fail if old_string is not found or matches multiple locations."
+        "Edit a file by replacing specific text. old_string must uniquely match exactly one location in the file — include surrounding context lines if needed to ensure uniqueness. The tool will fail if old_string is not found or matches multiple locations. You MUST provide the strings in the parameters."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "properties": .object([
@@ -775,12 +777,14 @@ struct WorkFileEditTool: OsaurusTool, PermissionedTool {
             "old_string": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "The exact text to find and replace (must uniquely match one location in the file)"
+                    "The exact text to find and replace (must uniquely match one location in the file). MUST be provided inline as a string. CRITICAL: Escape newlines as \\n."
                 ),
             ]),
             "new_string": .object([
                 "type": .string("string"),
-                "description": .string("The text to replace it with"),
+                "description": .string(
+                    "The text to replace it with. MUST be provided inline as a string. CRITICAL: Escape newlines as \\n."
+                ),
             ]),
         ]),
         "required": .array([.string("path"), .string("old_string"), .string("new_string")]),

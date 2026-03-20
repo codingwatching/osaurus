@@ -1283,20 +1283,32 @@ public actor RemoteProviderService: ToolCapableService {
             return trimmed
         }
 
-        // Attempt repair: close unclosed braces/brackets
-        var repaired = trimmed
-        var braceCount = 0
-        var bracketCount = 0
+        // Attempt repair: close unclosed braces/brackets and escape literal newlines
+        var repaired = ""
         var inString = false
         var isEscaped = false
-        for ch in repaired {
+        var braceCount = 0
+        var bracketCount = 0
+
+        for ch in trimmed {
             if inString {
                 if isEscaped {
                     isEscaped = false
+                    repaired.append(ch)
                 } else if ch == "\\" {
                     isEscaped = true
+                    repaired.append(ch)
                 } else if ch == "\"" {
                     inString = false
+                    repaired.append(ch)
+                } else if ch.isNewline {
+                    if ch == "\n" {
+                        repaired.append("\\n")
+                    } else if ch == "\r" {
+                        repaired.append("\\r")
+                    }
+                } else {
+                    repaired.append(ch)
                 }
             } else {
                 if ch == "\"" {
@@ -1310,12 +1322,16 @@ public actor RemoteProviderService: ToolCapableService {
                 } else if ch == "]" {
                     bracketCount -= 1
                 }
+                repaired.append(ch)
             }
         }
 
         // Close any unclosed strings
         if inString {
-            repaired += "\""
+            if isEscaped {
+                repaired.append("\\")
+            }
+            repaired.append("\"")
         }
 
         // Remove trailing comma before closing
@@ -1326,10 +1342,10 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Close unclosed brackets and braces
         for _ in 0 ..< bracketCount {
-            repaired += "]"
+            repaired.append("]")
         }
         for _ in 0 ..< braceCount {
-            repaired += "}"
+            repaired.append("}")
         }
 
         // Verify the repair worked

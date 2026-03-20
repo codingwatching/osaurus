@@ -233,7 +233,7 @@ public actor WorkExecutionEngine {
         sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
 
         **Prefer scripts over sequential tool calls.** Use `sandbox_run_script` for \
-        multi-line scripts (python, bash, node). For single shell commands use \
+        multi-line scripts (python, bash, node). You MUST pass the script code directly in the `script` parameter. **CRITICAL: NEVER use literal newlines in the `script` parameter. You MUST escape all newlines as `\\n` to ensure valid JSON.** For single shell commands use \
         `sandbox_exec`. For background processes use `sandbox_exec_background`. \
         Set `timeout` for long operations (default 60 s scripts, 30 s exec, max 300 s).
         """
@@ -244,7 +244,7 @@ public actor WorkExecutionEngine {
         Node `fetch` to call APIs and download data. Do NOT claim you lack \
         internet — always fetch real data. \
         Pre-installed: bash, python3, node, git, curl, jq, rg, sqlite3, gcc/make, cmake. \
-        Prefer `sandbox_run_script` for multi-line scripts; `sandbox_exec` for single commands.
+        Prefer `sandbox_run_script` for multi-line scripts (pass code in `script` arg, escape newlines as `\\n`); `sandbox_exec` for single commands.
         """
 
     private static let sandboxRuntimeHints = """
