@@ -93,9 +93,16 @@ struct KVCacheStore {
         }
 
         // Cold hit: restore from SSD
-        if let ssdPath = entry.ssdPath {
+        if entry.ssdPath != nil {
             do {
-                let (cache, metadata) = try loadPromptCache(url: ssdPath)
+                let (cache, metadata) = try loadPromptCache(url: entry.ssdPath!)
+                guard Self.isValidCache(cache) else {
+                    print(
+                        "[KVCacheStore] Session cache validation failed for \(sessionId.prefix(8)), removing stale SSD file"
+                    )
+                    evictEntry(sessionId: sessionId, saveSSD: false)
+                    return (nil, nil)
+                }
                 entry.cache = cache
                 if let tokensStr = metadata["tokens"], let data = tokensStr.data(using: .utf8) {
                     entry.tokens = try? JSONDecoder().decode([Int].self, from: data)
@@ -109,9 +116,7 @@ struct KVCacheStore {
                 return (cache, entry.tokens)
             } catch {
                 print("[KVCacheStore] Failed to load SSD cache for \(sessionId.prefix(8)): \(error)")
-                try? FileManager.default.removeItem(at: ssdPath)
-                entries.removeValue(forKey: sessionId)
-                lruOrder.removeAll { $0 == sessionId }
+                evictEntry(sessionId: sessionId, saveSSD: false)
                 return (nil, nil)
             }
         }
@@ -283,12 +288,18 @@ struct KVCacheStore {
         guard let ssdPath = entry.ssdPath else { return (nil, nil) }
         do {
             let (cache, metadata) = try loadPromptCache(url: ssdPath)
+            guard Self.isValidCache(cache) else {
+                print("[KVCacheStore] Prefix cache validation failed, removing stale SSD file")
+                evictEntry(sessionId: key, saveSSD: false)
+                return (nil, nil)
+            }
             if entry.tokens == nil, let tokensStr = metadata["tokens"], let data = tokensStr.data(using: .utf8) {
                 entry.tokens = try? JSONDecoder().decode([Int].self, from: data)
             }
             return (cache, entry.tokens)
         } catch {
             print("[KVCacheStore] Failed to load prefix cache from SSD: \(error)")
+            evictEntry(sessionId: key, saveSSD: false)
             return (nil, nil)
         }
     }
@@ -328,10 +339,22 @@ struct KVCacheStore {
         return entries[key] != nil
     }
 
+    /// Removes a prefix cache entry (RAM + SSD) for a specific model and content hash.
+    mutating func invalidatePrefixCache(modelName: String, hash: String) {
+        let key = Self.prefixKey(modelName: modelName, hash: hash)
+        evictEntry(sessionId: key, saveSSD: false)
+    }
+
     // MARK: - Helpers
 
     static func cacheBytes(_ cache: [any KVCache]) -> Int {
         cache.flatMap(\.state).reduce(0) { $0 + $1.nbytes }
+    }
+
+    /// Returns true when every layer in the cache has populated state and a
+    /// positive offset, which is the minimum bar for a usable SSD-restored cache.
+    private static func isValidCache(_ cache: [any KVCache]) -> Bool {
+        !cache.isEmpty && cache.allSatisfy { !$0.state.isEmpty && $0.offset > 0 }
     }
 
     #if DEBUG

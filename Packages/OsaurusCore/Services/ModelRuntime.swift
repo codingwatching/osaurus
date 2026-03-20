@@ -142,6 +142,43 @@ actor ModelRuntime {
         kvCacheStore.invalidate(sessionId: sessionId)
     }
 
+    // MARK: - Cache invalidation helpers
+
+    private func invalidateCaches(sessionId: String?, modelName: String, prefixHash: String) {
+        if let sid = sessionId {
+            kvCacheStore.invalidate(sessionId: sid)
+        }
+        kvCacheStore.invalidatePrefixCache(modelName: modelName, hash: prefixHash)
+    }
+
+    /// Forwards events from `stream` and invalidates the relevant caches when
+    /// iteration throws, so subsequent requests don't hit the same stale data.
+    private func wrapWithCacheInvalidation(
+        _ stream: AsyncThrowingStream<ModelRuntimeEvent, Error>,
+        sessionId: String?,
+        modelName: String,
+        prefixHash: String
+    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        let (wrapped, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        let forwardTask = Task {
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    continuation.yield(event)
+                }
+                continuation.finish()
+            } catch {
+                invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
+                print(
+                    "[ModelRuntime] Stream failed with cache, invalidated for next attempt: \(error.localizedDescription)"
+                )
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { @Sendable _ in forwardTask.cancel() }
+        return wrapped
+    }
+
     // MARK: - Internals
 
     private func getConfig() async -> RuntimeConfig {
@@ -382,9 +419,7 @@ actor ModelRuntime {
         } catch {
             guard existingCache != nil else { throw error }
             print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
-            if let sid = sessionId {
-                kvCacheStore.invalidate(sessionId: sid)
-            }
+            invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
             (rawStream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
@@ -404,11 +439,19 @@ actor ModelRuntime {
             kvCacheStore.ensureBudget(budget)
         }
 
-        return StreamAccumulator.accumulate(
+        let eventStream = StreamAccumulator.accumulate(
             events: rawStream,
             stopSequences: stopSequences,
             tools: tools,
             generationTask: genTask
+        )
+
+        guard existingCache != nil else { return eventStream }
+        return wrapWithCacheInvalidation(
+            eventStream,
+            sessionId: sessionId,
+            modelName: modelName,
+            prefixHash: prefixHash
         )
     }
 
