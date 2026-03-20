@@ -21,6 +21,10 @@ public enum WorkActivityEvent: Equatable, Sendable {
     case retrying(attempt: Int, waitSeconds: Int)
     case sharedArtifact(filename: String, isFinal: Bool)
     case completedIssue(success: Bool)
+    case optimizedMemory
+    case savingProgress
+    case summarizingWork
+    case resumedWithSummary
 }
 
 /// Input state for work mode - determines input behavior and placeholder text
@@ -1385,15 +1389,14 @@ public final class WorkSession: ObservableObject {
 extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didStartIssue issue: Issue) {
         activeIssue = issue
-        streamingContent = ""
         updateLocalIssueStatus(issue.id, to: .inProgress)
-        emitActivity(.startedIssue(title: issue.title))
 
         if preserveTurnsOnNextExecutionStart {
             preserveTurnsOnNextExecutionStart = false
             ensureAssistantTurnExists()
         } else {
-            // Fresh start - initialize turns with user request
+            streamingContent = ""
+            emitActivity(.startedIssue(title: issue.title))
             initializeTurns(for: issue)
         }
 
@@ -1503,6 +1506,7 @@ extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {
         retryAttempt = attempt
         isRetrying = true
+        preserveTurnsOnNextExecutionStart = true
         emitActivity(.retrying(attempt: attempt, waitSeconds: Int(afterDelay)))
 
         let content = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
@@ -1633,8 +1637,18 @@ extension WorkSession: WorkEngineDelegate {
     }
 
     public func workEngine(_ engine: WorkEngine, didUpdateStatus status: String, forIssue issue: Issue) {
-        // Update loop state with status message
         loopState?.statusMessage = status
-        emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
+
+        if status.hasPrefix("Optimizing") {
+            emitActivity(.optimizedMemory)
+        } else if status.hasPrefix("Saving progress") {
+            emitActivity(.savingProgress)
+        } else if status.hasPrefix("Summarizing") {
+            emitActivity(.summarizingWork)
+        } else if status.hasPrefix("Resuming") {
+            emitActivity(.resumedWithSummary)
+        } else {
+            emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
+        }
     }
 }

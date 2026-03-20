@@ -711,14 +711,65 @@
             }
 
             try await process.start()
-            let exitStatus = try await process.wait(timeoutInSeconds: Int64(timeout))
-            try await process.delete()
 
-            return ContainerExecResult(
-                stdout: stdout.string,
-                stderr: stderr.string,
-                exitCode: exitStatus.exitCode
-            )
+            do {
+                let exitStatus = try await waitWithInactivityTimeout(
+                    process: process,
+                    stdout: stdout,
+                    stderr: stderr,
+                    timeout: timeout
+                )
+                try await process.delete()
+                return ContainerExecResult(
+                    stdout: stdout.string,
+                    stderr: stderr.string,
+                    exitCode: exitStatus.exitCode
+                )
+            } catch {
+                try? await process.delete()
+                throw error
+            }
+        }
+
+        /// Waits for a process to exit, using an inactivity-based timeout that
+        /// resets whenever stdout or stderr receives data. Only kills the process
+        /// if no output arrives for `timeout` seconds.
+        private func waitWithInactivityTimeout(
+            process: LinuxProcess,
+            stdout: any DataWriterReadable,
+            stderr: any DataWriterReadable,
+            timeout: TimeInterval
+        ) async throws -> ExitStatus {
+            let startTime = Date()
+            return try await withThrowingTaskGroup(of: ExitStatus?.self) { group in
+                group.addTask {
+                    try await process.wait()
+                }
+                group.addTask {
+                    let pollInterval: UInt64 = 2_000_000_000
+                    while !Task.isCancelled {
+                        try await Task.sleep(nanoseconds: pollInterval)
+                        let lastActivity = max(
+                            stdout.lastWriteTime ?? startTime,
+                            stderr.lastWriteTime ?? startTime
+                        )
+                        if Date().timeIntervalSince(lastActivity) >= timeout {
+                            return nil
+                        }
+                    }
+                    return nil
+                }
+
+                let first = try await group.next()!
+                group.cancelAll()
+
+                if let status = first {
+                    return status
+                }
+
+                try? await process.kill(15)
+                throw SandboxError.timeout
+            }
         }
 
         // MARK: - Private Helpers
@@ -876,6 +927,7 @@
     private protocol DataWriterReadable: AnyObject, Sendable {
         var data: Data { get }
         var string: String { get }
+        var lastWriteTime: Date? { get }
     }
 
     /// Collects data written from a container process's stdout/stderr into memory.
@@ -883,9 +935,13 @@
     private final class DataWriter: Writer, DataWriterReadable, @unchecked Sendable {
         private let lock = NSLock()
         private var buffer = Data()
+        private var _lastWriteTime: Date?
 
         func write(_ data: Data) throws {
-            lock.withLock { buffer.append(data) }
+            lock.withLock {
+                buffer.append(data)
+                _lastWriteTime = Date()
+            }
         }
 
         func close() throws {}
@@ -896,6 +952,10 @@
 
         var string: String {
             String(data: data, encoding: .utf8) ?? ""
+        }
+
+        var lastWriteTime: Date? {
+            lock.withLock { _lastWriteTime }
         }
     }
 
@@ -910,6 +970,7 @@
         private var lineBuffer = Data()
         private var pendingLines: [String] = []
         private var flushScheduled = false
+        private var _lastWriteTime: Date?
         private let source: String
         private let level: SandboxLogBuffer.Entry.Level
 
@@ -921,6 +982,7 @@
         func write(_ data: Data) throws {
             let shouldSchedule: Bool = lock.withLock {
                 buffer.append(data)
+                _lastWriteTime = Date()
                 lineBuffer.append(data)
                 extractLines()
                 guard !pendingLines.isEmpty, !flushScheduled else { return false }
@@ -949,6 +1011,8 @@
         var data: Data { lock.withLock { buffer } }
 
         var string: String { String(data: data, encoding: .utf8) ?? "" }
+
+        var lastWriteTime: Date? { lock.withLock { _lastWriteTime } }
 
         // MARK: Private
 

@@ -36,8 +36,10 @@ public actor WorkExecutionEngine {
 
     // MARK: - Tool Execution
 
-    /// Maximum time (in seconds) to wait for a single tool execution before timing out.
-    private static let toolExecutionTimeout: UInt64 = 120
+    /// Hard safety-net timeout for a single tool execution. The real timeout
+    /// for sandbox commands is inactivity-based (at the container exec layer),
+    /// so this only fires if something is genuinely stuck.
+    private static let toolExecutionTimeout: UInt64 = 300
 
     /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
@@ -168,7 +170,8 @@ public actor WorkExecutionEngine {
 
     // MARK: - Folder Context
 
-    /// Builds the folder context section for prompts when a folder is selected
+    /// Builds the folder context section for prompts when a folder is selected.
+    /// Uses a compact representation — the agent can explore via tools on demand.
     static func buildFolderContextSection(from folderContext: WorkFolderContext?) -> String {
         guard let folder = folderContext else {
             return ""
@@ -178,24 +181,40 @@ public actor WorkExecutionEngine {
         section += "**Path:** \(folder.rootPath.path)\n"
         section += "**Project Type:** \(folder.projectType.displayName)\n"
 
-        section += "\n**File Structure:**\n```\n\(folder.tree)```\n"
-
-        if let manifest = folder.manifest {
-            // Truncate manifest if too long for prompt
-            let truncatedManifest =
-                manifest.count > 2000 ? String(manifest.prefix(2000)) + "\n... (truncated)" : manifest
-            section += "\n**Manifest:**\n```\n\(truncatedManifest)\n```\n"
-        }
+        let topLevel = buildTopLevelSummary(from: folder.tree)
+        section += "**Root contents:** \(topLevel)\n"
 
         if let gitStatus = folder.gitStatus, !gitStatus.isEmpty {
-            section += "\n**Git Status:**\n```\n\(gitStatus)\n```\n"
+            let shortStatus = String(gitStatus.prefix(300))
+            section += "\n**Git status (uncommitted changes):**\n```\n\(shortStatus)\n```\n"
         }
 
         section +=
-            "\n**File Tools Available:** Use `file_read`, `file_write`, `file_edit`, `file_search`, etc. to work with files.\n"
-        section += "Always read files before editing. Use relative paths from the working directory.\n"
+            "\nUse `file_read`, `file_search`, and `file_list` to explore the project structure. Always read files before editing.\n"
 
         return section
+    }
+
+    /// Extracts top-level directory entries from the tree string for a compact summary.
+    private static func buildTopLevelSummary(from tree: String) -> String {
+        let lines = tree.components(separatedBy: .newlines)
+        let topLevel = lines.compactMap { line -> String? in
+            let stripped = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !stripped.isEmpty else { return nil }
+            let treeChars = CharacterSet(charactersIn: "│├└─ \u{00A0}")
+            let indentPrefix = line.prefix(while: { char in
+                char.unicodeScalars.allSatisfy { treeChars.contains($0) }
+            })
+            guard indentPrefix.count <= 4 else { return nil }
+            return stripped.trimmingCharacters(in: treeChars)
+        }
+        .filter { !$0.isEmpty }
+
+        if topLevel.count <= 8 {
+            return topLevel.joined(separator: ", ")
+        }
+        let shown = topLevel.prefix(6)
+        return shown.joined(separator: ", ") + ", and \(topLevel.count - 6) other items"
     }
 
     // MARK: - Sandbox Prompt Blocks
@@ -225,7 +244,7 @@ public actor WorkExecutionEngine {
         Node `fetch` to call APIs and download data. Do NOT claim you lack \
         internet — always fetch real data. \
         Pre-installed: bash, python3, node, git, curl, jq, rg, sqlite3, gcc/make, cmake. \
-        Prefer `sandbox_run_script` for multi-line scripts; `sandbox_exec` for single commands.
+        Prefer `sandbox_run_script` for multi-line scripts (pass code in `script` arg, escape newlines as `\\n`); `sandbox_exec` for single commands.
         """
 
     private static let sandboxRuntimeHints = """
@@ -302,6 +321,169 @@ public actor WorkExecutionEngine {
             Access via `$NAME` in shell, `os.environ["NAME"]` in Python, or `process.env.NAME` in Node.
 
             """
+    }
+
+    // MARK: - Context Compaction
+
+    /// Clears old tool results in-place to free context budget.
+    /// Returns the number of results cleared this pass.
+    private func clearStaleToolResults(
+        messages: inout [ChatMessage],
+        currentIteration: Int,
+        staleness: Int = 8
+    ) -> Int {
+        guard currentIteration > staleness else { return 0 }
+
+        var iterationBoundary = 0
+        var cleared = 0
+
+        // Walk backwards counting iteration boundaries (each assistant message = ~1 iteration)
+        for i in stride(from: messages.count - 1, through: 0, by: -1) {
+            let msg = messages[i]
+            if msg.role == "assistant" {
+                iterationBoundary += 1
+            }
+            if msg.role == "tool", iterationBoundary >= staleness,
+                let content = msg.content,
+                !content.hasPrefix("[Result cleared")
+            {
+                let toolName = resolveToolName(
+                    forToolCallId: msg.tool_call_id,
+                    in: messages,
+                    before: i
+                )
+                let label = toolName ?? "unknown tool"
+                let byteCount = content.utf8.count
+                messages[i] = ChatMessage(
+                    role: "tool",
+                    content:
+                        "[Result cleared — \(label) returned \(byteCount) bytes. Re-run the tool or use `sandbox_read_file` to inspect.]",
+                    tool_calls: nil,
+                    tool_call_id: msg.tool_call_id
+                )
+                cleared += 1
+            }
+        }
+        return cleared
+    }
+
+    /// Finds the tool name for a given `tool_call_id` by scanning preceding assistant messages.
+    private func resolveToolName(
+        forToolCallId callId: String?,
+        in messages: [ChatMessage],
+        before index: Int
+    ) -> String? {
+        guard let callId else { return nil }
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            if let toolCalls = messages[i].tool_calls {
+                for tc in toolCalls where tc.id == callId {
+                    return tc.function.name
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Prompt used to summarize the middle chunk of conversation during compaction.
+    private static let compactionSummarizationPrompt = """
+        You are summarizing an agent's work-in-progress for context continuity.
+
+        Given the following conversation excerpt from an ongoing task, produce a concise summary covering:
+        - Key decisions made and why
+        - Files created, modified, or read (with paths)
+        - Current state of the task (what's done, what remains)
+        - Any errors encountered and how they were resolved
+        - Important values, configurations, or findings
+
+        Be specific — include file paths, function names, error messages, and concrete details.
+        Do NOT include tool call arguments or raw file contents.
+        Keep it under 800 tokens.
+        """
+
+    /// Compacts middle messages into a summary using an LLM call.
+    /// Protects the head (initial context) and tail (recent work), summarizing everything between.
+    private func compactMiddleMessages(
+        messages: [ChatMessage],
+        model: String?,
+        protectHead: Int = 2,
+        protectTail: Int = 6
+    ) async throws -> [ChatMessage] {
+        let head = min(protectHead, messages.count)
+        let tail = min(protectTail, messages.count - head)
+
+        guard messages.count > head + tail else { return messages }
+
+        let headSlice = Array(messages[..<head])
+        let tailSlice = Array(messages[(messages.count - tail)...])
+        let middle = Array(messages[head ..< (messages.count - tail)])
+
+        // Serialize the middle chunk for summarization
+        var transcript = ""
+        for msg in middle {
+            let role = msg.role.uppercased()
+            if let content = msg.content, !content.isEmpty {
+                let truncated = content.count > 500 ? String(content.prefix(500)) + "..." : content
+                transcript += "[\(role)] \(truncated)\n"
+            } else if let toolCalls = msg.tool_calls {
+                let names = toolCalls.map { $0.function.name }.joined(separator: ", ")
+                transcript += "[ASSISTANT] Called: \(names)\n"
+            }
+        }
+
+        guard !transcript.isEmpty else { return messages }
+
+        let request = ChatCompletionRequest(
+            model: model ?? "default",
+            messages: [
+                ChatMessage(role: "system", content: Self.compactionSummarizationPrompt),
+                ChatMessage(role: "user", content: transcript),
+            ],
+            temperature: 0.1,
+            max_tokens: 1024,
+            stream: nil,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil
+        )
+
+        let response = try await chatEngine.completeChat(request: request)
+        guard let summary = response.choices.first?.message.content, !summary.isEmpty else {
+            throw WorkExecutionError.unknown("Empty compaction summary")
+        }
+
+        let summaryMessage = ChatMessage(
+            role: "user",
+            content: """
+                [System — Context Summary]
+                The following summarizes work completed in earlier iterations that has been compacted:
+
+                \(summary)
+
+                Continue from where this summary leaves off.
+                """
+        )
+
+        return stripOrphanedToolResults(headSlice + [summaryMessage] + tailSlice)
+    }
+
+    /// Removes tool-result messages that have no matching tool_call in a preceding assistant message.
+    private func stripOrphanedToolResults(_ messages: [ChatMessage]) -> [ChatMessage] {
+        var knownCallIds = Set<String>()
+        var cleaned: [ChatMessage] = []
+        for msg in messages {
+            if let toolCalls = msg.tool_calls {
+                for tc in toolCalls { knownCallIds.insert(tc.id) }
+            }
+            if msg.role == "tool" {
+                guard let callId = msg.tool_call_id, knownCallIds.contains(callId) else { continue }
+            }
+            cleaned.append(msg)
+        }
+        return cleaned
     }
 
     // MARK: - Reasoning Loop
@@ -383,6 +565,7 @@ public actor WorkExecutionEngine {
         var toolsUsed: [String] = []
         var consecutiveTextOnly = 0
         var lastResponseContent = ""
+        var preSaveAttempted = false
 
         // Set up context budget manager if context length is known
         var budgetManager: ContextBudgetManager? = nil
@@ -438,13 +621,44 @@ public actor WorkExecutionEngine {
                 )
             }
 
-            // Trim messages to fit context budget (no-op if within budget or no limit known)
+            // Tier 1: Clear stale tool results in-place (cheap, no LLM call)
+            let cleared = clearStaleToolResults(messages: &messages, currentIteration: iteration)
+            if cleared > 0 {
+                await onStatusUpdate("Optimizing memory...")
+            }
+
+            // Context compaction: tier 2 LLM summarization if still over budget
             let effectiveMessages: [ChatMessage]
-            if let manager = budgetManager {
-                effectiveMessages = manager.trimMessages(messages)
+            if let manager = budgetManager, !manager.fitsInBudget(messages) {
+                if !preSaveAttempted {
+                    await onStatusUpdate("Saving progress notes...")
+                    messages.append(
+                        ChatMessage(
+                            role: "user",
+                            content: "[System] Context is getting large and will be compacted soon. "
+                                + "Use `save_notes` now to record any important findings, decisions, "
+                                + "or state you want to preserve. Then continue with your task."
+                        )
+                    )
+                    preSaveAttempted = true
+                    continue
+                }
+                await onStatusUpdate("Summarizing earlier work...")
+                do {
+                    effectiveMessages = try await compactMiddleMessages(
+                        messages: messages,
+                        model: model
+                    )
+                    await onStatusUpdate("Resuming with summary")
+                } catch {
+                    effectiveMessages = manager.trimMessages(messages)
+                    await onStatusUpdate("Resuming...")
+                }
             } else {
                 effectiveMessages = messages
             }
+
+            await onStatusUpdate("Thinking...")
 
             // Build full messages with system prompt
             let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + effectiveMessages
@@ -706,6 +920,10 @@ public actor WorkExecutionEngine {
         - Only after sharing all outputs, call `complete_task` with `{"summary": "...", "success": true}`.
         - NEVER call `complete_task` without first calling `share_artifact`.
 
+        ## Notes
+
+        Use `save_notes` to record important findings, decisions, file paths, and current state as you work. Your context may be compacted during long tasks — saved notes persist and will be available if you resume. Use `read_notes` to recall earlier findings.
+
         """
     }
 
@@ -750,6 +968,10 @@ public actor WorkExecutionEngine {
         2. Only AFTER sharing all outputs, call `complete_task` with `{"summary": "what was accomplished", "success": true}`.
 
         NEVER call `complete_task` without first calling `share_artifact` for every file the user should see. If you skip `share_artifact`, the user gets nothing.
+
+        ## Notes
+
+        Use `save_notes` to record important findings, decisions, file paths, and current state as you work. Your context may be compacted during long tasks — saved notes persist and will be available if you resume. Use `read_notes` to recall earlier findings.
 
         """
     }

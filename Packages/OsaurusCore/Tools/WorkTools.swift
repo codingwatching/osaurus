@@ -425,6 +425,9 @@ public final class WorkToolManager {
         CompleteTaskTool(),
         CreateIssueTool(),
         RequestClarificationTool(),
+        SaveNotesTool(),
+        ReadNotesTool(),
+        LoadSkillTool(),
     ]
 
     /// Reference count for active work sessions

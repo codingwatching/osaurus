@@ -625,57 +625,49 @@ public final class BackgroundTaskManager: ObservableObject {
     // MARK: - Private: Work Activity Event Mapping
 
     private func recordActivityEvent(_ event: WorkActivityEvent, into state: BackgroundTaskState) {
-        var emitKind: BackgroundTaskActivityItem.Kind?
-        var emitTitle: String?
-        var emitDetail: String?
-
-        switch event {
-        case .startedIssue(let title):
-            state.appendActivity(kind: .info, title: "Task", detail: title)
-            emitKind = .info
-            emitTitle = "Task"
-            emitDetail = title
-
-        case .willExecuteStep, .completedStep:
-            break
-
-        case .toolExecuted(let name):
-            state.appendActivity(kind: .tool, title: "Tool", detail: name)
-            emitKind = .tool
-            emitTitle = "Tool"
-            emitDetail = name
-
-        case .needsClarification:
+        // Append-only: no plugin event for clarification requests
+        if case .needsClarification = event {
             state.appendActivity(kind: .warning, title: "Needs input")
-
-        case .retrying(let attempt, let waitSeconds):
-            let detail = "Attempt \(attempt), wait \(waitSeconds)s"
-            state.appendActivity(kind: .warning, title: "Retrying", detail: detail)
-            emitKind = .warning
-            emitTitle = "Retrying"
-            emitDetail = detail
-
-        case .sharedArtifact(let filename, let isFinal):
-            let title = isFinal ? "Final artifact" : "Shared artifact"
-            state.appendActivity(kind: .info, title: title, detail: filename)
-            emitKind = .info
-            emitTitle = title
-            emitDetail = filename
-
-        case .completedIssue(let success):
-            let title = success ? "Task completed" : "Task failed"
-            state.appendActivity(kind: success ? .success : .error, title: title)
-            emitKind = success ? .success : .error
-            emitTitle = title
+            return
         }
 
-        if let kind = emitKind, let title = emitTitle {
-            emitPluginEvent(
-                state,
-                type: .activity,
-                json: PluginHostContext.serializeActivityEvent(kind: kind, title: title, detail: emitDetail)
+        typealias Activity = (kind: BackgroundTaskActivityItem.Kind, title: String, detail: String?)
+
+        let activity: Activity? =
+            switch event {
+            case .startedIssue(let title):
+                (.info, "Task", title)
+            case .toolExecuted(let name):
+                (.tool, "Tool", name)
+            case .retrying(let attempt, let waitSeconds):
+                (.warning, "Retrying", "Attempt \(attempt), wait \(waitSeconds)s")
+            case .sharedArtifact(let filename, let isFinal):
+                (.info, isFinal ? "Final artifact" : "Shared artifact", filename)
+            case .completedIssue(let success):
+                (success ? .success : .error, success ? "Task completed" : "Task failed", nil)
+            case .optimizedMemory:
+                (.info, "Memory", "Freed up space from older results")
+            case .savingProgress:
+                (.info, "Progress", "Saving key findings before summarizing")
+            case .summarizingWork:
+                (.progress, "Context", "Condensing conversation history")
+            case .resumedWithSummary:
+                (.success, "Context", "Earlier work summarized")
+            case .willExecuteStep, .completedStep, .needsClarification:
+                nil
+            }
+
+        guard let activity else { return }
+        state.appendActivity(kind: activity.kind, title: activity.title, detail: activity.detail)
+        emitPluginEvent(
+            state,
+            type: .activity,
+            json: PluginHostContext.serializeActivityEvent(
+                kind: activity.kind,
+                title: activity.title,
+                detail: activity.detail
             )
-        }
+        )
     }
 
     // MARK: - Private: Work State Handlers

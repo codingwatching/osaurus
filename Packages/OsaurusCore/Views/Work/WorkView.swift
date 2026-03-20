@@ -20,13 +20,9 @@ struct WorkView: View {
     @State private var isPinnedToBottom: Bool = true
     @State private var scrollToBottomTrigger: Int = 0
 
-    @State private var progressSidebarWidth: CGFloat = 220
-    @State private var isProgressSidebarCollapsed: Bool = false
+    @State private var isProgressPanelOpen: Bool = false
     @State private var selectedArtifact: SharedArtifact?
     @State private var fileOperations: [WorkFileOperation] = []
-
-    private let minProgressSidebarWidth: CGFloat = 180
-    private let maxProgressSidebarWidth: CGFloat = 340
 
     private var theme: ThemeProtocol { windowState.theme }
 
@@ -52,7 +48,6 @@ struct WorkView: View {
                             }
                         }
                     )
-                    .padding(.top, 0)
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 }
 
@@ -183,11 +178,6 @@ struct WorkView: View {
         }
     }
 
-    /// Close this window via ChatWindowManager
-    private func closeWindow() {
-        ChatWindowManager.shared.closeWindow(id: windowState.windowId)
-    }
-
     // MARK: - Background
 
     private var agentBackground: some View {
@@ -307,23 +297,16 @@ struct WorkView: View {
     // MARK: - Task Execution View
 
     private func taskExecutionView(width: CGFloat) -> some View {
-        let collapsedWidth: CGFloat = 48
-        // Account for panel trailing padding (12px)
-        let expandedWidth = progressSidebarWidth + 12
-        let sidebarWidth = isProgressSidebarCollapsed ? collapsedWidth : expandedWidth
-        let chatWidth = width - sidebarWidth
         let hasBlocks = !session.issueBlocks.isEmpty
 
-        return HStack(spacing: 0) {
-            // Main chat area
+        return ZStack(alignment: .trailing) {
+            // Layer 1: Full-width chat content
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
                     if session.selectedIssueId != nil && hasBlocks {
-                        issueDetailView(width: chatWidth)
-                    } else if session.selectedIssueId != nil {
-                        issueEmptyDetailView
+                        issueDetailView(width: width)
                     } else {
-                        noIssueSelectedView
+                        issueEmptyDetailView
                     }
 
                     if let error = session.errorMessage { errorView(error: error) }
@@ -337,71 +320,55 @@ struct WorkView: View {
             }
             .frame(maxWidth: .infinity)
 
-            if !isProgressSidebarCollapsed {
-                IssueTrackerPanel(
+            // Layer 2: Status button (visible when panel is closed)
+            if !isProgressPanelOpen {
+                WorkStatusButton(
+                    isExecuting: session.isExecuting,
                     issues: session.issues,
-                    activeIssueId: session.activeIssue?.id,
-                    selectedIssueId: session.selectedIssueId,
-                    finalArtifact: session.finalArtifact,
-                    sharedArtifacts: session.sharedArtifacts,
-                    fileOperations: fileOperations,
-                    isCollapsed: $isProgressSidebarCollapsed,
-                    onIssueSelect: { session.selectIssue($0) },
-                    onIssueRun: { issue in Task { await session.executeIssue(issue) } },
-                    onIssueClose: { issueId in Task { await session.closeIssue(issueId, reason: "Manually closed") } },
-                    onArtifactView: { viewArtifact($0) },
-                    onArtifactOpen: { openArtifactInFinder($0) },
-                    onUndoOperation: { operationId in undoFileOperation(operationId) },
-                    onUndoAllOperations: { undoAllFileOperations() }
+                    artifactCount: session.sharedArtifacts.count,
+                    fileOpCount: fileOperations.count,
+                    onTap: { isProgressPanelOpen = true }
                 )
-                .frame(width: progressSidebarWidth)
-                .padding(.vertical, 12)
-                .padding(.trailing, 12)
-                .overlay(alignment: .leading) {
-                    ProgressSidebarResizeHandle(
-                        width: $progressSidebarWidth,
-                        minWidth: minProgressSidebarWidth,
-                        maxWidth: maxProgressSidebarWidth
+                .padding(.trailing, 16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, 14)
+                .transition(.opacity)
+            }
+
+            // Layer 3: Overlay panel (toggled open)
+            if isProgressPanelOpen {
+                HStack(spacing: 0) {
+                    Color.black.opacity(0.001)
+                        .contentShape(Rectangle())
+                        .onTapGesture { isProgressPanelOpen = false }
+
+                    IssueTrackerPanel(
+                        issues: session.issues,
+                        activeIssueId: session.activeIssue?.id,
+                        selectedIssueId: session.selectedIssueId,
+                        finalArtifact: session.finalArtifact,
+                        sharedArtifacts: session.sharedArtifacts,
+                        fileOperations: fileOperations,
+                        onDismiss: { isProgressPanelOpen = false },
+                        onIssueSelect: { session.selectIssue($0) },
+                        onIssueRun: { issue in Task { await session.executeIssue(issue) } },
+                        onIssueClose: { issueId in Task { await session.closeIssue(issueId, reason: "Manually closed") }
+                        },
+                        onArtifactView: { viewArtifact($0) },
+                        onArtifactOpen: { openArtifactInFinder($0) },
+                        onUndoOperation: { operationId in undoFileOperation(operationId) },
+                        onUndoAllOperations: { undoAllFileOperations() }
                     )
+                    .frame(width: 280)
                     .padding(.vertical, 12)
+                    .padding(.trailing, 12)
+                    .shadow(color: theme.shadowColor.opacity(0.2), radius: 16, x: -4, y: 0)
                 }
                 .transition(.move(edge: .trailing).combined(with: .opacity))
-            } else {
-                collapsedProgressSidebar.transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .frame(width: width)
-        .animation(theme.animationQuick(), value: isProgressSidebarCollapsed)
-    }
-
-    // MARK: - No Issue Selected View
-
-    private var noIssueSelectedView: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "hand.point.right")
-                .font(theme.font(size: 32, weight: .regular))
-                .foregroundColor(theme.tertiaryText)
-
-            Text("Select an issue to view details")
-                .font(theme.font(size: CGFloat(theme.bodySize) + 1, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, Self.contentHorizontalPadding)
-    }
-
-    // MARK: - Collapsed Progress Sidebar
-
-    private var collapsedProgressSidebar: some View {
-        CollapsedSidebarButton(onExpand: {
-            withAnimation(theme.animationQuick()) {
-                isProgressSidebarCollapsed = false
-            }
-        })
-        .padding(.top, 14)
-        .padding(.trailing, 14)
-        .frame(width: 48, alignment: .top)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .animation(theme.springAnimation(responseMultiplier: 0.8), value: isProgressPanelOpen)
     }
 }
 
@@ -432,61 +399,59 @@ private struct ClarificationOverlay: View {
     }
 }
 
-// MARK: - Collapsed Sidebar Button
+// MARK: - Work Status Button
 
-private struct CollapsedSidebarButton: View {
-    let onExpand: () -> Void
+private struct WorkStatusButton: View {
+    let isExecuting: Bool
+    let issues: [Issue]
+    let artifactCount: Int
+    let fileOpCount: Int
+    let onTap: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var isHovered = false
 
+    private var completedCount: Int {
+        issues.filter { $0.status == .closed }.count
+    }
+
+    private var allDone: Bool {
+        !issues.isEmpty && completedCount == issues.count
+    }
+
+    private var statusText: String {
+        if isExecuting { return "Running" }
+        if allDone { return "Done" }
+        if issues.count > 1 { return "\(completedCount)/\(issues.count) tasks" }
+        return "Progress"
+    }
+
     var body: some View {
-        Button(action: onExpand) {
-            ZStack {
-                // Background with subtle glass effect
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.95 : 0.8))
+        Button(action: onTap) {
+            HStack(spacing: 6) {
+                statusIndicator
 
-                // Subtle accent gradient on hover
-                if isHovered {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    theme.accentColor.opacity(0.08),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
+                Text(statusText)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
 
-                Image(systemName: "sidebar.right")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.tertiaryText)
+                detailChips
+
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
             }
-            .frame(width: 32, height: 32)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
-                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isHovered ? theme.accentColor.opacity(0.15) : .clear,
-                radius: 8,
-                x: 0,
-                y: 2
-            )
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.6))
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1), lineWidth: 0.5)
+            }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -494,7 +459,48 @@ private struct CollapsedSidebarButton: View {
                 isHovered = hovering
             }
         }
-        .help("Show progress")
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        if isExecuting {
+            Circle()
+                .fill(theme.accentColor)
+                .frame(width: 7, height: 7)
+                .modifier(WorkPulseModifier())
+        } else if allDone {
+            Image(systemName: "checkmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundColor(theme.successColor)
+        } else {
+            Circle()
+                .fill(theme.tertiaryText.opacity(0.4))
+                .frame(width: 6, height: 6)
+        }
+    }
+
+    @ViewBuilder
+    private var detailChips: some View {
+        if artifactCount > 0 || fileOpCount > 0 {
+            HStack(spacing: 4) {
+                if fileOpCount > 0 {
+                    chipLabel("pencil", count: fileOpCount)
+                }
+                if artifactCount > 0 {
+                    chipLabel("doc.fill", count: artifactCount)
+                }
+            }
+        }
+    }
+
+    private func chipLabel(_ systemName: String, count: Int) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: systemName)
+                .font(.system(size: 9, weight: .medium))
+            Text("\(count)")
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+        }
+        .foregroundColor(theme.tertiaryText)
     }
 }
 
@@ -503,15 +509,12 @@ private struct CollapsedSidebarButton: View {
 extension WorkView {
     // MARK: - Constants
 
-    private static let maxChatContentWidth: CGFloat = 700
     private static let contentHorizontalPadding: CGFloat = 20
 
     // MARK: - Issue Detail View
 
     private func issueDetailView(width: CGFloat) -> some View {
         let agentName = windowState.cachedAgentDisplayName
-        let availableWidth = width - (Self.contentHorizontalPadding * 2)
-        let contentWidth = min(availableWidth, Self.maxChatContentWidth)
 
         let blocks = session.issueBlocks
         let groupHeaderMap = session.issueBlocksGroupHeaderMap
@@ -520,7 +523,7 @@ extension WorkView {
             MessageThreadView(
                 blocks: blocks,
                 groupHeaderMap: groupHeaderMap,
-                width: contentWidth,
+                width: width,
                 agentName: agentName,
                 isStreaming: session.isExecuting && session.activeIssue?.id == session.selectedIssueId,
                 lastAssistantTurnId: blocks.last?.turnId,
@@ -531,7 +534,6 @@ extension WorkView {
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
                 onCopy: copyTurnContent
             )
-            .frame(maxWidth: contentWidth)
 
             ScrollToBottomButton(
                 isPinnedToBottom: isPinnedToBottom,
@@ -543,7 +545,6 @@ extension WorkView {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, Self.contentHorizontalPadding)
         .padding(.top, 16)
         .overlay {
             if let request = session.pendingClarification {
@@ -600,9 +601,10 @@ extension WorkView {
                 .frame(width: 5, height: 5)
                 .modifier(WorkPulseModifier())
 
-            Text("Working on it...")
+            Text(session.loopState?.statusMessage ?? "Working on it...")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
+                .animation(.easeInOut(duration: 0.2), value: session.loopState?.statusMessage)
         }
         .padding(.bottom, 12)
     }
@@ -722,58 +724,6 @@ extension WorkView {
     }
 
 }
-
-// MARK: - Progress Sidebar Resize Handle
-
-private struct ProgressSidebarResizeHandle: View {
-    @Binding var width: CGFloat
-    let minWidth: CGFloat
-    let maxWidth: CGFloat
-
-    @Environment(\.theme) private var theme: ThemeProtocol
-    @State private var isHovered = false
-    @State private var isDragging = false
-    @GestureState private var dragOffset: CGFloat = 0
-
-    var body: some View {
-        // Invisible hit area that becomes visible on hover
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: 12)
-            .contentShape(Rectangle())
-            .overlay(
-                // Visual indicator only shown on hover/drag
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(theme.accentColor.opacity(isHovered || isDragging ? 0.6 : 0))
-                    .frame(width: 4)
-                    .animation(.easeOut(duration: 0.15), value: isHovered)
-                    .animation(.easeOut(duration: 0.15), value: isDragging)
-            )
-            .onHover { hovering in
-                isHovered = hovering
-                if hovering {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        isDragging = true
-                        // Dragging left increases width, dragging right decreases
-                        let newWidth = width - value.translation.width
-                        width = min(maxWidth, max(minWidth, newWidth))
-                    }
-                    .onEnded { _ in
-                        isDragging = false
-                    }
-            )
-    }
-}
-
-// MARK: - Shared Header Components
-// HeaderActionButton, ModeToggleButton, ModeIndicatorBadge are now in SharedHeaderComponents.swift
 
 // MARK: - Download Menu Target
 

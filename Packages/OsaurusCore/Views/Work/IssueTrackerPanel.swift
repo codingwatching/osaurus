@@ -10,31 +10,18 @@ import SwiftUI
 
 struct IssueTrackerPanel: View {
     let issues: [Issue]
-    /// ID of the issue currently being executed
     let activeIssueId: String?
-    /// ID of the issue currently selected for viewing
     let selectedIssueId: String?
-    /// Final artifact from task completion
     let finalArtifact: SharedArtifact?
-    /// All shared artifacts
     let sharedArtifacts: [SharedArtifact]
-    /// File operations for undo tracking
     let fileOperations: [WorkFileOperation]
-    /// Binding to control collapse state
-    @Binding var isCollapsed: Bool
-    /// Called when user clicks to view an issue's details
+    let onDismiss: () -> Void
     let onIssueSelect: (Issue) -> Void
-    /// Called when user clicks to run/execute an issue
     let onIssueRun: (Issue) -> Void
-    /// Called when user closes an issue
     let onIssueClose: (String) -> Void
-    /// Called when user wants to view an artifact
     let onArtifactView: (SharedArtifact) -> Void
-    /// Called when user wants to open an artifact in Finder
     let onArtifactOpen: (SharedArtifact) -> Void
-    /// Called when user wants to undo a file operation
     let onUndoOperation: (UUID) -> Void
-    /// Called when user wants to undo all file operations
     let onUndoAllOperations: () -> Void
 
     @Environment(\.theme) private var theme: ThemeProtocol
@@ -61,7 +48,7 @@ struct IssueTrackerPanel: View {
                                     )
                                 }
                             }
-                            .padding(.horizontal, 12)
+                            .padding(.horizontal, 14)
                             .padding(.vertical, 10)
                         }
 
@@ -77,63 +64,32 @@ struct IssueTrackerPanel: View {
         }
         .frame(maxHeight: .infinity)
         .background(panelBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(panelBorder)
-        .compositingGroup()
-        .shadow(color: theme.shadowColor.opacity(theme.shadowOpacity * 0.5), radius: 8, x: 0, y: 2)
     }
 
     // MARK: - Panel Styling
 
     @ViewBuilder
     private var panelBackground: some View {
-        ZStack {
-            // Layer 1: Glass material (if enabled)
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            // Layer 2: Semi-transparent background
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.secondaryBackground.opacity(theme.isDark ? 0.75 : 0.85))
-
-            // Layer 3: Subtle accent gradient at top
-            LinearGradient(
-                colors: [
-                    theme.accentColor.opacity(theme.isDark ? 0.05 : 0.03),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        if theme.glassEnabled {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(.ultraThinMaterial)
+        } else {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(theme.secondaryBackground)
         }
     }
 
     private var panelBorder: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(theme.isDark ? 0.18 : 0.25),
-                        theme.primaryBorder.opacity(0.12),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+        RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(theme.primaryBorder.opacity(0.15), lineWidth: 1)
     }
 
     // MARK: - Sections
 
     private var sectionDivider: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.2))
-            .frame(height: 1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 12)
+        Spacer().frame(height: 20)
     }
 
     private func resultSection(artifact: SharedArtifact) -> some View {
@@ -141,40 +97,42 @@ struct IssueTrackerPanel: View {
             sectionDivider
 
             HStack(spacing: 8) {
-                Image(systemName: "doc.text.fill").font(.system(size: 12)).foregroundColor(theme.successColor)
-                Text("Result").font(.system(size: 13, weight: .semibold)).foregroundColor(theme.primaryText)
+                Image(systemName: "doc.text.fill")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.successColor)
+                Text("Result")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
                 Spacer()
 
-                HStack(spacing: 4) {
-                    Button {
-                        onArtifactView(artifact)
-                    } label: {
-                        Image(systemName: "eye")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                            .frame(width: 24, height: 24)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(theme.accentColor.opacity(0.1)))
-                    }
-                    .buttonStyle(.plain).help("View artifact")
-
-                    Button {
-                        onArtifactOpen(artifact)
-                    } label: {
-                        Image(systemName: "folder")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 24, height: 24)
-                            .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground.opacity(0.5)))
-                    }
-                    .buttonStyle(.plain).help("Reveal in Finder")
+                Button {
+                    onArtifactView(artifact)
+                } label: {
+                    Image(systemName: "eye")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain).help("View artifact")
+
+                Button {
+                    onArtifactOpen(artifact)
+                } label: {
+                    Image(systemName: "folder")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).help("Reveal in Finder")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.bottom, 8)
 
             ArtifactPreviewCard(artifact: artifact, onView: { onArtifactView(artifact) })
-                .padding(.horizontal, 12)
-                .padding(.bottom, 12)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 14)
         }
     }
 
@@ -183,12 +141,15 @@ struct IssueTrackerPanel: View {
             sectionDivider
 
             HStack(spacing: 8) {
-                Image(systemName: "doc.on.doc").font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                Text("Artifacts").font(.system(size: 12, weight: .medium)).foregroundColor(theme.secondaryText)
-                Text("(\(artifacts.count))").font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                Text("Artifacts")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
                 Spacer()
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.bottom, 8)
             VStack(spacing: 6) {
                 ForEach(artifacts) { artifact in
@@ -199,8 +160,8 @@ struct IssueTrackerPanel: View {
                     )
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
         }
     }
 
@@ -211,30 +172,16 @@ struct IssueTrackerPanel: View {
             sectionDivider
 
             HStack(spacing: 8) {
-                // Section icon with subtle background
-                ZStack {
-                    RoundedRectangle(cornerRadius: 4, style: .continuous)
-                        .fill(theme.accentColor.opacity(0.1))
-                        .frame(width: 20, height: 20)
-                    Image(systemName: "doc.badge.clock")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
+                Image(systemName: "pencil")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
 
                 Text("Changed Files")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text("\(fileOperations.count)")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(theme.tertiaryBackground.opacity(0.6)))
 
                 Spacer()
 
-                // Undo All button
                 Button {
                     onUndoAllOperations()
                 } label: {
@@ -251,15 +198,11 @@ struct IssueTrackerPanel: View {
                         RoundedRectangle(cornerRadius: 6, style: .continuous)
                             .fill(theme.warningColor.opacity(0.1))
                     )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(theme.warningColor.opacity(0.2), lineWidth: 1)
-                    )
                 }
                 .buttonStyle(.plain)
                 .help("Undo all file changes")
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.bottom, 10)
 
             VStack(spacing: 6) {
@@ -271,8 +214,8 @@ struct IssueTrackerPanel: View {
                     )
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 14)
+            .padding(.bottom, 14)
         }
     }
 
@@ -290,59 +233,27 @@ struct IssueTrackerPanel: View {
     // MARK: - Header
 
     private var headerView: some View {
-        HStack(spacing: 8) {
+        HStack {
             Text("Progress")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
-            // Progress indicator
-            if !issues.isEmpty {
-                HStack(spacing: 4) {
-                    Text("\(completedCount)")
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundColor(theme.successColor)
-                    Text("/")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                    Text("\(issues.count)")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.secondaryText)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                )
-            }
 
             Spacer()
 
-            // Collapse button
             Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isCollapsed = true
-                }
+                onDismiss()
             } label: {
-                Image(systemName: "sidebar.right")
+                Image(systemName: "xmark")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Hide progress")
+            .help("Close progress panel")
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 16)
         .padding(.vertical, 14)
-        .overlay(alignment: .bottom) {
-            // Subtle bottom divider
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.1))
-                .frame(height: 1)
-        }
     }
 
     // MARK: - Empty State
@@ -412,34 +323,18 @@ private struct IssueRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Status indicator
+        HStack(alignment: .top, spacing: 10) {
             statusIndicator
                 .frame(width: 16, height: 16)
-                .padding(.top, 1)
+                .padding(.top, 2)
 
-            // Content
-            VStack(alignment: .leading, spacing: 3) {
-                // Type + status label
-                HStack(spacing: 6) {
-                    if issue.type != .task {
-                        typeBadge
-                    }
-
-                    if isActive {
-                        Text("Running")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                    } else if issue.status == .closed {
-                        Text("Done")
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(theme.successColor)
-                    }
+            VStack(alignment: .leading, spacing: 4) {
+                if issue.type != .task {
+                    typeBadge
                 }
 
-                // Text content (max 4 lines)
                 Text(displayText)
-                    .font(.system(size: 12, weight: isActive || isSelected ? .medium : .regular))
+                    .font(.system(size: 13, weight: isActive || isSelected ? .medium : .regular))
                     .foregroundColor(isActive || isSelected ? theme.primaryText : theme.secondaryText)
                     .lineLimit(4)
                     .lineSpacing(2)
@@ -450,13 +345,8 @@ private struct IssueRow: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
         .background(backgroundView)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(borderColor, lineWidth: isActive || isSelected ? 1 : 0)
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(alignment: .topTrailing) {
-            // Actions on hover
             if isHovered && issue.status != .closed {
                 actionButtons
             }
@@ -527,11 +417,10 @@ private struct IssueRow: View {
             if (issue.status == .open || issue.status == .inProgress) && !isActive {
                 Button(action: onRun) {
                     Image(systemName: issue.status == .inProgress ? "arrow.clockwise" : "play.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(theme.successColor)
+                        .font(.system(size: 8, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
                         .frame(width: 20, height: 20)
-                        .background(Circle().fill(theme.primaryBackground))
-                        .overlay(Circle().stroke(theme.successColor.opacity(0.3), lineWidth: 1))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
                 .help(issue.status == .inProgress ? "Resume" : "Run")
@@ -542,8 +431,7 @@ private struct IssueRow: View {
                     .font(.system(size: 8, weight: .medium))
                     .foregroundColor(theme.tertiaryText)
                     .frame(width: 20, height: 20)
-                    .background(Circle().fill(theme.primaryBackground))
-                    .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
+                    .contentShape(Circle())
             }
             .buttonStyle(.plain)
             .help("Close")
@@ -556,27 +444,17 @@ private struct IssueRow: View {
     @ViewBuilder
     private var backgroundView: some View {
         if isActive {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(theme.accentColor.opacity(0.08))
         } else if isSelected {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(theme.accentColor.opacity(0.05))
         } else if isHovered {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground.opacity(0.4))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(theme.tertiaryBackground.opacity(0.3))
         } else {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.clear)
+            Color.clear
         }
-    }
-
-    private var borderColor: Color {
-        if isActive {
-            return theme.accentColor.opacity(0.4)
-        } else if isSelected {
-            return theme.accentColor.opacity(0.25)
-        }
-        return Color.clear
     }
 }
 
@@ -594,21 +472,16 @@ private struct ArtifactPreviewCard: View {
             onView()
         } label: {
             VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 4) {
+                HStack(spacing: 6) {
                     Image(systemName: artifactIconName)
-                        .font(.system(size: 9))
-                        .foregroundColor(artifactIconColor)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(theme.secondaryText)
 
                     Text(artifact.filename)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(artifactIconColor)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                        .lineLimit(1)
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(artifactIconColor.opacity(0.1))
-                )
 
                 if artifact.isImage, !artifact.hostPath.isEmpty,
                     let nsImage = NSImage(contentsOf: URL(fileURLWithPath: artifact.hostPath))
@@ -642,12 +515,8 @@ private struct ArtifactPreviewCard: View {
             }
             .padding(10)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.6 : 0.4))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.5 : 0.3))
             )
         }
         .buttonStyle(.plain)
@@ -662,14 +531,6 @@ private struct ArtifactPreviewCard: View {
         if artifact.mimeType == "text/markdown" { return "doc.richtext" }
         if artifact.isText { return "doc.text" }
         return "doc"
-    }
-
-    private var artifactIconColor: Color {
-        if artifact.isImage { return .purple }
-        if artifact.isAudio { return .orange }
-        if artifact.isHTML { return .blue }
-        if artifact.isDirectory { return .cyan }
-        return theme.accentColor
     }
 
     private func formatPreviewSize(_ bytes: Int) -> String {
@@ -699,25 +560,17 @@ private struct ArtifactRow: View {
         return "doc"
     }
 
-    private var rowIconColor: Color {
-        if artifact.isImage { return .purple }
-        if artifact.isAudio { return .orange }
-        if artifact.isHTML { return .blue }
-        if artifact.isDirectory { return .cyan }
-        return theme.secondaryText
-    }
-
     var body: some View {
         Button {
             onView()
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: rowIconName)
-                    .font(.system(size: 12))
-                    .foregroundColor(rowIconColor)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.secondaryText)
 
                 Text(artifact.filename)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                     .lineLimit(1)
 
@@ -726,22 +579,20 @@ private struct ArtifactRow: View {
                 HStack(spacing: 4) {
                     Button(action: onView) {
                         Image(systemName: "eye")
-                            .font(.system(size: 9))
-                            .foregroundColor(theme.accentColor)
-                            .frame(width: 20, height: 20)
-                            .background(Circle().fill(theme.primaryBackground))
-                            .overlay(Circle().stroke(theme.accentColor.opacity(0.3), lineWidth: 1))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("View")
 
                     Button(action: onOpen) {
                         Image(systemName: "folder")
-                            .font(.system(size: 9))
+                            .font(.system(size: 10, weight: .medium))
                             .foregroundColor(theme.secondaryText)
-                            .frame(width: 20, height: 20)
-                            .background(Circle().fill(theme.primaryBackground))
-                            .overlay(Circle().stroke(theme.primaryBorder.opacity(0.3), lineWidth: 1))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help("Reveal in Finder")
@@ -752,8 +603,8 @@ private struct ArtifactRow: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovered ? theme.tertiaryBackground.opacity(0.4) : Color.clear)
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(isHovered ? theme.tertiaryBackground.opacity(0.3) : Color.clear)
             )
         }
         .buttonStyle(.plain)
@@ -782,11 +633,6 @@ private struct FileOperationRow: View {
     @Environment(\.theme) private var theme: ThemeProtocol
     @State private var isHovered = false
 
-    private var fileExtension: String? {
-        let ext = (operation.path as NSString).pathExtension
-        return ext.isEmpty ? nil : ext.lowercased()
-    }
-
     private var fullURL: URL? {
         WorkFolderContextService.shared.currentContext?.rootPath.appendingPathComponent(operation.path)
     }
@@ -801,110 +647,64 @@ private struct FileOperationRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Colored left accent bar
-            RoundedRectangle(cornerRadius: 2)
-                .fill(iconColor)
-                .frame(width: 3)
-                .padding(.vertical, 4)
+        HStack(spacing: 10) {
+            Image(systemName: operation.type.iconName)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+                .frame(width: 20)
 
-            HStack(spacing: 10) {
-                // Operation type icon with background
-                ZStack {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                        .fill(iconColor.opacity(0.12))
-                        .frame(width: 24, height: 24)
-                    Image(systemName: operation.type.iconName)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(iconColor)
-                }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(operation.filename)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(isClickable ? theme.primaryText : theme.secondaryText)
+                    .lineLimit(1)
 
-                // Filename and info
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(operation.filename)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(isClickable ? theme.primaryText : theme.secondaryText)
-                            .lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(operation.type.displayName)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(theme.tertiaryText)
 
-                        // File extension badge
-                        if let ext = fileExtension {
-                            Text(ext)
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(
-                                    Capsule()
-                                        .fill(theme.tertiaryBackground.opacity(0.6))
-                                )
-                        }
-                    }
-
-                    HStack(spacing: 4) {
-                        Text(operation.type.displayName)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundColor(iconColor.opacity(0.8))
-
-                        if operationCount > 1 {
-                            Text("•")
-                                .font(.system(size: 8))
-                                .foregroundColor(theme.tertiaryText)
-                            Text("\(operationCount) changes")
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.tertiaryText)
-                        }
+                    if operationCount > 1 {
+                        Text("\u{00B7} \(operationCount) changes")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
                     }
                 }
+            }
 
-                Spacer()
+            Spacer()
 
-                // Action buttons (visible on hover)
-                HStack(spacing: 6) {
-                    // Open/Reveal button
-                    if isClickable {
-                        Button(action: openFile) {
-                            Image(systemName: "arrow.up.forward.square")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(theme.accentColor)
-                                .frame(width: 22, height: 22)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                        .fill(theme.accentColor.opacity(0.1))
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open file")
-                    }
-
-                    // Undo button
-                    Button(action: onUndo) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
+            HStack(spacing: 6) {
+                if isClickable {
+                    Button(action: openFile) {
+                        Image(systemName: "arrow.up.forward.square")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
                             .frame(width: 22, height: 22)
-                            .background(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .fill(theme.warningColor.opacity(0.1))
-                            )
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("Undo this change")
+                    .help("Open file")
                 }
-                .opacity(isHovered ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: isHovered)
+
+                Button(action: onUndo) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(theme.warningColor)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Undo this change")
             }
-            .padding(.leading, 8)
-            .padding(.trailing, 10)
-            .padding(.vertical, 8)
+            .opacity(isHovered ? 1 : 0)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isHovered ? theme.tertiaryBackground.opacity(0.5) : theme.tertiaryBackground.opacity(0.25))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(isHovered ? theme.primaryBorder.opacity(0.15) : Color.clear, lineWidth: 1)
+                .fill(isHovered ? theme.tertiaryBackground.opacity(0.3) : Color.clear)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -939,19 +739,6 @@ private struct FileOperationRow: View {
             } label: {
                 Label("Undo Change", systemImage: "arrow.uturn.backward")
             }
-        }
-    }
-
-    private var iconColor: Color {
-        switch operation.type {
-        case .create, .dirCreate:
-            return theme.successColor
-        case .write:
-            return theme.accentColor
-        case .move, .copy:
-            return theme.secondaryText
-        case .delete:
-            return theme.errorColor
         }
     }
 

@@ -231,6 +231,8 @@ public actor WorkEngine {
             throw WorkEngineError.noActiveSession
         }
 
+        injectSavedNotesIfNeeded(into: &session)
+
         if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             appendUserMessage(
                 to: &session,
@@ -298,6 +300,8 @@ public actor WorkEngine {
                 )
             )
         )
+
+        injectSavedNotesIfNeeded(into: &session)
 
         session.messages.append(
             ChatMessage(
@@ -521,6 +525,7 @@ public actor WorkEngine {
             )
         } catch {
             if activeSession?.issueId == issue.id {
+                activeSession?.messages = messages
                 activeSession?.lastExitReason = .error(error.localizedDescription)
                 persistExecutionStateIfPossible()
             }
@@ -817,6 +822,18 @@ public actor WorkEngine {
         session.messages.append(ChatMessage(role: "user", content: content))
     }
 
+    /// Prepends any previously saved scratchpad notes so the agent has them on resume.
+    private func injectSavedNotesIfNeeded(into session: inout WorkExecutionSession) {
+        let notes = ReadNotesTool.loadNotes(issueId: session.issueId)
+        guard !notes.isEmpty, !notes.hasPrefix("No notes") else { return }
+        session.messages.append(
+            ChatMessage(
+                role: "user",
+                content: "[Previously saved notes for this task]:\n\(notes)"
+            )
+        )
+    }
+
     private func resumeActiveSession() async throws -> ExecutionResult {
         guard let session = activeSession else {
             throw WorkEngineError.noActiveSession
@@ -840,27 +857,25 @@ public actor WorkEngine {
         )
     }
 
-    /// Builds skill instructions string from the skill catalog
+    /// Builds skill instructions — inlines small single skills, otherwise emits a compact listing.
+    /// The agent loads full instructions on demand via `load_skill`.
     @MainActor
     private func buildSkillInstructions(from skillCatalog: [CapabilityEntry]) async -> String? {
         guard !skillCatalog.isEmpty else { return nil }
 
-        // Get active skill names
-        let skillNames = skillCatalog.map { $0.name }
-
-        // Load full instructions for active skills
-        let skillInstructionsMap = SkillManager.shared.loadInstructions(for: skillNames)
-
-        guard !skillInstructionsMap.isEmpty else { return nil }
-
-        var instructions = ""
-        for skillName in skillNames {
-            if let content = skillInstructionsMap[skillName] {
-                instructions += "## \(skillName)\n\n\(content)\n\n---\n\n"
+        // Exception: single small skill — inline it directly
+        if skillCatalog.count == 1, let entry = skillCatalog.first {
+            let map = SkillManager.shared.loadInstructions(for: [entry.name])
+            if let content = map[entry.name], content.count < 2000 {
+                return "## \(entry.name)\n\n\(content)"
             }
         }
 
-        return instructions.isEmpty ? nil : instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        var listing = "## Available Skills\nUse `load_skill` to load full instructions when needed.\n"
+        for entry in skillCatalog {
+            listing += "- \(entry.name): \(entry.description)\n"
+        }
+        return listing
     }
 
     // MARK: - Retry Logic
@@ -905,7 +920,8 @@ public actor WorkEngine {
                     executionMode: executionMode,
                     toolOverrides: toolOverrides,
                     skillCatalog: skillCatalog,
-                    images: images
+                    images: images,
+                    attemptResume: attempt > 0
                 )
 
                 // Success - clear any error state

@@ -512,7 +512,9 @@ private struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "content": .object([
                     "type": .string("string"),
-                    "description": .string("File contents to write"),
+                    "description": .string(
+                        "File contents to write"
+                    ),
                 ]),
             ]),
             "required": .array([.string("path"), .string("content")]),
@@ -941,7 +943,8 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_run_script"
     let description =
         "Write and execute a script in the sandbox. Saves to a temp file and runs it. "
-        + "Use for multi-step operations: file analysis, bulk edits, data processing, build scripts."
+        + "Use for multi-step operations: file analysis, bulk edits, data processing, build scripts. "
+        + "You MUST provide the script contents in the `script` parameter."
     let agentId: String
     let agentName: String
     let home: String
@@ -965,7 +968,9 @@ private struct SandboxRunScriptTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "script": .object([
                     "type": .string("string"),
-                    "description": .string("The script contents to execute"),
+                    "description": .string(
+                        "The script contents to execute"
+                    ),
                 ]),
                 "timeout": .object([
                     "type": .string("integer"),
