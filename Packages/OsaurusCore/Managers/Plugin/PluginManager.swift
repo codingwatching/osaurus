@@ -158,7 +158,34 @@ final class PluginManager {
         }
 
         migrateGlobalConfigToPerAgent()
+        notifyNewPluginsWithAgentConfig(from: scanResult)
         observeTunnelStatus()
+    }
+
+    /// For each newly loaded plugin, re-deliver its config under the primary
+    /// agent context. `initPlugin` runs before any agent is wired up, so
+    /// `configGet` falls back to `Agent.defaultId` and misses secrets stored
+    /// under custom agents. Sending the batch here corrects that.
+    private func notifyNewPluginsWithAgentConfig(from scanResult: PluginScanResult) {
+        for entry in scanResult.loadResults {
+            guard case .success(let loaded) = entry.result else { continue }
+            let pluginId = loaded.plugin.id
+            guard let agentId = AgentManager.shared.primaryAgent(forPlugin: pluginId),
+                let configSpec = loaded.plugin.manifest.capabilities.config,
+                let hostCtx = PluginHostContext.getContext(for: pluginId)
+            else { continue }
+
+            hostCtx.currentAgentId = agentId
+            let changes: [(key: String, value: String)] = configSpec.sections
+                .flatMap { $0.fields }
+                .compactMap { field in
+                    guard let value = ToolSecretsKeychain.getSecret(
+                        id: field.key, for: pluginId, agentId: agentId),
+                        !value.isEmpty else { return nil }
+                    return (key: field.key, value: value)
+                }
+            loaded.plugin.notifyConfigBatch(changes)
+        }
     }
 
     // MARK: - One-Time Migration (global config → per-agent)
