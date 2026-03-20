@@ -427,6 +427,28 @@ public struct IssueStore {
         return events
     }
 
+    /// Gets events of a specific type for an issue
+    public static func getEvents(issueId: String, ofType type: IssueEventType) throws -> [IssueEvent] {
+        let sql = "SELECT * FROM events WHERE issue_id = ? AND event_type = ? ORDER BY created_at ASC"
+        var events: [IssueEvent] = []
+
+        try WorkDatabase.shared.prepareAndExecute(
+            sql,
+            bind: { stmt in
+                WorkDatabase.bindText(stmt, index: 1, value: issueId)
+                WorkDatabase.bindText(stmt, index: 2, value: type.rawValue)
+            }
+        ) { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let event = parseEventRow(stmt) {
+                    events.append(event)
+                }
+            }
+        }
+
+        return events
+    }
+
     // MARK: - Task Operations
 
     /// Creates a new task

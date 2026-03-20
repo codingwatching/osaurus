@@ -226,6 +226,7 @@ public enum IssueEventType: String, Codable, Sendable {
     // Reasoning loop events
     case loopIteration = "loop_iteration"
     case toolCallCompleted = "tool_call_completed"
+    case noteSaved = "note_saved"
 }
 
 /// An event in the issue's history (append-only audit log)
@@ -334,6 +335,14 @@ public enum EventPayload {
             self.iteration = iteration
             self.toolCallCount = toolCallCount
             self.statusMessage = statusMessage
+        }
+    }
+
+    /// Payload for agent scratchpad notes
+    public struct NoteSaved: Codable {
+        public let content: String
+        public init(content: String) {
+            self.content = content
         }
     }
 

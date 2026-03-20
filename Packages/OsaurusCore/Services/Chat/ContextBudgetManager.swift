@@ -141,6 +141,11 @@ public struct ContextBudgetManager: Sendable {
         }
     }
 
+    /// Whether the given messages fit within the history budget without trimming.
+    func fitsInBudget(_ messages: [ChatMessage]) -> Bool {
+        Self.estimateTokens(for: messages) <= historyBudget
+    }
+
     // MARK: - Message Trimming
 
     /// Trims messages to fit within the history budget.
