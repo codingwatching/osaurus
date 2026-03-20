@@ -58,9 +58,9 @@ public actor RemoteProviderService: ToolCapableService {
             .replacingOccurrences(of: "/", with: "-")
 
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = provider.timeout
-        // Resource timeout must be generous because image generation (non-streaming)
-        // can take several minutes for thinking + rendering.
+        // Request timeout must be generous: thinking models can pause for minutes
+        // between tokens. The app-level streamInactivityTimeout handles stall detection.
+        config.timeoutIntervalForRequest = max(provider.timeout, 300)
         config.timeoutIntervalForResource = max(provider.timeout * 2, 600)
         self.session = URLSession(configuration: config)
     }
@@ -75,8 +75,9 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Inactivity timeout for streaming: if no bytes arrive within this interval,
-    /// assume the provider has stalled and end the stream.
-    private var streamInactivityTimeout: TimeInterval { provider.timeout }
+    /// assume the provider has stalled and end the stream. Floor of 120s accommodates
+    /// thinking models that pause between tokens during reasoning.
+    private var streamInactivityTimeout: TimeInterval { max(provider.timeout, 120) }
 
     /// Invalidate the URLSession to release its strong delegate reference.
     /// Must be called before discarding this service instance to avoid leaking.

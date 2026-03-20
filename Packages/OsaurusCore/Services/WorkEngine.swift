@@ -525,6 +525,7 @@ public actor WorkEngine {
             )
         } catch {
             if activeSession?.issueId == issue.id {
+                activeSession?.messages = messages
                 activeSession?.lastExitReason = .error(error.localizedDescription)
                 persistExecutionStateIfPossible()
             }
@@ -919,7 +920,8 @@ public actor WorkEngine {
                     executionMode: executionMode,
                     toolOverrides: toolOverrides,
                     skillCatalog: skillCatalog,
-                    images: images
+                    images: images,
+                    attemptResume: attempt > 0
                 )
 
                 // Success - clear any error state

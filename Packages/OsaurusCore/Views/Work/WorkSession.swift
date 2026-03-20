@@ -1389,15 +1389,14 @@ public final class WorkSession: ObservableObject {
 extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didStartIssue issue: Issue) {
         activeIssue = issue
-        streamingContent = ""
         updateLocalIssueStatus(issue.id, to: .inProgress)
-        emitActivity(.startedIssue(title: issue.title))
 
         if preserveTurnsOnNextExecutionStart {
             preserveTurnsOnNextExecutionStart = false
             ensureAssistantTurnExists()
         } else {
-            // Fresh start - initialize turns with user request
+            streamingContent = ""
+            emitActivity(.startedIssue(title: issue.title))
             initializeTurns(for: issue)
         }
 
@@ -1507,6 +1506,7 @@ extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, willRetryIssue issue: Issue, attempt: Int, afterDelay: TimeInterval) {
         retryAttempt = attempt
         isRetrying = true
+        preserveTurnsOnNextExecutionStart = true
         emitActivity(.retrying(attempt: attempt, waitSeconds: Int(afterDelay)))
 
         let content = "\n\n⚠️ **Retrying...** (attempt \(attempt), waiting \(Int(afterDelay))s)\n"
