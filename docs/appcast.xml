@@ -3,23 +3,23 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>0.14.23</title>
-            <pubDate>Thu, 19 Mar 2026 22:55:27 +0000</pubDate>
+            <title>0.14.24</title>
+            <pubDate>Fri, 20 Mar 2026 09:44:56 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
-            <sparkle:version>0.14.23</sparkle:version>
-            <sparkle:shortVersionString>0.14.23</sparkle:shortVersionString>
+            <sparkle:version>0.14.24</sparkle:version>
+            <sparkle:shortVersionString>0.14.24</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:releaseNotesLink>https://osaurus-ai.github.io/osaurus/Osaurus-latest.html</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.14.23/Osaurus-0.14.23.dmg" length="32058415" type="application/octet-stream" sparkle:edSignature="JDPrQiJYEqBxWNdqA89tYR9a7yS2pF9ek0bE1AOIMjrEQQQkMKf9oi8wFbp4kSml7gulLkizrFCjLBE9Bp1wDQ=="/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.14.24/Osaurus-0.14.24.dmg" length="32050791" type="application/octet-stream" sparkle:edSignature="rNe77YiNUrAmOwK509DCqwZPeQSU08o04DwDMUaK9I1NCCkuSc9dyBwA8eFqBUUDREeGYjyMGEnb7di1VdwqCg=="/>
         </item>
         <item>
             <title>0.0.9</title>
-            <pubDate>Thu, 19 Mar 2026 22:55:29 +0000</pubDate>
+            <pubDate>Fri, 20 Mar 2026 09:44:58 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
             <sparkle:version>0.0.9</sparkle:version>
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.14.23/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.14.24/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
         </item>
   </channel>
 </rss>
