@@ -9,9 +9,9 @@
 //  impossible because an idempotent LLM on a stable directory produces no changes.
 //
 
-import Combine
 import CoreServices
 import Foundation
+import Observation
 
 /// Notification posted when watchers change
 extension Notification.Name {
@@ -20,27 +20,29 @@ extension Notification.Name {
 }
 
 /// Manages file system watchers with FSEvents-based monitoring and fingerprint convergence
+@Observable
 @MainActor
-public final class WatcherManager: ObservableObject {
+public final class WatcherManager {
     public static let shared = WatcherManager()
 
-    // MARK: - Published State
+    // MARK: - Observable State
 
     /// All watchers
-    @Published public private(set) var watchers: [Watcher] = []
+    public private(set) var watchers: [Watcher] = []
 
     /// Currently running tasks (watcher ID -> run info)
-    @Published public private(set) var runningTasks: [UUID: WatcherRunInfo] = [:]
+    public private(set) var runningTasks: [UUID: WatcherRunInfo] = [:]
 
     /// Current phase per watcher (for UI display)
-    @Published public private(set) var phases: [UUID: WatcherPhase] = [:]
+    public private(set) var phases: [UUID: WatcherPhase] = [:]
 
     // MARK: - Private State
 
     /// Active execution tasks (processing loop per watcher)
     private var executionTasks: [UUID: Task<Void, Never>] = [:]
 
-    /// FSEvent stream reference (nonisolated(unsafe) so deinit can clean it up)
+    /// FSEvent stream reference (nonisolated so deinit can clean it up)
+    @ObservationIgnored
     private nonisolated(unsafe) var eventStream: FSEventStreamRef?
 
     /// Per-watcher debounce tasks
@@ -71,7 +73,6 @@ public final class WatcherManager: ObservableObject {
     /// Reload watchers from disk
     public func refresh() {
         watchers = WatcherStore.loadAll()
-        objectWillChange.send()
     }
 
     /// Create a new watcher

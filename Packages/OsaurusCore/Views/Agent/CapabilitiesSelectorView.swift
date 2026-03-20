@@ -92,9 +92,8 @@ final class CapabilitiesSelectorViewModel: ObservableObject {
         self.agentId = agentId
         self.isWorkMode = isWorkMode
 
-        Publishers.Merge4(
+        Publishers.Merge3(
             toolRegistry.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            skillManager.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             sandboxPluginManager.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             Publishers.Merge(
                 NotificationCenter.default.publisher(for: .toolsListChanged).map { _ in () },

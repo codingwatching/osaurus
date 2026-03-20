@@ -14,7 +14,7 @@ Examples:
     --output-prefix ./results/llm-bench --export json csv
 
 Requires: httpx>=0.27.0
-Install deps: pip install -r scripts/requirements-bench.txt
+Install deps: pip install -r scripts/benchmark/requirements-bench.txt
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Tuple
 try:
     import httpx  # type: ignore
 except Exception as exc:  # pragma: no cover
-    print("This script requires the 'httpx' package. Install with:\n  pip install -r scripts/requirements-bench.txt", file=sys.stderr)
+    print("This script requires the 'httpx' package. Install with:\n  pip install -r scripts/benchmark/requirements-bench.txt", file=sys.stderr)
     raise
 
 

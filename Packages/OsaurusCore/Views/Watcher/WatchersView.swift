@@ -12,7 +12,7 @@ import SwiftUI
 
 struct WatchersView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var watcherManager = WatcherManager.shared
+    private var watcherManager = WatcherManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 

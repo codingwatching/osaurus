@@ -10,33 +10,33 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 | Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                         |
 | -------------------------------- | --------- | ------------------ | ----------------------------- | ------------------------------------------------------------------------------------- |
-| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/MLXService.swift, Services/ModelRuntime/                                     |
-| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Services/RemoteProviderManager.swift, Services/RemoteProviderService.swift            |
-| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Services/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCPServerManager.swift                       |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/PluginManager.swift, Services/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/PluginHTTP.swift, Views/PluginConfigView.swift |
-| Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/SkillsView.swift, Services/CapabilityService.swift |
-| Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/MemoryService.swift, Services/MemorySearchService.swift, Services/MemoryContextAssembler.swift |
-| Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent.swift, Views/AgentsView.swift         |
-| Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule.swift, Views/SchedulesView.swift      |
-| Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher.swift, Views/WatchersView.swift         |
-| Agents                           | Stable    | "Agents"           | WORK.md                     | Agent/, Services/WorkEngine.swift, Views/WorkView.swift                             |
-| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/InsightsView.swift, Services/InsightsService.swift                              |
-| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/ServerView.swift                                                                |
-| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/FoundationModelService.swift                                                 |
-| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/ChatView.swift, Views/ChatOverlayView.swift                                     |
-| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/ChatSessionsManager.swift, Models/ChatSessionData.swift                      |
-| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/ThemesView.swift, Views/Components/ThemeEditorView.swift                        |
-| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/ModelDownloadView.swift, Services/HuggingFaceService.swift                      |
+| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/Inference/MLXService.swift, Services/ModelRuntime/                                     |
+| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
+| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
+| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
+| Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
+| Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/CapabilityService.swift |
+| Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
+| Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
+| Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
+| Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
+| Agents                           | Stable    | "Agents"           | WORK.md                     | Work/, Services/WorkEngine.swift, Views/Work/WorkView.swift                             |
+| Developer Tools: Insights        | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Insights/InsightsView.swift, Managers/InsightsService.swift                              |
+| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
+| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
+| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/Chat/ChatView.swift, Views/ChatOverlayView.swift                                     |
+| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/Chat/ChatSessionsManager.swift, Models/Chat/ChatSessionData.swift                      |
+| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/Theme/ThemesView.swift, Views/Theme/ThemeEditorView.swift                        |
+| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/Model/ModelDownloadView.swift, Services/HuggingFaceService.swift                      |
 | Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                             |
-| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenAIAPI.swift                                  |
-| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/AnthropicAPI.swift                               |
-| Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/OpenResponsesAPI.swift                           |
+| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenAIAPI.swift                                  |
+| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/API/AnthropicAPI.swift                               |
+| Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenResponsesAPI.swift                           |
 | Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                          |
-| Voice Input (FluidAudio)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/SpeechService.swift, Managers/SpeechModelManager.swift                  |
-| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/VADService.swift, Views/ContentView.swift (VAD controls)                     |
-| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/TranscriptionModeService.swift, Views/TranscriptionOverlayView.swift         |
-| Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/SandboxPluginManager.swift, Views/SandboxView.swift |
+| Voice Input (FluidAudio)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Managers/SpeechService.swift, Managers/Model/SpeechModelManager.swift                  |
+| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/ContentView.swift (VAD controls)                     |
+| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
+| Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
 | CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
 
 ---
@@ -141,10 +141,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Services/MLXService.swift` — MLX model loading, warm-up orchestration
+- `Services/Inference/MLXService.swift` — MLX model loading, warm-up orchestration
 - `Services/ModelRuntime/` — Generation engine, streaming, KV cache management, tool detection
 - `Services/ModelRuntime/KVCacheStore.swift` — Tiered KV cache (hot RAM + cold SSD) with LRU eviction
-- `Services/ModelService.swift` — Model lifecycle management
+- `Services/Inference/ModelService.swift` — Model lifecycle management
 
 **Runtime behavior:**
 
@@ -178,12 +178,12 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/RemoteProviderConfiguration.swift` — Provider config model
-- `Services/RemoteProviderManager.swift` — Connection management
-- `Services/RemoteProviderService.swift` — Per-provider API client
-- `Services/RemoteProviderKeychain.swift` — Secure credential storage
-- `Views/RemoteProvidersView.swift` — UI for managing providers
-- `Views/Components/RemoteProviderEditSheet.swift` — Add/edit provider UI
+- `Models/Configuration/RemoteProviderConfiguration.swift` — Provider config model
+- `Managers/RemoteProviderManager.swift` — Connection management
+- `Services/Provider/RemoteProviderService.swift` — Per-provider API client
+- `Services/Provider/RemoteProviderKeychain.swift` — Secure credential storage
+- `Views/Settings/RemoteProvidersView.swift` — UI for managing providers
+- `Views/Settings/RemoteProviderEditSheet.swift` — Add/edit provider UI
 
 **Presets:**
 | Preset | Host | Default Port | Auth |
@@ -202,9 +202,9 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/MCPProviderConfiguration.swift` — Provider config model
-- `Services/MCPProviderManager.swift` — Connection and tool discovery
-- `Services/MCPProviderKeychain.swift` — Secure token storage
+- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model
+- `Managers/MCPProviderManager.swift` — Connection and tool discovery
+- `Services/MCP/MCPProviderKeychain.swift` — Secure token storage
 - `Tools/MCPProviderTool.swift` — Wrapper for remote MCP tools
 
 **Features:**
@@ -222,7 +222,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Services/MCPServerManager.swift` — MCP server lifecycle
+- `Services/MCP/MCPServerManager.swift` — MCP server lifecycle
 - `Networking/OsaurusServer.swift` — HTTP MCP endpoints
 - `Tools/ToolRegistry.swift` — Tool registration and lookup
 
@@ -243,8 +243,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Services/InsightsService.swift` — Request/response logging
-- `Views/InsightsView.swift` — Insights UI
+- `Managers/InsightsService.swift` — Request/response logging
+- `Views/Insights/InsightsView.swift` — Insights UI
 
 **Features:**
 
@@ -257,7 +257,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Views/ServerView.swift` — Server explorer UI
+- `Views/Settings/ServerView.swift` — Server explorer UI
 
 **Features:**
 
@@ -274,8 +274,8 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/AnthropicAPI.swift` — Anthropic request/response models
-- `Models/ResponseWriters.swift` — SSE streaming for Anthropic format
+- `Models/API/AnthropicAPI.swift` — Anthropic request/response models
+- `Models/Chat/ResponseWriters.swift` — SSE streaming for Anthropic format
 - `Networking/HTTPHandler.swift` — `/messages` endpoint handler
 
 **Features:**
@@ -293,10 +293,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/OpenResponsesAPI.swift` — Open Responses request/response models and streaming events
-- `Models/ResponseWriters.swift` — SSE streaming for Open Responses format
+- `Models/API/OpenResponsesAPI.swift` — Open Responses request/response models and streaming events
+- `Models/Chat/ResponseWriters.swift` — SSE streaming for Open Responses format
 - `Networking/HTTPHandler.swift` — `/responses` endpoint handler
-- `Services/RemoteProviderService.swift` — Remote Open Responses provider support
+- `Services/Provider/RemoteProviderService.swift` — Remote Open Responses provider support
 
 **Features:**
 
@@ -329,11 +329,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Views/ThemesView.swift` — Theme gallery and management
-- `Views/Components/ThemeEditorView.swift` — Full theme editor
-- `Models/CustomTheme.swift` — Theme data model
-- `Models/ThemeConfigurationStore.swift` — Theme persistence
-- `Theme/Theme.swift` — Theme protocol and built-in themes
+- `Views/Theme/ThemesView.swift` — Theme gallery and management
+- `Views/Theme/ThemeEditorView.swift` — Full theme editor
+- `Models/Theme/CustomTheme.swift` — Theme data model
+- `Models/Theme/ThemeConfigurationStore.swift` — Theme persistence
+- `Models/Theme/Theme.swift` — Theme protocol and built-in themes
 
 **Features:**
 
@@ -351,10 +351,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/Agent.swift` — Agent data model with export/import support
-- `Models/AgentStore.swift` — Agent persistence (JSON files)
+- `Models/Agent/Agent.swift` — Agent data model with export/import support
+- `Models/Agent/AgentStore.swift` — Agent persistence (JSON files)
 - `Managers/AgentManager.swift` — Agent lifecycle and active agent management
-- `Views/AgentsView.swift` — Agent gallery and management UI
+- `Views/Agent/AgentsView.swift` — Agent gallery and management UI
 
 **Features:**
 
@@ -386,10 +386,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/Schedule.swift` — Schedule data model with frequency types
-- `Models/ScheduleStore.swift` — Schedule persistence (JSON files)
+- `Models/Schedule/Schedule.swift` — Schedule data model with frequency types
+- `Models/Schedule/ScheduleStore.swift` — Schedule persistence (JSON files)
 - `Managers/ScheduleManager.swift` — Schedule lifecycle, timer management, and execution
-- `Views/SchedulesView.swift` — Schedule management UI
+- `Views/Schedule/SchedulesView.swift` — Schedule management UI
 
 **Features:**
 
@@ -432,11 +432,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Models/Watcher.swift` — Watcher data model
-- `Models/WatcherStore.swift` — Watcher persistence (JSON files)
+- `Models/Watcher/Watcher.swift` — Watcher data model
+- `Models/Watcher/WatcherStore.swift` — Watcher persistence (JSON files)
 - `Managers/WatcherManager.swift` — FSEvents monitoring, debouncing, and convergence loop
 - `Services/DirectoryFingerprint.swift` — Merkle hash-based change detection
-- `Views/WatchersView.swift` — Watcher management UI
+- `Views/Watcher/WatchersView.swift` — Watcher management UI
 
 **Features:**
 
@@ -497,19 +497,19 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Agent/WorkFolderContext.swift` — Folder context models and project detection
-- `Agent/WorkFolderContextService.swift` — Folder selection and security-scoped bookmarks
-- `Agent/AgentFolderTools.swift` — File and shell operation tools
-- `Agent/WorkFileOperation.swift` — File operation models
-- `Agent/WorkFileOperationLog.swift` — Operation logging with undo support
-- `Models/WorkModels.swift` — Core data models (Issue, WorkTask, LoopState, etc.)
+- `Work/WorkFolderContext.swift` — Folder context models and project detection
+- `Work/WorkFolderContextService.swift` — Folder selection and security-scoped bookmarks
+- `Work/WorkFolderTools.swift` — File and shell operation tools
+- `Work/WorkFileOperation.swift` — File operation models
+- `Work/WorkFileOperationLog.swift` — Operation logging with undo support
+- `Models/Work/WorkModels.swift` — Core data models (Issue, WorkTask, LoopState, etc.)
 - `Services/WorkEngine.swift` — Main task execution coordinator
 - `Services/WorkExecutionEngine.swift` — Reasoning loop execution engine
 - `Managers/IssueManager.swift` — Issue lifecycle and dependency management
 - `Storage/WorkDatabase.swift` — SQLite storage for issues, tasks, and conversation turns
 - `Tools/WorkTools.swift` — Agent-specific tools (complete_task, create_issue, generate_artifact, etc.)
-- `Views/WorkView.swift` — Main Work Mode UI
-- `Views/WorkSession.swift` — Observable session state manager
+- `Views/Work/WorkView.swift` — Main Work Mode UI
+- `Views/Work/WorkSession.swift` — Observable session state manager
 
 **Features:**
 
@@ -582,20 +582,20 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 **Components:**
 
-- `Services/SandboxManager.swift` — Container lifecycle (provision, start, stop, reset, exec)
-- `Services/SandboxLogBuffer.swift` — Ring buffer for container log entries
-- `Services/SandboxToolRegistrar.swift` — Registers/unregisters tools on status and agent changes
-- `Services/SandboxSecurity.swift` — Path sanitization, network policy, rate limiting
-- `Managers/SandboxPluginManager.swift` — Per-agent plugin install, uninstall, and update tracking
-- `Managers/SandboxPluginLibrary.swift` — Plugin library storage and discovery
+- `Services/Sandbox/SandboxManager.swift` — Container lifecycle (provision, start, stop, reset, exec)
+- `Services/Sandbox/SandboxLogBuffer.swift` — Ring buffer for container log entries
+- `Services/Sandbox/SandboxToolRegistrar.swift` — Registers/unregisters tools on status and agent changes
+- `Services/Sandbox/SandboxSecurity.swift` — Path sanitization, network policy, rate limiting
+- `Managers/Plugin/SandboxPluginManager.swift` — Per-agent plugin install, uninstall, and update tracking
+- `Managers/Plugin/SandboxPluginLibrary.swift` — Plugin library storage and discovery
 - `Tools/BuiltinSandboxTools.swift` — 14 built-in tools for file ops, shell, and package management
 - `Tools/SandboxPluginTool.swift` — Wraps plugin tool specs as OsaurusTool instances
 - `Tools/ToolRegistry.swift` — Sandbox tool registration and namespace management
 - `Networking/HostAPIBridgeServer.swift` — HTTP server over vsock for host service access
 - `Models/SandboxPlugin.swift` — Plugin model with tool specs, MCP, daemon, events, and permissions
-- `Models/SandboxConfiguration.swift` — Container config (CPUs, memory, network, auto-start)
-- `Models/SandboxAgentMap.swift` — Linux username to agent UUID mapping
-- `Views/SandboxView.swift` — Container dashboard, log console, diagnostics, plugin management UI
+- `Models/Plugin/SandboxConfiguration.swift` — Container config (CPUs, memory, network, auto-start)
+- `Models/Plugin/SandboxAgentMap.swift` — Linux username to agent UUID mapping
+- `Views/Sandbox/SandboxView.swift` — Container dashboard, log console, diagnostics, plugin management UI
 
 **VM Configuration:**
 
@@ -674,10 +674,10 @@ Read-only tools are always available. Write/exec/package tools require `autonomo
 
 **Components:**
 
-- `Managers/ChatSessionsManager.swift` — Session list management
-- `Models/ChatSessionData.swift` — Session data model
-- `Models/ChatSessionStore.swift` — Session persistence
-- `Views/Components/ChatSessionSidebar.swift` — Session history sidebar
+- `Managers/Chat/ChatSessionsManager.swift` — Session list management
+- `Models/Chat/ChatSessionData.swift` — Session data model
+- `Models/Chat/ChatSessionStore.swift` — Session persistence
+- `Views/Chat/ChatSessionSidebar.swift` — Session history sidebar
 
 **Features:**
 
@@ -700,13 +700,13 @@ Read-only tools are always available. Write/exec/package tools require `autonomo
 - `Tools/ExternalTool.swift` — External plugin wrapper
 - `Tools/ToolRegistry.swift` — Tool registration
 - `Tools/SchemaValidator.swift` — JSON schema validation
-- `Managers/PluginManager.swift` — Plugin discovery, loading, unloading
-- `Services/PluginHostAPI.swift` — v2 host API callbacks (config, db, log)
+- `Managers/Plugin/PluginManager.swift` — Plugin discovery, loading, unloading
+- `Services/Plugin/PluginHostAPI.swift` — v2 host API callbacks (config, db, log)
 - `Storage/PluginDatabase.swift` — Sandboxed per-plugin SQLite database
-- `Models/PluginHTTP.swift` — HTTP request/response models, rate limiter, MIME types
-- `Models/ExternalPlugin.swift` — C ABI wrapper with v1/v2 support
-- `Views/PluginConfigView.swift` — Native SwiftUI config UI renderer
-- `Views/PluginsView.swift` — Plugin detail view (README, Settings, Changelog, Routes)
+- `Models/Plugin/PluginHTTP.swift` — HTTP request/response models, rate limiter, MIME types
+- `Models/Plugin/ExternalPlugin.swift` — C ABI wrapper with v1/v2 support
+- `Views/Plugin/PluginConfigView.swift` — Native SwiftUI config UI renderer
+- `Views/Plugin/PluginsView.swift` — Plugin detail view (README, Settings, Changelog, Routes)
 
 **Plugin Types:**
 
@@ -738,11 +738,11 @@ Routes are agent-scoped via the `enabledPlugins` map on each agent. See [PLUGIN_
 - `Managers/SkillManager.swift` — Skill CRUD, persistence, and loading
 - `Services/CapabilityService.swift` — Two-phase capability selection
 - `Services/GitHubSkillService.swift` — GitHub repository import
-- `Models/Skill.swift` — Skill data model
-- `Models/CapabilityCatalog.swift` — Capability catalog structure
+- `Models/Agent/Skill.swift` — Skill data model
+- `Models/Configuration/CapabilityCatalog.swift` — Capability catalog structure
 - `Tools/SelectCapabilitiesTool.swift` — AI tool for selecting capabilities
-- `Views/SkillsView.swift` — Skill management UI
-- `Views/SkillEditorSheet.swift` — Skill editor
+- `Views/Skill/SkillsView.swift` — Skill management UI
+- `Views/Skill/SkillEditorSheet.swift` — Skill editor
 
 **Features:**
 
@@ -793,12 +793,12 @@ A context optimization system that reduces token usage by ~80%:
 
 **Components:**
 
-- `Services/SpeechService.swift` — Core transcription service with streaming support
-- `Managers/SpeechModelManager.swift` — Model download and selection
-- `Models/SpeechConfiguration.swift` — Voice input settings
-- `Views/VoiceView.swift` — Voice settings UI
-- `Views/VoiceSetupTab.swift` — Guided setup wizard
-- `Views/Components/VoiceInputOverlay.swift` — Voice input UI in chat
+- `Managers/SpeechService.swift` — Core transcription service with streaming support
+- `Managers/Model/SpeechModelManager.swift` — Model download and selection
+- `Models/Voice/SpeechConfiguration.swift` — Voice input settings
+- `Views/Voice/VoiceView.swift` — Voice settings UI
+- `Views/Voice/VoiceSetupTab.swift` — Guided setup wizard
+- `Views/Voice/VoiceInputOverlay.swift` — Voice input UI in chat
 
 **Features:**
 
@@ -832,11 +832,11 @@ A context optimization system that reduces token usage by ~80%:
 
 **Components:**
 
-- `Services/VADService.swift` — Always-on listening and wake-word detection
-- `Models/VADConfiguration.swift` — VAD settings and enabled agents
+- `Services/Voice/VADService.swift` — Always-on listening and wake-word detection
+- `Models/Voice/VADConfiguration.swift` — VAD settings and enabled agents
 - `Views/ContentView.swift` — VAD toggle button in popover
 - `AppDelegate.swift` — VAD status indicator in menu bar icon
-- `Models/AgentNameDetector.swift` — Agent name matching logic
+- `Services/Chat/AgentNameDetector.swift` — Agent name matching logic
 
 **Features:**
 
@@ -875,13 +875,13 @@ A context optimization system that reduces token usage by ~80%:
 
 **Components:**
 
-- `Services/TranscriptionModeService.swift` — Main orchestration service
-- `Services/KeyboardSimulationService.swift` — Simulates keyboard input via CGEventPost
-- `Services/TranscriptionOverlayWindowService.swift` — Floating overlay panel management
+- `Services/Voice/TranscriptionModeService.swift` — Main orchestration service
+- `Services/Voice/KeyboardSimulationService.swift` — Simulates keyboard input via CGEventPost
+- `Services/Voice/TranscriptionOverlayWindowService.swift` — Floating overlay panel management
 - `Managers/TranscriptionHotKeyManager.swift` — Global hotkey registration
-- `Models/TranscriptionConfiguration.swift` — Configuration and persistence
-- `Views/TranscriptionOverlayView.swift` — Minimal floating UI
-- `Views/TranscriptionModeSettingsTab.swift` — Settings UI in Voice tab
+- `Models/Voice/TranscriptionConfiguration.swift` — Configuration and persistence
+- `Views/Voice/TranscriptionOverlayView.swift` — Minimal floating UI
+- `Views/Voice/TranscriptionModeSettingsTab.swift` — Settings UI in Voice tab
 
 **Features:**
 
@@ -922,13 +922,13 @@ A context optimization system that reduces token usage by ~80%:
 
 **Components:**
 
-- `Services/MemoryService.swift` — Core actor for conversation processing, extraction, and summarization
-- `Services/MemorySearchService.swift` — Hybrid search (BM25 + vector) with MMR reranking
-- `Services/MemoryContextAssembler.swift` — Assembles memory context for system prompt injection
+- `Services/Memory/MemoryService.swift` — Core actor for conversation processing, extraction, and summarization
+- `Services/Memory/MemorySearchService.swift` — Hybrid search (BM25 + vector) with MMR reranking
+- `Services/Memory/MemoryContextAssembler.swift` — Assembles memory context for system prompt injection
 - `Storage/MemoryDatabase.swift` — SQLite database with WAL mode and schema migrations
-- `Models/MemoryModels.swift` — Data types for all 4 memory layers
-- `Models/MemoryConfiguration.swift` — User-configurable settings with validation
-- `Views/MemoryView.swift` — Memory management UI (profile, overrides, agents, statistics, config)
+- `Models/Memory/MemoryModels.swift` — Data types for all 4 memory layers
+- `Models/Memory/MemoryConfiguration.swift` — User-configurable settings with validation
+- `Views/Memory/MemoryView.swift` — Memory management UI (profile, overrides, agents, statistics, config)
 
 **4-Layer Architecture:**
 

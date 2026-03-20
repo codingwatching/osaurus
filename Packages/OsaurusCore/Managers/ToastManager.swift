@@ -7,22 +7,23 @@
 //
 
 import AppKit
-import Combine
 import Foundation
+import Observation
 import SwiftUI
 
 /// Manages toast notifications throughout the application
+@Observable
 @MainActor
-public final class ToastManager: ObservableObject {
+public final class ToastManager {
     public static let shared = ToastManager()
 
-    // MARK: - Published State
+    // MARK: - Observable State
 
     /// Currently visible toasts (ordered by creation time, newest last)
-    @Published public private(set) var toasts: [Toast] = []
+    public private(set) var toasts: [Toast] = []
 
     /// User configuration for toast behavior
-    @Published public private(set) var configuration: ToastConfiguration
+    public private(set) var configuration: ToastConfiguration
 
     // MARK: - Private State
 

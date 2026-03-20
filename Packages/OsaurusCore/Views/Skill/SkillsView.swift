@@ -13,7 +13,7 @@ import UniformTypeIdentifiers
 
 struct SkillsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var skillManager = SkillManager.shared
+    private var skillManager = SkillManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 

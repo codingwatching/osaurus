@@ -5,8 +5,8 @@
 //  Manages skill lifecycle - loading, saving, enabling, and catalog generation.
 //
 
-import Combine
 import Foundation
+import Observation
 import SwiftUI
 
 extension Notification.Name {
@@ -31,11 +31,12 @@ public enum SkillFileError: Error, LocalizedError {
     }
 }
 
+@Observable
 @MainActor
-public final class SkillManager: ObservableObject {
+public final class SkillManager {
     public static let shared = SkillManager()
 
-    @Published public private(set) var skills: [Skill] = []
+    public private(set) var skills: [Skill] = []
 
     private init() {
         refresh()

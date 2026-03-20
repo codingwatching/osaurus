@@ -40,7 +40,7 @@ app: cli
 
 install-cli: cli
 	@echo "Installing CLI symlink…"
-	./scripts/install_cli_symlink.sh --dev
+	./scripts/release/install_cli_symlink.sh --dev
 
 serve: install-cli
 	@echo "Starting Osaurus server…"
@@ -77,18 +77,18 @@ bench-setup:
 		echo "EasyLocomo already cloned."; \
 	fi
 	@echo "Applying Osaurus patches…"
-	cd $(EASYLOCOMO_DIR) && git checkout -- . && git apply ../../scripts/easylocomo.patch
+	cd $(EASYLOCOMO_DIR) && git checkout -- . && git apply ../../scripts/benchmark/easylocomo.patch
 	@echo "Installing Python dependencies…"
 	cd $(EASYLOCOMO_DIR) && python -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 	@echo "Done. Run 'make bench-ingest' then 'make bench-run'."
 
 bench-ingest:
 	@echo "Ingesting LOCOMO conversations into Osaurus memory…"
-	$(BENCH_PYTHON) scripts/ingest_locomo.py --base-url $(BENCH_BASE_URL)
+	$(BENCH_PYTHON) scripts/benchmark/ingest_locomo.py --base-url $(BENCH_BASE_URL)
 
 bench-ingest-chunks:
 	@echo "Backfilling LOCOMO conversation chunks (no LLM, fast)…"
-	$(BENCH_PYTHON) scripts/ingest_locomo.py --base-url $(BENCH_BASE_URL) --chunks-only --delay 0
+	$(BENCH_PYTHON) scripts/benchmark/ingest_locomo.py --base-url $(BENCH_BASE_URL) --chunks-only --delay 0
 
 bench-run:
 	@echo "Running LOCOMO benchmark (model=$(BENCH_MODEL), no-context, batch=$(BENCH_BATCH))…"

@@ -13,8 +13,8 @@ import SwiftUI
 struct osaurusApp: SwiftUI.App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var scheduleManager = ScheduleManager.shared
-    @ObservedObject private var watcherManager = WatcherManager.shared
+    private var scheduleManager = ScheduleManager.shared
+    private var watcherManager = WatcherManager.shared
     @ObservedObject private var vadService = VADService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
 

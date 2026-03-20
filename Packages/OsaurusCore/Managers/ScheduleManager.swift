@@ -6,8 +6,8 @@
 //  Uses efficient scheduling that only wakes when needed.
 //
 
-import Combine
 import Foundation
+import Observation
 
 /// Notification posted when schedules change
 extension Notification.Name {
@@ -16,27 +16,30 @@ extension Notification.Name {
 }
 
 /// Manages scheduled AI tasks with precise timer-based execution
+@Observable
 @MainActor
-public final class ScheduleManager: ObservableObject {
+public final class ScheduleManager {
     public static let shared = ScheduleManager()
 
-    // MARK: - Published State
+    // MARK: - Observable State
 
     /// All schedules
-    @Published public private(set) var schedules: [Schedule] = []
+    public private(set) var schedules: [Schedule] = []
 
     /// Currently running tasks (schedule ID -> run info)
-    @Published public private(set) var runningTasks: [UUID: ScheduleRunInfo] = [:]
+    public private(set) var runningTasks: [UUID: ScheduleRunInfo] = [:]
 
     // MARK: - Private State
 
     /// The task that waits for the next scheduled execution
-    private var timerTask: Task<Void, Never>?
+    @ObservationIgnored
+    private nonisolated(unsafe) var timerTask: Task<Void, Never>?
 
     /// Active execution tasks
     private var executionTasks: [UUID: Task<Void, Never>] = [:]
 
     /// Observer for timezone changes
+    @ObservationIgnored
     private nonisolated(unsafe) var timezoneObserver: NSObjectProtocol?
 
     // MARK: - Initialization
@@ -77,7 +80,6 @@ public final class ScheduleManager: ObservableObject {
     /// Reload schedules from disk
     public func refresh() {
         schedules = ScheduleStore.loadAll()
-        objectWillChange.send()
     }
 
     /// Create a new schedule

@@ -12,7 +12,7 @@ import SwiftUI
 
 struct SchedulesView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var scheduleManager = ScheduleManager.shared
+    private var scheduleManager = ScheduleManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 

@@ -3,7 +3,7 @@ name: Build Sandbox Image
 on:
   push:
     branches: [main]
-    paths: [images/Dockerfile]
+    paths: [sandbox/Dockerfile]
   workflow_dispatch:
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: images
+          context: sandbox
           platforms: linux/arm64
           push: true
           tags: |
