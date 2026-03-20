@@ -658,6 +658,8 @@ public actor WorkExecutionEngine {
                 effectiveMessages = messages
             }
 
+            await onStatusUpdate("Thinking...")
+
             // Build full messages with system prompt
             let fullMessages = [ChatMessage(role: "system", content: systemPrompt)] + effectiveMessages
 
