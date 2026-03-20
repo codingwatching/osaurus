@@ -128,7 +128,8 @@ struct FloatingInputCard: View {
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
-    @State private var sandboxPulse = false
+    @State private var sandboxPulseAmount: CGFloat = 1.0
+    @State private var sandboxPulseTask: Task<Void, Never>? = nil
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
     // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
@@ -151,9 +152,8 @@ struct FloatingInputCard: View {
 
     /// Tracks confirmed transcription length to detect actual changes (for silence timeout)
     @State private var lastConfirmedLength: Int = 0
-
-    /// Timer publisher for pause detection (fires every 100ms)
-    private let pauseDetectionTimer = Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()
+    
+    @State private var pauseTimerCancellable: AnyCancellable? = nil
 
     // TextEditor should grow up to ~6 lines before scrolling
     private var inputFontSize: CGFloat { CGFloat(theme.bodySize) }
@@ -418,11 +418,18 @@ struct FloatingInputCard: View {
                     resetPauseDetectionForRecording()
                 }
             }
-            .onReceive(pauseDetectionTimer) { _ in
-                guard showVoiceOverlay else { return }
-                checkForPause()
-                checkForSilenceTimeout()
-                handlePauseCountdown()
+            .onChange(of: showVoiceOverlay) { _, isShowing in
+                if isShowing {
+                    pauseTimerCancellable = Timer.publish(every: 0.1, on: .main, in: .common)
+                        .autoconnect()
+                        .sink { [self] _ in
+                            checkForPause()
+                            checkForSilenceTimeout()
+                            handlePauseCountdown()
+                        }
+                } else {
+                    pauseTimerCancellable = nil
+                }
             }
             .onReceive(toolRegistry.objectWillChange) { _ in
                 DispatchQueue.main.async {
@@ -1108,13 +1115,7 @@ struct FloatingInputCard: View {
                             : theme.tertiaryText
                     )
                     .lineLimit(1)
-                    .opacity(isSandboxLoading ? (sandboxPulse ? 0.4 : 1.0) : 1.0)
-                    .animation(
-                        isSandboxLoading
-                            ? .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
-                            : .default,
-                        value: sandboxPulse
-                    )
+                    .opacity(isSandboxLoading ? sandboxPulseAmount : 1.0)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
@@ -1143,7 +1144,26 @@ struct FloatingInputCard: View {
                 AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
             }
         }
-        .task(id: isSandboxLoading) { sandboxPulse = isSandboxLoading }
+        .task(id: isSandboxLoading) {
+            sandboxPulseTask?.cancel()
+            guard isSandboxLoading else {
+                sandboxPulseAmount = 1.0
+                return
+            }
+            sandboxPulseTask = Task {
+                while !Task.isCancelled {
+                    withAnimation(.easeInOut(duration: 0.8)) {
+                        sandboxPulseAmount = 0.4
+                    }
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                    guard !Task.isCancelled else { break }
+                    withAnimation(.easeInOut(duration: 0.8)) {
+                        sandboxPulseAmount = 1.0
+                    }
+                    try? await Task.sleep(nanoseconds: 800_000_000)
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -1340,12 +1360,11 @@ struct FloatingInputCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
-        .compositingGroup()
         .shadow(
             color: shadowColor,
-            radius: isFocused ? 24 : 12,
+            radius: isFocused ? 12 : 6,
             x: 0,
-            y: isFocused ? 8 : 4
+            y: isFocused ? 4 : 2
         )
         .animation(.easeOut(duration: 0.15), value: isFocused)
         .animation(.easeOut(duration: 0.1), value: isDragOver)
