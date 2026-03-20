@@ -38,6 +38,7 @@ public enum RemoteProviderServiceError: LocalizedError {
 public actor RemoteProviderService: ToolCapableService {
 
     public let provider: RemoteProvider
+    private let cachedHeaders: [String: String]
     private let providerPrefix: String
     private var availableModels: [String]
     private var session: URLSession
@@ -46,8 +47,9 @@ public actor RemoteProviderService: ToolCapableService {
         "remote-\(provider.id.uuidString)"
     }
 
-    public init(provider: RemoteProvider, models: [String]) {
+    public init(provider: RemoteProvider, models: [String], resolvedHeaders: [String: String]) {
         self.provider = provider
+        self.cachedHeaders = resolvedHeaders
         self.availableModels = models
         // Create a unique prefix for model names (lowercase, sanitized)
         self.providerPrefix = provider.name
@@ -1551,8 +1553,9 @@ public actor RemoteProviderService: ToolCapableService {
             urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         }
 
-        // Add provider headers (including auth)
-        for (key, value) in provider.resolvedHeaders() {
+        // Headers are resolved once at service creation time (on @MainActor)
+        // to avoid Keychain access issues from the actor's background executor.
+        for (key, value) in cachedHeaders {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
