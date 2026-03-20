@@ -104,6 +104,13 @@ struct MLXGenerationEngine {
                 contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
 
                 let newPromptTokens = fullLMInput.text.tokens.asArray(Int.self)
+                guard !newPromptTokens.isEmpty else {
+                    throw NSError(
+                        domain: "MLXGenerationEngine",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Tokenizer produced no tokens for the given input"]
+                    )
+                }
                 var cache: [any KVCache]
                 var effectiveInput = fullLMInput
 

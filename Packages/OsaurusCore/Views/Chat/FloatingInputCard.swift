@@ -152,7 +152,7 @@ struct FloatingInputCard: View {
 
     /// Tracks confirmed transcription length to detect actual changes (for silence timeout)
     @State private var lastConfirmedLength: Int = 0
-    
+
     @State private var pauseTimerCancellable: AnyCancellable? = nil
 
     // TextEditor should grow up to ~6 lines before scrolling
