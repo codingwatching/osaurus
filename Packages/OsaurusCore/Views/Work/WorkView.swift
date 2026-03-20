@@ -600,9 +600,10 @@ extension WorkView {
                 .frame(width: 5, height: 5)
                 .modifier(WorkPulseModifier())
 
-            Text("Working on it...")
+            Text(session.loopState?.statusMessage ?? "Working on it...")
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                 .foregroundColor(theme.tertiaryText)
+                .animation(.easeInOut(duration: 0.2), value: session.loopState?.statusMessage)
         }
         .padding(.bottom, 12)
     }

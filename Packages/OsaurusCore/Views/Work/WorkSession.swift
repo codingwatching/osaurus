@@ -21,6 +21,10 @@ public enum WorkActivityEvent: Equatable, Sendable {
     case retrying(attempt: Int, waitSeconds: Int)
     case sharedArtifact(filename: String, isFinal: Bool)
     case completedIssue(success: Bool)
+    case optimizedMemory
+    case savingProgress
+    case summarizingWork
+    case resumedWithSummary
 }
 
 /// Input state for work mode - determines input behavior and placeholder text
@@ -1633,8 +1637,18 @@ extension WorkSession: WorkEngineDelegate {
     }
 
     public func workEngine(_ engine: WorkEngine, didUpdateStatus status: String, forIssue issue: Issue) {
-        // Update loop state with status message
         loopState?.statusMessage = status
-        emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
+
+        if status.hasPrefix("Optimizing") {
+            emitActivity(.optimizedMemory)
+        } else if status.hasPrefix("Saving progress") {
+            emitActivity(.savingProgress)
+        } else if status.hasPrefix("Summarizing") {
+            emitActivity(.summarizingWork)
+        } else if status.hasPrefix("Resuming") {
+            emitActivity(.resumedWithSummary)
+        } else {
+            emitActivity(.willExecuteStep(index: currentStep, total: loopState?.maxIterations, description: status))
+        }
     }
 }

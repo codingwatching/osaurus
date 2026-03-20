@@ -36,8 +36,10 @@ public actor WorkExecutionEngine {
 
     // MARK: - Tool Execution
 
-    /// Maximum time (in seconds) to wait for a single tool execution before timing out.
-    private static let toolExecutionTimeout: UInt64 = 120
+    /// Hard safety-net timeout for a single tool execution. The real timeout
+    /// for sandbox commands is inactivity-based (at the container exec layer),
+    /// so this only fires if something is genuinely stuck.
+    private static let toolExecutionTimeout: UInt64 = 300
 
     /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
@@ -620,12 +622,16 @@ public actor WorkExecutionEngine {
             }
 
             // Tier 1: Clear stale tool results in-place (cheap, no LLM call)
-            _ = clearStaleToolResults(messages: &messages, currentIteration: iteration)
+            let cleared = clearStaleToolResults(messages: &messages, currentIteration: iteration)
+            if cleared > 0 {
+                await onStatusUpdate("Optimizing memory...")
+            }
 
             // Context compaction: tier 2 LLM summarization if still over budget
             let effectiveMessages: [ChatMessage]
             if let manager = budgetManager, !manager.fitsInBudget(messages) {
                 if !preSaveAttempted {
+                    await onStatusUpdate("Saving progress notes...")
                     messages.append(
                         ChatMessage(
                             role: "user",
@@ -637,13 +643,16 @@ public actor WorkExecutionEngine {
                     preSaveAttempted = true
                     continue
                 }
+                await onStatusUpdate("Summarizing earlier work...")
                 do {
                     effectiveMessages = try await compactMiddleMessages(
                         messages: messages,
                         model: model
                     )
+                    await onStatusUpdate("Resuming with summary")
                 } catch {
                     effectiveMessages = manager.trimMessages(messages)
+                    await onStatusUpdate("Resuming...")
                 }
             } else {
                 effectiveMessages = messages
