@@ -91,7 +91,6 @@ final class ChatWindowState: ObservableObject {
             self?.refreshSessionsDebounced()
         }
 
-        warmUpSelectedModel()
         setupNotificationObservers()
     }
 
@@ -122,19 +121,12 @@ final class ChatWindowState: ObservableObject {
             refreshWorkTasks()
         }
 
-        warmUpSelectedModel()
         setupNotificationObservers()
     }
 
     deinit {
         print("[ChatWindowState] deinit – windowId: \(windowId)")
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
-    }
-
-    /// Kicks off model warm-up for the window's currently selected local model.
-    private func warmUpSelectedModel() {
-        // Defer to ChatSession's warmup logic to ensure consistency
-        session.triggerWarmup()
     }
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
@@ -221,11 +213,6 @@ final class ChatWindowState: ObservableObject {
         } else {
             session.load(from: sessionData)
         }
-
-        // Pre-warm the KV cache for this session so it's ready when the user types
-        let sid = sessionData.id.uuidString
-        let model = session.selectedModel ?? "default"
-        Task { await ModelRuntime.shared.prewarmSession(sessionId: sid, modelName: model) }
 
         // Update theme if session has different agent
         let sessionAgentId = sessionData.agentId ?? Agent.defaultId

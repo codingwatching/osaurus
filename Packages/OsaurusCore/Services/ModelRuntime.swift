@@ -134,97 +134,12 @@ actor ModelRuntime {
         cachedConfig = nil
     }
 
-    /// Pre-warms a session's KV cache by loading it from SSD into RAM.
-    func prewarmSession(sessionId: String, modelName: String) {
-        let budget = currentKVBudget()
-        kvCacheStore.prewarm(sessionId: sessionId, modelName: modelName, budgetBytes: budget)
-    }
-
     /// Invalidates the KV cache for a specific session (e.g., on window close).
     /// Does NOT call Memory.clearCache() -- the freed arrays will be reclaimed
     /// naturally once they exceed mlxCacheLimit. Flushing here would penalize
     /// any generation still running on other windows.
     func invalidateSession(_ sessionId: String) {
         kvCacheStore.invalidate(sessionId: sessionId)
-    }
-
-    // MARK: - Warm-up
-
-    func warmUp(modelId: String, modelName: String, prefillChars: Int = 0, maxTokens: Int = 1) async {
-        guard !Task.isCancelled else { return }
-        let content = String(repeating: "A", count: prefillChars > 0 ? max(1, prefillChars) : 1024)
-        do {
-            let stream = try await deltasStream(
-                messages: [Message(role: .user, content: content)],
-                modelId: modelId,
-                modelName: modelName,
-                temperature: 0.0,
-                maxTokens: maxTokens,
-                stopSequences: [],
-                tools: nil,
-                toolChoice: nil
-            )
-            for await _ in stream where !Task.isCancelled {}
-        } catch {}
-    }
-
-    /// Precomputes the prefix KV cache using current UI context (memory, agent
-    /// prompt, tools) so that new conversations start with a warm cache.
-    func precomputeUIPrefix(modelId: String, modelName: String, agentId: UUID) async {
-        guard !Task.isCancelled else { return }
-        guard let holder = try? await loadContainer(id: modelId, name: modelName) else { return }
-        await precomputePrefixCache(holder: holder, agentId: agentId)
-    }
-
-    func deltasStream(
-        messages: [Message],
-        modelId: String,
-        modelName: String,
-        temperature: Float,
-        maxTokens: Int,
-        stopSequences: [String],
-        tools: [Tool]?,
-        toolChoice: ToolChoiceOption?
-    ) async throws -> AsyncStream<String> {
-        let params = GenerationParameters(
-            temperature: temperature,
-            maxTokens: maxTokens,
-            topPOverride: nil,
-            repetitionPenalty: nil
-        )
-        let (stream, continuation) = AsyncStream<String>.makeStream()
-        let producerTask = Task {
-            do {
-                let events = try await generateEventStream(
-                    chatBuilder: { ModelRuntime.mapMessagesToMLX(messages) },
-                    parameters: params,
-                    stopSequences: stopSequences,
-                    tools: tools,
-                    toolChoice: toolChoice,
-                    modelId: modelId,
-                    modelName: modelName
-                )
-                for try await ev in events {
-                    if Task.isCancelled {
-                        break
-                    }
-                    if case .tokens(let s) = ev, !s.isEmpty {
-                        continuation.yield(s)
-                    } else {
-                        break
-                    }
-                }
-            } catch {
-                // ignore errors; best-effort warm-up / streaming
-            }
-            continuation.finish()
-        }
-
-        continuation.onTermination = { @Sendable _ in
-            producerTask.cancel()
-        }
-
-        return stream
     }
 
     // MARK: - Internals
@@ -338,85 +253,46 @@ actor ModelRuntime {
         }
     }
 
-    /// Builds a prefix KV cache from the full context (memory + system prompt +
-    /// tools) and stores it keyed by a content hash so that UI and API requests
-    /// with the same context get a warm start on new conversations.
-    private func precomputePrefixCache(holder: SessionHolder, agentId: UUID) async {
-        let modelName = holder.name
+    /// Builds and persists a prefix KV cache for the given system content and
+    /// tools via a minimal 1-token generation.  Called lazily on the first real
+    /// query when no persisted prefix cache is found on disk.
+    private func buildPrefixCache(
+        holder: SessionHolder,
+        systemContent: String,
+        tools: [Tool]?,
+        toolChoice: ToolChoiceOption?,
+        modelName: String,
+        hash: String,
+        runtimeConfig: RuntimeConfig
+    ) async {
+        let tokenizerTools = Self.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
+        let messages: [MLXLMCommon.Chat.Message] = [
+            .init(role: .system, content: systemContent, images: [], videos: []),
+            .init(role: .user, content: "Hi", images: [], videos: []),
+        ]
+        let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
         do {
-            let configs = await MainActor.run {
-                let sys = SystemPromptBuilder.effectiveBasePrompt(
-                    AgentManager.shared.effectiveSystemPrompt(for: agentId)
-                )
-                let cfg = MemoryConfigurationStore.load()
-                let execEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
-                let sandboxRunning = SandboxManager.State.shared.status == .running
-                let mode: WorkExecutionMode = (execEnabled && sandboxRunning) ? .sandbox : .none
+            let (stream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                container: holder.container,
+                buildChat: { messages },
+                buildToolsSpec: { tokenizerTools },
+                generation: params,
+                runtime: runtimeConfig,
+                existingCache: nil,
+                cachedTokens: nil
+            )
+            activeGenerationTask = genTask
 
-                let chatSpecs = ToolRegistry.shared.chatSpecs(withOverrides: nil, mode: mode)
-                let workSpecs = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: mode)
+            for await _ in stream {}
+            await genTask.value
 
-                let compact = SystemPromptBuilder.isLocalModel(modelName)
-                let workSys = WorkExecutionEngine.buildAgentSystemPrompt(
-                    base: sys,
-                    executionMode: mode,
-                    skillInstructions: nil,
-                    compact: compact,
-                    secretNames: []
-                )
+            guard !Task.isCancelled else { return }
 
-                return [
-                    (sys, cfg, chatSpecs, "Chat"),
-                    (workSys, cfg, workSpecs, "Work"),
-                ]
-            }
-
-            for (systemBase, memCfg, toolSpecs, label) in configs {
-                _ = await activeGenerationTask?.value
-                guard !Task.isCancelled else { break }
-
-                let memCtx = await MemoryContextAssembler.assembleContext(
-                    agentId: agentId.uuidString,
-                    config: memCfg
-                )
-
-                let systemContent = SystemPromptBuilder.prependMemoryContext(memCtx, to: systemBase)
-                let toolNames = toolSpecs.map { $0.function.name }
-                let tokenizerTools = Self.makeTokenizerTools(tools: toolSpecs, toolChoice: .auto)
-
-                let hash = Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
-                guard !kvCacheStore.hasPrefixCache(modelName: modelName, hash: hash) else { continue }
-
-                let runtimeCfg = await getConfig()
-                let messages: [MLXLMCommon.Chat.Message] = [
-                    .init(role: .system, content: systemContent, images: [], videos: []),
-                    .init(role: .user, content: "Hi", images: [], videos: []),
-                ]
-
-                let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
-
-                let (stream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
-                    container: holder.container,
-                    buildChat: { messages },
-                    buildToolsSpec: { tokenizerTools },
-                    generation: params,
-                    runtime: runtimeCfg,
-                    existingCache: nil,
-                    cachedTokens: nil
-                )
-                activeGenerationTask = genTask
-
-                for await _ in stream {}
-                await genTask.value
-
-                guard !Task.isCancelled else { break }
-
-                kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
-                print("[ModelRuntime] Prefix cached for \(modelName) (\(label) mode, hash: \(hash.prefix(8)))")
-            }
+            kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
+            print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
         } catch {
-            print("[ModelRuntime] Failed to pre-compute prefix cache: \(error)")
+            print("[ModelRuntime] Failed to build prefix cache: \(error)")
         }
     }
 
@@ -441,17 +317,30 @@ actor ModelRuntime {
         let cfg = await getConfig()
         let holder = try await loadContainer(id: modelId, name: modelName)
 
-        // Compute a content hash from the generation inputs for prefix cache lookup.
-        // An explicit cache_hint from the API overrides the computed hash.
         let sessionId = parameters.sessionId
         let chatMessages = chatBuilder()
+        let systemContent = chatMessages.first(where: { $0.role == .system })?.content ?? ""
         let toolNames = (tools ?? []).map { $0.function.name }
         let prefixHash =
             parameters.cacheHint
-            ?? Self.computePrefixHash(
-                systemContent: chatMessages.first(where: { $0.role == .system })?.content ?? "",
-                toolNames: toolNames
+            ?? Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
+
+        // Lazy prefix cache: build and persist on the first query when no
+        // disk-cached prefix exists yet.  Subsequent queries (and future app
+        // launches) load the persisted cache from disk.
+        if sessionId == nil,
+            !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
+        {
+            await buildPrefixCache(
+                holder: holder,
+                systemContent: systemContent,
+                tools: tools,
+                toolChoice: toolChoice,
+                modelName: modelName,
+                hash: prefixHash,
+                runtimeConfig: cfg
             )
+        }
 
         // Look up existing KV cache for this session, or fall back to a
         // hash-keyed prefix cache for a warm start on new conversations.
@@ -645,20 +534,6 @@ actor ModelRuntime {
         )
         p.prefillStepSize = prefillStep
         return p
-    }
-
-    nonisolated static func mapMessagesToMLX(_ messages: [Message]) -> [MLXLMCommon.Chat.Message] {
-        return messages.map { m in
-            let role: MLXLMCommon.Chat.Message.Role = {
-                switch m.role {
-                case .system: return .system
-                case .user: return .user
-                case .assistant: return .assistant
-                case .tool: return .tool
-                }
-            }()
-            return MLXLMCommon.Chat.Message(role: role, content: m.content, images: [], videos: [])
-        }
     }
 
     nonisolated static func makeTokenizerTools(

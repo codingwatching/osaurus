@@ -69,8 +69,6 @@ final class ChatSession: ObservableObject {
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
-    @Published var isWarmingModel: Bool = false
-    var warmupTask: Task<Void, Never>?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
 
@@ -101,27 +99,7 @@ final class ChatSession: ObservableObject {
             Task { @MainActor in await self?.refreshPickerItems() }
         }
 
-        NotificationCenter.default.addObserver(
-            forName: .toolsListChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.triggerWarmup()
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: .skillsListChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.triggerWarmup()
-            }
-        }
-
-        // Auto-persist model selection and drive warm-up / GC
+        // Auto-persist model selection and unload unused models on switch
         modelSelectionCancellable =
             $selectedModel
             .dropFirst()
@@ -132,9 +110,9 @@ final class ChatSession: ObservableObject {
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
 
-                // Use a task to ensure this happens on the main actor
                 Task { @MainActor in
-                    self.triggerWarmup()
+                    let active = ChatWindowManager.shared.activeLocalModelNames()
+                    await ModelRuntime.shared.unloadModelsNotIn(active)
                 }
             }
 
@@ -169,29 +147,6 @@ final class ChatSession: ObservableObject {
         }
         isLoadingModel = false
         Task { [weak self] in await self?.refreshMemoryTokens() }
-    }
-
-    @MainActor
-    func triggerWarmup() {
-        guard let model = self.selectedModel else { return }
-
-        self.warmupTask?.cancel()
-
-        let isLocal = ModelManager.findInstalledModel(named: model) != nil
-        self.isWarmingModel = isLocal
-
-        self.warmupTask = Task { [weak self] in
-            // Unload models no window references before warming the new one
-            let active = await MainActor.run { ChatWindowManager.shared.activeLocalModelNames() }
-            await ModelRuntime.shared.unloadModelsNotIn(active)
-
-            if isLocal {
-                let aid = await MainActor.run { self?.agentId ?? Agent.defaultId }
-                await MLXService.shared.warmUp(modelName: model, agentId: aid)
-            }
-            guard !Task.isCancelled else { return }
-            await MainActor.run { self?.isWarmingModel = false }
-        }
     }
 
     func refreshPickerItems() async {
@@ -421,9 +376,6 @@ final class ChatSession: ObservableObject {
 
     func reset() {
         stop()
-        warmupTask?.cancel()
-        warmupTask = nil
-        isWarmingModel = false
         turns.removeAll()
         input = ""
         pendingAttachments = []
@@ -518,9 +470,6 @@ final class ChatSession: ObservableObject {
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
         stop()
-        warmupTask?.cancel()
-        warmupTask = nil
-        isWarmingModel = false
         sessionId = data.id
         title = data.title
         createdAt = data.createdAt
@@ -902,11 +851,6 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
-
-        // Cancel any in-progress warm-up to free the ModelContainer queue
-        warmupTask?.cancel()
-        warmupTask = nil
-        isWarmingModel = false
 
         if hasContent {
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
@@ -1449,7 +1393,6 @@ struct ChatView: View {
                                 pickerItems: observedSession.pickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
-                                isWarmingModel: observedSession.isWarmingModel,
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,

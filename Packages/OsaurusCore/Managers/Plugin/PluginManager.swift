@@ -179,9 +179,14 @@ final class PluginManager {
             let changes: [(key: String, value: String)] = configSpec.sections
                 .flatMap { $0.fields }
                 .compactMap { field in
-                    guard let value = ToolSecretsKeychain.getSecret(
-                        id: field.key, for: pluginId, agentId: agentId),
-                        !value.isEmpty else { return nil }
+                    guard
+                        let value = ToolSecretsKeychain.getSecret(
+                            id: field.key,
+                            for: pluginId,
+                            agentId: agentId
+                        ),
+                        !value.isEmpty
+                    else { return nil }
                     return (key: field.key, value: value)
                 }
             loaded.plugin.notifyConfigBatch(changes)
