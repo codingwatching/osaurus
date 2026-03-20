@@ -176,8 +176,13 @@ public final class RemoteProviderManager: ObservableObject {
             // Fetch models from the provider
             let models = try await RemoteProviderService.fetchModels(from: provider)
 
-            // Create service instance
-            let service = RemoteProviderService(provider: provider, models: models)
+            // Create service instance – resolve headers eagerly on @MainActor
+            // so the service actor never reads from Keychain off the main thread.
+            let service = RemoteProviderService(
+                provider: provider,
+                models: models,
+                resolvedHeaders: provider.resolvedHeaders()
+            )
             services[providerId] = service
 
             // Update state to connected
