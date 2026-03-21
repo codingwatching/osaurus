@@ -11,7 +11,7 @@ import Foundation
 
 // MARK: - Option Value
 
-enum ModelOptionValue: Sendable, Equatable, Hashable {
+enum ModelOptionValue: Sendable, Equatable, Hashable, Codable {
     case string(String)
     case bool(Bool)
     case int(Int)
@@ -61,6 +61,14 @@ protocol ModelProfile: Sendable {
     static var displayName: String { get }
     static var options: [ModelOptionDefinition] { get }
     static var defaults: [String: ModelOptionValue] { get }
+
+    /// Mapping for a dedicated "Thinking/Reasoning" toggle in the input area.
+    /// Returns the option ID (like "disableThinking") and whether true means "Enabled".
+    static var thinkingOption: (id: String, inverted: Bool)? { get }
+}
+
+extension ModelProfile {
+    static var thinkingOption: (id: String, inverted: Bool)? { nil }
 }
 
 // MARK: - Registry
@@ -146,6 +154,8 @@ struct QwenThinkingProfile: ModelProfile {
     static let defaults: [String: ModelOptionValue] = [
         "disableThinking": .bool(false)
     ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
 }
 
 // MARK: - Shared Segments
@@ -351,4 +361,6 @@ struct VeniceModelProfile: ModelProfile {
         "disableThinking": .bool(false),
         "includeVeniceSystemPrompt": .bool(true),
     ]
+
+    static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
 }
