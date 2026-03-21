@@ -77,7 +77,17 @@ actor ModelRuntime {
 
     // MARK: - Model lifecycle
 
+    /// Cancels any in-flight generation and waits for the GPU work to finish
+    /// so that subsequent `Memory.clearCache()` calls don't free buffers that
+    /// are still being read on the cooperative thread pool.
+    private func cancelActiveGeneration() async {
+        activeGenerationTask?.cancel()
+        _ = await activeGenerationTask?.value
+        activeGenerationTask = nil
+    }
+
     func unload(name: String) async {
+        await cancelActiveGeneration()
         if let holder = modelCache[name], holder.reservationActive, let reservation = holder.weightReservation {
             holder.reservationActive = false
             _ = await reservation.end()
@@ -106,6 +116,7 @@ actor ModelRuntime {
     }
 
     func clearAll() async {
+        await cancelActiveGeneration()
         let reservations: [WiredMemoryTicket] = modelCache.values.compactMap { holder in
             guard holder.reservationActive, let reservation = holder.weightReservation else { return nil }
             holder.reservationActive = false
