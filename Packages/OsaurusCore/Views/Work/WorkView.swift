@@ -75,7 +75,7 @@ struct WorkView: View {
                             supportsImages: session.selectedModelSupportsImages,
                             estimatedContextTokens: session.estimatedContextTokens,
                             contextBreakdown: session.estimatedContextBreakdown,
-                            onSend: { Task { await session.handleUserInput() } },
+                            onSend: { _ in Task { await session.handleUserInput() } },
                             onStop: { session.stopExecution() },
                             agentId: windowState.agentId,
                             windowId: windowState.windowId,

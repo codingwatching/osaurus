@@ -699,11 +699,6 @@ public struct PauseDetectionRing: View {
 
     public var body: some View {
         HStack(spacing: 8) {
-            // Mic indicator
-            Image(systemName: isSpeaking ? "waveform" : "mic.fill")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(isSpeaking ? theme.accentColor : theme.secondaryText)
-
             // Progress bar (only show when there's silence building)
             if progress > 0.1 && !isSpeaking {
                 GeometryReader { geo in
@@ -723,9 +718,11 @@ public struct PauseDetectionRing: View {
                 .frame(width: 40, height: 3)
             }
 
-            Text(isSpeaking ? "Listening" : "Pause to send")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+            if !isSpeaking {
+                Text("Pause to send")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)

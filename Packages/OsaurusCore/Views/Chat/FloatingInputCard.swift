@@ -26,7 +26,7 @@ struct FloatingInputCard: View {
     let estimatedContextTokens: Int
     /// Per-category breakdown of context token usage
     var contextBreakdown: ContextTokenBreakdown = .zero
-    let onSend: () -> Void
+    let onSend: (String?) -> Void
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
     var focusTrigger: Int = 0
@@ -66,7 +66,7 @@ struct FloatingInputCard: View {
         supportsImages: Bool,
         estimatedContextTokens: Int,
         contextBreakdown: ContextTokenBreakdown = .zero,
-        onSend: @escaping () -> Void,
+        onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
         focusTrigger: Int = 0,
         agentId: UUID? = nil,
@@ -253,6 +253,7 @@ struct FloatingInputCard: View {
                     silenceTimeoutProgress: displayedSilenceTimeoutDuration,
                     isContinuousMode: isContinuousVoiceMode,
                     isStreaming: isStreaming,
+                    useClipboardPaste: voiceConfig.useClipboardPaste,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
                     onEdit: { transferToTextInput() }
@@ -296,6 +297,15 @@ struct FloatingInputCard: View {
                 // Load voice config (cached after first load)
                 loadVoiceConfig()
 
+                // Ensure voice model is loaded if enabled and not already loaded
+                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded && !speechService.isLoadingModel {
+                    if let model = SpeechModelManager.shared.selectedModel {
+                        Task {
+                            try? await speechService.loadModel(model.id)
+                        }
+                    }
+                }
+
                 if speechService.isRecording {
                     if voiceInputState == .idle {
                         voiceInputState = .recording
@@ -328,6 +338,13 @@ struct FloatingInputCard: View {
             .onReceive(NotificationCenter.default.publisher(for: .voiceConfigurationChanged)) { _ in
                 // Reload voice config when settings change
                 loadVoiceConfig()
+
+                // If voice was just enabled, ensure model is loaded
+                if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded && !speechService.isLoadingModel {
+                    if let model = SpeechModelManager.shared.selectedModel {
+                        Task { try? await speechService.loadModel(model.id) }
+                    }
+                }
             }
             .onChange(of: isStreaming) { wasStreaming, nowStreaming in
                 // When AI finishes responding and we're in continuous voice mode, restart voice input
@@ -401,16 +418,21 @@ struct FloatingInputCard: View {
             }
             .onChange(of: speechService.currentTranscription) { _, newValue in
                 // When new transcription arrives, user is speaking
+                // Only reset silence timer if there is also active audio detection or meaningful level
                 if voiceInputState == .recording && !newValue.isEmpty {
-                    hasDetectedSpeechThisTurn = true
-                    lastSpeechTime = Date()
+                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
+                        hasDetectedSpeechThisTurn = true
+                        lastSpeechTime = Date()
+                    }
                 }
             }
             .onChange(of: speechService.confirmedTranscription) { _, newValue in
                 // When confirmed transcription changes, user was speaking
                 if voiceInputState == .recording && !newValue.isEmpty {
-                    hasDetectedSpeechThisTurn = true
-                    lastSpeechTime = Date()
+                    if speechService.isSpeechDetected || speechService.audioLevel > 0.05 {
+                        hasDetectedSpeechThisTurn = true
+                        lastSpeechTime = Date()
+                    }
                 }
             }
             .onChange(of: voiceInputState) { _, newState in
@@ -637,18 +659,45 @@ struct FloatingInputCard: View {
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
 
-        // Show sending state first
+        // show sending state first
         voiceInputState = .sending
 
         Task {
             _ = await speechService.stopStreamingTranscription()
-            // Clear transcription so next voice input starts fresh
+            // clear transcription so next voice input starts fresh
             speechService.clearTranscription()
+
             await MainActor.run {
                 voiceInputState = .idle
                 showVoiceOverlay = false
-                text = message
-                onSend()
+
+                let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fullMessage = existing.isEmpty ? message : "\(existing) \(message)"
+
+                if voiceConfig.useClipboardPaste {
+                    // try to paste. if it fails (permissions), we fall back to direct text setting
+                    if KeyboardSimulationService.shared.pasteText(message) {
+                        // Success: clear UI state immediately
+                        localText = ""
+                        text = ""
+                        // small delay before sending to let UI breathe before model starts streaming
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            localText = ""
+                            text = ""
+                            onSend(fullMessage)
+                        }
+                    } else {
+                        // failed (no permission): set text and clear local buffer before sending
+                        localText = ""
+                        text = ""
+                        onSend(fullMessage)
+                    }
+                } else {
+                    // clear local buffer before sending
+                    localText = ""
+                    text = ""
+                    onSend(fullMessage)
+                }
             }
         }
     }
@@ -672,17 +721,32 @@ struct FloatingInputCard: View {
         showVoiceOverlay = false
         isContinuousVoiceMode = false  // Exit continuous mode when switching to text
 
-        // Set the text input
-        localText = transcribedText
-        text = transcribedText
-        isFocused = true
+        let existing = localText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fullCombined = existing.isEmpty ? transcribedText : "\(existing) \(transcribedText)"
+
+        if voiceConfig.useClipboardPaste {
+            if KeyboardSimulationService.shared.pasteText(transcribedText) {
+                isFocused = true
+            } else {
+                // Fallback if paste fails
+                localText = fullCombined
+                text = fullCombined
+                isFocused = true
+            }
+        } else {
+            // Set the text input directly
+            localText = fullCombined
+            text = fullCombined
+            isFocused = true
+        }
     }
 
     private func syncAndSend() {
         guard canSend else { return }
-        text = localText
-        onSend()
+        let message = localText
         localText = ""
+        text = ""
+        onSend(message)
     }
 
     private func syncAndSendNow() {
@@ -2702,7 +2766,7 @@ private struct EndTaskButton: View {
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,
-                        onSend: {},
+                        onSend: {_ in },
                         onStop: {}
                     )
                 }

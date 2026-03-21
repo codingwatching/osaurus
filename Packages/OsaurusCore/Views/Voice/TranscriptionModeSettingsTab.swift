@@ -20,18 +20,21 @@ struct TranscriptionModeSettingsTab: View {
     // Configuration state
     @State private var transcriptionEnabled: Bool = false
     @State private var hotkey: Hotkey?
+    @State private var useClipboardPaste: Bool = true
     @State private var hasLoadedSettings = false
 
     private func loadSettings() {
         let config = TranscriptionConfigurationStore.load()
         transcriptionEnabled = config.transcriptionModeEnabled
         hotkey = config.hotkey
+        useClipboardPaste = config.useClipboardPaste
     }
 
     private func saveSettings() {
         let config = TranscriptionConfiguration(
             transcriptionModeEnabled: transcriptionEnabled,
-            hotkey: hotkey
+            hotkey: hotkey,
+            useClipboardPaste: useClipboardPaste
         )
         TranscriptionConfigurationStore.save(config)
     }
@@ -58,6 +61,11 @@ struct TranscriptionModeSettingsTab: View {
                 // Hotkey Settings Card
                 if canEnableTranscription {
                     hotkeySettingsCard
+                }
+
+                // Transcription Delivery Card
+                if canEnableTranscription {
+                    transcriptionDeliveryCard
                 }
 
                 // Test Area Card
@@ -273,6 +281,67 @@ struct TranscriptionModeSettingsTab: View {
                     Text("Set a hotkey to enable transcription mode")
                         .font(.system(size: 11))
                         .foregroundColor(theme.warningColor)
+                }
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(theme.cardBorder, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Transcription Delivery Card
+
+    private var transcriptionDeliveryCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(theme.accentColor.opacity(0.15))
+                    Image(systemName: "doc.on.clipboard.fill")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Transcription Delivery")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("How transcribed text is sent to the active field")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $useClipboardPaste) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Paste via Clipboard (Recommended)")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(theme.primaryText)
+
+                        Text(
+                            useClipboardPaste
+                                ? "Transcribes everything first, then pastes it into the field at once. Most reliable."
+                                : "Types characters into the field in real-time as you speak. Can be less reliable."
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
+                .onChange(of: useClipboardPaste) { _, _ in
+                    saveSettings()
                 }
             }
         }
