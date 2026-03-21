@@ -737,10 +737,13 @@ struct FloatingInputCard: View {
                 modelSelectorChip
             }
 
+            // Dedicated Thinking Toggle
+            thinkingToggleChip
+
             // Model-specific options (single grouped entry point)
-            if !activeProfileOptions.isEmpty {
-                modelOptionsSelectorChip
-            }
+//            if !activeProfileOptions.isEmpty {
+//                modelOptionsSelectorChip
+//            }
 
             // Capabilities selector (tools + skills combined)
             if hasTools || hasSkills {
@@ -911,6 +914,47 @@ struct FloatingInputCard: View {
         }
     }
 
+    // MARK: - Thinking Toggle
+
+    @ViewBuilder
+    private var thinkingToggleChip: some View {
+        if let model = selectedModel,
+           let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption {
+            let isCurrentlyEnabled = activeModelOptions[thinkingOpt.id]?.boolValue ?? false
+            let isEnabled = thinkingOpt.inverted ? !isCurrentlyEnabled : isCurrentlyEnabled
+            
+            SelectorChip(isActive: isEnabled) {
+                toggleThinking(id: thinkingOpt.id)
+            } content: {
+                HStack(spacing: 5) {
+                    Image(systemName: isEnabled ? "checkmark.square.fill" : "square")
+                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                        .foregroundColor(isEnabled ? theme.accentColor : theme.tertiaryText)
+                        .contentTransition(.symbolEffect(.replace))
+
+                    Text("Thinking")
+                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                        .foregroundColor(isEnabled ? theme.secondaryText : theme.tertiaryText)
+                }
+            }
+            .help("Toggle model reasoning mode")
+        }
+    }
+
+    private func toggleThinking(id: String) {
+        let current = activeModelOptions[id]?.boolValue ?? false
+        let newVal = !current
+        
+        withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
+            activeModelOptions[id] = .bool(newVal)
+        }
+        
+        // Persist the change for this model
+        if let model = selectedModel {
+            ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
+        }
+    }
+
     // MARK: - Capabilities Selector (Tools + Skills)
 
     private var effectiveAgentId: UUID {
@@ -1008,7 +1052,8 @@ struct FloatingInputCard: View {
                 options: activeProfileOptions,
                 values: $activeModelOptions,
                 defaults: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.defaults } ?? [:],
-                profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? ""
+                profileName: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.displayName } ?? "",
+                thinkingOptionId: selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
             )
         }
     }
@@ -2083,6 +2128,7 @@ private struct ModelOptionsSelectorView: View {
     @Binding var values: [String: ModelOptionValue]
     let defaults: [String: ModelOptionValue]
     let profileName: String
+    let thinkingOptionId: String?
 
     @Environment(\.theme) private var theme
 
@@ -2154,8 +2200,10 @@ private struct ModelOptionsSelectorView: View {
     // MARK: - Option Rows
 
     private var optionRows: some View {
-        VStack(spacing: 0) {
-            ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
+        let filteredOptions = options.filter { $0.id != thinkingOptionId }
+        
+        return VStack(spacing: 0) {
+            ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
                 if index > 0 {
                     Divider().background(theme.primaryBorder.opacity(0.15)).padding(.horizontal, 14)
                 }
