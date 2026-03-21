@@ -336,6 +336,10 @@ actor ModelRuntime {
             await genTask.value
 
             guard !Task.isCancelled else { return }
+            guard cache.contains(where: { $0.offset > 0 }) else {
+                print("[ModelRuntime] Prefix cache incomplete, skipping persistence")
+                return
+            }
 
             kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
             print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")

@@ -35,10 +35,12 @@ struct StreamAccumulator {
 
             for await event in events {
                 if Task.isCancelled {
+                    generationTask?.cancel()
                     continuation.finish()
                     return
                 }
                 if let toolCall = event.toolCall {
+                    generationTask?.cancel()
                     let argsData = try? JSONSerialization.data(
                         withJSONObject: toolCall.function.arguments.mapValues { $0.anyValue }
                     )
@@ -86,6 +88,7 @@ struct StreamAccumulator {
                         if let tools,
                             let (name, argsJSON) = ToolDetection.detectInlineToolCall(in: rollingBuffer, tools: tools)
                         {
+                            generationTask?.cancel()
                             continuation.yield(.toolInvocation(name: name, argsJSON: argsJSON))
                             continuation.finish()
                             return
@@ -134,6 +137,7 @@ struct StreamAccumulator {
                             }
                         }
 
+                        generationTask?.cancel()
                         continuation.finish()
                         return
                     }
@@ -150,6 +154,7 @@ struct StreamAccumulator {
 
         continuation.onTermination = { @Sendable _ in
             producerTask.cancel()
+            generationTask?.cancel()
         }
 
         return stream
