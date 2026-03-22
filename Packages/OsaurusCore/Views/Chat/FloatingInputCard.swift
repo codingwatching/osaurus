@@ -293,7 +293,9 @@ struct FloatingInputCard: View {
     var body: some View {
         mainContent
             .onAppear {
+                let isReappear = !localText.isEmpty || voiceInputState != .idle
                 localText = text
+                print("[VoiceDebug] FloatingInputCard onAppear (reappear=\(isReappear))")
 
                 // Focus immediately when view appears
                 isFocused = true
@@ -781,6 +783,7 @@ extension FloatingInputCard {
 
     private func sendVoiceMessage(_ message: String) {
         print("[FloatingInputCard] Sending voice message. Continuous mode: \(isContinuousVoiceMode)")
+        logVoiceState(trigger: "sendVoiceMessage-start")
 
         // show sending state first
         voiceInputState = .sending
@@ -789,6 +792,7 @@ extension FloatingInputCard {
             _ = await speechService.stopStreamingTranscription()
             // clear transcription so next voice input starts fresh
             speechService.clearTranscription()
+            logVoiceState(trigger: "sendVoiceMessage-afterStop")
 
             await MainActor.run {
                 voiceInputState = .idle
@@ -1772,8 +1776,10 @@ extension FloatingInputCard {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 mediaButton
-                if isVoiceConfigured && !isStreaming {
+                if isVoiceConfigured {
                     voiceInputButton
+                        .disabled(isStreaming)
+                        .opacity(isStreaming ? 0.4 : 1.0)
                 }
             }
 
