@@ -180,25 +180,28 @@ struct VoiceInputSettingsTab: View {
 
                 Spacer()
             }
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Paste via Clipboard (Recommended)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
 
-            VStack(alignment: .leading, spacing: 12) {
-                Toggle(isOn: $useClipboardPaste) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Paste via Clipboard (Recommended)")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-
-                        Text(
-                            useClipboardPaste
-                                ? "Transcribes everything first, then pastes it into the field at once. Most reliable."
-                                : "Types characters into the field in real-time as you speak. Can be less reliable."
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text(
+                        useClipboardPaste
+                            ? "Transcribes everything first, then pastes it into the field at once. Most reliable."
+                            : "Types characters into the field in real-time as you speak. Can be less reliable."
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    
+                    
                 }
-                .toggleStyle(SwitchToggleStyle(tint: theme.successColor))
+                
+                Spacer()
+                
+                Toggle("", isOn: $useClipboardPaste).toggleStyle(SwitchToggleStyle(tint: theme.successColor))
                 .onChange(of: useClipboardPaste) { _, _ in
                     saveSettings()
                 }
