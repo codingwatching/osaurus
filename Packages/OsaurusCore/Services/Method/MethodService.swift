@@ -91,6 +91,10 @@ public actor MethodService {
         try db.loadMethodsByTier(.rule)
     }
 
+    public func loadScore(methodId: String) throws -> MethodScore? {
+        try db.loadScore(methodId: methodId)
+    }
+
     // MARK: - Scoring
 
     public func reportOutcome(
@@ -186,11 +190,21 @@ public actor MethodService {
         let prompt = Self.distillationPrompt.replacingOccurrences(of: "{trace}", with: trace)
         let body = try await callCoreModel(prompt: prompt, coreModelIdentifier: coreModelIdentifier)
 
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MethodServiceError.invalidYAML("Distillation returned empty output")
+        }
+
+        let tools = extractToolIds(from: trimmed)
+        guard !tools.isEmpty else {
+            throw MethodServiceError.invalidYAML("Distillation output contains no tool: entries")
+        }
+
         return try await create(
             name: name,
             description: description,
             triggerText: triggerText,
-            body: body,
+            body: trimmed,
             source: .user,
             sourceModel: sourceModel
         )

@@ -137,10 +137,16 @@ final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
-            let name = args["name"] as? String,
-            let description = args["description"] as? String
+            let rawName = args["name"] as? String,
+            let rawDesc = args["description"] as? String
         else {
             return "Error: 'name' and 'description' parameters are required."
+        }
+
+        let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description = rawDesc.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !description.isEmpty else {
+            return "Error: 'name' and 'description' must not be blank."
         }
 
         let triggerText = args["trigger_text"] as? String
@@ -158,7 +164,7 @@ final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
                 "Method '\(method.name)' saved (id: \(method.id), tools: \(method.toolsUsed.joined(separator: ", ")))."
         }
 
-        let trace = try await buildTraceFromCurrentSession()
+        let trace = try buildTraceFromCurrentSession()
         if trace.isEmpty {
             return "Error: No successful tool calls found in the current session to distill."
         }
@@ -179,7 +185,6 @@ final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
             "Method '\(method.name)' distilled and saved (id: \(method.id), tools: \(method.toolsUsed.joined(separator: ", ")))."
     }
 
-    @MainActor
     private func buildTraceFromCurrentSession() throws -> String {
         guard let issueId = WorkExecutionContext.currentIssueId else {
             return ""
@@ -189,13 +194,16 @@ final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
         if events.isEmpty { return "" }
 
         var trace = ""
-        for (i, event) in events.enumerated() {
+        var stepNumber = 0
+        for event in events {
             guard let payloadStr = event.payload,
                 let data = payloadStr.data(using: .utf8),
                 let payload = try? JSONDecoder().decode(EventPayload.ToolCallCompleted.self, from: data)
             else { continue }
 
             guard payload.success else { continue }
+
+            stepNumber += 1
 
             let truncatedResult =
                 payload.result.map { result in
@@ -207,7 +215,7 @@ final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
                     args.count > 300 ? String(args.prefix(300)) + "..." : args
                 } ?? ""
 
-            trace += "Step \(i + 1): \(payload.toolName)(\(truncatedArgs)) -> \(truncatedResult)\n"
+            trace += "Step \(stepNumber): \(payload.toolName)(\(truncatedArgs)) -> \(truncatedResult)\n"
         }
         return trace
     }
@@ -261,7 +269,7 @@ final class MethodsReportTool: OsaurusTool, @unchecked Sendable {
             agentId: WorkExecutionContext.currentIssueId
         )
 
-        let score = try MethodDatabase.shared.loadScore(methodId: id)
+        let score = try await MethodService.shared.loadScore(methodId: id)
         let scoreStr = score.map { String(format: "%.2f", $0.score) } ?? "N/A"
         return "Reported '\(outcomeStr)' for method '\(method.name)'. Current score: \(scoreStr)."
     }

@@ -149,6 +149,7 @@ public actor IntrospectionWorker {
             var updated = method
             updated.body = refinedBody
             updated.toolsUsed = await MethodService.shared.extractToolIds(from: refinedBody)
+            updated.tokenCount = max(1, refinedBody.count / 4)
             updated.version += 1
             try await MethodService.shared.update(updated)
 
@@ -378,6 +379,7 @@ public actor IntrospectionWorker {
 
     func detectDeviation(method: Method, actualEvents: [IssueEvent]) -> Deviation? {
         let expectedTools = method.toolsUsed
+        guard !expectedTools.isEmpty else { return nil }
 
         let actualTools: [String] = actualEvents.compactMap { event in
             guard let payloadStr = event.payload,

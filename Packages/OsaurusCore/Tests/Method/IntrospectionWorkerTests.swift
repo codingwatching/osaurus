@@ -420,6 +420,28 @@ struct DeviationDetectionTests {
         #expect(deviation?.summary.contains("additional") == true)
     }
 
+    @Test func noDeviationWhenExpectedToolsEmpty() async {
+        let method = OsaurusCore.Method(
+            id: "m-empty",
+            name: "no-tools",
+            description: "method with no expected tools",
+            body: "steps:\n  - note: manual process",
+            source: MethodSource.user,
+            toolsUsed: []
+        )
+
+        let events = [
+            makeToolCallEvent(toolName: "terminal"),
+            makeToolCallEvent(toolName: "web_fetch"),
+        ]
+
+        let deviation = await IntrospectionWorker.shared.detectDeviation(
+            method: method,
+            actualEvents: events
+        )
+        #expect(deviation == nil)
+    }
+
     @Test func singleCallMatchesSingleExpected() async {
         let method = OsaurusCore.Method(
             id: "m10",

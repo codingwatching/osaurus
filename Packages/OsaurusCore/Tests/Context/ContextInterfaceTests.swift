@@ -394,6 +394,21 @@ struct ContextAssemblyTests {
         #expect(ctx.coLoadedToolIds.contains("terminal"))
     }
 
+    @Test func loadScoreDelegatesToDatabase() async throws {
+        try await seedTestData()
+        let score = try await MethodService.shared.loadScore(methodId: "active-high")
+        #expect(score != nil)
+        #expect(score?.timesLoaded == 10)
+        #expect(score?.timesSucceeded == 9)
+        #expect(abs((score?.score ?? 0) - 0.9) < 0.001)
+    }
+
+    @Test func loadScoreReturnsNilForMissing() async throws {
+        try await seedTestData()
+        let score = try await MethodService.shared.loadScore(methodId: "nonexistent")
+        #expect(score == nil)
+    }
+
     @Test func compactMethodIndexExcludesDormant() async throws {
         try await seedTestData()
         try MethodDatabase.shared.insertMethod(

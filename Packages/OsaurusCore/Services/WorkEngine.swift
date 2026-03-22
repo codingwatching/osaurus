@@ -471,7 +471,8 @@ public actor WorkEngine {
                 let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
                 if let maxTools = profile.maxTools {
                     let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
-                    tools = Array(otherTools.prefix(maxTools)) + methodTools
+                    let otherLimit = Swift.max(maxTools - methodTools.count, 0)
+                    tools = Array(otherTools.prefix(otherLimit)) + methodTools
                 } else {
                     tools = methodTools.isEmpty ? originalTools : methodTools
                 }
@@ -942,6 +943,9 @@ public actor WorkEngine {
         )
     }
 
+    private static let maxMethodBodyChars = 2000
+    private static let maxMethodsSectionChars = 8000
+
     private func buildMethodsSection(from context: AssembledContext) -> String? {
         let allMethods = context.rules + context.matchedMethods
         guard !allMethods.isEmpty else { return nil }
@@ -950,19 +954,27 @@ public actor WorkEngine {
         if !context.rules.isEmpty {
             section += "## Active Rules (always applied)\n\n"
             for rule in context.rules {
-                section += "### \(rule.name)\n\(rule.body)\n\n"
+                let body = Self.truncateBody(rule.body)
+                section += "### \(rule.name)\n\(body)\n\n"
             }
         }
         if !context.matchedMethods.isEmpty {
             section += "## Matched Methods\n\n"
             for method in context.matchedMethods {
+                if section.count >= Self.maxMethodsSectionChars { break }
+                let body = Self.truncateBody(method.body)
                 section += "### \(method.name)\n"
                 section += "Description: \(method.description)\n"
                 section += "Tools: \(method.toolsUsed.joined(separator: ", "))\n\n"
-                section += method.body + "\n\n"
+                section += body + "\n\n"
             }
         }
         return section.isEmpty ? nil : section
+    }
+
+    private static func truncateBody(_ body: String) -> String {
+        if body.count <= maxMethodBodyChars { return body }
+        return String(body.prefix(maxMethodBodyChars)) + "\n... (truncated)"
     }
 
     /// Builds skill instructions — inlines small single skills, otherwise emits a compact listing.

@@ -16,18 +16,21 @@ public actor ToolIndexService {
     /// Populate tool_index from ToolRegistry. Called once at startup after
     /// ToolDatabase and ToolSearchService are both initialized.
     public func syncFromRegistry() async {
-        let tools: [ToolRegistry.ToolEntry] = await MainActor.run {
-            ToolRegistry.shared.listTools()
+        let (tools, sandboxNames): ([ToolRegistry.ToolEntry], Set<String>) = await MainActor.run {
+            let all = ToolRegistry.shared.listTools()
+            let sandbox = Set(all.filter { ToolRegistry.shared.isSandboxTool($0.name) }.map(\.name))
+            return (all, sandbox)
         }
 
         let registryNames = Set(tools.map(\.name))
 
         for tool in tools {
+            let runtime: ToolRuntime = sandboxNames.contains(tool.name) ? .sandbox : .builtin
             let entry = ToolIndexEntry(
                 id: tool.name,
                 name: tool.name,
                 description: tool.description,
-                runtime: .builtin,
+                runtime: runtime,
                 toolsJSON: "{}",
                 source: .system,
                 tokenCount: tool.estimatedTokens
