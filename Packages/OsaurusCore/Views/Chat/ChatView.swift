@@ -1402,7 +1402,12 @@ struct ChatView: View {
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
-                                onSend: { observedSession.sendCurrent() },
+                                onSend: { manualText in
+                                    if let manualText = manualText {
+                                        observedSession.input = manualText
+                                    }
+                                    observedSession.sendCurrent()
+                                },
                                 onStop: { observedSession.stop() },
                                 focusTrigger: focusTrigger,
                                 agentId: windowState.agentId,

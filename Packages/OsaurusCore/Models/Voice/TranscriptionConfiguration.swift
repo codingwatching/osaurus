@@ -17,9 +17,13 @@ public struct TranscriptionConfiguration: Codable, Equatable, Sendable {
     /// Global hotkey to activate transcription mode
     public var hotkey: Hotkey?
 
+    /// Whether to paste the full transcription via clipboard instead of live-typing
+    public var useClipboardPaste: Bool
+
     private enum CodingKeys: String, CodingKey {
         case transcriptionModeEnabled
         case hotkey
+        case useClipboardPaste
     }
 
     public init(from decoder: Decoder) throws {
@@ -30,21 +34,27 @@ public struct TranscriptionConfiguration: Codable, Equatable, Sendable {
             ?? defaults.transcriptionModeEnabled
         self.hotkey =
             try container.decodeIfPresent(Hotkey.self, forKey: .hotkey)
+        self.useClipboardPaste =
+            try container.decodeIfPresent(Bool.self, forKey: .useClipboardPaste)
+            ?? defaults.useClipboardPaste
     }
 
     public init(
         transcriptionModeEnabled: Bool = false,
-        hotkey: Hotkey? = nil
+        hotkey: Hotkey? = nil,
+        useClipboardPaste: Bool = true
     ) {
         self.transcriptionModeEnabled = transcriptionModeEnabled
         self.hotkey = hotkey
+        self.useClipboardPaste = useClipboardPaste
     }
 
     /// Default configuration
     public static var `default`: TranscriptionConfiguration {
         TranscriptionConfiguration(
             transcriptionModeEnabled: false,
-            hotkey: nil
+            hotkey: nil,
+            useClipboardPaste: true
         )
     }
 }

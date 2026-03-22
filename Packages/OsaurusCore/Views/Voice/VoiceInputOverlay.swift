@@ -49,6 +49,9 @@ public struct VoiceInputOverlay: View {
     /// Whether AI is currently streaming a response
     var isStreaming: Bool = false
 
+    /// Whether to paste the full transcription via clipboard instead of live-typing
+    let useClipboardPaste: Bool
+
     /// Callbacks
     var onCancel: (() -> Void)?
     var onSend: ((String) -> Void)?
@@ -69,6 +72,7 @@ public struct VoiceInputOverlay: View {
         silenceTimeoutProgress: Double = 0,
         isContinuousMode: Bool = false,
         isStreaming: Bool = false,
+        useClipboardPaste: Bool = true,
         onCancel: (() -> Void)? = nil,
         onSend: ((String) -> Void)? = nil,
         onEdit: (() -> Void)? = nil
@@ -84,6 +88,7 @@ public struct VoiceInputOverlay: View {
         self.silenceTimeoutProgress = silenceTimeoutProgress
         self.isContinuousMode = isContinuousMode
         self.isStreaming = isStreaming
+        self.useClipboardPaste = useClipboardPaste
         self.onCancel = onCancel
         self.onSend = onSend
         self.onEdit = onEdit
@@ -190,7 +195,13 @@ public struct VoiceInputOverlay: View {
             // Combined transcription display
             HStack(alignment: .top, spacing: 2) {
                 // Full text with styling
-                if fullText.isEmpty {
+                if useClipboardPaste && state == .recording {
+                    // In clipboard mode, hide live jitter but show indicator
+                    Text("Listening...")
+                        .font(.system(size: 15))
+                        .foregroundColor(theme.tertiaryText)
+                        .italic()
+                } else if fullText.isEmpty {
                     Text("Listening...")
                         .font(.system(size: 15))
                         .foregroundColor(theme.tertiaryText)
@@ -268,14 +279,16 @@ public struct VoiceInputOverlay: View {
                 Spacer()
 
                 // Pause hint with subtle progress
-                if pauseDuration > 0 {
+                if pauseDuration > 0 && silenceDuration > 0.2 {
                     PauseDetectionRing(
                         silenceDuration: silenceDuration,
                         pauseThreshold: pauseDuration,
                         audioLevel: audioLevel
                     )
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
+            .animation(.easeOut(duration: 0.2), value: silenceDuration > 0.2)
 
         case .paused(let remaining):
             // Clean countdown card - use state remaining value

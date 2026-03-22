@@ -18,6 +18,7 @@ struct VoiceInputSettingsTab: View {
     @State private var pauseDuration: Double = 1.5
     @State private var confirmationDelay: Double = 2.0
     @State private var silenceTimeoutSeconds: Double = 30.0
+    @State private var useClipboardPaste: Bool = true
     @State private var hasLoadedSettings = false
 
     private func loadSettings() {
@@ -26,6 +27,7 @@ struct VoiceInputSettingsTab: View {
         pauseDuration = config.pauseDuration
         confirmationDelay = config.confirmationDelay
         silenceTimeoutSeconds = config.silenceTimeoutSeconds
+        useClipboardPaste = config.useClipboardPaste
     }
 
     private func saveSettings() {
@@ -34,6 +36,7 @@ struct VoiceInputSettingsTab: View {
         config.pauseDuration = pauseDuration
         config.confirmationDelay = confirmationDelay
         config.silenceTimeoutSeconds = silenceTimeoutSeconds
+        config.useClipboardPaste = useClipboardPaste
         SpeechConfigurationStore.save(config)
 
         // Notify other views of the configuration change
@@ -60,6 +63,9 @@ struct VoiceInputSettingsTab: View {
             VStack(spacing: 24) {
                 // Voice Input Toggle Card
                 voiceInputToggleCard
+
+                // Transcription Delivery Card
+                transcriptionDeliveryCard
 
                 // Auto-Send Settings Card
                 autoSendSettingsCard
@@ -144,6 +150,70 @@ struct VoiceInputSettingsTab: View {
                             voiceInputEnabled ? theme.successColor.opacity(0.3) : theme.cardBorder,
                             lineWidth: 1
                         )
+                )
+        )
+    }
+
+    // MARK: - Transcription Delivery Card
+
+    private var transcriptionDeliveryCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(theme.accentColor.opacity(0.15))
+                    Image(systemName: "doc.on.clipboard.fill")
+                        .font(.system(size: 20, weight: .medium))
+                        .foregroundColor(theme.accentColor)
+                }
+                .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Transcription Delivery")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text("How transcribed text is sent to the active field")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+            }
+            
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Paste via Clipboard (Recommended)")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(
+                        useClipboardPaste
+                            ? "Transcribes everything first, then pastes it into the field at once. Most reliable."
+                            : "Types characters into the field in real-time as you speak. Can be less reliable."
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    
+                    
+                }
+                
+                Spacer()
+                
+                Toggle("", isOn: $useClipboardPaste).toggleStyle(SwitchToggleStyle(tint: theme.successColor))
+                .onChange(of: useClipboardPaste) { _, _ in
+                    saveSettings()
+                }
+            }
+        }
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(theme.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(theme.cardBorder, lineWidth: 1)
                 )
         )
     }

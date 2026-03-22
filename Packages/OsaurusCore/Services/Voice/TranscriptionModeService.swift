@@ -131,7 +131,18 @@ public final class TranscriptionModeService: ObservableObject {
         transcriptionCancellables.removeAll()
 
         Task {
+            // stop recording and get final result
             _ = await speechService.stopStreamingTranscription()
+
+            // if using clipboard paste, do it now at the end
+            if configuration.useClipboardPaste {
+                let fullText = speechService.confirmedTranscription
+                if !fullText.isEmpty {
+                    print("[TranscriptionMode] Pasting \(fullText.count) characters via clipboard")
+                    keyboardService.pasteText(fullText)
+                }
+            }
+
             speechService.clearTranscription()
             overlayService.hide()
             lastTypedText = ""
@@ -188,6 +199,11 @@ public final class TranscriptionModeService: ObservableObject {
 
     private func handleTranscriptionUpdate() {
         guard state == .transcribing else { return }
+
+        // skip live typing if clipboard paste is enabled
+        if configuration.useClipboardPaste {
+            return
+        }
 
         let fullText: String
         if speechService.confirmedTranscription.isEmpty {

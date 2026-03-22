@@ -566,8 +566,34 @@ public final class SpeechService: ObservableObject {
 
     // MARK: - Initialization
 
+    private var appActivationObserver: NSObjectProtocol?
+
     private init() {
-        checkMicrophonePermission()
+        // call requestMicrophonePermission on startup as
+        // AVCaptureDevice.authorizationStatus() alone often returns .notDetermined
+        // even when the user has already granted access via system settings — the OS
+        // only confirms the grant when the app explicitly calls requestAccess()
+        // if permission is already granted, requestAccess returns instantly
+        Task { @MainActor [weak self] in
+            _ = await self?.requestMicrophonePermission()
+        }
+
+        // also re-check on every app activation to handle the case where the user granted the permission from system settings
+        appActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                _ = await self?.requestMicrophonePermission()
+            }
+        }
+    }
+
+    deinit {
+        if let observer = appActivationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     // MARK: - Microphone Permission

@@ -28,18 +28,26 @@ public final class KeyboardSimulationService: ObservableObject {
 
     /// Check if accessibility permission is granted
     public func checkAccessibilityPermission() {
-        hasAccessibilityPermission = AXIsProcessTrusted()
+        // run check in background to avoid blocking main thread
+        Task.detached(priority: .utility) {
+            let granted = AXIsProcessTrusted()
+            await MainActor.run {
+                if self.hasAccessibilityPermission != granted {
+                    self.hasAccessibilityPermission = granted
+                }
+            }
+        }
     }
 
     /// Request accessibility permission (shows system prompt if not granted)
     public func requestAccessibilityPermission() {
-        // Use the string value directly to avoid concurrency issues with the global constant
+        // use the string value directly to avoid concurrency issues with the global constant
         // kAXTrustedCheckOptionPrompt's value is "AXTrustedCheckOptionPrompt"
         let options: NSDictionary = ["AXTrustedCheckOptionPrompt": true]
         _ = AXIsProcessTrustedWithOptions(options)
 
-        // Re-check after a delay (user may grant permission)
-        Task { @MainActor in
+        // re-check after a delay (user may grant permission)
+        Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
             checkAccessibilityPermission()
         }
@@ -59,7 +67,12 @@ public final class KeyboardSimulationService: ObservableObject {
     /// - Returns: True if typing was successful
     @discardableResult
     public func typeText(_ text: String) -> Bool {
-        guard hasAccessibilityPermission else {
+        let currentlyTrusted = AXIsProcessTrusted()
+        if currentlyTrusted != hasAccessibilityPermission {
+            hasAccessibilityPermission = currentlyTrusted
+        }
+
+        guard currentlyTrusted else {
             print("[KeyboardSimulationService] Cannot type: accessibility permission not granted")
             return false
         }
@@ -68,11 +81,13 @@ public final class KeyboardSimulationService: ObservableObject {
             return true
         }
 
-        // Type each character
-        for char in text {
-            typeCharacter(char)
-            // Small delay between characters for reliability
-            usleep(1000)  // 1ms
+        // use a Task to allow non-blocking sleep. Since we are @MainActor,
+        // this stays on the main thread but yields during sleep.
+        Task {
+            for char in text {
+                Self.typeCharacter(char)
+                try? await Task.sleep(nanoseconds: 1_000_000)  // 1ms
+            }
         }
 
         return true
@@ -82,14 +97,81 @@ public final class KeyboardSimulationService: ObservableObject {
     /// - Parameter count: Number of characters to delete
     @discardableResult
     public func typeBackspace(count: Int) -> Bool {
-        guard hasAccessibilityPermission else {
+        let currentlyTrusted = AXIsProcessTrusted()
+        if currentlyTrusted != hasAccessibilityPermission {
+            hasAccessibilityPermission = currentlyTrusted
+        }
+
+        guard currentlyTrusted else {
             print("[KeyboardSimulationService] Cannot type backspace: accessibility permission not granted")
             return false
         }
 
-        for _ in 0 ..< count {
-            typeKeyCode(UInt16(kVK_Delete))
-            usleep(1000)  // 1ms
+        Task {
+            for _ in 0 ..< count {
+                Self.typeKeyCode(UInt16(kVK_Delete))
+                try? await Task.sleep(nanoseconds: 1_000_000)  // 1ms
+            }
+        }
+
+        return true
+    }
+
+    // MARK: - Clipboard Paste
+
+    /// Paste the given text into the currently focused text field via clipboard
+    @discardableResult
+    public func pasteText(_ text: String, restoreClipboard: Bool = true) -> Bool {
+        // use cached permission to avoid blocking main thread
+        guard hasAccessibilityPermission else {
+            print("[KeyboardSimulationService] Cannot paste: accessibility permission not granted (using cached status)")
+            // trigger a refresh for the next time
+            checkAccessibilityPermission()
+            return false
+        }
+
+        guard !text.isEmpty else {
+            return true
+        }
+
+        // entire clipboard operation moved to background to prevent main-thread hangs
+        Task.detached(priority: .userInitiated) {
+            let pb = NSPasteboard.general
+
+            var backup: [[String: Data]] = []
+            if restoreClipboard {
+                for item in pb.pasteboardItems ?? [] {
+                    var itemData: [String: Data] = [:]
+                    for type in item.types {
+                        if let data = item.data(forType: type) {
+                            itemData[type.rawValue] = data
+                        }
+                    }
+                    backup.append(itemData)
+                }
+            }
+
+            // clear and Set
+            pb.clearContents()
+            pb.setString(text, forType: .string)
+
+            // trigger Cmd+V
+            // 50ms buffer for OS to register clipboard
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            Self.typeKeyCode(UInt16(kVK_ANSI_V), modifiers: .maskCommand)
+
+            if restoreClipboard && !backup.isEmpty {
+                // longer delay to ensure target app pasted
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                pb.clearContents()
+                for itemData in backup {
+                    let newItem = NSPasteboardItem()
+                    for (type, data) in itemData {
+                        newItem.setData(data, forType: NSPasteboard.PasteboardType(type))
+                    }
+                    pb.writeObjects([newItem])
+                }
+            }
         }
 
         return true
@@ -98,7 +180,7 @@ public final class KeyboardSimulationService: ObservableObject {
     // MARK: - Private Helpers
 
     /// Type a single character using CGEventPost
-    private func typeCharacter(_ char: Character) {
+    nonisolated private static func typeCharacter(_ char: Character) {
         let str = String(char)
 
         // Use Unicode input method for reliability
@@ -123,7 +205,7 @@ public final class KeyboardSimulationService: ObservableObject {
     }
 
     /// Type a specific key code (for special keys like backspace)
-    private func typeKeyCode(_ keyCode: UInt16, modifiers: CGEventFlags = []) {
+    nonisolated private static func typeKeyCode(_ keyCode: UInt16, modifiers: CGEventFlags = []) {
         guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true),
             let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false)
         else {
