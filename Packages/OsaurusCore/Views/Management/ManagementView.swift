@@ -10,86 +10,6 @@ import Foundation
 import OsaurusRepository
 import SwiftUI
 
-// MARK: - Management Tab
-
-/// Defines all available tabs in the management sidebar.
-public enum ManagementTab: String, CaseIterable, Identifiable {
-    case models
-    case providers
-    case agents
-    case plugins
-    case sandbox
-    case tools
-    case skills
-    case memory
-    case schedules
-    case watchers
-    case voice
-    case themes
-    case insights
-    case server
-    case permissions
-    case identity
-    case settings
-
-    public var id: String { rawValue }
-
-    public var icon: String {
-        switch self {
-        case .models: "cube.box.fill"
-        case .providers: "cloud.fill"
-        case .agents: "person.2.fill"
-        case .plugins: "puzzlepiece.extension.fill"
-        case .sandbox: "shippingbox.fill"
-        case .tools: "wrench.and.screwdriver.fill"
-        case .skills: "sparkles"
-        case .memory: "brain.head.profile.fill"
-        case .schedules: "calendar.badge.clock"
-        case .watchers: "eye.fill"
-        case .voice: "waveform"
-        case .themes: "paintpalette.fill"
-        case .insights: "chart.bar.doc.horizontal"
-        case .server: "server.rack"
-        case .permissions: "lock.shield.fill"
-        case .identity: "person.badge.key.fill"
-        case .settings: "gearshape.fill"
-        }
-    }
-
-    public var label: String {
-        switch self {
-        case .models: "Models"
-        case .providers: "Providers"
-        case .agents: "Agents"
-        case .plugins: "Plugins"
-        case .sandbox: "Sandbox"
-        case .tools: "Tools"
-        case .skills: "Skills"
-        case .memory: "Memory"
-        case .schedules: "Schedules"
-        case .watchers: "Watchers"
-        case .voice: "Voice"
-        case .themes: "Themes"
-        case .insights: "Insights"
-        case .server: "Server"
-        case .permissions: "Permissions"
-        case .identity: "Identity"
-        case .settings: "Settings"
-        }
-    }
-
-    /// Creates a sidebar item for this tab with an optional badge count and highlight state.
-    func sidebarItem(badge: Int? = nil, badgeHighlight: Bool = false) -> SidebarItemData {
-        SidebarItemData(
-            id: rawValue,
-            icon: icon,
-            label: label,
-            badge: badge,
-            badgeHighlight: badgeHighlight
-        )
-    }
-}
-
 // MARK: - Management View
 
 struct ManagementView: View {
@@ -106,12 +26,12 @@ struct ManagementView: View {
     @ObservedObject private var modelManager = ModelManager.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
     @ObservedObject private var sandboxPluginLibrary = SandboxPluginLibrary.shared
+    @ObservedObject private var stateManager = ManagementStateManager.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
     // MARK: Local State
 
-    @State private var selectedTab: ManagementTab
     @State private var hasAppeared = false
     @State private var searchText = ""
 
@@ -125,11 +45,14 @@ struct ManagementView: View {
     // MARK: Initialization
 
     init(
-        initialTab: ManagementTab = .models,
+        initialTab: ManagementTab? = nil,
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil
     ) {
-        _selectedTab = State(initialValue: initialTab)
+        // Use provided initialTab if any, otherwise fall back to the last selected tab in this session.
+        if let tab = initialTab {
+            ManagementStateManager.shared.selectedTab = tab
+        }
         self.deeplinkModelId = deeplinkModelId
         self.deeplinkFile = deeplinkFile
     }
@@ -145,7 +68,7 @@ struct ManagementView: View {
             .themedAlertScope(.management)
             .overlay(ThemedAlertHost(scope: .management))
             .onAppear(perform: handleAppear)
-            .onChange(of: selectedTab) { handleTabChange(to: $1) }
+            .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
             .onChange(of: searchText) { handleSearchChange(to: $1) }
     }
 }
@@ -178,10 +101,10 @@ private extension ManagementView {
     /// Binding that converts between ManagementTab and String for SidebarNavigation.
     var selectedTabBinding: Binding<String> {
         Binding(
-            get: { selectedTab.rawValue },
+            get: { stateManager.selectedTab.rawValue },
             set: { newValue in
                 if let tab = ManagementTab(rawValue: newValue) {
-                    selectedTab = tab
+                    stateManager.selectedTab = tab
                 }
             }
         )
@@ -317,9 +240,9 @@ private extension ManagementView {
 
     func handleSearchChange(to newValue: String) {
         // Auto-navigate to settings when searching
-        if !newValue.isEmpty && selectedTab != .settings {
+        if !newValue.isEmpty && stateManager.selectedTab != .settings {
             withAnimation(.easeOut(duration: 0.2)) {
-                selectedTab = .settings
+                stateManager.selectedTab = .settings
             }
         }
     }

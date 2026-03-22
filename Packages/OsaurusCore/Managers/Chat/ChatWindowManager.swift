@@ -743,7 +743,7 @@ private struct ChatToolbarActionView: View {
         Group {
             if isWorkMode || session.turns.isEmpty {
                 SettingsButton(action: {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .settings)
+                    AppDelegate.shared?.showManagementWindow(initialTab: nil)
                 })
             } else {
                 HeaderActionButton(

@@ -430,7 +430,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     }
 
     @objc private func dockShowSettings() {
-        showManagementWindow(initialTab: .settings)
+        showManagementWindow(initialTab: nil)
     }
 
     #if DEBUG
@@ -969,7 +969,7 @@ extension AppDelegate {
 // MARK: Management Window
 extension AppDelegate {
     @MainActor public func showManagementWindow(
-        initialTab: ManagementTab = .models,
+        initialTab: ManagementTab? = nil,
         deeplinkModelId: String? = nil,
         deeplinkFile: String? = nil
     ) {
