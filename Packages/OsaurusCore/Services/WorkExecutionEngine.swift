@@ -880,10 +880,17 @@ public actor WorkExecutionEngine {
         base: String,
         executionMode: WorkExecutionMode,
         skillInstructions: String? = nil,
+        methodsSection: String? = nil,
+        compactToolIndex: String? = nil,
+        compactMethodIndex: String? = nil,
         compact: Bool = false,
         secretNames: [String] = []
     ) -> String {
         var prompt = base
+
+        if let methods = methodsSection, !methods.isEmpty {
+            prompt += "\n\(methods)\n"
+        }
 
         prompt +=
             compact
@@ -898,6 +905,13 @@ public actor WorkExecutionEngine {
 
         if let skills = skillInstructions, !skills.isEmpty {
             prompt += "\n## Active Skills\n\(skills)\n"
+        }
+
+        if let toolIdx = compactToolIndex {
+            prompt += "\n## Tool Index\n\(toolIdx)\n"
+        }
+        if let methodIdx = compactMethodIndex {
+            prompt += "\n## Method Index\n\(methodIdx)\n"
         }
 
         return prompt

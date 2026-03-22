@@ -12,9 +12,9 @@ import Combine
 @MainActor
 public final class ManagementStateManager: ObservableObject {
     public static let shared = ManagementStateManager()
-    
+
     /// Persists the last selected tab within the current app session.
     @Published public var selectedTab: ManagementTab = .settings
-    
+
     private init() {}
 }

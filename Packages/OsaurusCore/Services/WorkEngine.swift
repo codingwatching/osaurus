@@ -382,6 +382,15 @@ public actor WorkEngine {
         // Load skill instructions if any skills are selected
         let skillInstructions = await buildSkillInstructions(from: skillCatalog)
 
+        // Assemble context from all four pillars (methods, skills, tools, memory)
+        let resolvedModel = model ?? "default"
+        let contextQuery = issue.title + (issue.description.map { " " + $0 } ?? "")
+        let assembledContext = try await ContextInterface.shared.assemble(
+            query: contextQuery,
+            modelId: resolvedModel,
+            agentId: issue.id
+        )
+
         let initialMessages =
             if attemptResume,
                 let existing = activeSession,
@@ -408,13 +417,44 @@ public actor WorkEngine {
             else { return [] }
             return Array(AgentSecretsKeychain.getAllSecrets(agentId: uuid).keys)
         }()
+
+        // Build methods section for system prompt
+        let methodsSection = buildMethodsSection(from: assembledContext)
+
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             executionMode: resolvedExecutionMode,
             skillInstructions: skillInstructions,
+            methodsSection: methodsSection,
+            compactToolIndex: assembledContext.toolIndex,
+            compactMethodIndex: assembledContext.methodIndex,
             compact: compact,
             secretNames: secretNames
         )
+
+        // Apply co-loading: adjust tools based on assembled context and model profile
+        let profile = ModelContextProfile.profile(for: resolvedModel)
+        let allMethods = assembledContext.rules + assembledContext.matchedMethods
+        let methodToolNames = Set(["methods_search", "methods_load", "methods_save", "methods_report"])
+
+        var tools = tools
+        if !allMethods.isEmpty {
+            let coLoadedIds = assembledContext.coLoadedToolIds.union(methodToolNames)
+            tools = tools.filter { coLoadedIds.contains($0.function.name) }
+        } else {
+            switch profile.tier {
+            case .frontier:
+                break
+            case .capable:
+                if let max = profile.maxTools, tools.count > max {
+                    let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
+                    let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
+                    tools = Array(otherTools.prefix(max - methodTools.count)) + methodTools
+                }
+            case .local:
+                tools = tools.filter { methodToolNames.contains($0.function.name) }
+            }
+        }
 
         // Log execution started
         _ = try? IssueStore.createEvent(
@@ -572,6 +612,16 @@ public actor WorkEngine {
 
             await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
             clearPersistedExecutionState(issueId: issue.id)
+
+            // Trigger introspection worker for method refinement and tool packaging
+            let sessionStart = activeSession?.startedAt ?? Date()
+            Task.detached {
+                await IntrospectionWorker.shared.onSessionEnd(
+                    issueId: issue.id,
+                    sessionStartTime: sessionStart
+                )
+            }
+
             activeSession = nil
             awaitingClarification = nil
             pendingExecutionContext = nil
@@ -855,6 +905,29 @@ public actor WorkEngine {
             skillCatalog: context.skillCatalog,
             attemptResume: true
         )
+    }
+
+    private func buildMethodsSection(from context: AssembledContext) -> String? {
+        let allMethods = context.rules + context.matchedMethods
+        guard !allMethods.isEmpty else { return nil }
+
+        var section = ""
+        if !context.rules.isEmpty {
+            section += "## Active Rules (always applied)\n\n"
+            for rule in context.rules {
+                section += "### \(rule.name)\n\(rule.body)\n\n"
+            }
+        }
+        if !context.matchedMethods.isEmpty {
+            section += "## Matched Methods\n\n"
+            for method in context.matchedMethods {
+                section += "### \(method.name)\n"
+                section += "Description: \(method.description)\n"
+                section += "Tools: \(method.toolsUsed.joined(separator: ", "))\n\n"
+                section += method.body + "\n\n"
+            }
+        }
+        return section.isEmpty ? nil : section
     }
 
     /// Builds skill instructions — inlines small single skills, otherwise emits a compact listing.

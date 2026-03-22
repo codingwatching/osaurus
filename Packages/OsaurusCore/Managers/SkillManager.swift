@@ -68,6 +68,7 @@ public final class SkillManager {
         SkillStore.save(skill)
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
 
@@ -78,6 +79,7 @@ public final class SkillManager {
         SkillStore.save(updated)
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        Task { await SkillSearchService.shared.indexSkill(updated) }
     }
 
     @discardableResult
@@ -88,6 +90,7 @@ public final class SkillManager {
         if result {
             refresh()
             NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+            Task { await SkillSearchService.shared.removeSkill(id: id) }
         }
         return result
     }
@@ -181,6 +184,7 @@ public final class SkillManager {
         SkillStore.save(skill)
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
 
@@ -198,6 +202,7 @@ public final class SkillManager {
         SkillStore.save(skill)
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
 
@@ -220,6 +225,11 @@ public final class SkillManager {
         if !imported.isEmpty {
             refresh()
             NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+            Task {
+                for skill in imported {
+                    await SkillSearchService.shared.indexSkill(skill)
+                }
+            }
         }
         return imported
     }

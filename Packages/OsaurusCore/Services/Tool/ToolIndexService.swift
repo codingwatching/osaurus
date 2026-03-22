@@ -1,0 +1,96 @@
+//
+//  ToolIndexService.swift
+//  osaurus
+//
+//  Syncs ToolRegistry contents into the unified tool_index SQLite table and
+//  VecturaKit search index. Provides search for the context interface.
+//
+
+import Foundation
+
+public actor ToolIndexService {
+    public static let shared = ToolIndexService()
+
+    private init() {}
+
+    /// Populate tool_index from ToolRegistry. Called once at startup after
+    /// ToolDatabase and ToolSearchService are both initialized.
+    public func syncFromRegistry() async {
+        let tools: [ToolRegistry.ToolEntry] = await MainActor.run {
+            ToolRegistry.shared.listTools()
+        }
+
+        for tool in tools {
+            let entry = ToolIndexEntry(
+                id: tool.name,
+                name: tool.name,
+                description: tool.description,
+                runtime: .builtin,
+                toolsJSON: "{}",
+                source: .system,
+                tokenCount: tool.estimatedTokens
+            )
+
+            do {
+                try ToolDatabase.shared.upsertEntry(entry)
+                await ToolSearchService.shared.indexEntry(entry)
+            } catch {
+                ToolIndexLogger.service.error("Failed to sync tool '\(tool.name)' to index: \(error)")
+            }
+        }
+
+        let count = (try? ToolDatabase.shared.entryCount()) ?? 0
+        ToolIndexLogger.service.info("Tool index synced: \(count) entries from registry")
+    }
+
+    /// Index a single newly-registered tool.
+    public func onToolRegistered(
+        name: String,
+        description: String,
+        runtime: ToolRuntime = .builtin,
+        tokenCount: Int = 0
+    ) async {
+        let entry = ToolIndexEntry(
+            id: name,
+            name: name,
+            description: description,
+            runtime: runtime,
+            toolsJSON: "{}",
+            source: .system,
+            tokenCount: tokenCount
+        )
+        do {
+            try ToolDatabase.shared.upsertEntry(entry)
+            await ToolSearchService.shared.indexEntry(entry)
+        } catch {
+            ToolIndexLogger.service.error("Failed to index registered tool '\(name)': \(error)")
+        }
+    }
+
+    /// Remove a tool from the index when unregistered.
+    public func onToolUnregistered(name: String) async {
+        do {
+            try ToolDatabase.shared.deleteEntry(id: name)
+            await ToolSearchService.shared.removeEntry(id: name)
+        } catch {
+            ToolIndexLogger.service.error("Failed to remove tool '\(name)' from index: \(error)")
+        }
+    }
+
+    /// Search the tool index.
+    public func search(query: String, topK: Int = 10) async -> [ToolIndexEntry] {
+        await ToolSearchService.shared.search(query: query, topK: topK)
+    }
+
+    /// Build a compact text index for injection into system prompt (for local models).
+    public func buildCompactIndex() throws -> String {
+        let entries = try ToolDatabase.shared.loadAllEntries()
+        if entries.isEmpty { return "No tools available." }
+
+        var lines: [String] = ["Available tools:"]
+        for entry in entries {
+            lines.append("- \(entry.name): \(entry.description) [\(entry.runtime.rawValue)]")
+        }
+        return lines.joined(separator: "\n")
+    }
+}

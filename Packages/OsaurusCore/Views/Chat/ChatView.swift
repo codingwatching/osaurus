@@ -108,7 +108,7 @@ final class ChatSession: ObservableObject {
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
-                
+
                 // Load persisted options or use defaults
                 if let persisted = ModelOptionsStore.shared.loadOptions(for: model) {
                     self.activeModelOptions = persisted

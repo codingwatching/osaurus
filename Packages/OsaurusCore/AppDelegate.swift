@@ -159,6 +159,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
+        // Initialize context management system (methods, tool index, skill search)
+        Task {
+            async let methodsInit: Void = {
+                try? MethodDatabase.shared.open()
+                await MethodSearchService.shared.initialize()
+            }()
+            async let toolsInit: Void = {
+                try? ToolDatabase.shared.open()
+                await ToolSearchService.shared.initialize()
+            }()
+            async let skillsInit: Void = SkillSearchService.shared.initialize()
+
+            _ = await (methodsInit, toolsInit, skillsInit)
+            await ToolIndexService.shared.syncFromRegistry()
+            await SkillSearchService.shared.rebuildIndex()
+        }
+
         // Auto-start server on app launch
         Task { @MainActor in
             await serverController.startServer()

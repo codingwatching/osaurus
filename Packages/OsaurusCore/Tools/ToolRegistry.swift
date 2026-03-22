@@ -101,10 +101,23 @@ final class ToolRegistry: ObservableObject {
         register(SearchConversationsTool())
         register(SearchSummariesTool())
         register(SearchGraphTool())
+
+        // Method tools
+        register(MethodsSearchTool())
+        register(MethodsLoadTool())
+        register(MethodsSaveTool())
+        register(MethodsReportTool())
     }
 
     func register(_ tool: OsaurusTool) {
         toolsByName[tool.name] = tool
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                tokenCount: tool.asOpenAITool().function.name.count + (tool.description.count / 4)
+            )
+        }
     }
 
     /// OpenAI-compatible tool specifications for the current registry
@@ -494,6 +507,7 @@ final class ToolRegistry: ObservableObject {
             sandboxToolNames.remove(n)
             builtInSandboxToolNames.remove(n)
             previousSandboxEnabledState.removeValue(forKey: n)
+            Task { await ToolIndexService.shared.onToolUnregistered(name: n) }
         }
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()
