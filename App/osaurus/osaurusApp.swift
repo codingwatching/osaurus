@@ -84,7 +84,7 @@ private extension osaurusApp {
     var settingsCommand: some Commands {
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") {
-                openManagementTab(.settings)
+                openManagementTab(nil)
             }
             .keyboardShortcut(",", modifiers: .command)
         }
@@ -296,7 +296,7 @@ private extension osaurusApp {
 
 private extension osaurusApp {
 
-    func openManagementTab(_ tab: ManagementTab) {
+    func openManagementTab(_ tab: ManagementTab?) {
         Task { @MainActor in
             AppDelegate.shared?.showManagementWindow(initialTab: tab)
         }
