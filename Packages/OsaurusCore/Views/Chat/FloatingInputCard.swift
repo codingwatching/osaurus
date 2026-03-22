@@ -262,6 +262,7 @@ struct FloatingInputCard: View {
                     isContinuousMode: isContinuousVoiceMode,
                     isStreaming: isStreaming,
                     useClipboardPaste: voiceConfig.useClipboardPaste,
+                    transcriptionStopMode: voiceConfig.transcriptionStopMode,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
                     onEdit: { transferToTextInput() }
@@ -492,23 +493,25 @@ struct FloatingInputCard: View {
     }
 
     private func logVoiceState(trigger: String) {
-        let enabled     = voiceConfig.voiceInputEnabled
-        let permission  = speechService.microphonePermissionGranted
-        let downloaded  = speechModelManager.downloadedModelsCount
-        let loading     = speechService.isLoadingModel
-        let loaded      = speechService.isModelLoaded
-        let configured  = isVoiceConfigured
-        let available   = isVoiceAvailable
-        print("""
-[VoiceDebug] [\(trigger)] \
-enabled=\(enabled) | \
-micPermission=\(permission) | \
-downloadedCount=\(downloaded) | \
-isLoading=\(loading) | \
-isLoaded=\(loaded) | \
-→ isVoiceConfigured=\(configured) | \
-→ isVoiceAvailable=\(available)
-""")
+        let enabled = voiceConfig.voiceInputEnabled
+        let permission = speechService.microphonePermissionGranted
+        let downloaded = speechModelManager.downloadedModelsCount
+        let loading = speechService.isLoadingModel
+        let loaded = speechService.isModelLoaded
+        let configured = isVoiceConfigured
+        let available = isVoiceAvailable
+        print(
+            """
+            [VoiceDebug] [\(trigger)] \
+            enabled=\(enabled) | \
+            micPermission=\(permission) | \
+            downloadedCount=\(downloaded) | \
+            isLoading=\(loading) | \
+            isLoaded=\(loaded) | \
+            → isVoiceConfigured=\(configured) | \
+            → isVoiceAvailable=\(available)
+            """
+        )
     }
 
 }
@@ -525,17 +528,19 @@ fileprivate func voiceDebugLog(
     isLoaded: Bool
 ) {
     let configured = enabled && micPermission && downloadedCount > 0
-    let available  = configured && isLoaded
-    print("""
-[VoiceDebug] [\(trigger)] \
-enabled=\(enabled) | \
-micPermission=\(micPermission) | \
-downloadedCount=\(downloadedCount) | \
-isLoading=\(isLoading) | \
-isLoaded=\(isLoaded) | \
-→ isVoiceConfigured=\(configured) | \
-→ isVoiceAvailable=\(available)
-""")
+    let available = configured && isLoaded
+    print(
+        """
+        [VoiceDebug] [\(trigger)] \
+        enabled=\(enabled) | \
+        micPermission=\(micPermission) | \
+        downloadedCount=\(downloadedCount) | \
+        isLoading=\(isLoading) | \
+        isLoaded=\(isLoaded) | \
+        → isVoiceConfigured=\(configured) | \
+        → isVoiceAvailable=\(available)
+        """
+    )
 }
 
 // MARK: - Voice Debug Observers
@@ -591,7 +596,9 @@ extension FloatingInputCard {
 
     fileprivate func startVoiceInput() {
         guard isVoiceAvailable else {
-            print("[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible")
+            print(
+                "[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible"
+            )
             // Model may not be loaded yet — kick off load and bail; once loaded the button will become tappable.
             if let model = SpeechModelManager.shared.selectedModel, !speechService.isLoadingModel {
                 Task { try? await speechService.loadModel(model.id) }
@@ -678,6 +685,7 @@ extension FloatingInputCard {
 
     private func checkForPause() {
         guard voiceInputState == .recording,
+            voiceConfig.transcriptionStopMode == .automatic,
             voiceConfig.pauseDuration > 0
         else { return }
 
@@ -736,10 +744,10 @@ extension FloatingInputCard {
             let hasContent =
                 !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
 
-            if hasContent {
+            if hasContent && voiceConfig.transcriptionStopMode == .automatic {
                 print("[FloatingInputCard] Silence timeout with content - triggering auto-send")
                 voiceInputState = .paused(remaining: voiceConfig.confirmationDelay)
-            } else {
+            } else if !hasContent {
                 print("[FloatingInputCard] Silence timeout without content - closing voice input")
                 stopVoiceInputFromTimeout()
             }
@@ -932,9 +940,9 @@ extension FloatingInputCard {
             thinkingToggleChip
 
             // Model-specific options (single grouped entry point)
-//            if !activeProfileOptions.isEmpty {
-//                modelOptionsSelectorChip
-//            }
+            //            if !activeProfileOptions.isEmpty {
+            //                modelOptionsSelectorChip
+            //            }
 
             // Capabilities selector (tools + skills combined)
             if hasTools || hasSkills {
@@ -1110,10 +1118,11 @@ extension FloatingInputCard {
     @ViewBuilder
     private var thinkingToggleChip: some View {
         if let model = selectedModel,
-           let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption {
+            let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
+        {
             let isCurrentlyEnabled = activeModelOptions[thinkingOpt.id]?.boolValue ?? false
             let isEnabled = thinkingOpt.inverted ? !isCurrentlyEnabled : isCurrentlyEnabled
-            
+
             SelectorChip(isActive: isEnabled) {
                 toggleThinking(id: thinkingOpt.id)
             } content: {
@@ -1135,11 +1144,11 @@ extension FloatingInputCard {
     private func toggleThinking(id: String) {
         let current = activeModelOptions[id]?.boolValue ?? false
         let newVal = !current
-        
+
         withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
             activeModelOptions[id] = .bool(newVal)
         }
-        
+
         // Persist the change for this model
         if let model = selectedModel {
             ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
@@ -2412,7 +2421,7 @@ private struct ModelOptionsSelectorView: View {
 
     private var optionRows: some View {
         let filteredOptions = options.filter { $0.id != thinkingOptionId }
-        
+
         return VStack(spacing: 0) {
             ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
                 if index > 0 {
@@ -2913,7 +2922,7 @@ private struct EndTaskButton: View {
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,
-                        onSend: {_ in },
+                        onSend: { _ in },
                         onStop: {}
                     )
                 }

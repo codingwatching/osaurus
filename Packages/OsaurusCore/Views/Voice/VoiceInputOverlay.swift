@@ -52,6 +52,9 @@ public struct VoiceInputOverlay: View {
     /// Whether to paste the full transcription via clipboard instead of live-typing
     let useClipboardPaste: Bool
 
+    /// How to stop voice recording (automatic silence detection or manual)
+    let transcriptionStopMode: TranscriptionStopMode
+
     /// Callbacks
     var onCancel: (() -> Void)?
     var onSend: ((String) -> Void)?
@@ -73,6 +76,7 @@ public struct VoiceInputOverlay: View {
         isContinuousMode: Bool = false,
         isStreaming: Bool = false,
         useClipboardPaste: Bool = true,
+        transcriptionStopMode: TranscriptionStopMode = .automatic,
         onCancel: (() -> Void)? = nil,
         onSend: ((String) -> Void)? = nil,
         onEdit: (() -> Void)? = nil
@@ -89,6 +93,7 @@ public struct VoiceInputOverlay: View {
         self.isContinuousMode = isContinuousMode
         self.isStreaming = isStreaming
         self.useClipboardPaste = useClipboardPaste
+        self.transcriptionStopMode = transcriptionStopMode
         self.onCancel = onCancel
         self.onSend = onSend
         self.onEdit = onEdit
@@ -278,14 +283,34 @@ public struct VoiceInputOverlay: View {
 
                 Spacer()
 
-                // Pause hint with subtle progress
-                if pauseDuration > 0 && silenceDuration > 0.2 {
-                    PauseDetectionRing(
-                        silenceDuration: silenceDuration,
-                        pauseThreshold: pauseDuration,
-                        audioLevel: audioLevel
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                if transcriptionStopMode == .manual {
+                    Button(action: { sendMessage() }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "stop.fill")
+                                .font(.system(size: 12, weight: .bold))
+                            Text("Stop")
+                                .font(.system(size: 13, weight: .bold))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(theme.errorColor)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .opacity(fullText.isEmpty ? 0.5 : 1)
+                    .disabled(fullText.isEmpty)
+                } else {
+                    if pauseDuration > 0 && silenceDuration > 0.2 {
+                        PauseDetectionRing(
+                            silenceDuration: silenceDuration,
+                            pauseThreshold: pauseDuration,
+                            audioLevel: audioLevel
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    }
                 }
             }
             .animation(.easeOut(duration: 0.2), value: silenceDuration > 0.2)
@@ -448,6 +473,8 @@ private struct BlinkingCursor: ViewModifier {
                             silenceDuration: 0.8,
                             silenceTimeoutDuration: 30.0,
                             isContinuousMode: true,
+                            useClipboardPaste: true,
+                            transcriptionStopMode: .automatic,
                             onCancel: { print("Cancelled") },
                             onSend: { text in print("Send: \(text)") },
                             onEdit: { print("Edit") }
@@ -477,6 +504,8 @@ private struct BlinkingCursor: ViewModifier {
                             pauseDuration: 1.5,
                             confirmationDelay: 2.0,
                             silenceDuration: 1.5,
+                            useClipboardPaste: true,
+                            transcriptionStopMode: .automatic,
                             onCancel: { print("Cancelled") },
                             onSend: { text in print("Send: \(text)") },
                             onEdit: { print("Edit") }
