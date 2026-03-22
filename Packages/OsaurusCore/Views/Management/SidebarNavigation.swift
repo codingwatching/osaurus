@@ -145,32 +145,44 @@ private extension SidebarNavigation {
     }
 
     var itemList: some View {
-        ScrollView {
-            LazyVStack(
-                alignment: isCollapsed ? .center : .leading,
-                spacing: isCollapsed ? SidebarLayout.collapsedItemSpacing : SidebarLayout.expandedItemSpacing
-            ) {
-                ForEach(items) { item in
-                    SidebarItemView(
-                        item: item,
-                        isSelected: selection == item.id,
-                        isCollapsed: isCollapsed,
-                        namespace: sidebarNamespace
-                    ) {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            selection = item.id
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(
+                    alignment: isCollapsed ? .center : .leading,
+                    spacing: isCollapsed ? SidebarLayout.collapsedItemSpacing : SidebarLayout.expandedItemSpacing
+                ) {
+                    ForEach(items) { item in
+                        SidebarItemView(
+                            item: item,
+                            isSelected: selection == item.id,
+                            isCollapsed: isCollapsed,
+                            namespace: sidebarNamespace
+                        ) {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                selection = item.id
+                            }
                         }
+                        .id(item.id)
                     }
-                }
 
-                Color.clear
-                    .frame(height: 1)
-                    .onAppear { canScrollDown = false }
-                    .onDisappear { canScrollDown = true }
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear { canScrollDown = false }
+                        .onDisappear { canScrollDown = true }
+                }
+                .padding(.bottom, 8)
             }
-            .padding(.bottom, 8)
+            .scrollIndicators(.hidden)
+            .onChange(of: selection) { _, newValue in
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
+            .onAppear {
+                // Ensure initial selection is visible
+                proxy.scrollTo(selection, anchor: .center)
+            }
         }
-        .scrollIndicators(.hidden)
     }
 
     var footerScrollShadow: some View {
