@@ -1,5 +1,5 @@
 {
-  "originHash" : "3d92c9b2d72bb737259402ba176432ad6b1efe2d18c3e895b069160fb00fe984",
+  "originHash" : "f48ad6030f17cc8767dccd3a083cbe299deb21b797840c5db6d3cbc9224a11e8",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -177,8 +177,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/jkrukowski/swift-embeddings.git",
       "state" : {
-        "revision" : "66994e3b3ed172a9b691b59d11bd0702c3f5eb33",
-        "version" : "0.0.26"
+        "branch" : "main",
+        "revision" : "66994e3b3ed172a9b691b59d11bd0702c3f5eb33"
       }
     },
     {
@@ -384,8 +384,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/rryam/VecturaKit",
       "state" : {
-        "revision" : "dbaaca29b67272de924d3dc2d6d56d23335956d9",
-        "version" : "3.0.0"
+        "branch" : "main",
+        "revision" : "a1b93774d16d8a6e7fc39b7cda9449b719f07f48"
       }
     },
     {

@@ -49,7 +49,8 @@ public actor MemorySearchService {
                     hybridWeight: 0.5,
                     k1: 1.2,
                     b: 0.75
-                )
+                ),
+                memoryStrategy: .automatic()
             )
 
             let embedder = SwiftEmbedder(modelSource: .default)
