@@ -654,6 +654,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         self.popover = popover
 
         popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+
+        // ensure popover window can join all spaces and appear over full screen apps
+        if let popoverWindow = popover.contentViewController?.view.window {
+            popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
+
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -885,6 +891,7 @@ extension AppDelegate {
         window.contentViewController = hostingController
         window.center()
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         Self.acknowledgementsWindow = window
 
@@ -958,6 +965,7 @@ extension AppDelegate {
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
         window.isMovableByWindowBackground = true
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         Self.onboardingWindow = window
 
