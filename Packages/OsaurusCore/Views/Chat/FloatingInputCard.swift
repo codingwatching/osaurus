@@ -138,6 +138,7 @@ struct FloatingInputCard: View {
 
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
     @State private var voiceConfig = SpeechConfiguration.default
 
     // Pause detection state
@@ -213,10 +214,17 @@ struct FloatingInputCard: View {
         return nil
     }
 
-    /// Whether voice input is available (enabled + model loaded + permission granted)
-    private var isVoiceAvailable: Bool {
-        voiceConfig.voiceInputEnabled && speechService.isModelLoaded
+    /// Whether voice button should be visible: voice is enabled + mic permission granted + a model is downloaded.
+    /// Does NOT require the model to be loaded into memory yet — loading happens on demand.
+    private var isVoiceConfigured: Bool {
+        voiceConfig.voiceInputEnabled
             && speechService.microphonePermissionGranted
+            && speechModelManager.downloadedModelsCount > 0
+    }
+
+    /// Whether voice input is ready to actually start recording (model loaded into memory).
+    private var isVoiceAvailable: Bool {
+        isVoiceConfigured && speechService.isModelLoaded
     }
 
     /// Whether voice is in a recording/active state
@@ -300,9 +308,12 @@ struct FloatingInputCard: View {
                 // Ensure voice model is loaded if enabled and not already loaded
                 if voiceConfig.voiceInputEnabled && !speechService.isModelLoaded && !speechService.isLoadingModel {
                     if let model = SpeechModelManager.shared.selectedModel {
+                        print("[VoiceDebug] Kicking off model load for: \(model.id)")
                         Task {
                             try? await speechService.loadModel(model.id)
                         }
+                    } else {
+                        print("[VoiceDebug] No selected model — cannot load")
                     }
                 }
 
@@ -453,6 +464,13 @@ struct FloatingInputCard: View {
                     pauseTimerCancellable = nil
                 }
             }
+            .modifier(VoiceDebugObservers())
+            .task {
+                // log full voice state once the view has settled (deferred to avoid type-checker load in body)
+                // 100ms
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                logVoiceState(trigger: "onAppear")
+            }
             .onReceive(toolRegistry.objectWillChange) { _ in
                 DispatchQueue.main.async {
                     let newValue = !toolRegistry.listTools().isEmpty
@@ -471,8 +489,113 @@ struct FloatingInputCard: View {
         voiceConfig = SpeechConfigurationStore.load()
     }
 
-    private func startVoiceInput() {
-        guard isVoiceAvailable else { return }
+    private func logVoiceState(trigger: String) {
+        let enabled     = voiceConfig.voiceInputEnabled
+        let permission  = speechService.microphonePermissionGranted
+        let downloaded  = speechModelManager.downloadedModelsCount
+        let loading     = speechService.isLoadingModel
+        let loaded      = speechService.isModelLoaded
+        let configured  = isVoiceConfigured
+        let available   = isVoiceAvailable
+        print("""
+[VoiceDebug] [\(trigger)] \
+enabled=\(enabled) | \
+micPermission=\(permission) | \
+downloadedCount=\(downloaded) | \
+isLoading=\(loading) | \
+isLoaded=\(loaded) | \
+→ isVoiceConfigured=\(configured) | \
+→ isVoiceAvailable=\(available)
+""")
+    }
+
+}
+
+// MARK: - Voice Debug Helpers
+
+/// Standalone log helper so VoiceDebugObservers can call it without a card reference.
+fileprivate func voiceDebugLog(
+    trigger: String,
+    enabled: Bool,
+    micPermission: Bool,
+    downloadedCount: Int,
+    isLoading: Bool,
+    isLoaded: Bool
+) {
+    let configured = enabled && micPermission && downloadedCount > 0
+    let available  = configured && isLoaded
+    print("""
+[VoiceDebug] [\(trigger)] \
+enabled=\(enabled) | \
+micPermission=\(micPermission) | \
+downloadedCount=\(downloadedCount) | \
+isLoading=\(isLoading) | \
+isLoaded=\(isLoaded) | \
+→ isVoiceConfigured=\(configured) | \
+→ isVoiceAvailable=\(available)
+""")
+}
+
+// MARK: - Voice Debug Observers
+
+/// Watches the four properties that feed into isVoiceConfigured / isVoiceAvailable
+/// and emits a debug log line whenever any of them change.
+private struct VoiceDebugObservers: ViewModifier {
+    @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var speechModelManager = SpeechModelManager.shared
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: speechService.microphonePermissionGranted) { _, granted in
+                print("[VoiceDebug] microphonePermissionGranted → \(granted)")
+                voiceDebugLog(
+                    trigger: "micPermission",
+                    enabled: SpeechConfigurationStore.load().voiceInputEnabled,
+                    micPermission: granted,
+                    downloadedCount: speechModelManager.downloadedModelsCount,
+                    isLoading: speechService.isLoadingModel,
+                    isLoaded: speechService.isModelLoaded
+                )
+            }
+            .onChange(of: speechService.isModelLoaded) { _, loaded in
+                print("[VoiceDebug] isModelLoaded → \(loaded)")
+                voiceDebugLog(
+                    trigger: "isModelLoaded",
+                    enabled: SpeechConfigurationStore.load().voiceInputEnabled,
+                    micPermission: speechService.microphonePermissionGranted,
+                    downloadedCount: speechModelManager.downloadedModelsCount,
+                    isLoading: speechService.isLoadingModel,
+                    isLoaded: loaded
+                )
+            }
+            .onChange(of: speechService.isLoadingModel) { _, loading in
+                print("[VoiceDebug] isLoadingModel → \(loading)")
+            }
+            .onChange(of: speechModelManager.downloadedModelsCount) { _, count in
+                print("[VoiceDebug] downloadedModelsCount → \(count)")
+                voiceDebugLog(
+                    trigger: "downloadedModelsCount",
+                    enabled: SpeechConfigurationStore.load().voiceInputEnabled,
+                    micPermission: speechService.microphonePermissionGranted,
+                    downloadedCount: count,
+                    isLoading: speechService.isLoadingModel,
+                    isLoaded: speechService.isModelLoaded
+                )
+            }
+    }
+}
+
+extension FloatingInputCard {
+
+    fileprivate func startVoiceInput() {
+        guard isVoiceAvailable else {
+            print("[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible")
+            // Model may not be loaded yet — kick off load and bail; once loaded the button will become tappable.
+            if let model = SpeechModelManager.shared.selectedModel, !speechService.isLoadingModel {
+                Task { try? await speechService.loadModel(model.id) }
+            }
+            return
+        }
 
         // If continuous mode is active, we should be aggressive about ensuring the UI is shown.
         // If recording is already active (e.g. VAD or zombie state), just attach to it.
@@ -1482,11 +1605,29 @@ struct FloatingInputCard: View {
     // MARK: - Voice Input Button
 
     private var voiceInputButton: some View {
-        InputActionButton(
-            icon: "mic.fill",
-            help: "Voice input (speak to type)",
-            action: { startVoiceInput() }
-        )
+        Group {
+            if speechService.isLoadingModel {
+                // model is loading — show a small spinner in place of the mic icon
+                InputActionButton(
+                    icon: "mic.fill",
+                    help: "Loading voice model…",
+                    action: {}
+                )
+                .overlay(
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .allowsHitTesting(false)
+                )
+                .disabled(true)
+                .opacity(0.5)
+            } else {
+                InputActionButton(
+                    icon: "mic.fill",
+                    help: "Voice input (speak to type)",
+                    action: { startVoiceInput() }
+                )
+            }
+        }
         .transition(.opacity.combined(with: .scale(scale: 0.96)))
     }
 
@@ -1631,7 +1772,7 @@ struct FloatingInputCard: View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 mediaButton
-                if isVoiceAvailable && !isStreaming {
+                if isVoiceConfigured && !isStreaming {
                     voiceInputButton
                 }
             }
