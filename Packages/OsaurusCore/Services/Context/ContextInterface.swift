@@ -44,18 +44,22 @@ public actor ContextInterface {
         let profile = ModelContextProfile.profile(for: modelId)
 
         let rules = try MethodDatabase.shared.loadMethodsByTier(.rule)
+        let ruleIds = Set(rules.map(\.id))
 
-        let searchResults = await MethodSearchService.shared.search(
+        async let searchResultsTask = MethodSearchService.shared.search(
             query: query,
             topK: profile.maxMethods,
             threshold: profile.methodThreshold
         )
-        let matchedMethods = searchResults.map(\.method)
+        async let matchedSkillsTask = SkillSearchService.shared.search(query: query, topK: 5)
+
+        let searchResults = await searchResultsTask
+        let matchedSkills = await matchedSkillsTask
+
+        let matchedMethods = searchResults.map(\.method).filter { !ruleIds.contains($0.id) }
 
         let allMethods = rules + matchedMethods
         let coLoadedToolIds = Set(allMethods.flatMap(\.toolsUsed))
-
-        let matchedSkills = await SkillSearchService.shared.search(query: query, topK: 5)
 
         let methodIndex: String?
         if profile.loadMethodIndex {
@@ -95,9 +99,12 @@ public actor ContextInterface {
         let methods = try MethodDatabase.shared.loadAllMethods()
         if methods.isEmpty { return "No methods available." }
 
+        let scores = try MethodDatabase.shared.loadAllScores()
+        let scoreMap = Dictionary(scores.map { ($0.methodId, $0.score) }, uniquingKeysWith: { first, _ in first })
+
         var lines: [String] = ["Available methods:"]
         for m in methods where m.tier != .dormant {
-            let score = (try? MethodDatabase.shared.loadScore(methodId: m.id))?.score ?? 0.0
+            let score = scoreMap[m.id] ?? 0.0
             lines.append("- \(m.name): \(m.description) [score: \(String(format: "%.1f", score))]")
         }
         return lines.joined(separator: "\n")

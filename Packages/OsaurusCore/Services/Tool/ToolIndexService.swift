@@ -20,6 +20,8 @@ public actor ToolIndexService {
             ToolRegistry.shared.listTools()
         }
 
+        let registryNames = Set(tools.map(\.name))
+
         for tool in tools {
             let entry = ToolIndexEntry(
                 id: tool.name,
@@ -37,6 +39,24 @@ public actor ToolIndexService {
             } catch {
                 ToolIndexLogger.service.error("Failed to sync tool '\(tool.name)' to index: \(error)")
             }
+        }
+
+        do {
+            let allEntries = try ToolDatabase.shared.loadAllEntries()
+            let staleSystemEntries = allEntries.filter {
+                $0.source == .system && !registryNames.contains($0.id)
+            }
+            for stale in staleSystemEntries {
+                do {
+                    try ToolDatabase.shared.deleteEntry(id: stale.id)
+                    await ToolSearchService.shared.removeEntry(id: stale.id)
+                    ToolIndexLogger.service.info("Pruned stale tool index entry: \(stale.id)")
+                } catch {
+                    ToolIndexLogger.service.error("Failed to prune stale entry '\(stale.id)': \(error)")
+                }
+            }
+        } catch {
+            ToolIndexLogger.service.error("Failed to load entries for pruning: \(error)")
         }
 
         let count = (try? ToolDatabase.shared.entryCount()) ?? 0

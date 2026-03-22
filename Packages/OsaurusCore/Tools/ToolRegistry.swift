@@ -446,6 +446,14 @@ final class ToolRegistry: ObservableObject {
             builtInSandboxToolNames.remove(tool.name)
         }
         setEnabled(true, for: tool.name)
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .sandbox,
+                tokenCount: tool.asOpenAITool().function.name.count + (tool.description.count / 4)
+            )
+        }
     }
 
     /// Register all tools from a sandbox plugin for a given agent.
@@ -476,10 +484,10 @@ final class ToolRegistry: ObservableObject {
 
     /// Unregister all sandbox tools (e.g., when sandbox becomes unavailable).
     func unregisterAllSandboxTools() {
-        for name in sandboxToolNames {
+        let snapshot = Array(sandboxToolNames)
+        for name in snapshot {
             unregisterSandboxTool(named: name)
         }
-        sandboxToolNames.removeAll()
         previousSandboxEnabledState.removeAll()
         Task { @MainActor in
             await MCPServerManager.shared.notifyToolsListChanged()
@@ -493,6 +501,7 @@ final class ToolRegistry: ObservableObject {
         sandboxToolNames.remove(name)
         builtInSandboxToolNames.remove(name)
         previousSandboxEnabledState.removeValue(forKey: name)
+        Task { await ToolIndexService.shared.onToolUnregistered(name: name) }
     }
 
     /// Whether a tool requires the sandbox container.

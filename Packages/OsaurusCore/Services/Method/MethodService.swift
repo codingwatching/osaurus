@@ -107,7 +107,7 @@ public actor MethodService {
         )
         try db.insertEvent(event)
 
-        guard var score = try db.loadScore(methodId: methodId) else { return }
+        var score = try db.loadScore(methodId: methodId) ?? MethodScore(methodId: methodId)
 
         switch outcome {
         case .loaded:

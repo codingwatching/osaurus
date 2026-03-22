@@ -255,7 +255,11 @@ final class MethodsReportTool: OsaurusTool, @unchecked Sendable {
             return "Error: Method '\(id)' not found."
         }
 
-        try await MethodService.shared.reportOutcome(methodId: id, outcome: outcome)
+        try await MethodService.shared.reportOutcome(
+            methodId: id,
+            outcome: outcome,
+            agentId: WorkExecutionContext.currentIssueId
+        )
 
         let score = try MethodDatabase.shared.loadScore(methodId: id)
         let scoreStr = score.map { String(format: "%.2f", $0.score) } ?? "N/A"

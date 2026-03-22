@@ -191,12 +191,17 @@ struct TierTransitionTests {
 
 struct DeviationDetectionTests {
 
-    private func makeToolCallEvent(toolName: String, success: Bool = true) -> IssueEvent {
+    private func makeToolCallEvent(
+        toolName: String,
+        success: Bool = true,
+        arguments: String? = nil,
+        result: String? = nil
+    ) -> IssueEvent {
         let payload = EventPayload.ToolCallCompleted(
             toolName: toolName,
             iteration: 1,
-            arguments: nil,
-            result: nil,
+            arguments: arguments,
+            result: result,
             success: success
         )
         return IssueEvent.withPayload(
@@ -316,5 +321,166 @@ struct DeviationDetectionTests {
             actualEvents: []
         )
         #expect(deviation == nil)
+    }
+
+    @Test func structuralDeviationWithBothMissingAndExtra() async {
+        let method = OsaurusCore.Method(
+            id: "m6",
+            name: "deploy",
+            description: "deploy flow",
+            body: "steps:\n  - tool: terminal\n  - tool: web_fetch",
+            source: MethodSource.user,
+            toolsUsed: ["terminal", "web_fetch"]
+        )
+
+        let events = [
+            makeToolCallEvent(toolName: "sandbox_run_script"),
+            makeToolCallEvent(toolName: "new_tool"),
+        ]
+
+        let deviation = await IntrospectionWorker.shared.detectDeviation(
+            method: method,
+            actualEvents: events
+        )
+        #expect(deviation != nil)
+        #expect(deviation?.isMinor == false)
+        #expect(deviation?.summary.contains("missing") == true)
+        #expect(deviation?.summary.contains("extra") == true)
+    }
+
+    @Test func singleExtraToolOnlyIsStructural() async {
+        let method = OsaurusCore.Method(
+            id: "m7",
+            name: "test",
+            description: "test",
+            body: "steps:\n  - tool: terminal",
+            source: MethodSource.user,
+            toolsUsed: ["terminal"]
+        )
+
+        let events = [
+            makeToolCallEvent(toolName: "web_fetch")
+        ]
+
+        let deviation = await IntrospectionWorker.shared.detectDeviation(
+            method: method,
+            actualEvents: events
+        )
+        #expect(deviation != nil)
+        #expect(deviation?.isMinor == false)
+        #expect(deviation?.summary.contains("missing") == true)
+        #expect(deviation?.summary.contains("extra") == true)
+    }
+
+    @Test func eventsWithMalformedPayloadAreIgnored() async {
+        let method = OsaurusCore.Method(
+            id: "m8",
+            name: "test",
+            description: "test",
+            body: "steps:\n  - tool: terminal",
+            source: MethodSource.user,
+            toolsUsed: ["terminal"]
+        )
+
+        let malformed = IssueEvent(
+            issueId: "test-issue",
+            eventType: .toolCallCompleted,
+            payload: "not-valid-json"
+        )
+
+        let deviation = await IntrospectionWorker.shared.detectDeviation(
+            method: method,
+            actualEvents: [malformed]
+        )
+        #expect(deviation == nil)
+    }
+
+    @Test func duplicateCallsDetectedAsMinorDeviation() async {
+        let method = OsaurusCore.Method(
+            id: "m9",
+            name: "test",
+            description: "test",
+            body: "steps:\n  - tool: terminal\n  - tool: terminal\n  - tool: terminal",
+            source: MethodSource.user,
+            toolsUsed: ["terminal"]
+        )
+
+        let events = [
+            makeToolCallEvent(toolName: "terminal"),
+            makeToolCallEvent(toolName: "terminal"),
+            makeToolCallEvent(toolName: "terminal"),
+        ]
+
+        let deviation = await IntrospectionWorker.shared.detectDeviation(
+            method: method,
+            actualEvents: events
+        )
+        #expect(deviation != nil)
+        #expect(deviation?.isMinor == true)
+        #expect(deviation?.summary.contains("additional") == true)
+    }
+
+    @Test func singleCallMatchesSingleExpected() async {
+        let method = OsaurusCore.Method(
+            id: "m10",
+            name: "test",
+            description: "test",
+            body: "steps:\n  - tool: terminal",
+            source: MethodSource.user,
+            toolsUsed: ["terminal"]
+        )
+
+        let events = [
+            makeToolCallEvent(toolName: "terminal")
+        ]
+
+        let deviation = await IntrospectionWorker.shared.detectDeviation(
+            method: method,
+            actualEvents: events
+        )
+        #expect(deviation == nil)
+    }
+}
+
+// MARK: - Prompt Template Tests
+
+struct IntrospectionPromptTests {
+
+    @Test func refinementPromptContainsAllPlaceholders() {
+        let prompt = IntrospectionWorker.refinementPrompt
+        #expect(prompt.contains("{method_body}"))
+        #expect(prompt.contains("{deviation_summary}"))
+        #expect(prompt.contains("{actual_calls}"))
+    }
+
+    @Test func refinementPromptSubstitution() {
+        let prompt = IntrospectionWorker.refinementPrompt
+            .replacingOccurrences(of: "{method_body}", with: "steps:\n  - tool: terminal")
+            .replacingOccurrences(of: "{deviation_summary}", with: "2 additional tool call(s) appended")
+            .replacingOccurrences(of: "{actual_calls}", with: "- terminal [success]\n- web_fetch [success]")
+
+        #expect(!prompt.contains("{method_body}"))
+        #expect(!prompt.contains("{deviation_summary}"))
+        #expect(!prompt.contains("{actual_calls}"))
+        #expect(prompt.contains("steps:\n  - tool: terminal"))
+        #expect(prompt.contains("2 additional tool call(s) appended"))
+        #expect(prompt.contains("- terminal [success]"))
+    }
+
+    @Test func toolPackagingPromptContainsAllPlaceholders() {
+        let prompt = IntrospectionWorker.toolPackagingPrompt
+        #expect(prompt.contains("{arguments}"))
+        #expect(prompt.contains("{result}"))
+    }
+
+    @Test func toolPackagingPromptSubstitution() {
+        let prompt = IntrospectionWorker.toolPackagingPrompt
+            .replacingOccurrences(of: "{arguments}", with: "python3 -c 'print(42)'")
+            .replacingOccurrences(of: "{result}", with: "42")
+
+        #expect(!prompt.contains("{arguments}"))
+        #expect(!prompt.contains("{result}"))
+        #expect(prompt.contains("python3 -c 'print(42)'"))
+        #expect(prompt.contains("42"))
     }
 }

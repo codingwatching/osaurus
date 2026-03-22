@@ -110,6 +110,7 @@ public final class SkillManager {
         }
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        Task { await SkillSearchService.shared.indexSkill(skill) }
     }
 
     /// Remove all skills associated with a plugin
@@ -117,6 +118,7 @@ public final class SkillManager {
         let pluginSkillIds = skills.filter { $0.pluginId == pluginId }.map { $0.id }
         for id in pluginSkillIds {
             _ = SkillStore.delete(id: id)
+            Task { await SkillSearchService.shared.removeSkill(id: id) }
         }
         if !pluginSkillIds.isEmpty {
             refresh()
@@ -351,6 +353,7 @@ public final class SkillManager {
 
         refresh()
         NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+        Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
 

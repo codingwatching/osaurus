@@ -58,7 +58,6 @@ public enum ContextBudgetCategory: String, CaseIterable, Sendable {
     case systemPrompt
     case tools
     case memory
-    case methods
     case response
     case history
 }

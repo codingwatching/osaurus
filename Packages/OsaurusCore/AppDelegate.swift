@@ -174,6 +174,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             _ = await (methodsInit, toolsInit, skillsInit)
             await ToolIndexService.shared.syncFromRegistry()
             await SkillSearchService.shared.rebuildIndex()
+            await MethodSearchService.shared.rebuildIndex()
         }
 
         // Auto-start server on app launch

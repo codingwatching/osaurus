@@ -380,7 +380,7 @@ public actor WorkEngine {
         }
 
         // Load skill instructions if any skills are selected
-        let skillInstructions = await buildSkillInstructions(from: skillCatalog)
+        var skillInstructions = await buildSkillInstructions(from: skillCatalog)
 
         // Assemble context from all four pillars (methods, skills, tools, memory)
         let resolvedModel = model ?? "default"
@@ -390,6 +390,19 @@ public actor WorkEngine {
             modelId: resolvedModel,
             agentId: issue.id
         )
+
+        // Merge semantically matched skills into skill instructions
+        let catalogSkillNames = Set(skillCatalog.map(\.name))
+        let additionalSkills = assembledContext.matchedSkills.filter { !catalogSkillNames.contains($0.name) }
+        if !additionalSkills.isEmpty {
+            let matched = additionalSkills.map { "- \($0.name): \($0.description)" }.joined(separator: "\n")
+            if skillInstructions != nil {
+                skillInstructions! += "\n\n## Context-Matched Skills\n\(matched)"
+            } else {
+                skillInstructions =
+                    "## Context-Matched Skills\nUse `load_skill` to load full instructions when needed.\n\(matched)"
+            }
+        }
 
         let initialMessages =
             if attemptResume,
@@ -437,22 +450,31 @@ public actor WorkEngine {
         let allMethods = assembledContext.rules + assembledContext.matchedMethods
         let methodToolNames = Set(["methods_search", "methods_load", "methods_save", "methods_report"])
 
+        let originalTools = tools
         var tools = tools
         if !allMethods.isEmpty {
             let coLoadedIds = assembledContext.coLoadedToolIds.union(methodToolNames)
-            tools = tools.filter { coLoadedIds.contains($0.function.name) }
+            let filtered = tools.filter { coLoadedIds.contains($0.function.name) }
+            tools = filtered.isEmpty ? originalTools : filtered
         } else {
             switch profile.tier {
             case .frontier:
                 break
             case .capable:
-                if let max = profile.maxTools, tools.count > max {
+                if let maxTools = profile.maxTools, tools.count > maxTools {
                     let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
                     let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
-                    tools = Array(otherTools.prefix(max - methodTools.count)) + methodTools
+                    let otherLimit = Swift.max(maxTools - methodTools.count, 1)
+                    tools = Array(otherTools.prefix(otherLimit)) + methodTools
                 }
             case .local:
-                tools = tools.filter { methodToolNames.contains($0.function.name) }
+                let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
+                if let maxTools = profile.maxTools {
+                    let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
+                    tools = Array(otherTools.prefix(maxTools)) + methodTools
+                } else {
+                    tools = methodTools.isEmpty ? originalTools : methodTools
+                }
             }
         }
 
@@ -492,6 +514,7 @@ public actor WorkEngine {
         )
 
         var messages = activeSession?.messages ?? initialMessages
+        let sessionStartForIntrospection = activeSession?.startedAt ?? Date()
 
         // Run the reasoning loop
         let loopResult: LoopResult
@@ -569,6 +592,12 @@ public actor WorkEngine {
                 activeSession?.lastExitReason = .error(error.localizedDescription)
                 persistExecutionStateIfPossible()
             }
+            Task.detached {
+                await IntrospectionWorker.shared.onSessionEnd(
+                    issueId: issue.id,
+                    sessionStartTime: sessionStartForIntrospection
+                )
+            }
             throw error
         }
 
@@ -614,11 +643,10 @@ public actor WorkEngine {
             clearPersistedExecutionState(issueId: issue.id)
 
             // Trigger introspection worker for method refinement and tool packaging
-            let sessionStart = activeSession?.startedAt ?? Date()
             Task.detached {
                 await IntrospectionWorker.shared.onSessionEnd(
                     issueId: issue.id,
-                    sessionStartTime: sessionStart
+                    sessionStartTime: sessionStartForIntrospection
                 )
             }
 
@@ -704,6 +732,13 @@ public actor WorkEngine {
                 "Budget exhausted after \(totalIterations) iterations and \(totalToolCalls) tool calls."
             persistExecutionStateIfPossible()
             await delegate?.workEngine(self, didExhaustBudget: issue, summary: summary)
+
+            Task.detached {
+                await IntrospectionWorker.shared.onSessionEnd(
+                    issueId: issue.id,
+                    sessionStartTime: sessionStartForIntrospection
+                )
+            }
 
             return ExecutionResult(
                 issue: issue,

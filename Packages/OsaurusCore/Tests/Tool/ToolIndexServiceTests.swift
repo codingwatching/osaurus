@@ -146,4 +146,113 @@ struct ToolDatabaseTests {
         let loaded = try db.loadEntry(id: "manual-tool")
         #expect(loaded?.source == .manual)
     }
+
+    @Test func introspectionSourceFieldPersists() throws {
+        let db = try makeTempDB()
+        let entry = ToolIndexEntry(
+            id: "suggestion_issue123_evt456",
+            name: "suggestion_issue123_evt456",
+            description: "[packaging_suggestion] {\"name\": \"run_tests\"}",
+            runtime: .sandbox,
+            source: .introspection,
+            tokenCount: 100
+        )
+        try db.upsertEntry(entry)
+
+        let loaded = try db.loadEntry(id: "suggestion_issue123_evt456")
+        #expect(loaded != nil)
+        #expect(loaded?.source == .introspection)
+        #expect(loaded?.runtime == .sandbox)
+        #expect(loaded?.description.hasPrefix("[packaging_suggestion]") == true)
+    }
+
+    @Test func communitySourceFieldPersists() throws {
+        let db = try makeTempDB()
+        let entry = ToolIndexEntry(
+            id: "community-tool",
+            name: "community-tool",
+            description: "From community",
+            runtime: .native,
+            source: .community,
+            tokenCount: 30
+        )
+        try db.upsertEntry(entry)
+
+        let loaded = try db.loadEntry(id: "community-tool")
+        #expect(loaded?.source == .community)
+    }
+
+    @Test func allSourceTypesDistinct() throws {
+        let db = try makeTempDB()
+        try db.upsertEntry(
+            ToolIndexEntry(
+                id: "sys",
+                name: "sys",
+                description: "system",
+                runtime: .builtin,
+                source: .system
+            )
+        )
+        try db.upsertEntry(
+            ToolIndexEntry(
+                id: "man",
+                name: "man",
+                description: "manual",
+                runtime: .native,
+                source: .manual
+            )
+        )
+        try db.upsertEntry(
+            ToolIndexEntry(
+                id: "intro",
+                name: "intro",
+                description: "introspection",
+                runtime: .sandbox,
+                source: .introspection
+            )
+        )
+        try db.upsertEntry(
+            ToolIndexEntry(
+                id: "comm",
+                name: "comm",
+                description: "community",
+                runtime: .native,
+                source: .community
+            )
+        )
+
+        #expect(try db.loadEntry(id: "sys")?.source == .system)
+        #expect(try db.loadEntry(id: "man")?.source == .manual)
+        #expect(try db.loadEntry(id: "intro")?.source == .introspection)
+        #expect(try db.loadEntry(id: "comm")?.source == .community)
+        #expect(try db.entryCount() == 4)
+    }
+
+    @Test func packagingSuggestionCanBeOverwritten() throws {
+        let db = try makeTempDB()
+        let initial = ToolIndexEntry(
+            id: "suggestion_x",
+            name: "suggestion_x",
+            description: "[packaging_suggestion] v1",
+            runtime: .sandbox,
+            source: .introspection,
+            tokenCount: 50
+        )
+        try db.upsertEntry(initial)
+
+        let updated = ToolIndexEntry(
+            id: "suggestion_x",
+            name: "suggestion_x",
+            description: "[packaging_suggestion] v2 improved",
+            runtime: .sandbox,
+            source: .introspection,
+            tokenCount: 75
+        )
+        try db.upsertEntry(updated)
+
+        let loaded = try db.loadEntry(id: "suggestion_x")
+        #expect(loaded?.description == "[packaging_suggestion] v2 improved")
+        #expect(loaded?.tokenCount == 75)
+        #expect(try db.entryCount() == 1)
+    }
 }

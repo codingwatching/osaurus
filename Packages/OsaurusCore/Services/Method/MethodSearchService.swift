@@ -71,6 +71,7 @@ public actor MethodSearchService {
         do {
             let uuid = deterministicUUID(for: id)
             try await db.deleteDocuments(ids: [uuid])
+            reverseIdMap.removeValue(forKey: uuid.uuidString)
         } catch {
             MethodLogger.search.error("Failed to remove method \(id) from index: \(error)")
         }
