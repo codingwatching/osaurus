@@ -31,7 +31,7 @@ struct SidebarItemData: Identifiable, Hashable {
 // MARK: - Layout Constants
 
 private enum SidebarLayout {
-    static let expandedWidth: CGFloat = 200
+    static let expandedWidth: CGFloat = 220
     static let collapsedWidth: CGFloat = 64
     static let topPadding: CGFloat = 26
     static let bottomPadding: CGFloat = 16
