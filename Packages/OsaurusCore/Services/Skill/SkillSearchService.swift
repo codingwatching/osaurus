@@ -91,9 +91,10 @@ public actor SkillSearchService {
     ) async -> [Skill] {
         guard let db = vectorDB else { return [] }
         do {
+            let fetchCount = topK * 3
             let results = try await db.search(
                 query: .text(query),
-                numResults: topK,
+                numResults: fetchCount,
                 threshold: threshold ?? Self.defaultSearchThreshold
             )
 
@@ -102,7 +103,7 @@ public actor SkillSearchService {
 
             let allSkills = await MainActor.run { SkillManager.shared.skills }
             let idSet = Set(matchedSkillIds)
-            return allSkills.filter { idSet.contains($0.id) }
+            return Array(allSkills.filter { idSet.contains($0.id) && $0.enabled }.prefix(topK))
         } catch {
             SkillSearchLogger.search.error("Skill search failed: \(error)")
             return []

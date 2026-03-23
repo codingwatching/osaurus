@@ -69,14 +69,6 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         let tools = await toolResults
         let skills = await skillResults
 
-        let enabledToolNames = await MainActor.run {
-            Set(
-                ToolRegistry.shared.listTools()
-                    .filter { $0.enabled }
-                    .map { $0.name }
-            )
-        }
-
         struct ScoredResult {
             let id: String
             let type: String
@@ -89,7 +81,6 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
 
         for r in methods {
             let m = r.method
-            guard m.tier != .dormant else { continue }
             results.append(
                 ScoredResult(
                     id: "method/\(m.id)",
@@ -102,7 +93,6 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
 
         for entry in tools {
-            guard enabledToolNames.contains(entry.name) else { continue }
             results.append(
                 ScoredResult(
                     id: "tool/\(entry.id)",

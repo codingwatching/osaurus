@@ -92,16 +92,25 @@ public actor ToolSearchService {
     ) async -> [ToolIndexEntry] {
         guard let db = vectorDB else { return [] }
         do {
+            let fetchCount = topK * 3
             let results = try await db.search(
                 query: .text(query),
-                numResults: topK,
+                numResults: fetchCount,
                 threshold: threshold ?? Self.defaultSearchThreshold
             )
 
             let toolIds = results.compactMap { reverseIdMap[$0.id.uuidString] }
             guard !toolIds.isEmpty else { return [] }
 
-            return try ToolDatabase.shared.loadAllEntries().filter { toolIds.contains($0.id) }
+            let enabledNames = await MainActor.run {
+                Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
+            }
+
+            return Array(
+                try ToolDatabase.shared.loadAllEntries()
+                    .filter { toolIds.contains($0.id) && enabledNames.contains($0.name) }
+                    .prefix(topK)
+            )
         } catch {
             ToolIndexLogger.search.error("Tool search failed: \(error)")
             return []

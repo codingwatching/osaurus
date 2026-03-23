@@ -105,9 +105,13 @@ public actor ToolIndexService {
         await ToolSearchService.shared.search(query: query, topK: topK)
     }
 
-    /// Build a compact text index for injection into system prompt (for local models).
-    public func buildCompactIndex() throws -> String {
-        let entries = try ToolDatabase.shared.loadAllEntries()
+    /// Build a compact text index for injection into system prompt.
+    /// Only includes enabled tools from the registry.
+    public func buildCompactIndex() async throws -> String {
+        let enabledNames = await MainActor.run {
+            Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
+        }
+        let entries = try ToolDatabase.shared.loadAllEntries().filter { enabledNames.contains($0.name) }
         if entries.isEmpty { return "No tools available." }
 
         var lines: [String] = ["Available tools:"]

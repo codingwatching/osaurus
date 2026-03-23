@@ -21,8 +21,8 @@ struct PreflightCapabilitySearchTests {
         let result = await PreflightCapabilitySearch.search(
             query: "zzz_completely_nonexistent_capability_xyz_12345"
         )
-        #expect(result.toolSpecs.isEmpty || true)
-        #expect(result.contextSnippet.isEmpty || true)
+        #expect(result.toolSpecs.isEmpty)
+        #expect(result.contextSnippet.isEmpty)
     }
 
     @Test func resultContainsNoDuplicateToolSpecs() async {
@@ -31,20 +31,18 @@ struct PreflightCapabilitySearchTests {
         #expect(Set(names).count == names.count)
     }
 
-    @Test func builtInToolsNotDuplicatedByPreflight() async {
+    @Test func preflightToolSpecsHaveNoDuplicatesWithAlwaysLoaded() async {
         let alwaysLoaded = await MainActor.run {
             ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
         }
         let alwaysNames = Set(alwaysLoaded.map { $0.function.name })
 
         let result = await PreflightCapabilitySearch.search(query: "search memory save method")
+        let preflightNames = result.toolSpecs.map { $0.function.name }
 
-        for spec in result.toolSpecs {
-            #expect(
-                !alwaysNames.contains(spec.function.name)
-                    || true,
-                "Pre-flight may return built-ins; caller deduplicates"
-            )
-        }
+        #expect(
+            Set(preflightNames).count == preflightNames.count,
+            "Pre-flight specs should not contain internal duplicates"
+        )
     }
 }

@@ -86,9 +86,10 @@ public actor MethodSearchService {
     ) async -> [MethodSearchResult] {
         guard let db = vectorDB else { return [] }
         do {
+            let fetchCount = topK * 3
             let results = try await db.search(
                 query: .text(query),
-                numResults: topK,
+                numResults: fetchCount,
                 threshold: threshold ?? Self.defaultSearchThreshold
             )
 
@@ -106,13 +107,17 @@ public actor MethodSearchService {
             let scores = try methodIds.compactMap { try MethodDatabase.shared.loadScore(methodId: $0) }
             let scoreByMethod = Dictionary(scores.map { ($0.methodId, $0) }, uniquingKeysWith: { first, _ in first })
 
-            return methods.compactMap { method -> MethodSearchResult? in
-                let uuid = deterministicUUID(for: method.id)
-                guard let searchScore = scoreMap[uuid.uuidString] else { return nil }
-                let methodScore = scoreByMethod[method.id]?.score ?? 0.0
-                return MethodSearchResult(method: method, searchScore: searchScore, score: methodScore)
-            }
-            .sorted { $0.searchScore > $1.searchScore }
+            return Array(
+                methods.compactMap { method -> MethodSearchResult? in
+                    guard method.tier != .dormant else { return nil }
+                    let uuid = deterministicUUID(for: method.id)
+                    guard let searchScore = scoreMap[uuid.uuidString] else { return nil }
+                    let methodScore = scoreByMethod[method.id]?.score ?? 0.0
+                    return MethodSearchResult(method: method, searchScore: searchScore, score: methodScore)
+                }
+                .sorted { $0.searchScore > $1.searchScore }
+                .prefix(topK)
+            )
         } catch {
             MethodLogger.search.error("Method search failed: \(error)")
             return []

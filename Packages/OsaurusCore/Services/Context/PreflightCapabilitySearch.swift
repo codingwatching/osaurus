@@ -34,20 +34,17 @@ enum PreflightCapabilitySearch {
         let tools = await toolHits
         let skills = await skillHits
 
+        // Enabled tool names for filtering method-cascaded tool references
         let enabledToolNames = await MainActor.run {
-            Set(
-                ToolRegistry.shared.listTools()
-                    .filter { $0.enabled }
-                    .map { $0.name }
-            )
+            Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
         }
 
         // Collect tool specs to inject
         var toolSpecsToAdd: [Tool] = []
         var toolNamesAdded: Set<String> = []
 
-        // Tools matched directly by search
-        for entry in tools where enabledToolNames.contains(entry.name) {
+        // Tools matched directly by search (already filtered by ToolSearchService)
+        for entry in tools {
             let specs = await MainActor.run {
                 ToolRegistry.shared.specs(forTools: [entry.name])
             }
@@ -57,11 +54,11 @@ enum PreflightCapabilitySearch {
             }
         }
 
-        // Tools referenced by matched methods (cascading)
+        // Tools referenced by matched methods (cascading — filter by enabled)
         for result in methods {
             let method = result.method
-            guard method.tier != .dormant else { continue }
-            for toolName in method.toolsUsed where !toolNamesAdded.contains(toolName) {
+            for toolName in method.toolsUsed
+            where enabledToolNames.contains(toolName) && !toolNamesAdded.contains(toolName) {
                 let specs = await MainActor.run {
                     ToolRegistry.shared.specs(forTools: [toolName])
                 }
@@ -75,10 +72,9 @@ enum PreflightCapabilitySearch {
         // Build context snippet for methods and skills
         var sections: [String] = []
 
-        let activeMethodResults = methods.filter { $0.method.tier != .dormant }
-        if !activeMethodResults.isEmpty {
+        if !methods.isEmpty {
             sections.append("## Pre-loaded Methods\n")
-            for result in activeMethodResults {
+            for result in methods {
                 let m = result.method
                 sections.append("### \(m.name)\n")
                 sections.append("*\(m.description)*\n")
@@ -110,7 +106,7 @@ enum PreflightCapabilitySearch {
 
         if !toolSpecsToAdd.isEmpty || !snippet.isEmpty {
             let tc = toolSpecsToAdd.count
-            let mc = activeMethodResults.count
+            let mc = methods.count
             let sc = skills.count
             logger.info("Pre-flight loaded \(tc) tools, \(mc) methods, \(sc) skills")
         }
