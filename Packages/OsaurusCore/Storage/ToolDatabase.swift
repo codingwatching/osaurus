@@ -75,6 +75,7 @@ public enum ToolRuntime: String, Codable, Sendable {
     case sandbox
     case native
     case builtin
+    case mcp
 }
 
 public enum ToolIndexSource: String, Codable, Sendable {

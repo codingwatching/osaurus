@@ -191,7 +191,12 @@ public final class MCPProviderManager: ObservableObject {
             state.discoveredToolNames = []
             providerStates[providerId] = state
 
-            // Clean up (same as disconnect)
+            // Unregister any tools that were registered before the failure
+            if let tools = registeredTools[providerId] {
+                ToolRegistry.shared.unregister(names: tools.map { $0.name })
+            }
+
+            // Clean up local state
             clients.removeValue(forKey: providerId)
             discoveredTools.removeValue(forKey: providerId)
             registeredTools.removeValue(forKey: providerId)
@@ -392,7 +397,7 @@ public final class MCPProviderManager: ObservableObject {
         // Store discovered tools
         discoveredTools[providerId] = mcpTools
 
-        // Create and register tool wrappers
+        // Create, register, and auto-enable tool wrappers
         var tools: [MCPProviderTool] = []
         for mcpTool in mcpTools {
             let tool = MCPProviderTool(
@@ -401,7 +406,8 @@ public final class MCPProviderManager: ObservableObject {
                 providerName: provider.name
             )
             tools.append(tool)
-            ToolRegistry.shared.register(tool)
+            ToolRegistry.shared.registerMCPTool(tool)
+            ToolRegistry.shared.setEnabled(true, for: tool.name)
         }
         registeredTools[providerId] = tools
 

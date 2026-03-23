@@ -21,6 +21,8 @@ final class ToolRegistry: ObservableObject {
     private var sandboxToolNames: Set<String> = []
     /// Built-in sandbox execution tools managed by runtime context.
     private var builtInSandboxToolNames: Set<String> = []
+    /// Tool names registered from remote MCP providers.
+    private var mcpToolNames: Set<String> = []
 
     struct ToolPolicyInfo {
         let isPermissioned: Bool
@@ -104,9 +106,13 @@ final class ToolRegistry: ObservableObject {
             await ToolIndexService.shared.onToolRegistered(
                 name: tool.name,
                 description: tool.description,
-                tokenCount: tool.asOpenAITool().function.name.count + (tool.description.count / 4)
+                tokenCount: Self.estimateTokenCount(tool)
             )
         }
+    }
+
+    private static func estimateTokenCount(_ tool: OsaurusTool) -> Int {
+        tool.asOpenAITool().function.name.count + (tool.description.count / 4)
     }
 
     /// Get specs for specific tools by name (ignores enabled state)
@@ -349,7 +355,7 @@ final class ToolRegistry: ObservableObject {
                 name: tool.name,
                 description: tool.description,
                 runtime: .sandbox,
-                tokenCount: tool.asOpenAITool().function.name.count + (tool.description.count / 4)
+                tokenCount: Self.estimateTokenCount(tool)
             )
         }
     }
@@ -397,12 +403,34 @@ final class ToolRegistry: ObservableObject {
         sandboxToolNames.contains(name)
     }
 
+    // MARK: - MCP Tool Registration
+
+    /// Register a tool from a remote MCP provider.
+    func registerMCPTool(_ tool: OsaurusTool) {
+        toolsByName[tool.name] = tool
+        mcpToolNames.insert(tool.name)
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .mcp,
+                tokenCount: Self.estimateTokenCount(tool)
+            )
+        }
+    }
+
+    /// Whether a tool was registered from a remote MCP provider.
+    func isMCPTool(_ name: String) -> Bool {
+        mcpToolNames.contains(name)
+    }
+
     // MARK: - Unregister
     func unregister(names: [String]) {
         for n in names {
             toolsByName.removeValue(forKey: n)
             sandboxToolNames.remove(n)
             builtInSandboxToolNames.remove(n)
+            mcpToolNames.remove(n)
             Task { await ToolIndexService.shared.onToolUnregistered(name: n) }
         }
     }

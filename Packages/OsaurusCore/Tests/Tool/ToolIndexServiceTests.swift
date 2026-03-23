@@ -114,10 +114,32 @@ struct ToolDatabaseTests {
         try db.upsertEntry(sampleEntry(id: "native-tool", runtime: .native))
         try db.upsertEntry(sampleEntry(id: "sandbox-tool", runtime: .sandbox))
         try db.upsertEntry(sampleEntry(id: "builtin-tool", runtime: .builtin))
+        try db.upsertEntry(sampleEntry(id: "mcp-tool", runtime: .mcp))
 
         #expect(try db.loadEntry(id: "native-tool")?.runtime == .native)
         #expect(try db.loadEntry(id: "sandbox-tool")?.runtime == .sandbox)
         #expect(try db.loadEntry(id: "builtin-tool")?.runtime == .builtin)
+        #expect(try db.loadEntry(id: "mcp-tool")?.runtime == .mcp)
+    }
+
+    @Test func mcpRuntimePersistsAndRoundtrips() throws {
+        let db = try makeTempDB()
+        let entry = ToolIndexEntry(
+            id: "github_search",
+            name: "github_search",
+            description: "Search GitHub repositories via MCP",
+            runtime: .mcp,
+            toolsJSON: "{}",
+            source: .system,
+            tokenCount: 40
+        )
+        try db.upsertEntry(entry)
+
+        let loaded = try db.loadEntry(id: "github_search")
+        #expect(loaded != nil)
+        #expect(loaded?.runtime == .mcp)
+        #expect(loaded?.name == "github_search")
+        #expect(loaded?.description == "Search GitHub repositories via MCP")
     }
 
     // MARK: - Migrations

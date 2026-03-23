@@ -248,8 +248,14 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func loadTool(_ toolId: String) async -> String {
-        let toolSpec = await MainActor.run {
-            ToolRegistry.shared.specs(forTools: [toolId])
+        let (isEnabled, toolSpec) = await MainActor.run {
+            (
+                ToolRegistry.shared.isGlobalEnabled(toolId),
+                ToolRegistry.shared.specs(forTools: [toolId])
+            )
+        }
+        guard isEnabled else {
+            return "Error: Tool '\(toolId)' is disabled.\n"
         }
         guard let spec = toolSpec.first else {
             return "Error: Tool '\(toolId)' not found or not registered.\n"
