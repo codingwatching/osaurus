@@ -351,13 +351,23 @@ struct KVCacheStore {
         cache.flatMap(\.state).reduce(0) { $0 + $1.nbytes }
     }
 
-    /// Returns true when every layer in the cache has populated state and a
-    /// positive offset, which is the minimum bar for a usable SSD-restored cache.
+    /// Returns true when the cache has populated state and at least one
+    /// full-attention (non-ArraysCache) layer has a positive offset.
+    /// Hybrid models like Qwen3.5-27B interleave MambaCache layers (offset always
+    /// 0) with KVCacheSimple layers (offset > 0 after prefill), so checking
+    /// `allSatisfy { offset > 0 }` would incorrectly reject valid hybrid caches.
     private static func isValidCache(_ cache: [any KVCache]) -> Bool {
-        !cache.isEmpty && cache.allSatisfy { !$0.state.isEmpty && $0.offset > 0 }
+        guard !cache.isEmpty, cache.allSatisfy({ !$0.state.isEmpty }) else { return false }
+        // At least one non-Mamba layer must have a positive offset.
+        return cache.contains(where: { !($0 is ArraysCache) && $0.offset > 0 })
     }
 
     #if DEBUG
+        /// Test-only: exposes `isValidCache` for unit tests without making it internal.
+        static func _testIsValidCache(_ cache: [any KVCache]) -> Bool {
+            isValidCache(cache)
+        }
+
         /// Test-only: injects a cache entry with a specified byte size, bypassing MLX
         /// array creation which requires Metal. The entry has a hot cache reference
         /// (a zero-byte KVCacheSimple) but reports `sizeBytes` for budget accounting.

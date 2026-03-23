@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import MLX
 import MLXLMCommon
 import Testing
 
@@ -69,8 +70,10 @@ struct KVCacheStoreTests {
         store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
         store.putCache(sessionId: "s2", cache: makeCache(), tokens: nil, modelName: "m")
 
+        // Re-putting s1 should promote it to MRU
         store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
 
+        // Both should still be retrievable after re-put
         #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
         #expect(store.getCache(sessionId: "s2", modelName: "m").0 != nil)
     }
@@ -396,5 +399,78 @@ struct KVCacheStoreTests {
         let k1 = KVCacheStore.prefixKey(modelName: "org:model", hash: "h1")
         let k2 = KVCacheStore.prefixKey(modelName: "org", hash: "model_h1")
         #expect(k1 != k2)
+    }
+
+    // MARK: - isValidCache (hybrid model support)
+
+    /// A fresh KVCacheSimple has no keys/values yet → state is empty → invalid.
+    @Test func isValidCache_falseForFreshKVCacheSimple() {
+        let cache: [any KVCache] = [KVCacheSimple()]
+        #expect(!KVCacheStore._testIsValidCache(cache))
+    }
+
+    /// An empty array is invalid.
+    @Test func isValidCache_falseForEmptyArray() {
+        #expect(!KVCacheStore._testIsValidCache([]))
+    }
+
+    /// A KVCacheSimple whose state has been set (simulating post-prefill) is valid.
+    /// Setting `state` also sets offset = keys.dim(2) via the KVCacheSimple setter.
+    @Test func isValidCache_trueForKVCacheSimpleWithState() {
+        let cache = KVCacheSimple()
+        // Inject a 2-element state (keys + values) as if prefill ran.
+        // Shape [1, 1, 4, 1] → dim(2) == 4 → offset becomes 4.
+        let fakeKeys = MLX.zeros([1, 1, 4, 1])
+        let fakeValues = MLX.zeros([1, 1, 4, 1])
+        cache.state = [fakeKeys, fakeValues]
+        #expect(cache.offset == 4)
+        #expect(KVCacheStore._testIsValidCache([cache]))
+    }
+
+    /// An ArraysCache always has offset == 0, so a cache made entirely of
+    /// ArraysCache layers (like Qwen3.5-27B's Mamba layers) must be invalid.
+    @Test func isValidCache_falseForAllArraysCache() {
+        // ArraysCache(size: 2) starts with nil slots → state is empty → guard fails.
+        // We need to inject state to pass the first guard (allSatisfy { !state.isEmpty }).
+        // MambaCache extends ArraysCache and has size 2.
+        let mamba = MambaCache()
+        // Inject two dummy arrays so state is non-empty, but offset stays 0.
+        mamba.state = [MLX.zeros([1]), MLX.zeros([1])]
+        // offset is still 0 because ArraysCache never updates it.
+        #expect(mamba.offset == 0)
+        #expect(!KVCacheStore._testIsValidCache([mamba]))
+    }
+
+    /// A hybrid cache (MambaCache layers interleaved with a KVCacheSimple layer that
+    /// has a positive offset) must be considered valid — this is the Qwen3.5-27B case.
+    @Test func isValidCache_trueForHybridCacheWithOneValidKVLayer() {
+        // Simulate 3 Mamba layers + 1 KVCacheSimple layer (every 4th layer pattern).
+        let mamba1 = MambaCache()
+        let mamba2 = MambaCache()
+        let mamba3 = MambaCache()
+        mamba1.state = [MLX.zeros([1]), MLX.zeros([1])]
+        mamba2.state = [MLX.zeros([1]), MLX.zeros([1])]
+        mamba3.state = [MLX.zeros([1]), MLX.zeros([1])]
+
+        let attn = KVCacheSimple()
+        let fakeKeys = MLX.zeros([1, 1, 8, 1])
+        let fakeValues = MLX.zeros([1, 1, 8, 1])
+        attn.state = [fakeKeys, fakeValues]
+
+        let hybrid: [any KVCache] = [mamba1, mamba2, mamba3, attn]
+        #expect(KVCacheStore._testIsValidCache(hybrid))
+    }
+
+    /// A hybrid cache where the KVCacheSimple layer is present but still empty
+    /// (offset == 0, empty state) must be invalid.
+    @Test func isValidCache_falseForHybridCacheWithEmptyKVLayer() {
+        let mamba = MambaCache()
+        mamba.state = [MLX.zeros([1]), MLX.zeros([1])]
+
+        let attn = KVCacheSimple()  // fresh — empty state, offset 0
+
+        let hybrid: [any KVCache] = [mamba, attn]
+        // attn.state is empty, so allSatisfy { !state.isEmpty } fails → invalid.
+        #expect(!KVCacheStore._testIsValidCache(hybrid))
     }
 }
