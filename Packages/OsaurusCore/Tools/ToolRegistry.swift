@@ -360,16 +360,12 @@ final class ToolRegistry: ObservableObject {
         }
     }
 
-    /// Register all tools from a sandbox plugin for a given agent.
-    func registerSandboxPluginTools(plugin: SandboxPlugin, agentId: String, agentName: String) {
+    /// Register all tools from a sandbox plugin (agent-agnostic).
+    /// Agent identity is resolved at execution time via WorkExecutionContext.
+    func registerSandboxPluginTools(plugin: SandboxPlugin) {
         guard let tools = plugin.tools else { return }
         for spec in tools {
-            let tool = SandboxPluginTool(
-                spec: spec,
-                plugin: plugin,
-                agentId: agentId,
-                agentName: agentName
-            )
+            let tool = SandboxPluginTool(spec: spec, plugin: plugin)
             registerSandboxTool(tool)
         }
     }
@@ -386,6 +382,14 @@ final class ToolRegistry: ObservableObject {
     /// Unregister all sandbox tools (e.g., when sandbox becomes unavailable).
     func unregisterAllSandboxTools() {
         let snapshot = Array(sandboxToolNames)
+        for name in snapshot {
+            unregisterSandboxTool(named: name)
+        }
+    }
+
+    /// Unregister only builtin sandbox tools, leaving plugin tools intact.
+    func unregisterAllBuiltinSandboxTools() {
+        let snapshot = Array(builtInSandboxToolNames)
         for name in snapshot {
             unregisterSandboxTool(named: name)
         }

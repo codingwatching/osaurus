@@ -984,10 +984,12 @@ final class ChatSession: ObservableObject {
                                 if !isRunActive(runId) { break outer }
                             }
 
-                            resultText = try await ToolRegistry.shared.execute(
-                                name: inv.toolName,
-                                argumentsJSON: inv.jsonArguments
-                            )
+                            resultText = try await WorkExecutionContext.$currentAgentId.withValue(effectiveAgentId) {
+                                try await ToolRegistry.shared.execute(
+                                    name: inv.toolName,
+                                    argumentsJSON: inv.jsonArguments
+                                )
+                            }
                             if !isRunActive(runId) { break outer }
 
                             // Hot-load tools injected by capabilities_load

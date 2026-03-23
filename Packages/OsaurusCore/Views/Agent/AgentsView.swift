@@ -1172,7 +1172,6 @@ struct AgentDetailView: View {
     private var sandboxSection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let sandboxPlugins = SandboxPluginManager.shared.plugins(for: agent.id.uuidString)
         let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
         let updateExecConfig: ((inout AutonomousExecConfig) -> Void) -> Void = { update in
             var config = execConfig ?? .default
@@ -1190,7 +1189,7 @@ struct AgentDetailView: View {
         }
 
         let sandboxSubtitle: String = {
-            if sandboxRunning { return "\(sandboxPlugins.count) plugins" }
+            if sandboxRunning { return "Running" }
             if sandboxAvailable { return "Not Running" }
             return "Unavailable"
         }()
@@ -1268,29 +1267,6 @@ struct AgentDetailView: View {
                         }
                     }
 
-                    if !sandboxPlugins.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Sandbox Plugins")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-
-                            ForEach(sandboxPlugins) { installed in
-                                HStack(spacing: 8) {
-                                    Circle()
-                                        .fill(installed.status == .ready ? Color.green : Color.orange)
-                                        .frame(width: 6, height: 6)
-                                    Text(installed.plugin.name)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(theme.primaryText)
-                                    Spacer()
-                                    Text(installed.status.rawValue)
-                                        .font(.system(size: 10))
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        }
-                    }
                 }
             }
         }

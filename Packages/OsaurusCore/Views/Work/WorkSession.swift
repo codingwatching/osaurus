@@ -547,6 +547,7 @@ public final class WorkSession: ObservableObject {
             // Set self as delegate on WorkEngine to receive updates
             engine.setDelegate(self)
             engine.sandboxAgentName = SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            engine.agentId = agentId
 
             // Refresh window state's task list now that database is ready
             windowState?.refreshWorkTasks()

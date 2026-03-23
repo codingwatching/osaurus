@@ -14,4 +14,7 @@ public enum WorkExecutionContext {
 
     /// The current batch ID for grouped operations (nil for non-batch operations)
     @TaskLocal public static var currentBatchId: UUID?
+
+    /// The agent ID whose context is active for the current execution
+    @TaskLocal public static var currentAgentId: UUID?
 }

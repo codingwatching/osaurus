@@ -36,6 +36,9 @@ public actor WorkEngine {
     /// Set by WorkSession before execution when running in sandbox mode.
     public nonisolated(unsafe) var sandboxAgentName: String?
 
+    /// Agent UUID for execution context binding. Set by WorkSession.
+    public nonisolated(unsafe) var agentId: UUID?
+
     /// Delegate for execution events
     public nonisolated(unsafe) weak var delegate: WorkEngineDelegate?
 
@@ -449,6 +452,7 @@ public actor WorkEngine {
                 maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
                 executionMode: resolvedExecutionMode,
                 sandboxAgentName: sandboxAgentName,
+                agentId: agentId,
                 shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
                 onIterationStart: { [weak self] iteration in
                     guard let self = self else { return }

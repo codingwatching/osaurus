@@ -44,7 +44,8 @@ public actor WorkExecutionEngine {
     /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
-        issueId: String
+        issueId: String,
+        agentId: UUID? = nil
     ) async throws -> ToolCallResult {
         let callId =
             invocation.toolCallId
@@ -58,7 +59,8 @@ public actor WorkExecutionEngine {
                 await self.executeToolInBackground(
                     name: invocation.toolName,
                     argumentsJSON: invocation.jsonArguments,
-                    issueId: issueId
+                    issueId: issueId,
+                    agentId: agentId
                 )
             }
             group.addTask {
@@ -90,18 +92,21 @@ public actor WorkExecutionEngine {
         return ToolCallResult(toolCall: toolCall, result: result)
     }
 
-    /// Helper to execute tool in background with issue context
+    /// Helper to execute tool in background with issue and agent context
     private func executeToolInBackground(
         name: String,
         argumentsJSON: String,
-        issueId: String
+        issueId: String,
+        agentId: UUID? = nil
     ) async -> String {
         do {
             return try await WorkExecutionContext.$currentIssueId.withValue(issueId) {
-                try await ToolRegistry.shared.execute(
-                    name: name,
-                    argumentsJSON: argumentsJSON
-                )
+                try await WorkExecutionContext.$currentAgentId.withValue(agentId) {
+                    try await ToolRegistry.shared.execute(
+                        name: name,
+                        argumentsJSON: argumentsJSON
+                    )
+                }
             }
         } catch {
             print("[WorkExecutionEngine] Tool execution failed: \(error)")
@@ -544,6 +549,7 @@ public actor WorkExecutionEngine {
         maxIterations: Int = defaultMaxIterations,
         executionMode: WorkExecutionMode = .none,
         sandboxAgentName: String? = nil,
+        agentId: UUID? = nil,
         shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
@@ -778,7 +784,7 @@ public actor WorkExecutionEngine {
             }
 
             // Execute the tool
-            let result = try await executeToolCall(invocation, issueId: issue.id)
+            let result = try await executeToolCall(invocation, issueId: issue.id, agentId: agentId)
 
             // Hot-load tools injected by capabilities_load
             if invocation.toolName == "capabilities_load" {

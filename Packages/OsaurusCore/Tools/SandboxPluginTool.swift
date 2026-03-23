@@ -13,27 +13,17 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
     let name: String
     let description: String
     let parameters: JSONValue?
-    let pluginId: String
-    let agentId: String
+    let plugin: SandboxPlugin
 
     private let runCommand: String
-    private let agentName: String
     private let parameterSpecs: [String: SandboxParameterSpec]
 
-    /// Whether this tool requires the sandbox to be running
     let requiresSandbox = true
 
-    init(
-        spec: SandboxToolSpec,
-        plugin: SandboxPlugin,
-        agentId: String,
-        agentName: String
-    ) {
+    init(spec: SandboxToolSpec, plugin: SandboxPlugin) {
         self.name = "\(plugin.id)_\(spec.id)"
         self.description = spec.description
-        self.pluginId = plugin.id
-        self.agentId = agentId
-        self.agentName = agentName
+        self.plugin = plugin
         self.runCommand = spec.run
         self.parameterSpecs = spec.parameters ?? [:]
         self.parameters = Self.buildParameterSchema(from: spec.parameters)
@@ -44,29 +34,31 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
             return encodeResult(stdout: "", stderr: "Sandbox container is not running", exitCode: 1)
         }
 
-        let pluginDir = OsaurusPaths.inContainerPluginDir(agentName, pluginId)
-        let dirCheck = try await SandboxManager.shared.execAsAgent(
-            agentName,
-            command: "test -d \(pluginDir)"
+        let (agentId, agentName) = await resolveAgent()
+
+        let ready = await SandboxPluginManager.shared.ensureReady(
+            pluginId: plugin.id,
+            plugin: plugin,
+            for: agentId
         )
-        if !dirCheck.succeeded {
+        guard ready else {
             return encodeResult(
                 stdout: "",
-                stderr: "Plugin '\(pluginId)' is not available in the sandbox. Try reinstalling the plugin.",
+                stderr: "Failed to provision plugin '\(plugin.id)' for agent",
                 exitCode: 1
             )
         }
 
-        let env = buildExecEnvironment(from: argumentsJSON)
+        let env = buildExecEnvironment(agentId: agentId, from: argumentsJSON)
 
         let result = try await SandboxManager.shared.execAsAgent(
             agentName,
             command: runCommand,
-            pluginName: pluginId,
+            pluginName: plugin.id,
             env: env,
             timeout: 30,
             streamToLogs: true,
-            logSource: pluginId
+            logSource: plugin.id
         )
 
         return encodeResult(
@@ -76,19 +68,29 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
         )
     }
 
+    // MARK: - Agent Resolution
+
+    private func resolveAgent() async -> (id: String, name: String) {
+        let agentId: String
+        if let ctxAgent = WorkExecutionContext.currentAgentId {
+            agentId = ctxAgent.uuidString
+        } else {
+            agentId = await MainActor.run { AgentManager.shared.activeAgent.id.uuidString }
+        }
+        let agentName = await MainActor.run { SandboxAgentProvisioner.linuxName(for: agentId) }
+        return (agentId, agentName)
+    }
+
     // MARK: - Environment
 
-    /// Build the full execution environment: agent secrets, plugin secrets,
-    /// OSAURUS_PLUGIN, and PARAM_* from the tool arguments.
-    /// PARAM_* vars always win over secrets of the same name.
-    private func buildExecEnvironment(from argumentsJSON: String) -> [String: String] {
+    private func buildExecEnvironment(agentId: String, from argumentsJSON: String) -> [String: String] {
         var env: [String: String] = [:]
 
         if let uuid = UUID(uuidString: agentId) {
-            env = AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: pluginId)
+            env = AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: plugin.id)
         }
 
-        env["OSAURUS_PLUGIN"] = pluginId
+        env["OSAURUS_PLUGIN"] = plugin.id
         env.merge(buildParamVars(from: argumentsJSON)) { _, new in new }
         return env
     }
