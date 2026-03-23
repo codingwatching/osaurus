@@ -42,6 +42,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     public var defaultModel: String?
     /// ChatView-only phased capability loading (catalog, then `select_capabilities`) to reduce token usage
     public var phasedContextLoading: Bool
+    /// User-selected context mode controlling method/tool loading density
+    public var contextMode: ContextMode
 
     // MARK: - Work Generation Settings
     /// Work-specific temperature override (nil uses default 0.3)
@@ -65,6 +67,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         maxToolAttempts: Int? = nil,
         defaultModel: String? = nil,
         phasedContextLoading: Bool = true,
+        contextMode: ContextMode = .balanced,
         workTemperature: Float? = nil,
         workMaxTokens: Int? = nil,
         workTopPOverride: Float? = nil,
@@ -80,6 +83,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.maxToolAttempts = maxToolAttempts
         self.defaultModel = defaultModel
         self.phasedContextLoading = phasedContextLoading
+        self.contextMode = contextMode
         self.workTemperature = workTemperature
         self.workMaxTokens = workMaxTokens
         self.workTopPOverride = workTopPOverride
@@ -98,6 +102,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         maxToolAttempts = try container.decodeIfPresent(Int.self, forKey: .maxToolAttempts)
         defaultModel = try container.decodeIfPresent(String.self, forKey: .defaultModel)
         phasedContextLoading = try container.decodeIfPresent(Bool.self, forKey: .phasedContextLoading) ?? true
+        contextMode = try container.decodeIfPresent(ContextMode.self, forKey: .contextMode) ?? .balanced
         workTemperature = try container.decodeIfPresent(Float.self, forKey: .workTemperature)
         workMaxTokens = try container.decodeIfPresent(Int.self, forKey: .workMaxTokens)
         workTopPOverride = try container.decodeIfPresent(Float.self, forKey: .workTopPOverride)

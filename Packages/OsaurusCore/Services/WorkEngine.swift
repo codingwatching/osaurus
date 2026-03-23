@@ -383,11 +383,9 @@ public actor WorkEngine {
         var skillInstructions = await buildSkillInstructions(from: skillCatalog)
 
         // Assemble context from all four pillars (methods, skills, tools, memory)
-        let resolvedModel = model ?? "default"
         let contextQuery = issue.title + (issue.description.map { " " + $0 } ?? "")
         let assembledContext = try await ContextInterface.shared.assemble(
             query: contextQuery,
-            modelId: resolvedModel,
             agentId: issue.id
         )
 
@@ -445,8 +443,8 @@ public actor WorkEngine {
             secretNames: secretNames
         )
 
-        // Apply co-loading: adjust tools based on assembled context and model profile
-        let profile = ModelContextProfile.profile(for: resolvedModel)
+        // Apply co-loading: adjust tools based on assembled context and user's context mode
+        let profile = await ModelContextProfile.current()
         let allMethods = assembledContext.rules + assembledContext.matchedMethods
         let methodToolNames = Set(["methods_search", "methods_load", "methods_save", "methods_report"])
 
@@ -457,17 +455,17 @@ public actor WorkEngine {
             let filtered = tools.filter { coLoadedIds.contains($0.function.name) }
             tools = filtered.isEmpty ? originalTools : filtered
         } else {
-            switch profile.tier {
-            case .frontier:
+            switch profile.mode {
+            case .full:
                 break
-            case .capable:
+            case .balanced:
                 if let maxTools = profile.maxTools, tools.count > maxTools {
                     let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
                     let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
                     let otherLimit = Swift.max(maxTools - methodTools.count, 1)
                     tools = Array(otherTools.prefix(otherLimit)) + methodTools
                 }
-            case .local:
+            case .focused:
                 let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
                 if let maxTools = profile.maxTools {
                     let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }

@@ -38,10 +38,9 @@ public actor ContextInterface {
     /// Query all four pillars and assemble context for a single turn.
     public func assemble(
         query: String,
-        modelId: String,
         agentId: String
     ) async throws -> AssembledContext {
-        let profile = ModelContextProfile.profile(for: modelId)
+        let profile = await ModelContextProfile.current()
 
         let rules = try MethodDatabase.shared.loadMethodsByTier(.rule)
         let ruleIds = Set(rules.map(\.id))
@@ -81,6 +80,64 @@ public actor ContextInterface {
         let skillCount = matchedSkills.count
         contextLogger.debug(
             "Assembled context: \(ruleCount) rules, \(methodCount) methods, \(toolCount) co-loaded tools, \(skillCount) skills"
+        )
+
+        return AssembledContext(
+            rules: rules,
+            matchedMethods: matchedMethods,
+            coLoadedToolIds: coLoadedToolIds,
+            matchedSkills: matchedSkills,
+            methodIndex: methodIndex,
+            toolIndex: toolIndex
+        )
+    }
+
+    /// Overload accepting an explicit context mode (useful for tests).
+    public func assemble(
+        query: String,
+        agentId: String,
+        mode: ContextMode
+    ) async throws -> AssembledContext {
+        let profile = ModelContextProfile.profile(for: mode)
+
+        let rules = try MethodDatabase.shared.loadMethodsByTier(.rule)
+        let ruleIds = Set(rules.map(\.id))
+
+        async let searchResultsTask = MethodSearchService.shared.search(
+            query: query,
+            topK: profile.maxMethods,
+            threshold: profile.methodThreshold
+        )
+        async let matchedSkillsTask = SkillSearchService.shared.search(query: query, topK: 5)
+
+        let searchResults = await searchResultsTask
+        let matchedSkills = await matchedSkillsTask
+
+        let matchedMethods = searchResults.map(\.method).filter { !ruleIds.contains($0.id) }
+
+        let allMethods = rules + matchedMethods
+        let coLoadedToolIds = Set(allMethods.flatMap(\.toolsUsed))
+
+        let methodIndex: String?
+        if profile.loadMethodIndex {
+            methodIndex = try buildCompactMethodIndex()
+        } else {
+            methodIndex = nil
+        }
+
+        let toolIndex: String?
+        if profile.loadToolIndex {
+            toolIndex = try await ToolIndexService.shared.buildCompactIndex()
+        } else {
+            toolIndex = nil
+        }
+
+        let ruleCount = rules.count
+        let methodCount = matchedMethods.count
+        let toolCount = coLoadedToolIds.count
+        let skillCount = matchedSkills.count
+        contextLogger.debug(
+            "Assembled context (\(mode.rawValue)): \(ruleCount) rules, \(methodCount) methods, \(toolCount) co-loaded tools, \(skillCount) skills"
         )
 
         return AssembledContext(

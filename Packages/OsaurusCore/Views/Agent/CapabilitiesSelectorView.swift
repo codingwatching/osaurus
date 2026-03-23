@@ -80,6 +80,13 @@ final class CapabilitiesSelectorViewModel: ObservableObject {
     @Published private(set) var rows: [CapabilityRow] = []
     @Published var searchText = ""
     @Published var expandedGroups: Set<String> = []
+    @Published var contextMode: ContextMode {
+        didSet {
+            var config = ChatConfigurationStore.load()
+            config.contextMode = contextMode
+            ChatConfigurationStore.save(config)
+        }
+    }
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -91,6 +98,7 @@ final class CapabilitiesSelectorViewModel: ObservableObject {
     init(agentId: UUID, isWorkMode: Bool) {
         self.agentId = agentId
         self.isWorkMode = isWorkMode
+        self.contextMode = ChatConfigurationStore.load().contextMode
 
         Publishers.Merge3(
             toolRegistry.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
@@ -572,6 +580,13 @@ struct CapabilitiesSelectorView: View {
                         )
                 }
             }
+
+            Picker("Context", selection: $vm.contextMode) {
+                Text("Full").tag(ContextMode.full)
+                Text("Balanced").tag(ContextMode.balanced)
+                Text("Focused").tag(ContextMode.focused)
+            }
+            .pickerStyle(.segmented)
 
             HStack(spacing: 8) {
                 CapabilityActionButton(title: "Enable All", action: vm.enableAll)

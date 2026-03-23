@@ -2,8 +2,8 @@
 //  ContextInterfaceTests.swift
 //  osaurus
 //
-//  Tests for ModelContextProfile selection and the context interface's
-//  structural guarantees.
+//  Tests for ModelContextProfile, context mode selection, and the context
+//  interface's structural guarantees.
 //
 
 import Foundation
@@ -17,24 +17,9 @@ private typealias Method = OsaurusCore.Method
 
 struct ModelContextProfileTests {
 
-    @Test func frontierModelsDetected() {
-        let opusProfile = ModelContextProfile.profile(for: "claude-4-opus")
-        #expect(opusProfile.tier == .frontier)
-
-        let gpt4Profile = ModelContextProfile.profile(for: "gpt-4o-2025-01")
-        #expect(gpt4Profile.tier == .frontier)
-
-        let geminiProfile = ModelContextProfile.profile(for: "gemini-2.5-pro-latest")
-        #expect(geminiProfile.tier == .frontier)
-    }
-
-    @Test func unknownModelDefaultsToCapable() {
-        let profile = ModelContextProfile.profile(for: "unknown-model-xyz")
-        #expect(profile.tier == .capable)
-    }
-
-    @Test func frontierProfileLimits() {
-        let p = ModelContextProfile.frontier
+    @Test func fullProfileLimits() {
+        let p = ModelContextProfile.full
+        #expect(p.mode == .full)
         #expect(p.maxMethods == 10)
         #expect(p.maxTools == nil)
         #expect(p.methodThreshold == 0.3)
@@ -42,8 +27,9 @@ struct ModelContextProfileTests {
         #expect(p.loadToolIndex == false)
     }
 
-    @Test func capableProfileLimits() {
-        let p = ModelContextProfile.capable
+    @Test func balancedProfileLimits() {
+        let p = ModelContextProfile.balanced
+        #expect(p.mode == .balanced)
         #expect(p.maxMethods == 5)
         #expect(p.maxTools == 15)
         #expect(p.methodThreshold == 0.5)
@@ -51,13 +37,35 @@ struct ModelContextProfileTests {
         #expect(p.loadToolIndex == true)
     }
 
-    @Test func localProfileLimits() {
-        let p = ModelContextProfile.local
+    @Test func focusedProfileLimits() {
+        let p = ModelContextProfile.focused
+        #expect(p.mode == .focused)
         #expect(p.maxMethods == 2)
         #expect(p.maxTools == 5)
         #expect(p.methodThreshold == 0.7)
         #expect(p.loadMethodIndex == false)
         #expect(p.loadToolIndex == true)
+    }
+
+    @Test func profileForModeRoundtrips() {
+        for mode in ContextMode.allCases {
+            let profile = ModelContextProfile.profile(for: mode)
+            #expect(profile.mode == mode)
+        }
+    }
+
+    @Test func suggestedModeForFrontierModel() {
+        #expect(ModelContextProfile.suggestedMode(for: "claude-4-opus") == .full)
+        #expect(ModelContextProfile.suggestedMode(for: "gpt-4o-2025-01") == .full)
+        #expect(ModelContextProfile.suggestedMode(for: "gemini-2.5-pro-latest") == .full)
+    }
+
+    @Test func suggestedModeForLocalModel() {
+        #expect(ModelContextProfile.suggestedMode(for: "foundation") == .focused)
+    }
+
+    @Test func suggestedModeForUnknownModel() {
+        #expect(ModelContextProfile.suggestedMode(for: "unknown-model-xyz") == .balanced)
     }
 }
 
@@ -319,12 +327,12 @@ struct ContextAssemblyTests {
         await MethodSearchService.shared.rebuildIndex()
     }
 
-    @Test func frontierLoadsGenerously() async throws {
+    @Test func fullModeLoadsGenerously() async throws {
         try await seedTestData()
         let ctx = try await ContextInterface.shared.assemble(
             query: "deploy to staging",
-            modelId: "claude-opus-4-6",
-            agentId: "test"
+            agentId: "test",
+            mode: .full
         )
         #expect(!ctx.rules.isEmpty)
         #expect(ctx.rules.allSatisfy { $0.tier == .rule })
@@ -332,12 +340,12 @@ struct ContextAssemblyTests {
         #expect(ctx.methodIndex != nil)
     }
 
-    @Test func localLoadsStrictly() async throws {
+    @Test func focusedModeLoadsStrictly() async throws {
         try await seedTestData()
         let ctx = try await ContextInterface.shared.assemble(
             query: "deploy to staging",
-            modelId: "foundation",
-            agentId: "test"
+            agentId: "test",
+            mode: .focused
         )
         #expect(!ctx.rules.isEmpty)
         #expect(ctx.matchedMethods.count <= 2)
@@ -350,8 +358,8 @@ struct ContextAssemblyTests {
         try await seedTestData()
         let ctx = try await ContextInterface.shared.assemble(
             query: "completely unrelated query about cooking recipes",
-            modelId: "claude-opus-4-6",
-            agentId: "test"
+            agentId: "test",
+            mode: .full
         )
         #expect(!ctx.rules.isEmpty)
         #expect(ctx.rules[0].tier == .rule)
@@ -360,25 +368,25 @@ struct ContextAssemblyTests {
 
     @Test func zeroToolsInvariant() async throws {
         try await seedTestData()
-        for modelId in ["claude-opus-4-6", "claude-sonnet-4-6", "foundation"] {
+        for mode in ContextMode.allCases {
             for query in ["deploy to staging", "unrelated query xyz"] {
                 let ctx = try await ContextInterface.shared.assemble(
                     query: query,
-                    modelId: modelId,
-                    agentId: "test"
+                    agentId: "test",
+                    mode: mode
                 )
                 let hasToolAccess = !ctx.coLoadedToolIds.isEmpty || ctx.toolIndex != nil
-                #expect(hasToolAccess, "No tool access for \(modelId) with query '\(query)'")
+                #expect(hasToolAccess, "No tool access for \(mode.rawValue) with query '\(query)'")
             }
         }
     }
 
-    @Test func localExcludesLowScoringMethods() async throws {
+    @Test func focusedExcludesLowScoringMethods() async throws {
         try await seedTestData()
         let ctx = try await ContextInterface.shared.assemble(
             query: "deploy to staging",
-            modelId: "foundation",
-            agentId: "test"
+            agentId: "test",
+            mode: .focused
         )
         let matchedIds = ctx.matchedMethods.map(\.id)
         #expect(!matchedIds.contains("active-low"))
@@ -388,8 +396,8 @@ struct ContextAssemblyTests {
         try await seedTestData()
         let ctx = try await ContextInterface.shared.assemble(
             query: "something completely unrelated",
-            modelId: "claude-opus-4-6",
-            agentId: "test"
+            agentId: "test",
+            mode: .full
         )
         #expect(ctx.coLoadedToolIds.contains("terminal"))
     }
@@ -425,8 +433,8 @@ struct ContextAssemblyTests {
 
         let ctx = try await ContextInterface.shared.assemble(
             query: "deploy",
-            modelId: "claude-opus-4-6",
-            agentId: "test"
+            agentId: "test",
+            mode: .full
         )
 
         #expect(ctx.methodIndex != nil)

@@ -2,32 +2,33 @@
 //  ModelContextProfile.swift
 //  osaurus
 //
-//  Defines context limits per model tier: how many methods and tools to load,
-//  search thresholds, and whether to include compact fallback indices.
+//  Defines context limits per user-selected context mode: how many methods
+//  and tools to load, search thresholds, and whether to include compact
+//  fallback indices. The user picks Full / Balanced / Focused in the UI.
 //
 
 import Foundation
 
-// MARK: - ModelTier
+// MARK: - ContextMode
 
-public enum ModelTier: String, Sendable {
-    case frontier
-    case capable
-    case local
+public enum ContextMode: String, Codable, Sendable, CaseIterable {
+    case full
+    case balanced
+    case focused
 }
 
 // MARK: - ModelContextProfile
 
 public struct ModelContextProfile: Sendable {
-    public let tier: ModelTier
+    public let mode: ContextMode
     public let maxMethods: Int
     public let maxTools: Int?
     public let methodThreshold: Float
     public let loadMethodIndex: Bool
     public let loadToolIndex: Bool
 
-    public static let frontier = ModelContextProfile(
-        tier: .frontier,
+    public static let full = ModelContextProfile(
+        mode: .full,
         maxMethods: 10,
         maxTools: nil,
         methodThreshold: 0.3,
@@ -35,8 +36,8 @@ public struct ModelContextProfile: Sendable {
         loadToolIndex: false
     )
 
-    public static let capable = ModelContextProfile(
-        tier: .capable,
+    public static let balanced = ModelContextProfile(
+        mode: .balanced,
         maxMethods: 5,
         maxTools: 15,
         methodThreshold: 0.5,
@@ -44,8 +45,8 @@ public struct ModelContextProfile: Sendable {
         loadToolIndex: true
     )
 
-    public static let local = ModelContextProfile(
-        tier: .local,
+    public static let focused = ModelContextProfile(
+        mode: .focused,
         maxMethods: 2,
         maxTools: 5,
         methodThreshold: 0.7,
@@ -53,21 +54,37 @@ public struct ModelContextProfile: Sendable {
         loadToolIndex: true
     )
 
-    private static let frontierIdentifiers: Set<String> = [
+    @MainActor
+    public static func current() -> ModelContextProfile {
+        let mode = ChatConfigurationStore.load().contextMode
+        return profile(for: mode)
+    }
+
+    public static func profile(for mode: ContextMode) -> ModelContextProfile {
+        switch mode {
+        case .full: return .full
+        case .balanced: return .balanced
+        case .focused: return .focused
+        }
+    }
+
+    // MARK: - Suggestion for Default
+
+    private static let fullIdentifiers: Set<String> = [
         "opus", "gpt-4o", "gpt-4-turbo", "gpt-4.1", "o3", "o4-mini",
         "gemini-2.5-pro", "deepseek-r1",
     ]
 
-    public static func profile(for modelId: String) -> ModelContextProfile {
+    public static func suggestedMode(for modelId: String) -> ContextMode {
         if SystemPromptBuilder.isLocalModel(modelId) {
-            return .local
+            return .focused
         }
 
         let lowered = modelId.lowercased()
-        for id in frontierIdentifiers {
-            if lowered.contains(id) { return .frontier }
+        for id in fullIdentifiers {
+            if lowered.contains(id) { return .full }
         }
 
-        return .capable
+        return .balanced
     }
 }
