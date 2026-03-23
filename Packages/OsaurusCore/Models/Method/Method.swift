@@ -63,17 +63,12 @@ public struct Method: Identifiable, Codable, Sendable {
 
 public enum MethodSource: String, Codable, Sendable {
     case user
-    case agentSuggested = "agent-suggested"
-    case introspection
-    case community
 }
 
 // MARK: - MethodTier
 
 public enum MethodTier: String, Codable, Sendable {
-    case rule
     case active
-    case dormant
 }
 
 // MARK: - MethodEventType
@@ -82,9 +77,6 @@ public enum MethodEventType: String, Codable, Sendable {
     case loaded
     case succeeded
     case failed
-    case promoted
-    case demoted
-    case refined
 }
 
 // MARK: - MethodEvent

@@ -15,20 +15,34 @@ struct MethodsSaveToolTests {
 
     @Test func rejectsMissingName() async throws {
         let tool = MethodsSaveTool()
-        let result = try await tool.execute(argumentsJSON: "{\"description\": \"test\"}")
+        let result = try await tool.execute(
+            argumentsJSON: "{\"description\": \"test\", \"steps_yaml\": \"steps:\\n  - tool: terminal\"}"
+        )
         #expect(result.contains("Error"))
     }
 
     @Test func rejectsMissingDescription() async throws {
         let tool = MethodsSaveTool()
-        let result = try await tool.execute(argumentsJSON: "{\"name\": \"test\"}")
+        let result = try await tool.execute(
+            argumentsJSON: "{\"name\": \"test\", \"steps_yaml\": \"steps:\\n  - tool: terminal\"}"
+        )
         #expect(result.contains("Error"))
+    }
+
+    @Test func rejectsMissingStepsYaml() async throws {
+        let tool = MethodsSaveTool()
+        let result = try await tool.execute(
+            argumentsJSON: "{\"name\": \"test\", \"description\": \"test desc\"}"
+        )
+        #expect(result.contains("Error"))
+        #expect(result.contains("required"))
     }
 
     @Test func rejectsWhitespaceOnlyName() async throws {
         let tool = MethodsSaveTool()
         let result = try await tool.execute(
-            argumentsJSON: "{\"name\": \"   \", \"description\": \"valid desc\"}"
+            argumentsJSON:
+                "{\"name\": \"   \", \"description\": \"valid desc\", \"steps_yaml\": \"steps:\\n  - tool: terminal\"}"
         )
         #expect(result.contains("Error"))
         #expect(result.contains("blank"))
@@ -37,7 +51,17 @@ struct MethodsSaveToolTests {
     @Test func rejectsWhitespaceOnlyDescription() async throws {
         let tool = MethodsSaveTool()
         let result = try await tool.execute(
-            argumentsJSON: "{\"name\": \"valid-name\", \"description\": \"  \\n  \"}"
+            argumentsJSON:
+                "{\"name\": \"valid-name\", \"description\": \"  \\n  \", \"steps_yaml\": \"steps:\\n  - tool: terminal\"}"
+        )
+        #expect(result.contains("Error"))
+        #expect(result.contains("blank"))
+    }
+
+    @Test func rejectsEmptyStepsYaml() async throws {
+        let tool = MethodsSaveTool()
+        let result = try await tool.execute(
+            argumentsJSON: "{\"name\": \"valid-name\", \"description\": \"valid desc\", \"steps_yaml\": \"   \"}"
         )
         #expect(result.contains("Error"))
         #expect(result.contains("blank"))
@@ -46,7 +70,8 @@ struct MethodsSaveToolTests {
     @Test func rejectsEmptyName() async throws {
         let tool = MethodsSaveTool()
         let result = try await tool.execute(
-            argumentsJSON: "{\"name\": \"\", \"description\": \"valid desc\"}"
+            argumentsJSON:
+                "{\"name\": \"\", \"description\": \"valid desc\", \"steps_yaml\": \"steps:\\n  - tool: terminal\"}"
         )
         #expect(result.contains("Error"))
         #expect(result.contains("blank"))
@@ -55,7 +80,8 @@ struct MethodsSaveToolTests {
     @Test func rejectsEmptyDescription() async throws {
         let tool = MethodsSaveTool()
         let result = try await tool.execute(
-            argumentsJSON: "{\"name\": \"valid-name\", \"description\": \"\"}"
+            argumentsJSON:
+                "{\"name\": \"valid-name\", \"description\": \"\", \"steps_yaml\": \"steps:\\n  - tool: terminal\"}"
         )
         #expect(result.contains("Error"))
         #expect(result.contains("blank"))

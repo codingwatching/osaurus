@@ -79,7 +79,6 @@ public enum ToolRuntime: String, Codable, Sendable {
 
 public enum ToolIndexSource: String, Codable, Sendable {
     case manual
-    case introspection
     case community
     case system
 }

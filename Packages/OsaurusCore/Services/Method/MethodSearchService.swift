@@ -109,7 +109,6 @@ public actor MethodSearchService {
 
             return Array(
                 methods.compactMap { method -> MethodSearchResult? in
-                    guard method.tier != .dormant else { return nil }
                     let uuid = deterministicUUID(for: method.id)
                     guard let searchScore = scoreMap[uuid.uuidString] else { return nil }
                     let methodScore = scoreByMethod[method.id]?.score ?? 0.0

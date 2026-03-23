@@ -13,8 +13,7 @@ import Foundation
 final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
     let name = "methods_save"
     let description =
-        "Save a reusable method from the current session. "
-        + "Provide steps_yaml directly, or omit it to auto-distill from this session's tool calls."
+        "Save a reusable method. Provide the tool-call sequence as YAML steps."
 
     let parameters: JSONValue? = .object([
         "type": .string("object"),
@@ -34,96 +33,43 @@ final class MethodsSaveTool: OsaurusTool, @unchecked Sendable {
             "steps_yaml": .object([
                 "type": .string("string"),
                 "description": .string(
-                    "YAML steps directly. If omitted, distills from current session's tool calls."
+                    "YAML steps for the method. Write the tool-call sequence from the current session."
                 ),
             ]),
         ]),
-        "required": .array([.string("name"), .string("description")]),
+        "required": .array([.string("name"), .string("description"), .string("steps_yaml")]),
     ])
 
     func execute(argumentsJSON: String) async throws -> String {
         guard let args = parseArguments(argumentsJSON),
             let rawName = args["name"] as? String,
-            let rawDesc = args["description"] as? String
+            let rawDesc = args["description"] as? String,
+            let rawYaml = args["steps_yaml"] as? String
         else {
-            return "Error: 'name' and 'description' parameters are required."
+            return "Error: 'name', 'description', and 'steps_yaml' parameters are required."
         }
 
         let name = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let description = rawDesc.trimmingCharacters(in: .whitespacesAndNewlines)
+        let yaml = rawYaml.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, !description.isEmpty else {
             return "Error: 'name' and 'description' must not be blank."
         }
+        guard !yaml.isEmpty else {
+            return "Error: 'steps_yaml' must not be blank."
+        }
 
         let triggerText = args["trigger_text"] as? String
-        let stepsYaml = args["steps_yaml"] as? String
 
-        if let yaml = stepsYaml, !yaml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let method = try await MethodService.shared.create(
-                name: name,
-                description: description,
-                triggerText: triggerText,
-                body: yaml,
-                source: .user
-            )
-            return
-                "Method '\(method.name)' saved (id: \(method.id), tools: \(method.toolsUsed.joined(separator: ", ")))."
-        }
-
-        let trace = try buildTraceFromCurrentSession()
-        if trace.isEmpty {
-            return "Error: No successful tool calls found in the current session to distill."
-        }
-
-        let coreModel = await MainActor.run {
-            MemoryConfigurationStore.load().coreModelIdentifier
-        }
-
-        let method = try await MethodService.shared.distill(
-            trace: trace,
+        let method = try await MethodService.shared.create(
             name: name,
             description: description,
             triggerText: triggerText,
-            coreModelIdentifier: coreModel
+            body: yaml,
+            source: .user
         )
-
         return
-            "Method '\(method.name)' distilled and saved (id: \(method.id), tools: \(method.toolsUsed.joined(separator: ", ")))."
-    }
-
-    private func buildTraceFromCurrentSession() throws -> String {
-        guard let issueId = WorkExecutionContext.currentIssueId else {
-            return ""
-        }
-
-        let events = try IssueStore.getEvents(issueId: issueId, ofType: .toolCallCompleted)
-        if events.isEmpty { return "" }
-
-        var trace = ""
-        var stepNumber = 0
-        for event in events {
-            guard let payloadStr = event.payload,
-                let data = payloadStr.data(using: .utf8),
-                let payload = try? JSONDecoder().decode(EventPayload.ToolCallCompleted.self, from: data)
-            else { continue }
-
-            guard payload.success else { continue }
-
-            stepNumber += 1
-
-            let truncatedResult =
-                payload.result.map { result in
-                    result.count > 500 ? String(result.prefix(500)) + "..." : result
-                } ?? "(no output)"
-
-            let truncatedArgs =
-                payload.arguments.map { args in
-                    args.count > 300 ? String(args.prefix(300)) + "..." : args
-                } ?? ""
-
-            trace += "Step \(stepNumber): \(payload.toolName)(\(truncatedArgs)) -> \(truncatedResult)\n"
-        }
-        return trace
+            "Method '\(method.name)' saved (id: \(method.id), tools: \(method.toolsUsed.joined(separator: ", ")))."
     }
 }
 
@@ -165,6 +111,8 @@ final class MethodsReportTool: OsaurusTool, @unchecked Sendable {
             return "Error: 'id' and 'outcome' (succeeded/failed) are required."
         }
 
+        let notes = args["notes"] as? String
+
         guard let method = try await MethodService.shared.load(id: id) else {
             return "Error: Method '\(id)' not found."
         }
@@ -172,7 +120,8 @@ final class MethodsReportTool: OsaurusTool, @unchecked Sendable {
         try await MethodService.shared.reportOutcome(
             methodId: id,
             outcome: outcome,
-            agentId: WorkExecutionContext.currentIssueId
+            agentId: WorkExecutionContext.currentIssueId,
+            notes: notes
         )
 
         let score = try await MethodService.shared.loadScore(methodId: id)

@@ -363,20 +363,6 @@ public final class MethodDatabase: @unchecked Sendable {
         return methods
     }
 
-    public func loadMethodsByTier(_ tier: MethodTier) throws -> [Method] {
-        var methods: [Method] = []
-        try prepareAndExecute(
-            "SELECT \(Self.methodColumns) FROM methods WHERE tier = ?1 ORDER BY updated_at DESC",
-            bind: { stmt in Self.bindText(stmt, index: 1, value: tier.rawValue) },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    methods.append(Self.readMethod(from: stmt))
-                }
-            }
-        )
-        return methods
-    }
-
     public func loadMethodsByIds(_ ids: [String]) throws -> [Method] {
         guard !ids.isEmpty else { return [] }
         let placeholders = ids.indices.map { "?\($0 + 1)" }.joined(separator: ", ")
@@ -449,26 +435,6 @@ public final class MethodDatabase: @unchecked Sendable {
         return events
     }
 
-    public func loadRecentLoadedEvents(since: Date) throws -> [MethodEvent] {
-        var events: [MethodEvent] = []
-        try prepareAndExecute(
-            """
-            SELECT id, method_id, event_type, model_used, agent_id, notes, created_at
-            FROM method_events WHERE event_type = 'loaded' AND created_at > ?1
-            ORDER BY created_at
-            """,
-            bind: { stmt in
-                Self.bindText(stmt, index: 1, value: Self.iso8601Formatter.string(from: since))
-            },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    events.append(Self.readEvent(from: stmt))
-                }
-            }
-        )
-        return events
-    }
-
     // MARK: - Method Scores
 
     public func loadScore(methodId: String) throws -> MethodScore? {
@@ -487,24 +453,6 @@ public final class MethodDatabase: @unchecked Sendable {
             }
         )
         return score
-    }
-
-    public func loadAllScores() throws -> [MethodScore] {
-        var scores: [MethodScore] = []
-        try prepareAndExecute(
-            """
-            SELECT method_id, times_loaded, times_succeeded, times_failed,
-                   success_rate, last_used_at, score
-            FROM method_scores
-            """,
-            bind: { _ in },
-            process: { stmt in
-                while sqlite3_step(stmt) == SQLITE_ROW {
-                    scores.append(Self.readScore(from: stmt))
-                }
-            }
-        )
-        return scores
     }
 
     public func upsertScore(_ score: MethodScore) throws {

@@ -431,7 +431,6 @@ public actor WorkEngine {
         )
 
         var messages = activeSession?.messages ?? initialMessages
-        let sessionStartForIntrospection = activeSession?.startedAt ?? Date()
 
         // Run the reasoning loop
         let loopResult: LoopResult
@@ -508,12 +507,6 @@ public actor WorkEngine {
                 activeSession?.lastExitReason = .error(error.localizedDescription)
                 persistExecutionStateIfPossible()
             }
-            Task.detached {
-                await IntrospectionWorker.shared.onSessionEnd(
-                    issueId: issue.id,
-                    sessionStartTime: sessionStartForIntrospection
-                )
-            }
             throw error
         }
 
@@ -557,14 +550,6 @@ public actor WorkEngine {
 
             await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
             clearPersistedExecutionState(issueId: issue.id)
-
-            // Trigger introspection worker for method refinement and tool packaging
-            Task.detached {
-                await IntrospectionWorker.shared.onSessionEnd(
-                    issueId: issue.id,
-                    sessionStartTime: sessionStartForIntrospection
-                )
-            }
 
             activeSession = nil
             awaitingClarification = nil
@@ -648,13 +633,6 @@ public actor WorkEngine {
                 "Budget exhausted after \(totalIterations) iterations and \(totalToolCalls) tool calls."
             persistExecutionStateIfPossible()
             await delegate?.workEngine(self, didExhaustBudget: issue, summary: summary)
-
-            Task.detached {
-                await IntrospectionWorker.shared.onSessionEnd(
-                    issueId: issue.id,
-                    sessionStartTime: sessionStartForIntrospection
-                )
-            }
 
             return ExecutionResult(
                 issue: issue,

@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Unit tests for MethodDatabase: CRUD roundtrips, score formula,
-//  event persistence, tier filtering, and migration verification.
+//  event persistence, and migration verification.
 //
 
 import Foundation
@@ -24,7 +24,6 @@ struct MethodDatabaseTests {
     private func sampleMethod(
         id: String = UUID().uuidString,
         name: String = "test-method",
-        tier: MethodTier = MethodTier.active,
         toolsUsed: [String] = ["terminal"],
         body: String = "steps:\n  - tool: terminal\n    action: echo hello"
     ) -> Method {
@@ -36,7 +35,6 @@ struct MethodDatabaseTests {
             body: body,
             source: MethodSource.user,
             sourceModel: "test-model",
-            tier: tier,
             toolsUsed: toolsUsed,
             skillsUsed: [],
             tokenCount: 100
@@ -71,7 +69,6 @@ struct MethodDatabaseTests {
         try db.insertMethod(method)
 
         method.name = "updated-name"
-        method.tier = MethodTier.rule
         method.body = "steps:\n  - tool: web_fetch\n    action: GET /health"
         method.toolsUsed = ["web_fetch"]
         method.version = 2
@@ -79,29 +76,9 @@ struct MethodDatabaseTests {
 
         let loaded = try db.loadMethod(id: method.id)
         #expect(loaded?.name == "updated-name")
-        #expect(loaded?.tier == .rule)
         #expect(loaded?.body.contains("web_fetch") == true)
         #expect(loaded?.toolsUsed == ["web_fetch"])
         #expect(loaded?.version == 2)
-    }
-
-    @Test func loadMethodsByTierReturnsCorrectFiltering() throws {
-        let db = try makeTempDB()
-        try db.insertMethod(sampleMethod(id: "r1", name: "rule-1", tier: MethodTier.rule))
-        try db.insertMethod(sampleMethod(id: "a1", name: "active-1", tier: MethodTier.active))
-        try db.insertMethod(sampleMethod(id: "a2", name: "active-2", tier: MethodTier.active))
-        try db.insertMethod(sampleMethod(id: "d1", name: "dormant-1", tier: MethodTier.dormant))
-
-        let rules = try db.loadMethodsByTier(.rule)
-        #expect(rules.count == 1)
-        #expect(rules[0].name == "rule-1")
-
-        let active = try db.loadMethodsByTier(.active)
-        #expect(active.count == 2)
-
-        let dormant = try db.loadMethodsByTier(.dormant)
-        #expect(dormant.count == 1)
-        #expect(dormant[0].name == "dormant-1")
     }
 
     @Test func deleteMethodRemovesFromDB() throws {
@@ -173,21 +150,6 @@ struct MethodDatabaseTests {
         #expect(succeededOnly[0].modelUsed == "opus")
     }
 
-    @Test func loadRecentLoadedEventsFiltersByDate() throws {
-        let db = try makeTempDB()
-        let method = sampleMethod()
-        try db.insertMethod(method)
-
-        let event = MethodEvent(methodId: method.id, eventType: .loaded, agentId: "issue-1")
-        try db.insertEvent(event)
-
-        let recentEvents = try db.loadRecentLoadedEvents(since: Date().addingTimeInterval(-60))
-        #expect(recentEvents.count == 1)
-
-        let futureEvents = try db.loadRecentLoadedEvents(since: Date().addingTimeInterval(60))
-        #expect(futureEvents.isEmpty)
-    }
-
     // MARK: - Scores
 
     @Test func upsertAndLoadScoreRoundtrip() throws {
@@ -231,15 +193,6 @@ struct MethodDatabaseTests {
         #expect(score?.timesLoaded == 0)
         #expect(score?.timesSucceeded == 0)
         #expect(score?.score == 0.0)
-    }
-
-    @Test func loadAllScores() throws {
-        let db = try makeTempDB()
-        try db.insertMethod(sampleMethod(id: "a"))
-        try db.insertMethod(sampleMethod(id: "b"))
-
-        let scores = try db.loadAllScores()
-        #expect(scores.count == 2)
     }
 
     // MARK: - Score Formula
