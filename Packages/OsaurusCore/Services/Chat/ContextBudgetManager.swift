@@ -15,12 +15,11 @@ public struct ContextTokenBreakdown: Equatable, Sendable {
     public var systemPrompt: Int = 0
     public var memory: Int = 0
     public var tools: Int = 0
-    public var skills: Int = 0
     public var conversation: Int = 0
     public var input: Int = 0
 
     public var total: Int {
-        systemPrompt + memory + tools + skills + conversation + input
+        systemPrompt + memory + tools + conversation + input
     }
 
     public static let zero = ContextTokenBreakdown()
@@ -45,7 +44,6 @@ public struct ContextTokenBreakdown: Equatable, Sendable {
                 Category(label: "System Prompt", tokens: b.systemPrompt, tint: .purple),
                 Category(label: "Memory", tokens: b.memory, tint: .blue),
                 Category(label: "Tools", tokens: b.tools, tint: .orange),
-                Category(label: "Skills", tokens: b.skills, tint: .green),
                 Category(label: "Conversation", tokens: b.conversation, tint: .gray),
                 Category(label: "Input", tokens: b.input, tint: .cyan),
             ]

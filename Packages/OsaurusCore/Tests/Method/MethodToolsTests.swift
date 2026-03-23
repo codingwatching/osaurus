@@ -11,36 +11,6 @@ import Testing
 
 @testable import OsaurusCore
 
-struct MethodsSearchToolTests {
-
-    @Test func rejectsEmptyQuery() async throws {
-        let tool = MethodsSearchTool()
-        let result = try await tool.execute(argumentsJSON: "{\"query\": \"\"}")
-        #expect(result.contains("Error"))
-    }
-
-    @Test func rejectsMissingQuery() async throws {
-        let tool = MethodsSearchTool()
-        let result = try await tool.execute(argumentsJSON: "{}")
-        #expect(result.contains("Error"))
-    }
-}
-
-struct MethodsLoadToolTests {
-
-    @Test func rejectsEmptyId() async throws {
-        let tool = MethodsLoadTool()
-        let result = try await tool.execute(argumentsJSON: "{\"id\": \"\"}")
-        #expect(result.contains("Error"))
-    }
-
-    @Test func rejectsMissingId() async throws {
-        let tool = MethodsLoadTool()
-        let result = try await tool.execute(argumentsJSON: "{}")
-        #expect(result.contains("Error"))
-    }
-}
-
 struct MethodsSaveToolTests {
 
     @Test func rejectsMissingName() async throws {

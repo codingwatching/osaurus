@@ -412,8 +412,6 @@ public final class MCPProviderManager: ObservableObject {
             providerStates[providerId] = state
         }
 
-        // Notify tools list changed
-        await MCPServerManager.shared.notifyToolsListChanged()
         NotificationCenter.default.post(name: .toolsListChanged, object: nil)
     }
 

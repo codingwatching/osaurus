@@ -78,8 +78,6 @@ public actor WorkEngine {
     ///   - model: Model to use for execution
     ///   - systemPrompt: System prompt to use
     ///   - tools: Available tools
-    ///   - toolOverrides: Per-session tool overrides
-    ///   - skillCatalog: Available skills for capability selection
     /// - Returns: The execution result
     func run(
         query: String,
@@ -87,9 +85,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        executionMode: WorkExecutionMode
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -113,9 +109,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            executionMode: executionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            executionMode: executionMode
         )
     }
 
@@ -125,9 +119,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        executionMode: WorkExecutionMode
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -143,8 +135,6 @@ public actor WorkEngine {
             systemPrompt: systemPrompt,
             tools: tools,
             executionMode: executionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog,
             attemptResume: true
         )
     }
@@ -155,9 +145,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        executionMode: WorkExecutionMode
     ) async throws -> ExecutionResult? {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -174,9 +162,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            executionMode: executionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            executionMode: executionMode
         )
     }
 
@@ -347,8 +333,6 @@ public actor WorkEngine {
         systemPrompt: String,
         tools: [Tool],
         executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]?,
-        skillCatalog: [CapabilityEntry] = [],
         images: [Data] = [],
         attemptResume: Bool = false
     ) async throws -> ExecutionResult {
@@ -379,29 +363,6 @@ public actor WorkEngine {
             await WorkFileOperationLog.shared.setRootPath(rootPath)
         }
 
-        // Load skill instructions if any skills are selected
-        var skillInstructions = await buildSkillInstructions(from: skillCatalog)
-
-        // Assemble context from all four pillars (methods, skills, tools, memory)
-        let contextQuery = issue.title + (issue.description.map { " " + $0 } ?? "")
-        let assembledContext = try await ContextInterface.shared.assemble(
-            query: contextQuery,
-            agentId: issue.id
-        )
-
-        // Merge semantically matched skills into skill instructions
-        let catalogSkillNames = Set(skillCatalog.map(\.name))
-        let additionalSkills = assembledContext.matchedSkills.filter { !catalogSkillNames.contains($0.name) }
-        if !additionalSkills.isEmpty {
-            let matched = additionalSkills.map { "- \($0.name): \($0.description)" }.joined(separator: "\n")
-            if skillInstructions != nil {
-                skillInstructions! += "\n\n## Context-Matched Skills\n\(matched)"
-            } else {
-                skillInstructions =
-                    "## Context-Matched Skills\nUse `load_skill` to load full instructions when needed.\n\(matched)"
-            }
-        }
-
         let initialMessages =
             if attemptResume,
                 let existing = activeSession,
@@ -429,53 +390,12 @@ public actor WorkEngine {
             return Array(AgentSecretsKeychain.getAllSecrets(agentId: uuid).keys)
         }()
 
-        // Build methods section for system prompt
-        let methodsSection = buildMethodsSection(from: assembledContext)
-
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             executionMode: resolvedExecutionMode,
-            skillInstructions: skillInstructions,
-            methodsSection: methodsSection,
-            compactToolIndex: assembledContext.toolIndex,
-            compactMethodIndex: assembledContext.methodIndex,
             compact: compact,
             secretNames: secretNames
         )
-
-        // Apply co-loading: adjust tools based on assembled context and user's context mode
-        let profile = await ModelContextProfile.current()
-        let allMethods = assembledContext.rules + assembledContext.matchedMethods
-        let methodToolNames = Set(["methods_search", "methods_load", "methods_save", "methods_report"])
-
-        let originalTools = tools
-        var tools = tools
-        if !allMethods.isEmpty {
-            let coLoadedIds = assembledContext.coLoadedToolIds.union(methodToolNames)
-            let filtered = tools.filter { coLoadedIds.contains($0.function.name) }
-            tools = filtered.isEmpty ? originalTools : filtered
-        } else {
-            switch profile.mode {
-            case .full:
-                break
-            case .balanced:
-                if let maxTools = profile.maxTools, tools.count > maxTools {
-                    let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
-                    let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
-                    let otherLimit = Swift.max(maxTools - methodTools.count, 1)
-                    tools = Array(otherTools.prefix(otherLimit)) + methodTools
-                }
-            case .focused:
-                let methodTools = tools.filter { methodToolNames.contains($0.function.name) }
-                if let maxTools = profile.maxTools {
-                    let otherTools = tools.filter { !methodToolNames.contains($0.function.name) }
-                    let otherLimit = Swift.max(maxTools - methodTools.count, 0)
-                    tools = Array(otherTools.prefix(otherLimit)) + methodTools
-                } else {
-                    tools = methodTools.isEmpty ? originalTools : methodTools
-                }
-            }
-        }
 
         // Log execution started
         _ = try? IssueStore.createEvent(
@@ -507,9 +427,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            executionMode: resolvedExecutionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            executionMode: resolvedExecutionMode
         )
 
         var messages = activeSession?.messages ?? initialMessages
@@ -524,7 +442,6 @@ public actor WorkEngine {
                 systemPrompt: agentSystemPrompt,
                 model: model,
                 tools: tools,
-                toolOverrides: toolOverrides,
                 temperature: agentCfg.workTemperature,
                 maxTokens: agentCfg.workMaxTokens,
                 topPOverride: agentCfg.workTopPOverride,
@@ -761,7 +678,7 @@ public actor WorkEngine {
             break
         }
 
-        if let context = issue.context, !context.contains("[Selected Capabilities]") {
+        if let context = issue.context {
             firstMessageContent += "\n[Prior Context]:\n\(context)\n"
         }
 
@@ -935,65 +852,8 @@ public actor WorkEngine {
             systemPrompt: context.systemPrompt,
             tools: context.tools,
             executionMode: context.executionMode,
-            toolOverrides: context.toolOverrides,
-            skillCatalog: context.skillCatalog,
             attemptResume: true
         )
-    }
-
-    private static let maxMethodBodyChars = 2000
-    private static let maxMethodsSectionChars = 8000
-
-    private func buildMethodsSection(from context: AssembledContext) -> String? {
-        let allMethods = context.rules + context.matchedMethods
-        guard !allMethods.isEmpty else { return nil }
-
-        var section = ""
-        if !context.rules.isEmpty {
-            section += "## Active Rules (always applied)\n\n"
-            for rule in context.rules {
-                let body = Self.truncateBody(rule.body)
-                section += "### \(rule.name)\n\(body)\n\n"
-            }
-        }
-        if !context.matchedMethods.isEmpty {
-            section += "## Matched Methods\n\n"
-            for method in context.matchedMethods {
-                if section.count >= Self.maxMethodsSectionChars { break }
-                let body = Self.truncateBody(method.body)
-                section += "### \(method.name)\n"
-                section += "Description: \(method.description)\n"
-                section += "Tools: \(method.toolsUsed.joined(separator: ", "))\n\n"
-                section += body + "\n\n"
-            }
-        }
-        return section.isEmpty ? nil : section
-    }
-
-    private static func truncateBody(_ body: String) -> String {
-        if body.count <= maxMethodBodyChars { return body }
-        return String(body.prefix(maxMethodBodyChars)) + "\n... (truncated)"
-    }
-
-    /// Builds skill instructions — inlines small single skills, otherwise emits a compact listing.
-    /// The agent loads full instructions on demand via `load_skill`.
-    @MainActor
-    private func buildSkillInstructions(from skillCatalog: [CapabilityEntry]) async -> String? {
-        guard !skillCatalog.isEmpty else { return nil }
-
-        // Exception: single small skill — inline it directly
-        if skillCatalog.count == 1, let entry = skillCatalog.first {
-            let map = SkillManager.shared.loadInstructions(for: [entry.name])
-            if let content = map[entry.name], content.count < 2000 {
-                return "## \(entry.name)\n\n\(content)"
-            }
-        }
-
-        var listing = "## Available Skills\nUse `load_skill` to load full instructions when needed.\n"
-        for entry in skillCatalog {
-            listing += "- \(entry.name): \(entry.description)\n"
-        }
-        return listing
     }
 
     // MARK: - Retry Logic
@@ -1005,8 +865,6 @@ public actor WorkEngine {
         systemPrompt: String,
         tools: [Tool],
         executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = [],
         images: [Data] = []
     ) async throws -> ExecutionResult {
         guard let issue = try IssueStore.getIssue(id: issueId) else {
@@ -1036,8 +894,6 @@ public actor WorkEngine {
                     systemPrompt: systemPrompt,
                     tools: tools,
                     executionMode: executionMode,
-                    toolOverrides: toolOverrides,
-                    skillCatalog: skillCatalog,
                     images: images,
                     attemptResume: attempt > 0
                 )
@@ -1191,8 +1047,6 @@ struct PendingExecutionContext {
     let systemPrompt: String
     let tools: [Tool]
     let executionMode: WorkExecutionMode
-    let toolOverrides: [String: Bool]?
-    let skillCatalog: [CapabilityEntry]
 }
 
 extension PendingExecutionContext {
@@ -1217,9 +1071,7 @@ extension PendingExecutionContext {
             systemPrompt: systemPrompt,
             tools: tools,
             executionMode: executionModeSnapshot,
-            hostFolderRootPath: hostFolderRootPath,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            hostFolderRootPath: hostFolderRootPath
         )
     }
 
@@ -1245,9 +1097,7 @@ extension PendingExecutionContext {
             model: persisted.model,
             systemPrompt: persisted.systemPrompt,
             tools: persisted.tools,
-            executionMode: executionMode,
-            toolOverrides: persisted.toolOverrides,
-            skillCatalog: persisted.skillCatalog
+            executionMode: executionMode
         )
     }
 }

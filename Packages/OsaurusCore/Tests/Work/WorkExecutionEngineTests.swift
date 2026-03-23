@@ -109,7 +109,6 @@ struct WorkExecutionEngineTests {
             systemPrompt: "Base",
             model: "mock",
             tools: tools,
-            toolOverrides: nil,
             maxIterations: 15,
             onIterationStart: { _ in },
             onDelta: { _, _ in },
@@ -150,7 +149,6 @@ struct WorkExecutionEngineTests {
             systemPrompt: "Base",
             model: "mock",
             tools: tools,
-            toolOverrides: nil,
             maxIterations: 5,
             shouldInterrupt: {
                 await interruptCounter.nextShouldInterrupt()
@@ -190,7 +188,6 @@ struct WorkExecutionEngineTests {
             systemPrompt: "Base",
             model: "mock",
             tools: [clarificationToolSpec()],
-            toolOverrides: nil,
             maxIterations: 2,
             onIterationStart: { _ in },
             onDelta: { _, _ in },

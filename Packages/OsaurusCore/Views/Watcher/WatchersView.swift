@@ -1040,41 +1040,6 @@ private struct WatcherTextField: View {
     }
 }
 
-// MARK: - Agent Capability Helpers
-
-/// Counts enabled tools for an agent (nil = default/global config)
-@MainActor
-private func enabledToolCount(for agent: Agent?) -> Int {
-    let overrides = agent.map { AgentManager.shared.effectiveToolOverrides(for: $0.id) } ?? nil
-    return ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
-        .filter { $0.enabled }.count
-}
-
-/// Counts enabled skills for an agent (nil = default/global config)
-@MainActor
-private func enabledSkillCount(for agent: Agent?) -> Int {
-    let skills = SkillManager.shared.skills
-    guard let agent = agent,
-        let overrides = AgentManager.shared.effectiveSkillOverrides(for: agent.id)
-    else {
-        return skills.filter { $0.enabled }.count
-    }
-    return skills.filter { skill in
-        if let value = overrides[skill.name] { return value }
-        return skill.enabled
-    }.count
-}
-
-@MainActor
-private var totalToolCount: Int {
-    ToolRegistry.shared.listTools().count
-}
-
-@MainActor
-private var totalSkillCount: Int {
-    SkillManager.shared.skills.count
-}
-
 // MARK: - Agent Picker
 
 private struct WatcherAgentPicker: View {
@@ -1114,27 +1079,9 @@ private struct WatcherAgentPicker: View {
                             .foregroundColor(agentColor(for: selectedAgentName))
                     )
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(selectedAgentName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    HStack(spacing: 8) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "wrench.and.screwdriver")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledToolCount(for: selectedAgent)) tools")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        HStack(spacing: 3) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledSkillCount(for: selectedAgent)) skills")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                    }
-                    .foregroundColor(theme.tertiaryText)
-                }
+                Text(selectedAgentName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(theme.primaryText)
 
                 Spacer(minLength: 0)
 
@@ -1231,22 +1178,6 @@ private struct WatcherAgentOptionRow: View {
                             .foregroundColor(theme.tertiaryText)
                             .lineLimit(1)
                     }
-
-                    HStack(spacing: 10) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "wrench.and.screwdriver")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledToolCount(for: agent))/\(totalToolCount)")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        HStack(spacing: 3) {
-                            Image(systemName: "sparkles")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("\(enabledSkillCount(for: agent))/\(totalSkillCount)")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                    }
-                    .foregroundColor(theme.tertiaryText.opacity(0.8))
                 }
 
                 Spacer()

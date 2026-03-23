@@ -338,25 +338,18 @@ public final class WorkSession: ObservableObject {
                 ?? AgentManager.shared.effectiveSystemPrompt(for: agentId)
         )
         let executionMode = estimatedExecutionModeForBudget()
-        let toolOverrides = effectiveToolOverridesForBudget()
-        let toolSpecs = ToolRegistry.shared.workSpecs(withOverrides: toolOverrides, mode: executionMode)
-        let skillNames = buildSkillCatalog().map(\.name)
-        let skillInstructions = CapabilityService.shared.combineSkillInstructions(
-            SkillManager.shared.loadInstructions(for: skillNames)
-        )
+        let toolSpecs = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
 
         var breakdown = ContextTokenBreakdown()
         let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
         let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: baseSystemPrompt,
             executionMode: executionMode,
-            skillInstructions: nil,
             secretNames: secretNames
         )
         breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: prompt)
         breakdown.memory = windowState?.session.estimatedContextBreakdown.memory ?? 0
         breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
-        breakdown.skills = ContextBudgetManager.estimateTokens(for: skillInstructions)
 
         var conversationTokens = 0
 
@@ -369,7 +362,7 @@ public final class WorkSession: ObservableObject {
         }
 
         if let issue {
-            if let context = issue.context, !context.contains("[Selected Capabilities]") {
+            if let context = issue.context {
                 firstMessageContent += "\n[Prior Context]:\n\(context)\n"
             }
             firstMessageContent += "\n**Goal:** \(issue.title)\n"
@@ -773,11 +766,21 @@ public final class WorkSession: ObservableObject {
         resetExecutionState(for: issue)
 
         let config = await buildExecutionConfig()
-        let tools = ToolRegistry.shared.workSpecs(
-            withOverrides: config.toolOverrides,
-            mode: config.executionMode
-        )
-        let skillCatalog = buildSkillCatalog()
+        var tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: config.executionMode)
+
+        // Pre-flight RAG: search capabilities based on issue
+        let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
+        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery)
+
+        for spec in preflight.toolSpecs
+        where !tools.contains(where: { $0.function.name == spec.function.name }) {
+            tools.append(spec)
+        }
+
+        var systemPrompt = config.systemPrompt
+        if !preflight.contextSnippet.isEmpty {
+            systemPrompt += "\n\n" + preflight.contextSnippet
+        }
 
         executionTask = Task { [weak self, engine] in
             do {
@@ -786,22 +789,18 @@ public final class WorkSession: ObservableObject {
                         try await engine.executeWithRetry(
                             issueId: issue.id,
                             model: config.model,
-                            systemPrompt: config.systemPrompt,
+                            systemPrompt: systemPrompt,
                             tools: tools,
                             executionMode: config.executionMode,
-                            toolOverrides: config.toolOverrides,
-                            skillCatalog: skillCatalog,
                             images: images
                         )
                     } else {
                         try await engine.resume(
                             issueId: issue.id,
                             model: config.model,
-                            systemPrompt: config.systemPrompt,
+                            systemPrompt: systemPrompt,
                             tools: tools,
-                            executionMode: config.executionMode,
-                            toolOverrides: config.toolOverrides,
-                            skillCatalog: skillCatalog
+                            executionMode: config.executionMode
                         )
                     }
                 await MainActor.run { self?.handleExecutionResult(result) }
@@ -836,7 +835,6 @@ public final class WorkSession: ObservableObject {
     private func buildExecutionConfig() async -> (
         model: String,
         systemPrompt: String,
-        toolOverrides: [String: Bool]?,
         executionMode: WorkExecutionMode
     ) {
         let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
@@ -851,7 +849,6 @@ public final class WorkSession: ObservableObject {
         )
         let systemPrompt = SystemPromptBuilder.prependMemoryContext(memoryContext, to: baseSystemPrompt)
 
-        // Model priority: selectedModel > windowState model > agent default
         let model =
             if let selected = selectedModel, !selected.isEmpty {
                 selected
@@ -861,26 +858,11 @@ public final class WorkSession: ObservableObject {
                 AgentManager.shared.agent(for: agentId)?.defaultModel ?? "default"
             }
 
-        let toolOverrides = effectiveToolOverridesForBudget()
-
         let executionMode = ToolRegistry.shared.resolveWorkExecutionMode(
-            withOverrides: toolOverrides,
             folderContext: WorkFolderContextService.shared.currentContext
         )
 
-        return (model, systemPrompt, toolOverrides, executionMode)
-    }
-
-    private func effectiveToolOverridesForBudget() -> [String: Bool]? {
-        var toolOverrides = AgentManager.shared.effectiveToolOverrides(for: agentId)
-        let conflicting = ToolRegistry.shared.workConflictingToolNames
-        if !conflicting.isEmpty {
-            if toolOverrides == nil { toolOverrides = [:] }
-            for name in conflicting {
-                toolOverrides?[name] = false
-            }
-        }
-        return toolOverrides
+        return (model, systemPrompt, executionMode)
     }
 
     private func estimatedExecutionModeForBudget() -> WorkExecutionMode {
@@ -1307,37 +1289,35 @@ public final class WorkSession: ObservableObject {
         }
 
         let config = await buildExecutionConfig()
-        let tools = ToolRegistry.shared.workSpecs(
-            withOverrides: config.toolOverrides,
-            mode: config.executionMode
-        )
-        let skillCatalog = buildSkillCatalog()
+        var tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: config.executionMode)
+
+        let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
+        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery)
+
+        for spec in preflight.toolSpecs
+        where !tools.contains(where: { $0.function.name == spec.function.name }) {
+            tools.append(spec)
+        }
+
+        var systemPrompt = config.systemPrompt
+        if !preflight.contextSnippet.isEmpty {
+            systemPrompt += "\n\n" + preflight.contextSnippet
+        }
 
         executionTask = Task { [weak self, engine] in
             do {
                 let result = try await engine.resume(
                     issueId: issue.id,
                     model: config.model,
-                    systemPrompt: config.systemPrompt,
+                    systemPrompt: systemPrompt,
                     tools: tools,
-                    executionMode: config.executionMode,
-                    toolOverrides: config.toolOverrides,
-                    skillCatalog: skillCatalog
+                    executionMode: config.executionMode
                 )
                 await MainActor.run { self?.handleExecutionResult(result) }
             } catch {
                 await MainActor.run { self?.handleExecutionError(error, issue: issue) }
             }
         }
-    }
-
-    // MARK: - Skill Catalog
-
-    /// Builds the skill catalog for capability selection during planning
-    private func buildSkillCatalog() -> [CapabilityEntry] {
-        return SkillManager.shared.enabledCatalogEntries(
-            withOverrides: AgentManager.shared.effectiveSkillOverrides(for: agentId)
-        )
     }
 
     private func applyRestoredPauseState(_ pauseReason: ExecutionResult.PauseReason?, for issue: Issue) {

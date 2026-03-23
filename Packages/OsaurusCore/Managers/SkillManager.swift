@@ -9,10 +9,6 @@ import Foundation
 import Observation
 import SwiftUI
 
-extension Notification.Name {
-    static let skillsListChanged = Notification.Name("skillsListChanged")
-}
-
 public enum SkillFileError: Error, LocalizedError {
     case cannotModifyBuiltIn
     case cannotModifyPluginSkill
@@ -67,7 +63,7 @@ public final class SkillManager {
         )
         SkillStore.save(skill)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
@@ -78,7 +74,7 @@ public final class SkillManager {
         updated.updatedAt = Date()
         SkillStore.save(updated)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         Task { await SkillSearchService.shared.indexSkill(updated) }
     }
 
@@ -89,7 +85,7 @@ public final class SkillManager {
         let result = SkillStore.delete(id: id)
         if result {
             refresh()
-            NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
             Task { await SkillSearchService.shared.removeSkill(id: id) }
         }
         return result
@@ -109,7 +105,7 @@ public final class SkillManager {
             SkillStore.save(skill)
         }
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         Task { await SkillSearchService.shared.indexSkill(skill) }
     }
 
@@ -122,7 +118,7 @@ public final class SkillManager {
         }
         if !pluginSkillIds.isEmpty {
             refresh()
-            NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         }
     }
 
@@ -157,7 +153,7 @@ public final class SkillManager {
         }
 
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
     }
 
     // MARK: - Lookup
@@ -185,7 +181,7 @@ public final class SkillManager {
         )
         SkillStore.save(skill)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
@@ -203,7 +199,7 @@ public final class SkillManager {
         )
         SkillStore.save(skill)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
@@ -226,7 +222,7 @@ public final class SkillManager {
         }
         if !imported.isEmpty {
             refresh()
-            NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
             Task {
                 for skill in imported {
                     await SkillSearchService.shared.indexSkill(skill)
@@ -252,7 +248,7 @@ public final class SkillManager {
         }
         try SkillStore.addReference(to: skill, name: name, content: content)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
     }
 
     public func addAsset(to skillId: UUID, name: String, content: Data) throws {
@@ -261,7 +257,7 @@ public final class SkillManager {
         }
         try SkillStore.addAsset(to: skill, name: name, content: content)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
     }
 
     public func removeFile(from skillId: UUID, relativePath: String) throws {
@@ -270,7 +266,7 @@ public final class SkillManager {
         }
         try SkillStore.removeFile(from: skill, relativePath: relativePath)
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
     }
 
     public func readFile(from skillId: UUID, relativePath: String) throws -> Data {
@@ -352,7 +348,7 @@ public final class SkillManager {
         }
 
         refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
+
         Task { await SkillSearchService.shared.indexSkill(skill) }
         return skill
     }
@@ -382,17 +378,6 @@ public final class SkillManager {
     }
 
     // MARK: - Catalog & Instructions
-
-    public func enabledCatalogEntries() -> [CapabilityEntry] {
-        skills.filter { $0.enabled }.map { skill in
-            CapabilityEntry(
-                type: .skill,
-                name: skill.name,
-                description: skill.description,
-                category: skill.category
-            )
-        }
-    }
 
     public func loadInstructions(for skillNames: [String]) -> [String: String] {
         var result: [String: String] = [:]

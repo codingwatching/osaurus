@@ -44,7 +44,6 @@ public actor WorkExecutionEngine {
     /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
-        overrides: [String: Bool]?,
         issueId: String
     ) async throws -> ToolCallResult {
         let callId =
@@ -59,7 +58,6 @@ public actor WorkExecutionEngine {
                 await self.executeToolInBackground(
                     name: invocation.toolName,
                     argumentsJSON: invocation.jsonArguments,
-                    overrides: overrides,
                     issueId: issueId
                 )
             }
@@ -96,16 +94,13 @@ public actor WorkExecutionEngine {
     private func executeToolInBackground(
         name: String,
         argumentsJSON: String,
-        overrides: [String: Bool]?,
         issueId: String
     ) async -> String {
         do {
-            // Wrap with execution context so folder tools can log operations
             return try await WorkExecutionContext.$currentIssueId.withValue(issueId) {
                 try await ToolRegistry.shared.execute(
                     name: name,
-                    argumentsJSON: argumentsJSON,
-                    overrides: overrides
+                    argumentsJSON: argumentsJSON
                 )
             }
         } catch {
@@ -525,7 +520,6 @@ public actor WorkExecutionEngine {
     ///   - systemPrompt: The full system prompt including work instructions
     ///   - model: Model to use
     ///   - tools: All available tools (model picks which to use)
-    ///   - toolOverrides: Tool permission overrides
     ///   - contextLength: Model context window size in tokens (used for budget management)
     ///   - toolTokenEstimate: Estimated tokens consumed by tool definitions
     ///   - maxIterations: Maximum loop iterations (not tool calls - iterations)
@@ -542,7 +536,6 @@ public actor WorkExecutionEngine {
         systemPrompt: String,
         model: String?,
         tools: [Tool],
-        toolOverrides: [String: Bool]?,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         topPOverride: Float? = nil,
@@ -560,6 +553,7 @@ public actor WorkExecutionEngine {
         onArtifact: @escaping ArtifactCallback,
         onTokensConsumed: @escaping TokenConsumptionCallback
     ) async throws -> LoopResult {
+        var activeTools = tools
         var iteration = 0
         var totalToolCalls = 0
         var toolsUsed: [String] = []
@@ -675,7 +669,7 @@ public actor WorkExecutionEngine {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: tools.isEmpty ? nil : tools,
+                tools: activeTools.isEmpty ? nil : activeTools,
                 tool_choice: nil,
                 session_id: issue.id
             )
@@ -784,7 +778,15 @@ public actor WorkExecutionEngine {
             }
 
             // Execute the tool
-            let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
+            let result = try await executeToolCall(invocation, issueId: issue.id)
+
+            // Hot-load tools injected by capabilities_load
+            if invocation.toolName == "capabilities_load" {
+                let newTools = await CapabilityLoadBuffer.shared.drain()
+                for tool in newTools where !activeTools.contains(where: { $0.function.name == tool.function.name }) {
+                    activeTools.append(tool)
+                }
+            }
 
             // Process share_artifact before storing the result so the enriched
             // metadata (host_path, file_size, etc.) flows into the transcript.
@@ -879,18 +881,10 @@ public actor WorkExecutionEngine {
     static func buildAgentSystemPrompt(
         base: String,
         executionMode: WorkExecutionMode,
-        skillInstructions: String? = nil,
-        methodsSection: String? = nil,
-        compactToolIndex: String? = nil,
-        compactMethodIndex: String? = nil,
         compact: Bool = false,
         secretNames: [String] = []
     ) -> String {
         var prompt = base
-
-        if let methods = methodsSection, !methods.isEmpty {
-            prompt += "\n\(methods)\n"
-        }
 
         prompt +=
             compact
@@ -898,20 +892,9 @@ public actor WorkExecutionEngine {
             : workModeFull()
 
         switch executionMode {
-        case .hostFolder: break  // Moved to user message
+        case .hostFolder: break
         case .sandbox: prompt += sandboxPromptSection(compact: compact, secretNames: secretNames)
         case .none: break
-        }
-
-        if let skills = skillInstructions, !skills.isEmpty {
-            prompt += "\n## Active Skills\n\(skills)\n"
-        }
-
-        if let toolIdx = compactToolIndex {
-            prompt += "\n## Tool Index\n\(toolIdx)\n"
-        }
-        if let methodIdx = compactMethodIndex {
-            prompt += "\n## Method Index\n\(methodIdx)\n"
         }
 
         return prompt

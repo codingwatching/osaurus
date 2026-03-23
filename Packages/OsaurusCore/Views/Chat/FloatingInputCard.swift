@@ -110,8 +110,6 @@ struct FloatingInputCard: View {
     }
 
     // Observe managers for reactive updates
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
-    private var skillManager = SkillManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
@@ -124,7 +122,6 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var showModelPicker = false
     @State private var showModelOptionsPicker = false
-    @State private var showCapabilitiesPicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
@@ -132,10 +129,6 @@ struct FloatingInputCard: View {
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
-    // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
-    @State private var hasTools: Bool = false
-    @State private var hasSkills: Bool = false
-
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
@@ -240,7 +233,7 @@ struct FloatingInputCard: View {
 
     private var mainContent: some View {
         VStack(spacing: 12) {
-            if (pickerItems.count > 1 || hasTools || hasSkills
+            if (pickerItems.count > 1
                 || displayContextTokens > 0 || isSandboxAvailable) && !showVoiceOverlay
             {
                 selectorRow
@@ -299,10 +292,6 @@ struct FloatingInputCard: View {
 
                 // Focus immediately when view appears
                 isFocused = true
-
-                // Initialize cached tool/skill availability
-                hasTools = !toolRegistry.listTools().isEmpty
-                hasSkills = !skillManager.skills.isEmpty
 
                 // Load voice config (cached after first load)
                 loadVoiceConfig()
@@ -472,16 +461,6 @@ struct FloatingInputCard: View {
                 // 100ms
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 logVoiceState(trigger: "onAppear")
-            }
-            .onReceive(toolRegistry.objectWillChange) { _ in
-                DispatchQueue.main.async {
-                    let newValue = !toolRegistry.listTools().isEmpty
-                    if newValue != hasTools { hasTools = newValue }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in
-                let newValue = !skillManager.skills.isEmpty
-                if newValue != hasSkills { hasSkills = newValue }
             }
     }
 
@@ -942,11 +921,6 @@ extension FloatingInputCard {
             //                modelOptionsSelectorChip
             //            }
 
-            // Capabilities selector (tools + skills combined)
-            if hasTools || hasSkills {
-                capabilitiesSelectorChip
-            }
-
             // Sandbox toggle (visible when sandbox is available on this system, hidden when folder context is active)
             if isSandboxAvailable && !folderContextService.hasActiveFolder {
                 sandboxToggleChip
@@ -1153,58 +1127,6 @@ extension FloatingInputCard {
         }
     }
 
-    // MARK: - Capabilities Selector (Tools + Skills)
-
-    private var effectiveAgentId: UUID {
-        agentId ?? Agent.defaultId
-    }
-
-    private var toolOverrides: [String: Bool]? {
-        agentManager.effectiveToolOverrides(for: effectiveAgentId)
-    }
-
-    private var skillOverrides: [String: Bool]? {
-        agentManager.effectiveSkillOverrides(for: effectiveAgentId)
-    }
-
-    /// Count of enabled tools (with agent overrides applied, excluding work tools)
-    private var enabledToolCount: Int {
-        toolRegistry.listSelectableCapabilityTools(withOverrides: toolOverrides)
-            .filter { $0.enabled }
-            .count
-    }
-
-    /// Count of enabled skills (with agent overrides applied)
-    private var enabledSkillCount: Int {
-        skillManager.skills.filter { skill in
-            if let overrides = skillOverrides, let value = overrides[skill.name] {
-                return value
-            }
-            return skill.enabled
-        }.count
-    }
-
-    /// Total enabled capabilities count
-    private var totalEnabledCapabilities: Int {
-        enabledToolCount + enabledSkillCount
-    }
-
-    /// Human-readable description of enabled capabilities
-    private var capabilitiesDescription: String {
-        let toolText = enabledToolCount == 1 ? "1 tool" : "\(enabledToolCount) tools"
-        let skillText = enabledSkillCount == 1 ? "1 skill" : "\(enabledSkillCount) skills"
-
-        if enabledToolCount > 0 && enabledSkillCount > 0 {
-            return "\(toolText), \(skillText)"
-        } else if enabledToolCount > 0 {
-            return toolText
-        } else if enabledSkillCount > 0 {
-            return skillText
-        } else {
-            return "Capabilities"
-        }
-    }
-
     // MARK: - Model Options Chip
 
     private var modelOptionsSummary: String {
@@ -1256,39 +1178,11 @@ extension FloatingInputCard {
         }
     }
 
-    // MARK: - Capabilities Chip
-
-    private var capabilitiesSelectorChip: some View {
-        SelectorChip(isActive: showCapabilitiesPicker) {
-            showCapabilitiesPicker.toggle()
-        } content: {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkles")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text("Capabilities")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                if totalEnabledCapabilities > 0 {
-                    Text("\(totalEnabledCapabilities)")
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .bold, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
-                }
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
-            CapabilitiesSelectorView(agentId: effectiveAgentId, isWorkMode: workInputState != nil)
-        }
-    }
-
     // MARK: - Sandbox Toggle Chip
+
+    private var effectiveAgentId: UUID {
+        agentId ?? Agent.defaultId
+    }
 
     private var isSandboxAvailable: Bool {
         sandboxState.availability.isAvailable
@@ -2265,7 +2159,7 @@ private struct ContextBreakdownPopover: View {
 
 // MARK: - Selector Chip
 
-/// Polished selector chip for model/capabilities pickers
+/// Polished selector chip for model pickers
 private struct SelectorChip<Content: View>: View {
     let isActive: Bool
     let action: () -> Void
@@ -2339,8 +2233,7 @@ private struct SelectorChip<Content: View>: View {
 
 // MARK: - Model Options Selector View
 
-/// Popover that groups all model-specific options into a single panel,
-/// matching the visual language of CapabilitiesSelectorView.
+/// Popover that groups all model-specific options into a single panel.
 private struct ModelOptionsSelectorView: View {
     let options: [ModelOptionDefinition]
     @Binding var values: [String: ModelOptionValue]

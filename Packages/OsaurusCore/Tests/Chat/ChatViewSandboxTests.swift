@@ -11,12 +11,7 @@ struct ChatViewSandboxTests {
         let session = ChatSession()
 
         withRegisteredSandboxBuiltins {
-            let specs = session.buildToolSpecs(
-                needsSelection: false,
-                hasCapabilities: false,
-                overrides: nil,
-                executionMode: .none
-            )
+            let specs = session.buildToolSpecs(executionMode: .none)
 
             #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }) == false)
             #expect(specs.contains(where: { $0.function.name == "sandbox_read_file" }) == false)
@@ -24,22 +19,13 @@ struct ChatViewSandboxTests {
     }
 
     @Test
-    func buildToolSpecs_sandboxEnabledKeepsBuiltInsDuringCapabilitySelection() {
-        let session = ChatSession()
-        session.capabilitiesSelected = true
-        session.selectedToolNames = ["search_working_memory"]
-
+    func buildToolSpecs_sandboxEnabledIncludesBuiltIns() {
         withRegisteredSandboxBuiltins {
-            let specs = session.buildToolSpecs(
-                needsSelection: false,
-                hasCapabilities: true,
-                overrides: ["search_working_memory": false],
-                executionMode: .sandbox
-            )
+            let session = ChatSession()
+            let specs = session.buildToolSpecs(executionMode: .sandbox)
 
-            #expect(specs.contains(where: { $0.function.name == "search_working_memory" }))
-            #expect(specs.contains(where: { $0.function.name == "select_capabilities" }))
-            #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }))
+            #expect(specs.contains(where: { $0.function.name == "capabilities_search" }))
+            #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
         }
     }
 
@@ -50,13 +36,11 @@ struct ChatViewSandboxTests {
         let standardPrompt = session.buildSystemPrompt(
             base: "Base prompt",
             agentId: Agent.defaultId,
-            needsSelection: false,
             executionMode: .none
         )
         let sandboxPrompt = session.buildSystemPrompt(
             base: "Base prompt",
             agentId: Agent.defaultId,
-            needsSelection: false,
             executionMode: .sandbox
         )
 
@@ -100,30 +84,13 @@ struct ChatViewSandboxTests {
     }
 
     @Test
-    func workSpecs_excludeSelectCapabilitiesTool() {
-        let specs = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: .none)
+    func alwaysLoadedSpecs_includesCapabilityTools() {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
 
-        #expect(specs.contains(where: { $0.function.name == "select_capabilities" }) == false)
-    }
-
-    @Test
-    func selectableCapabilityLists_excludeSelectCapabilitiesTool() {
-        let tools = ToolRegistry.shared.listSelectableCapabilityTools(withOverrides: nil)
-        let catalogEntries = ToolRegistry.shared.enabledCatalogEntries()
-
-        #expect(tools.contains(where: { $0.name == "select_capabilities" }) == false)
-        #expect(catalogEntries.contains(where: { $0.name == "select_capabilities" }) == false)
-    }
-
-    @Test
-    func resolveSelection_rejectsInternalChatTools() async throws {
-        let result = try await CapabilityService.shared.resolveSelection(
-            argumentsJSON: #"{"tools":["select_capabilities"],"skills":[]}"#,
-            agentId: Agent.defaultId
-        )
-
-        #expect(result.selectedTools.isEmpty)
-        #expect(result.errors.contains("Tool 'select_capabilities' not found or not enabled"))
+        #expect(specs.contains(where: { $0.function.name == "capabilities_search" }))
+        #expect(specs.contains(where: { $0.function.name == "capabilities_load" }))
+        #expect(specs.contains(where: { $0.function.name == "methods_save" }))
+        #expect(specs.contains(where: { $0.function.name == "methods_report" }))
     }
 
     @Test
@@ -147,24 +114,13 @@ struct ChatViewSandboxTests {
         registrar.provisionAgentOverride = { _ in }
 
         let session = ChatSession()
-        let inactiveMode = await session.prepareChatExecutionMode(
-            agentId: inactiveAgent.id,
-            overrides: nil
-        )
-        let sandboxMode = await session.prepareChatExecutionMode(
-            agentId: sandboxAgent.id,
-            overrides: nil
-        )
+        let inactiveMode = await session.prepareChatExecutionMode(agentId: inactiveAgent.id)
+        let sandboxMode = await session.prepareChatExecutionMode(agentId: sandboxAgent.id)
 
         #expect(inactiveMode.usesSandboxTools == false)
         #expect(sandboxMode.usesSandboxTools)
 
-        let specs = session.buildToolSpecs(
-            needsSelection: false,
-            hasCapabilities: false,
-            overrides: nil,
-            executionMode: sandboxMode
-        )
+        let specs = session.buildToolSpecs(executionMode: sandboxMode)
         #expect(specs.contains(where: { $0.function.name == "sandbox_exec" }))
 
         ToolRegistry.shared.unregisterAllSandboxTools()
@@ -201,7 +157,7 @@ struct ChatViewSandboxTests {
         withRegisteredSandboxBuiltins {
             let inactiveBreakdown = inactiveSession.estimateContextBreakdown(for: issue)
             let sandboxBreakdown = sandboxSession.estimateContextBreakdown(for: issue)
-            let sandboxTools = ToolRegistry.shared.workSpecs(withOverrides: nil, mode: .sandbox)
+            let sandboxTools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .sandbox)
 
             #expect(sandboxBreakdown.systemPrompt > inactiveBreakdown.systemPrompt)
             #expect(sandboxBreakdown.tools > inactiveBreakdown.tools)

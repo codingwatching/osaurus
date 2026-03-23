@@ -2,105 +2,11 @@
 //  MethodTools.swift
 //  osaurus
 //
-//  Agent-facing tools for the methods subsystem: search, load, save, report.
+//  Agent-facing tools for saving and reporting on methods.
+//  Search and load are handled by capabilities_search / capabilities_load.
 //
 
 import Foundation
-
-// MARK: - methods_search
-
-final class MethodsSearchTool: OsaurusTool, @unchecked Sendable {
-    let name = "methods_search"
-    let description =
-        "Search for reusable methods (recorded tool-call sequences). "
-        + "Returns ranked results with names, descriptions, scores, and tiers."
-
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "properties": .object([
-            "query": .object([
-                "type": .string("string"),
-                "description": .string("Search query describing the task"),
-            ])
-        ]),
-        "required": .array([.string("query")]),
-    ])
-
-    func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let query = args["query"] as? String,
-            !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return "Error: 'query' parameter is required."
-        }
-
-        let results = await MethodSearchService.shared.search(query: query, topK: 10)
-        if results.isEmpty {
-            return "No methods found matching '\(query)'."
-        }
-
-        var output = "Found \(results.count) method(s):\n\n"
-        for result in results {
-            let m = result.method
-            output += "- **\(m.name)** (id: \(m.id))\n"
-            output += "  Description: \(m.description)\n"
-            output += "  Tier: \(m.tier.rawValue) | Score: \(String(format: "%.2f", result.score))\n"
-            output += "  Tools: \(m.toolsUsed.joined(separator: ", "))\n\n"
-        }
-        output += "Use `methods_load` with the id to load full method steps."
-        return output
-    }
-}
-
-// MARK: - methods_load
-
-final class MethodsLoadTool: OsaurusTool, @unchecked Sendable {
-    let name = "methods_load"
-    let description =
-        "Load a method's full step-by-step instructions into context. "
-        + "Use after methods_search to get the complete replay sequence."
-
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "properties": .object([
-            "id": .object([
-                "type": .string("string"),
-                "description": .string("Method ID to load"),
-            ])
-        ]),
-        "required": .array([.string("id")]),
-    ])
-
-    func execute(argumentsJSON: String) async throws -> String {
-        guard let args = parseArguments(argumentsJSON),
-            let id = args["id"] as? String,
-            !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return "Error: 'id' parameter is required."
-        }
-
-        guard let method = try await MethodService.shared.load(id: id) else {
-            return "Error: Method '\(id)' not found."
-        }
-
-        let issueId = WorkExecutionContext.currentIssueId
-        try await MethodService.shared.reportOutcome(
-            methodId: id,
-            outcome: .loaded,
-            agentId: issueId
-        )
-
-        var output = "# Method: \(method.name)\n\n"
-        output += "Description: \(method.description)\n"
-        output += "Version: \(method.version) | Source: \(method.source.rawValue)\n"
-        if !method.toolsUsed.isEmpty {
-            output += "Tools: \(method.toolsUsed.joined(separator: ", "))\n"
-        }
-        output += "\n---\n\n"
-        output += method.body
-        return output
-    }
-}
 
 // MARK: - methods_save
 
