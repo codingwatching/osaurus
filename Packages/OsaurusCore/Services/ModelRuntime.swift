@@ -12,6 +12,10 @@ import MLX
 import MLXLLM
 @preconcurrency import MLXLMCommon
 import MLXVLM
+import Tokenizers
+import os.log
+
+private let genLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
 
 // Force MLXVLM to be linked by referencing VLMModelFactory
 // This ensures VLM models can be loaded via the ModelFactoryRegistry
@@ -30,18 +34,17 @@ actor ModelRuntime {
         let name: String
         let container: ModelContainer
         let weightsSizeBytes: Int64
-        var weightReservation: WiredMemoryTicket?
-        var reservationActive = false
+        let isVLM: Bool
         init(
             name: String,
             container: ModelContainer,
             weightsSizeBytes: Int64,
-            weightReservation: WiredMemoryTicket? = nil
+            isVLM: Bool = false
         ) {
             self.name = name
             self.container = container
             self.weightsSizeBytes = weightsSizeBytes
-            self.weightReservation = weightReservation
+            self.isVLM = isVLM
         }
     }
 
@@ -88,10 +91,6 @@ actor ModelRuntime {
 
     func unload(name: String) async {
         await cancelActiveGeneration()
-        if let holder = modelCache[name], holder.reservationActive, let reservation = holder.weightReservation {
-            holder.reservationActive = false
-            _ = await reservation.end()
-        }
         kvCacheStore.invalidateModel(name)
 
         autoreleasepool {
@@ -117,14 +116,6 @@ actor ModelRuntime {
 
     func clearAll() async {
         await cancelActiveGeneration()
-        let reservations: [WiredMemoryTicket] = modelCache.values.compactMap { holder in
-            guard holder.reservationActive, let reservation = holder.weightReservation else { return nil }
-            holder.reservationActive = false
-            return reservation
-        }
-        for reservation in reservations {
-            _ = await reservation.end()
-        }
         kvCacheStore.clearAll()
 
         autoreleasepool {
@@ -190,6 +181,53 @@ actor ModelRuntime {
         return wrapped
     }
 
+    /// Wraps a stream so that after it finishes successfully, the KV cache is
+    /// persisted for the session. The cache object is a reference type whose
+    /// `offset` field grows as tokens are generated, so we must store it only
+    /// after the stream is drained (offset == promptTokens + generatedTokens).
+    ///
+    /// The stored token sequence is `promptTokens + generatedTokenIds` — the complete
+    /// token sequence the cache has processed — so subsequent turns can find the
+    /// correct common prefix even when the chat template reformats historical messages.
+    private func wrapWithCacheStore(
+        _ stream: AsyncThrowingStream<ModelRuntimeEvent, Error>,
+        sessionId: String,
+        cache: [any KVCache],
+        promptTokens: [Int],
+        generatedTokenIdsBox: @escaping @Sendable () -> [Int],
+        modelName: String
+    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        let (wrapped, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        nonisolated(unsafe) let capturedCache = cache
+        let forwardTask = Task {
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    continuation.yield(event)
+                }
+                // Stream finished normally — cache is now fully populated.
+                // Combine prompt tokens + generated token IDs for a complete token sequence.
+                let generatedIds = generatedTokenIdsBox()
+                let fullTokens = promptTokens + generatedIds
+                debugLog("[ModelRuntime] wrapWithCacheStore: promptTokens=\(promptTokens.count) generatedIds=\(generatedIds.count) fullTokens=\(fullTokens.count)")
+                storeSessionCache(sessionId: sessionId, cache: capturedCache, promptTokens: fullTokens, modelName: modelName)
+                continuation.finish()
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { @Sendable _ in forwardTask.cancel() }
+        return wrapped
+    }
+
+    private func storeSessionCache(sessionId: String, cache: [any KVCache], promptTokens: [Int], modelName: String) {
+        kvCacheStore.putCache(sessionId: sessionId, cache: cache, tokens: promptTokens, modelName: modelName)
+        let budget = currentKVBudget()
+        kvCacheStore.ensureBudget(budget)
+        let offset = effectiveCacheOffset(cache)
+        debugLog("[ModelRuntime] stored session cache sessionId=\(sessionId.prefix(8)) promptTokens=\(promptTokens.count) effectiveCacheOffset=\(offset) budget=\(budget / 1024 / 1024)MB")
+    }
+
     // MARK: - Internals
 
     private func getConfig() async -> RuntimeConfig {
@@ -219,9 +257,14 @@ actor ModelRuntime {
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
-        if let existing = modelCache[name] { return existing }
-
+        debugLog("[ModelRuntime] loadContainer: start name=\(name)")
+        if let existing = modelCache[name] {
+            debugLog("[ModelRuntime] loadContainer: cache hit")
+            return existing
+        }
+        debugLog("[ModelRuntime] loadContainer: cache miss, fetching policy...")
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
+        debugLog("[ModelRuntime] loadContainer: policy=\(policy)")
 
         if policy == .strictSingleModel {
             let otherModels = modelCache.keys.filter { $0 != name }
@@ -243,6 +286,7 @@ actor ModelRuntime {
         }
 
         if let existingTask = loadingTasks[name] {
+            debugLog("[ModelRuntime] loadContainer: joining existing load task")
             return try await existingTask.value
         }
 
@@ -255,26 +299,26 @@ actor ModelRuntime {
         }
 
         let task = Task<SessionHolder, Error> {
+            debugLog("[ModelRuntime] loadContainer: load task started isVLM check...")
             let isVLM = ModelManager.isVisionModel(at: localURL)
+            debugLog("[ModelRuntime] loadContainer: isVLM=\(isVLM), loading model weights...")
             let container: ModelContainer
 
             if isVLM {
                 let configuration = ModelConfiguration(directory: localURL)
+                debugLog("[ModelRuntime] loadContainer: calling VLMModelFactory.loadContainer")
                 container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
             } else {
+                debugLog("[ModelRuntime] loadContainer: calling loadModelContainer (LLM path)")
                 container = try await loadModelContainer(directory: localURL)
             }
-
+            debugLog("[ModelRuntime] loadContainer: weights loaded, building holder")
             let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
-            // Budget = weights + 20% workspace margin (capped at 2 GB) for activations
-            let workspaceMargin = min(Int(weightsBytes) / 5, 2 * 1024 * 1024 * 1024)
-            let budgetPolicy = WiredBudgetPolicy(baseBytes: Int(weightsBytes) + workspaceMargin)
-            let reservation = WiredMemoryTicket(size: Int(weightsBytes), policy: budgetPolicy, kind: .reservation)
             return SessionHolder(
                 name: name,
                 container: container,
                 weightsSizeBytes: weightsBytes,
-                weightReservation: reservation
+                isVLM: isVLM
             )
         }
 
@@ -282,18 +326,14 @@ actor ModelRuntime {
 
         do {
             let holder = try await task.value
+            debugLog("[ModelRuntime] loadContainer: task.value resolved, setting cache")
             modelCache[name] = holder
             loadingTasks[name] = nil
             currentModelName = name
 
             Memory.cacheLimit = mlxCacheLimit()
 
-            // Pin model weights in GPU memory via wired memory reservation
-            if let reservation = holder.weightReservation {
-                _ = await reservation.start()
-                holder.reservationActive = true
-            }
-
+            debugLog("[ModelRuntime] loadContainer: returning holder")
             return holder
         } catch {
             loadingTasks[name] = nil
@@ -321,7 +361,7 @@ actor ModelRuntime {
         let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
         do {
-            let (stream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+            let (stream, _, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: { messages },
                 buildToolsSpec: { tokenizerTools },
@@ -365,9 +405,13 @@ actor ModelRuntime {
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         _ = await activeGenerationTask?.value
         if Task.isCancelled { throw CancellationError() }
-
+        debugLog("[ModelRuntime] generateEventStream: start model=\(modelName)")
+        genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
+        print("[ModelRuntime] generateEventStream: start model=\(modelName)")
         let cfg = await getConfig()
+        debugLog("[ModelRuntime] generateEventStream: got config, loading container...")
         let holder = try await loadContainer(id: modelId, name: modelName)
+        debugLog("[ModelRuntime] generateEventStream: container ready isVLM=\(holder.isVLM)")
 
         let sessionId = parameters.sessionId
         let chatMessages = chatBuilder()
@@ -381,6 +425,7 @@ actor ModelRuntime {
         // disk-cached prefix exists yet.  Subsequent queries (and future app
         // launches) load the persisted cache from disk.
         if sessionId == nil,
+            !holder.isVLM,
             !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
         {
             await buildPrefixCache(
@@ -416,13 +461,22 @@ actor ModelRuntime {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         }
 
-        var rawStream: AsyncStream<MLXLMCommon.Generation>
+        var rawStream: AsyncStream<MLXLMCommon.TokenGeneration>
+        var tokenizer: any Tokenizer
         var cache: [any KVCache]
         var newTokens: [Int]
         var genTask: Task<Void, Never>
 
-        do {
-            (rawStream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+        debugLog("[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0) sessionId=\(sessionId?.prefix(8) ?? "nil")")
+        genLog.info("generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)")
+        print("[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0)")
+
+        // Signal that a prefill is starting (count unknown until prepareAndGenerate returns).
+        // The UI shows a spinner; once the first generated token arrives prefillDidFinish() clears it.
+        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+
+         do {
+             (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
@@ -431,39 +485,69 @@ actor ModelRuntime {
                 existingCache: existingCache,
                 cachedTokens: cachedTokens
             )
-        } catch {
-            guard existingCache != nil else { throw error }
-            print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
-            invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
-            (rawStream, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
-                container: holder.container,
-                buildChat: buildChat,
-                buildToolsSpec: buildTools,
-                generation: parameters,
-                runtime: cfg,
-                existingCache: nil,
-                cachedTokens: nil
-            )
-        }
+         } catch {
+             genLog.error("generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)")
+             guard existingCache != nil else {
+                 InferenceProgressManager.shared.prefillDidFinishAsync()
+                 throw error
+             }
+             print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
+             invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
+             // Re-signal for the retry prefill (still unknown count).
+             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+             do {
+                 (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                     container: holder.container,
+                     buildChat: buildChat,
+                     buildToolsSpec: buildTools,
+                     generation: parameters,
+                     runtime: cfg,
+                     existingCache: nil,
+                     cachedTokens: nil
+                 )
+             } catch {
+                 InferenceProgressManager.shared.prefillDidFinishAsync()
+                 throw error
+             }
+         }
+         genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
+         print("[ModelRuntime] generateEventStream: stream created tokenCount=\(newTokens.count)")
+         // Prefill is now complete; update the display with the actual token count while
+         // generation is warming up (the first token clears the indicator).
+         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
 
         activeGenerationTask = genTask
 
-        if let sid = sessionId {
-            kvCacheStore.putCache(sessionId: sid, cache: cache, tokens: newTokens, modelName: modelName)
-            let budget = currentKVBudget()
-            kvCacheStore.ensureBudget(budget)
-        }
-
+        // Thread the tokenizer into StreamAccumulator so it can decode token IDs to text.
+        // The onGeneratedTokenIds callback captures the generated IDs so wrapWithCacheStore
+        // can store promptTokens + generatedTokenIds as the complete cached token sequence.
+        let capturedPromptTokens = newTokens
+        nonisolated(unsafe) var generatedTokenIds: [Int] = []
         let eventStream = StreamAccumulator.accumulate(
             events: rawStream,
+            tokenizer: tokenizer,
             stopSequences: stopSequences,
             tools: tools,
-            generationTask: genTask
-        )
+            generationTask: genTask,
+            onGeneratedTokenIds: { ids in generatedTokenIds = ids }
+        ).asAsyncThrowingStream()
 
-        guard existingCache != nil else { return eventStream }
+        // Compose wrappers: cache-store on success (innermost), then cache-invalidation on error.
+        // Cache must be stored after the stream drains so `cache.offset` reflects all processed tokens.
+        var wrappedStream = eventStream
+        if let sid = sessionId {
+            wrappedStream = wrapWithCacheStore(
+                wrappedStream,
+                sessionId: sid,
+                cache: cache,
+                promptTokens: capturedPromptTokens,
+                generatedTokenIdsBox: { generatedTokenIds },
+                modelName: modelName
+            )
+        }
+        guard existingCache != nil else { return wrappedStream }
         return wrapWithCacheInvalidation(
-            eventStream,
+            wrappedStream,
             sessionId: sessionId,
             modelName: modelName,
             prefixHash: prefixHash

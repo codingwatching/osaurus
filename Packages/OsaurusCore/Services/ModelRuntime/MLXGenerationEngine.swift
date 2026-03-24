@@ -11,6 +11,24 @@ import MLXLLM
 @preconcurrency import MLXLMCommon
 import CoreImage
 import MLXVLM
+import Tokenizers
+import os.log
+
+private let engineLog = Logger(subsystem: "com.dinoki.osaurus", category: "Generation")
+
+/// Returns the offset of the first KV cache layer that actually tracks position (i.e., not a
+/// MambaCache / ArraysCache layer whose `offset` is always 0). Hybrid models like Qwen3.5-27B
+/// interleave linear-attention (MambaCache) and full-attention (KVCacheSimple) layers; reading
+/// `cache.first?.offset` on those models always returns 0 even after a full prefill.
+func effectiveCacheOffset(_ cache: [any KVCache]) -> Int {
+    for layer in cache {
+        // MambaCache (and its parent ArraysCache) never updates offset — skip them.
+        if layer is ArraysCache { continue }
+        return layer.offset
+    }
+    // All layers are Mamba-style; fall back to first layer (offset will be 0 but that's correct).
+    return cache.first?.offset ?? 0
+}
 
 struct MLXGenerationEngine {
 
@@ -59,8 +77,8 @@ struct MLXGenerationEngine {
         runtime: RuntimeConfig,
         existingCache: [any KVCache]?,
         cachedTokens: [Int]?
-    ) async throws -> (AsyncStream<MLXLMCommon.Generation>, [any KVCache], [Int], Task<Void, Never>) {
-        let result: (AsyncStream<MLXLMCommon.Generation>, CacheBox, [Int], Task<Void, Never>) =
+    ) async throws -> (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, [any KVCache], [Int], Task<Void, Never>) {
+        let result: (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, CacheBox, [Int], Task<Void, Never>) =
             try await container.perform { (context: MLXLMCommon.ModelContext) in
                 let chat = preprocessImages(in: buildChat())
                 let toolsSpec = buildToolsSpec()
@@ -104,6 +122,8 @@ struct MLXGenerationEngine {
                 contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
 
                 let newPromptTokens = fullLMInput.text.tokens.asArray(Int.self)
+                engineLog.info("prepareAndGenerate: promptTokens=\(newPromptTokens.count, privacy: .public) hasImage=\(fullLMInput.image != nil, privacy: .public)")
+                print("[MLXGenerationEngine] promptTokens=\(newPromptTokens.count) hasImage=\(fullLMInput.image != nil)")
                 guard !newPromptTokens.isEmpty else {
                     throw NSError(
                         domain: "MLXGenerationEngine",
@@ -125,8 +145,19 @@ struct MLXGenerationEngine {
                         commonPrefixLength -= 1
                     }
 
-                    // Trim cache if needed
-                    let cacheOffset = existingCache.first?.offset ?? 0
+                    // Trim cache if needed.
+                    // Use effectiveCacheOffset() to skip MambaCache/ArraysCache layers (offset always 0).
+                    let cacheOffset = effectiveCacheOffset(existingCache)
+                    // Log tokens around the divergence point to diagnose chat-template differences
+                    let divergeIdx = commonPrefixLength
+                    let loStart = max(0, divergeIdx - 2)
+                    let loEnd = min(min(newPromptTokens.count, cachedTokens.count), divergeIdx + 4)
+                    if loEnd > loStart {
+                        let newSlice = Array(newPromptTokens[loStart..<loEnd])
+                        let cachedSlice = Array(cachedTokens[loStart..<loEnd])
+                        debugLog("[MLXGenerationEngine] diverge@\(divergeIdx): new[\(loStart)..<\(loEnd)]=\(newSlice) cached[\(loStart)..<\(loEnd)]=\(cachedSlice)")
+                    }
+                    debugLog("[MLXGenerationEngine] cache reuse: newTokens=\(newPromptTokens.count) cachedTokens=\(cachedTokens.count) commonPrefix=\(commonPrefixLength) cacheOffset=\(cacheOffset) canTrim=\(canTrimPromptCache(existingCache))")
                     if commonPrefixLength > cacheOffset {
                         commonPrefixLength = cacheOffset
                     }
@@ -138,18 +169,23 @@ struct MLXGenerationEngine {
                                 _ = layerCache.trim(toTrim)
                             }
                             cache = existingCache
+                            debugLog("[MLXGenerationEngine] trimmed cache by \(toTrim) tokens, reusing")
                         } else {
                             // If cache cannot be trimmed, we must discard it
                             cache = makePromptCache(model: context.model, parameters: parameters)
                             commonPrefixLength = 0
+                            debugLog("[MLXGenerationEngine] cache not trimmable, full prefill")
                         }
                     } else {
                         cache = existingCache
+                        debugLog("[MLXGenerationEngine] cache offset matches, reusing directly")
                     }
 
-                    // Slice input to only evaluate new tokens
+                    // Slice input to only evaluate new tokens.
+                    // Use effectiveCacheOffset to account for hybrid models where cache[0] may be
+                    // a MambaCache (offset always 0) and the true offset lives in a later layer.
                     if commonPrefixLength > 0 && commonPrefixLength < newPromptTokens.count && !cache.isEmpty
-                        && cache[0].offset > 0
+                        && effectiveCacheOffset(cache) > 0
                     {
                         let newTokens = MLXArray(Array(newPromptTokens[commonPrefixLength...]))
                         effectiveInput = LMInput(
@@ -157,13 +193,17 @@ struct MLXGenerationEngine {
                             image: fullLMInput.image,
                             video: fullLMInput.video
                         )
+                        debugLog("[MLXGenerationEngine] sliced input to \(newTokens.shape) new tokens")
                     }
                 } else {
                     // Cannot reuse cache (e.g. VLM with images, or no cached tokens)
                     cache = makePromptCache(model: context.model, parameters: parameters)
+                    debugLog("[MLXGenerationEngine] no existing cache, full prefill. existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? -1)")
                 }
 
                 // withError converts MLX C++ errors (e.g. shape mismatches from stale caches) to catchable Swift errors
+                engineLog.info("prepareAndGenerate: constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0), privacy: .public)")
+                print("[MLXGenerationEngine] constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0))")
                 let iterator = try withError {
                     try TokenIterator(
                         input: effectiveInput,
@@ -172,15 +212,20 @@ struct MLXGenerationEngine {
                         parameters: parameters
                     )
                 }
-                let (stream, genTask) = MLXLMCommon.generateTask(
+                let postPrefillOffset = effectiveCacheOffset(cache)
+                debugLog("[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset) cacheCount=\(cache.count) cacheTypes=\(cache.prefix(4).map { type(of: $0) })")
+                print("[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset)")
+                let (stream, genTask) = MLXLMCommon.generateTokenTask(
                     promptTokenCount: newPromptTokens.count,
                     modelConfiguration: contextWithEOS.configuration,
                     tokenizer: contextWithEOS.tokenizer,
                     iterator: iterator
                 )
+                engineLog.info("prepareAndGenerate: generateTokenTask created, returning stream")
+                print("[MLXGenerationEngine] generateTokenTask created, returning stream")
 
-                return (stream, CacheBox(cache), newPromptTokens, genTask)
+                return (stream, contextWithEOS.tokenizer, CacheBox(cache), newPromptTokens, genTask)
             }
-        return (result.0, result.1.cache, result.2, result.3)
+        return (result.0, result.1, result.2.cache, result.3, result.4)
     }
 }
