@@ -161,34 +161,52 @@ final class PluginManager {
         observeTunnelStatus()
     }
 
-    /// For each newly loaded plugin, re-deliver its config under the primary
-    /// agent context. `initPlugin` runs before any agent is wired up, so
-    /// `configGet` falls back to `Agent.defaultId` and misses secrets stored
-    /// under custom agents. Sending the batch here corrects that.
+    /// For each newly loaded plugin, re-deliver its config for every agent.
+    /// `initPlugin` runs before any agent is wired up, so `configGet` falls
+    /// back to `Agent.defaultId` and misses secrets stored under custom agents.
+    /// Sending the batch here (for all agents) corrects that.
     private func notifyNewPluginsWithAgentConfig(from scanResult: PluginScanResult) {
+        let agents = AgentManager.shared.agents
+
         for entry in scanResult.loadResults {
             guard case .success(let loaded) = entry.result else { continue }
             let pluginId = loaded.plugin.id
-            let agentId = Agent.defaultId
             guard let configSpec = loaded.plugin.manifest.capabilities.config,
                 let hostCtx = PluginHostContext.getContext(for: pluginId)
             else { continue }
 
-            hostCtx.currentAgentId = agentId
-            let changes: [(key: String, value: String)] = configSpec.sections
-                .flatMap { $0.fields }
-                .compactMap { field in
-                    guard
-                        let value = ToolSecretsKeychain.getSecret(
-                            id: field.key,
-                            for: pluginId,
-                            agentId: agentId
-                        ),
-                        !value.isEmpty
-                    else { return nil }
-                    return (key: field.key, value: value)
+            let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
+
+            for agent in agents {
+                let agentId = agent.id
+                hostCtx.currentAgentId = agentId
+
+                var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
+
+                for section in configSpec.sections {
+                    for field in section.fields {
+                        if values[field.key] == nil, field.type != .readonly, field.type != .status,
+                            let val = ToolSecretsKeychain.getSecret(id: field.key, for: pluginId, agentId: agentId)
+                        {
+                            values[field.key] = val
+                        }
+                        if values[field.key] == nil, let def = field.default {
+                            values[field.key] = def.stringValue
+                        }
+                        if let connKey = field.connected_when, values[connKey] == nil,
+                            let val = ToolSecretsKeychain.getSecret(id: connKey, for: pluginId, agentId: agentId)
+                        {
+                            values[connKey] = val
+                        }
+                    }
                 }
-            loaded.plugin.notifyConfigBatch(changes)
+
+                let changes: [(key: String, value: String)] = values.compactMap { key, value in
+                    allFieldKeys.contains(key) ? (key: key, value: value) : nil
+                }
+                guard !changes.isEmpty else { continue }
+                loaded.plugin.notifyConfigBatch(changes)
+            }
         }
     }
 
