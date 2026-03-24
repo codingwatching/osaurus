@@ -906,20 +906,22 @@ extension FloatingInputCard {
         return ModelProfileRegistry.options(for: model)
     }
 
+    private var hasNonThinkingOptions: Bool {
+        let thinkingId = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
+        return activeProfileOptions.contains { $0.id != thinkingId }
+    }
+
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            // Model selector (when multiple models available)
             if pickerItems.count > 1 {
                 modelSelectorChip
             }
 
-            // Dedicated Thinking Toggle
             thinkingToggleChip
 
-            // Model-specific options (single grouped entry point)
-            //            if !activeProfileOptions.isEmpty {
-            //                modelOptionsSelectorChip
-            //            }
+            if hasNonThinkingOptions {
+                modelOptionsSelectorChip
+            }
 
             // Sandbox toggle (visible when sandbox is available on this system, hidden when folder context is active)
             if isSandboxAvailable && !folderContextService.hasActiveFolder {
@@ -1118,7 +1120,6 @@ extension FloatingInputCard {
             activeModelOptions[id] = .bool(newVal)
         }
 
-        // Persist the change for this model
         if let model = selectedModel {
             ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
         }
