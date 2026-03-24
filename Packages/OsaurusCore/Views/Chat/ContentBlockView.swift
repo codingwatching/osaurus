@@ -510,7 +510,7 @@ private struct PendingToolCallView: View {
     let argPreview: String?
     let argSize: Int
 
-    private static let previewHeight: CGFloat = 60
+    private static let previewHeight: CGFloat = 40
 
     @Environment(\.theme) private var theme
 

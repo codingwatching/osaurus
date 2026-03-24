@@ -385,7 +385,8 @@ public final class WorkSession: ObservableObject {
         conversationTokens += ContextBudgetManager.estimateTokens(for: firstMessageContent)
 
         conversationTokens += ContextBudgetManager.estimateTokens(for: currentTurns)
-        breakdown.conversation = conversationTokens
+        breakdown.output = ContextBudgetManager.estimateOutputTokens(for: currentTurns)
+        breakdown.conversation = conversationTokens - breakdown.output
 
         var inputTokens = 0
         if !input.isEmpty {
@@ -1536,7 +1537,8 @@ extension WorkSession: WorkEngineDelegate {
         deltaProcessor?.flush()
 
         budgetTracker.updateConversation(
-            tokens: ContextBudgetManager.estimateTokens(for: liveExecutionTurns)
+            tokens: ContextBudgetManager.estimateTokens(for: liveExecutionTurns),
+            finishedOutputTurn: liveExecutionTurns.last(where: { $0.role == .assistant })
         )
 
         // Update current iteration for progress tracking

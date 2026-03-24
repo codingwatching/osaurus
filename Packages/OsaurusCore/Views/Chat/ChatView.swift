@@ -259,7 +259,8 @@ final class ChatSession: ObservableObject {
 
         let toolSpecs = buildToolSpecs(executionMode: executionMode)
         breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
-        breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns)
+        breakdown.output = ContextBudgetManager.estimateOutputTokens(for: turns)
+        breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns) - breakdown.output
 
         var inputTokens = 0
         if !input.isEmpty {
@@ -882,7 +883,7 @@ final class ChatSession: ObservableObject {
                         msgs
                         .filter { $0.role != "system" }
                         .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
-                    budgetTracker.updateConversation(tokens: convTokens)
+                    budgetTracker.updateConversation(tokens: convTokens, finishedOutputTurn: assistantTurn)
                     var req = ChatCompletionRequest(
                         model: selectedModel ?? "default",
                         messages: msgs,

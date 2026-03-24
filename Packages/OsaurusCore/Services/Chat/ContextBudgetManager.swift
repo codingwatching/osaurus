@@ -147,6 +147,28 @@ public struct ContextBudgetManager: Sendable {
         }
     }
 
+    /// Estimate output tokens for a single assistant turn (text + thinking + tool calls).
+    static func estimateOutputTokens(for turn: ChatTurn) -> Int {
+        var tokens = 0
+        if !turn.contentIsEmpty {
+            tokens += max(1, turn.contentLength / charsPerToken)
+        }
+        if turn.hasThinking {
+            tokens += max(1, turn.thinkingLength / charsPerToken)
+        }
+        if let calls = turn.toolCalls {
+            for call in calls {
+                tokens += max(1, (call.function.name.count + call.function.arguments.count) / charsPerToken)
+            }
+        }
+        return tokens
+    }
+
+    /// Estimate total output tokens across all assistant turns.
+    static func estimateOutputTokens(for turns: [ChatTurn]) -> Int {
+        turns.filter { $0.role == .assistant }.reduce(0) { $0 + estimateOutputTokens(for: $1) }
+    }
+
     /// Estimate total tokens for a message array
     static func estimateTokens(for messages: [ChatMessage]) -> Int {
         return messages.reduce(0) { total, msg in
@@ -329,6 +351,7 @@ public struct ContextBudgetManager: Sendable {
 @MainActor
 final class ContextBudgetTracker {
     private var breakdown: ContextTokenBreakdown?
+    private var cumulativeOutputTokens: Int = 0
 
     /// Snapshot the fixed components of the actual request context.
     func snapshot(systemPromptChars: Int, memoryTokens: Int, toolTokens: Int) {
@@ -340,29 +363,31 @@ final class ContextBudgetTracker {
     }
 
     /// Update conversation tokens at each agent-loop iteration start.
-    /// Resets output to 0 since a new LLM call is beginning.
-    func updateConversation(tokens: Int) {
+    /// Accumulates the finished turn's output before starting a new iteration
+    /// so the `output` category reflects total model output across all turns.
+    func updateConversation(tokens: Int, finishedOutputTurn: ChatTurn? = nil) {
+        if let turn = finishedOutputTurn, turn.role == .assistant {
+            cumulativeOutputTokens += ContextBudgetManager.estimateOutputTokens(for: turn)
+        }
         breakdown?.conversation = tokens
-        breakdown?.output = 0
     }
 
     /// Returns the snapshot with live output tokens appended, or nil if
     /// no snapshot is active (caller falls back to full recomputation).
     func activeBreakdown(isActive: Bool, outputTurn: ChatTurn?) -> ContextTokenBreakdown? {
         guard var bd = breakdown, isActive else { return nil }
+        var currentTurnOutput = 0
         if let turn = outputTurn, turn.role == .assistant {
-            bd.output = max(
-                0,
-                (turn.contentLength + turn.thinkingLength)
-                    / ContextBudgetManager.charsPerToken
-            )
+            currentTurnOutput = ContextBudgetManager.estimateOutputTokens(for: turn)
         }
+        bd.output = cumulativeOutputTokens + currentTurnOutput
         return bd
     }
 
     /// Clear the active snapshot. Next read falls back to full recomputation.
     func clear() {
         breakdown = nil
+        cumulativeOutputTokens = 0
     }
 
     var hasActiveSnapshot: Bool { breakdown != nil }
