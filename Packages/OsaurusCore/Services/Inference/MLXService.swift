@@ -149,7 +149,9 @@ actor MLXService: ToolCapableService {
                 userInfo: [NSLocalizedDescriptionKey: "Requested model is required"]
             )
         }
-        if let m = Self.findModel(named: trimmed) { return m }
+        if let m = Self.findModel(named: trimmed) {
+            return m
+        }
         throw NSError(
             domain: "MLXService",
             code: 4,
