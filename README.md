@@ -64,7 +64,7 @@ osaurus status   # Check status
 
 ## Agents
 
-Agents are the core of Osaurus. Each one gets its own prompts, tools, memory, and visual theme -- a research assistant, a coding partner, a file organizer, whatever you need. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
+Agents are the core of Osaurus. Each one gets its own prompts, memory, and visual theme -- a research assistant, a coding partner, a file organizer, whatever you need. Tools and skills are automatically selected via RAG search based on the task at hand -- no manual configuration needed. Everything else in the harness exists to make agents smarter, faster, and more capable over time.
 
 ### Work Mode
 
@@ -152,7 +152,7 @@ osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 
 ## More
 
-**Skills** -- Import reusable AI capabilities from GitHub repos or files. Compatible with [Agent Skills](https://agentskills.io/). See [Skills Guide](docs/SKILLS.md).
+**Skills & Methods** -- Skills import reusable AI capabilities from GitHub repos or files, compatible with [Agent Skills](https://agentskills.io/). Methods are learned workflows that agents save and reuse over time. Both are automatically selected via RAG search -- no manual configuration needed. See [Skills Guide](docs/SKILLS.md).
 
 **Automation** -- Schedules run recurring tasks in the background. Watchers monitor folders and trigger agents on file changes.
 
@@ -203,7 +203,7 @@ ln -sf "/Applications/Osaurus.app/Contents/MacOS/osaurus" "$(brew --prefix)/bin/
 ├──────────┴──────────┴───────────┴───────────────────┤
 │      Plugin System (v1 / v2 ABI) · Native Plugins   │
 ├──────────┬──────────┬───────────┬───────────────────┤
-│ Identity │ Relay    │ Tools     │ Skills            │
+│ Identity │ Relay    │ Tools     │ Skills · Methods  │
 ├──────────┴──────────┴───────────┴───────────────────┤
 │  Sandbox VM (Alpine · Apple Containerization)       │
 │  vsock bridge · VirtioFS · per-agent isolation      │

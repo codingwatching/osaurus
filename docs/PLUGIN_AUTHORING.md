@@ -663,11 +663,10 @@ Rate limiting is applied to `none` and `verify` routes at 100 requests/minute pe
 
 ### Agent-Scoped Routing
 
-Plugin routes are scoped per agent. When a plugin is enabled for an agent, its routes are accessible on that agent's tunnel. When disabled, the routes are removed.
+Plugin routes are scoped per agent. When a route request arrives, Osaurus resolves the agent context and makes the plugin's routes accessible.
 
 - All plugin route requests require an `X-Osaurus-Agent-Id` header identifying the requesting agent.
-- Osaurus checks the agent's `enabledPlugins` map to verify the plugin is active for that agent.
-- Agents manage plugin enablement in the Management window under Agents → Capabilities.
+- Agent identity is resolved at execution time via the work execution context.
 
 ### Request / Response Schema
 
