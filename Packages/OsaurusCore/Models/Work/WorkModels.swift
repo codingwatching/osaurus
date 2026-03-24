@@ -509,8 +509,6 @@ struct PersistedPendingExecutionContext: Codable, Sendable {
     let tools: [Tool]
     let executionMode: PersistedExecutionMode
     let hostFolderRootPath: String?
-    let toolOverrides: [String: Bool]?
-    let skillCatalog: [CapabilityEntry]
 }
 
 struct PersistedWorkExecutionState: Codable, Sendable {

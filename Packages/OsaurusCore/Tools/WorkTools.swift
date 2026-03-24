@@ -427,15 +427,11 @@ public final class WorkToolManager {
         RequestClarificationTool(),
         SaveNotesTool(),
         ReadNotesTool(),
-        LoadSkillTool(),
     ]
 
     /// Reference count for active work sessions
     /// Tools stay registered while count > 0
     private var referenceCount = 0
-
-    /// Previous enabled state for each tool (to restore on unregister)
-    private var previousEnabledState: [String: Bool] = [:]
 
     // MARK: - Folder Tools
 
@@ -470,70 +466,34 @@ public final class WorkToolManager {
         currentFolderContext != nil
     }
 
-    /// Registers work-specific tools with the tool registry and enables them
-    /// Uses reference counting - safe to call multiple times from different sessions
-    /// Call this when entering Work Mode
+    /// Registers work-specific tools with the tool registry.
+    /// Uses reference counting - safe to call multiple times from different sessions.
     public func registerTools() {
         referenceCount += 1
-
-        // Only register on first reference
         guard referenceCount == 1 else { return }
 
-        // Save previous enabled state and register tools
         for tool in tools {
-            // Save current state (might be nil/false, that's fine)
-            previousEnabledState[tool.name] = ToolRegistry.shared.isGlobalEnabled(tool.name)
-
-            // Register and enable
             ToolRegistry.shared.register(tool)
-            ToolRegistry.shared.setEnabled(true, for: tool.name)
         }
     }
 
-    /// Unregisters work-specific tools from the tool registry
-    /// Uses reference counting - only unregisters when last session leaves
-    /// Call this when leaving Work Mode
+    /// Unregisters work-specific tools from the tool registry.
+    /// Uses reference counting - only unregisters when last session leaves.
     public func unregisterTools() {
         guard referenceCount > 0 else { return }
-
         referenceCount -= 1
-
-        // Only unregister when no more references
         guard referenceCount == 0 else { return }
 
-        // Restore previous enabled state and unregister
-        for tool in tools {
-            // Restore previous state (or disable if wasn't set)
-            let wasEnabled = previousEnabledState[tool.name] ?? false
-            ToolRegistry.shared.setEnabled(wasEnabled, for: tool.name)
-        }
-
-        // Clear saved state
-        previousEnabledState.removeAll()
-
-        // Unregister the tools
         ToolRegistry.shared.unregister(names: toolNames)
-
-        // Also unregister folder tools if any
         unregisterFolderTools()
     }
 
-    /// Force unregisters all work tools regardless of reference count
-    /// Use for cleanup during app termination
+    /// Force unregisters all work tools regardless of reference count.
+    /// Use for cleanup during app termination.
     public func forceUnregisterAll() {
         guard referenceCount > 0 else { return }
-
-        // Restore previous enabled state
-        for tool in tools {
-            let wasEnabled = previousEnabledState[tool.name] ?? false
-            ToolRegistry.shared.setEnabled(wasEnabled, for: tool.name)
-        }
-
-        previousEnabledState.removeAll()
         ToolRegistry.shared.unregister(names: toolNames)
         referenceCount = 0
-
-        // Also unregister folder tools
         unregisterFolderTools()
     }
 
@@ -560,11 +520,9 @@ public final class WorkToolManager {
             folderTools += WorkFolderToolFactory.buildGitTools(rootPath: context.rootPath)
         }
 
-        // Register and enable all folder tools
         _folderToolNames = folderTools.map { $0.name }
         for tool in folderTools {
             ToolRegistry.shared.register(tool)
-            ToolRegistry.shared.setEnabled(true, for: tool.name)
         }
     }
 

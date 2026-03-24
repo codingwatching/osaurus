@@ -147,12 +147,12 @@ struct QwenThinkingProfile: ModelProfile {
             id: "disableThinking",
             label: "Disable Thinking",
             icon: "brain.head.profile",
-            kind: .toggle(default: false)
+            kind: .toggle(default: true)
         )
     ]
 
     static let defaults: [String: ModelOptionValue] = [
-        "disableThinking": .bool(false)
+        "disableThinking": .bool(true)
     ]
 
     static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
@@ -346,7 +346,7 @@ struct VeniceModelProfile: ModelProfile {
             id: "disableThinking",
             label: "Disable Thinking",
             icon: "brain.head.profile",
-            kind: .toggle(default: false)
+            kind: .toggle(default: true)
         ),
         ModelOptionDefinition(
             id: "includeVeniceSystemPrompt",
@@ -358,7 +358,7 @@ struct VeniceModelProfile: ModelProfile {
 
     static let defaults: [String: ModelOptionValue] = [
         "enableWebSearch": .string("off"),
-        "disableThinking": .bool(false),
+        "disableThinking": .bool(true),
         "includeVeniceSystemPrompt": .bool(true),
     ]
 

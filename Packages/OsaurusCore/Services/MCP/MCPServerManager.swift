@@ -60,12 +60,6 @@ final class MCPServerManager {
         }
     }
 
-    // MARK: - Dynamic Tool Changes
-    func notifyToolsListChanged() async {
-        // The MCP Swift SDK advertises listChanged in capabilities; most clients will re-list
-        // on reconnect or UI trigger. This is a hook for future push events if added.
-    }
-
     // MARK: - Internal
     private func registerHandlers(on server: MCP.Server) async {
         // ListTools returns only enabled tools from ToolRegistry

@@ -189,8 +189,13 @@ struct ContentBlockView: View, Equatable {
                 .padding(.top, 6)
                 .padding(.bottom, isLastInTurn ? 16 : 6)
 
-        case let .pendingToolCall(toolName):
-            PendingToolCallView(toolName: toolName)
+        case let .preflightCapabilities(items):
+            PreflightCapabilitiesView(items: items)
+                .padding(.top, 4)
+                .padding(.bottom, isLastInTurn ? 8 : 4)
+
+        case let .pendingToolCall(toolName, argPreview, argSize):
+            PendingToolCallView(toolName: toolName, argPreview: argPreview, argSize: argSize)
                 .padding(.top, 8)
                 .padding(.bottom, isLastInTurn ? 16 : 8)
 
@@ -503,27 +508,134 @@ private struct ActionButton: View {
     }
 }
 
+// MARK: - Preflight Capabilities View
+
+private struct PreflightCapabilitiesView: View {
+    let items: [PreflightCapabilityItem]
+
+    @Environment(\.theme) private var theme
+
+    private var icon: String {
+        let types = Set(items.map(\.type))
+        if types.count == 1, let only = types.first {
+            return only.icon
+        }
+        return "sparkles"
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                .foregroundColor(theme.tertiaryText)
+
+            FlowLayout(spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    CapabilityBadge(item: item)
+                }
+            }
+        }
+    }
+}
+
+private struct CapabilityBadge: View {
+    let item: PreflightCapabilityItem
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Text(item.name)
+            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
+            .foregroundColor(theme.secondaryText)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(
+                Capsule()
+                    .fill(theme.tertiaryBackground)
+            )
+            .help(item.description)
+    }
+}
+
 // MARK: - Pending Tool Call View
 
 private struct PendingToolCallView: View {
     let toolName: String
+    let argPreview: String?
+    let argSize: Int
+
+    private static let previewHeight: CGFloat = 40
 
     @Environment(\.theme) private var theme
 
     private var category: ToolCategory { ToolCategory.from(toolName: toolName) }
 
+    private var formattedSize: String? {
+        guard argSize > 0 else { return nil }
+        if argSize < 1024 {
+            return "\(argSize) B"
+        } else {
+            let kb = Double(argSize) / 1024.0
+            return String(format: "%.1f KB", kb)
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            PulsingDot(color: theme.accentColor)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                PulsingDot(color: theme.accentColor)
 
-            Image(systemName: category.icon)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                Image(systemName: category.icon)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
 
-            Text(toolName)
-                .font(theme.monoFont(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
+                Text(toolName)
+                    .font(theme.monoFont(size: 12, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                if let size = formattedSize {
+                    Text(size)
+                        .font(theme.monoFont(size: 11, weight: .regular))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+
+            if let preview = argPreview, !preview.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        Text(preview)
+                            .font(theme.monoFont(size: 10, weight: .regular))
+                            .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .id("bottom")
+                    }
+                    .frame(height: Self.previewHeight)
+                    .mask(
+                        VStack(spacing: 0) {
+                            LinearGradient(
+                                colors: [.clear, .white],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 16)
+
+                            Color.white
+                        }
+                    )
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(theme.secondaryBackground.opacity(0.5))
+                    )
+                    .onChange(of: argSize) { _, _ in
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

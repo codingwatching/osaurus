@@ -44,8 +44,8 @@ public actor WorkExecutionEngine {
     /// Executes a tool call with a timeout to prevent indefinite hangs.
     private func executeToolCall(
         _ invocation: ServiceToolInvocation,
-        overrides: [String: Bool]?,
-        issueId: String
+        issueId: String,
+        agentId: UUID? = nil
     ) async throws -> ToolCallResult {
         let callId =
             invocation.toolCallId
@@ -59,8 +59,8 @@ public actor WorkExecutionEngine {
                 await self.executeToolInBackground(
                     name: invocation.toolName,
                     argumentsJSON: invocation.jsonArguments,
-                    overrides: overrides,
-                    issueId: issueId
+                    issueId: issueId,
+                    agentId: agentId
                 )
             }
             group.addTask {
@@ -92,21 +92,21 @@ public actor WorkExecutionEngine {
         return ToolCallResult(toolCall: toolCall, result: result)
     }
 
-    /// Helper to execute tool in background with issue context
+    /// Helper to execute tool in background with issue and agent context
     private func executeToolInBackground(
         name: String,
         argumentsJSON: String,
-        overrides: [String: Bool]?,
-        issueId: String
+        issueId: String,
+        agentId: UUID? = nil
     ) async -> String {
         do {
-            // Wrap with execution context so folder tools can log operations
             return try await WorkExecutionContext.$currentIssueId.withValue(issueId) {
-                try await ToolRegistry.shared.execute(
-                    name: name,
-                    argumentsJSON: argumentsJSON,
-                    overrides: overrides
-                )
+                try await WorkExecutionContext.$currentAgentId.withValue(agentId) {
+                    try await ToolRegistry.shared.execute(
+                        name: name,
+                        argumentsJSON: argumentsJSON
+                    )
+                }
             }
         } catch {
             print("[WorkExecutionEngine] Tool execution failed: \(error)")
@@ -506,6 +506,9 @@ public actor WorkExecutionEngine {
     /// Callback type for tool hint (pending tool name detected during streaming)
     public typealias ToolHintCallback = @MainActor @Sendable (String) async -> Void
 
+    /// Callback type for tool argument fragment (partial args detected during streaming)
+    public typealias ToolArgHintCallback = @MainActor @Sendable (String) async -> Void
+
     /// Callback type for token consumption (inputTokens, outputTokens)
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
     public typealias InterruptCheckCallback = @Sendable () async -> Bool
@@ -525,7 +528,6 @@ public actor WorkExecutionEngine {
     ///   - systemPrompt: The full system prompt including work instructions
     ///   - model: Model to use
     ///   - tools: All available tools (model picks which to use)
-    ///   - toolOverrides: Tool permission overrides
     ///   - contextLength: Model context window size in tokens (used for budget management)
     ///   - toolTokenEstimate: Estimated tokens consumed by tool definitions
     ///   - maxIterations: Maximum loop iterations (not tool calls - iterations)
@@ -542,7 +544,6 @@ public actor WorkExecutionEngine {
         systemPrompt: String,
         model: String?,
         tools: [Tool],
-        toolOverrides: [String: Bool]?,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         topPOverride: Float? = nil,
@@ -551,15 +552,18 @@ public actor WorkExecutionEngine {
         maxIterations: Int = defaultMaxIterations,
         executionMode: WorkExecutionMode = .none,
         sandboxAgentName: String? = nil,
+        agentId: UUID? = nil,
         shouldInterrupt: @escaping InterruptCheckCallback = { false },
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
         onToolHint: @escaping ToolHintCallback,
+        onToolArgHint: @escaping ToolArgHintCallback,
         onToolCall: @escaping ToolCallCallback,
         onStatusUpdate: @escaping StatusCallback,
         onArtifact: @escaping ArtifactCallback,
         onTokensConsumed: @escaping TokenConsumptionCallback
     ) async throws -> LoopResult {
+        var activeTools = tools
         var iteration = 0
         var totalToolCalls = 0
         var toolsUsed: [String] = []
@@ -675,7 +679,7 @@ public actor WorkExecutionEngine {
                 presence_penalty: nil,
                 stop: nil,
                 n: nil,
-                tools: tools.isEmpty ? nil : tools,
+                tools: activeTools.isEmpty ? nil : activeTools,
                 tool_choice: nil,
                 session_id: issue.id
             )
@@ -696,6 +700,10 @@ public actor WorkExecutionEngine {
                     }
                     if let toolName = StreamingToolHint.decode(delta) {
                         await onToolHint(toolName)
+                        continue
+                    }
+                    if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                        await onToolArgHint(argFragment)
                         continue
                     }
                     responseContent += delta
@@ -784,7 +792,15 @@ public actor WorkExecutionEngine {
             }
 
             // Execute the tool
-            let result = try await executeToolCall(invocation, overrides: toolOverrides, issueId: issue.id)
+            let result = try await executeToolCall(invocation, issueId: issue.id, agentId: agentId)
+
+            // Hot-load tools injected by capabilities_load
+            if invocation.toolName == "capabilities_load" {
+                let newTools = await CapabilityLoadBuffer.shared.drain()
+                for tool in newTools where !activeTools.contains(where: { $0.function.name == tool.function.name }) {
+                    activeTools.append(tool)
+                }
+            }
 
             // Process share_artifact before storing the result so the enriched
             // metadata (host_path, file_size, etc.) flows into the transcript.
@@ -879,7 +895,6 @@ public actor WorkExecutionEngine {
     static func buildAgentSystemPrompt(
         base: String,
         executionMode: WorkExecutionMode,
-        skillInstructions: String? = nil,
         compact: Bool = false,
         secretNames: [String] = []
     ) -> String {
@@ -891,13 +906,9 @@ public actor WorkExecutionEngine {
             : workModeFull()
 
         switch executionMode {
-        case .hostFolder: break  // Moved to user message
+        case .hostFolder: break
         case .sandbox: prompt += sandboxPromptSection(compact: compact, secretNames: secretNames)
         case .none: break
-        }
-
-        if let skills = skillInstructions, !skills.isEmpty {
-            prompt += "\n## Active Skills\n\(skills)\n"
         }
 
         return prompt

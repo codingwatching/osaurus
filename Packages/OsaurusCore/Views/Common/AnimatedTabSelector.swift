@@ -134,6 +134,7 @@ private struct AnimatedTabButton<Tab: AnimatedTabItem>: View {
 enum ToolsTab: String, CaseIterable, AnimatedTabItem {
     case available = "Available"
     case remote = "Remote"
+    case sandbox = "Sandbox"
 
     var title: String { rawValue }
 }
@@ -152,7 +153,6 @@ enum PluginsTab: String, CaseIterable, AnimatedTabItem {
 enum SandboxTab: String, CaseIterable, AnimatedTabItem {
     case container = "Container"
     case agents = "Agents"
-    case plugins = "Plugins"
 
     var title: String { rawValue }
 }
@@ -186,7 +186,7 @@ enum SandboxTab: String, CaseIterable, AnimatedTabItem {
 
                 AnimatedTabSelector(
                     selection: $sandboxTab,
-                    counts: [.plugins: 5]
+                    counts: [.agents: 5]
                 )
             }
             .padding(40)

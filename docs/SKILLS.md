@@ -180,58 +180,55 @@ Add context files that are automatically loaded when the skill is active:
 
 ---
 
-## Smart Capability Selection
+## Automated Capability Selection
 
-Skills uses a smart loading system that saves up to 80% of context space.
+Osaurus uses a RAG-based system to automatically select and inject relevant skills into each conversation. No manual configuration is needed -- the right skills are loaded based on what you're asking about.
 
 ### How It Works
 
-Instead of loading all skill instructions upfront (which can consume thousands of tokens), Osaurus uses a two-phase approach:
+Before each agent loop, a **preflight capability search** runs across all indexed skills (as well as methods and tools). The search uses hybrid BM25 + vector matching to find capabilities relevant to your query, then injects matching skill instructions directly into the system prompt.
 
-**Phase 1 — Catalog**
-- The AI sees a lightweight menu of available skills (just names and descriptions)
-- This uses minimal tokens (~10-20 per skill)
+### Search Modes
 
-**Phase 2 — Selection**
-- The AI picks which skills are relevant to your request
-- Only selected skills are fully loaded into context
-- Unneeded skills don't consume any context space
+You can control how aggressively the system searches for capabilities:
+
+| Mode        | Skills Loaded | Description                               |
+| ----------- | ------------- | ----------------------------------------- |
+| `off`       | 0             | Disable automatic selection               |
+| `narrow`    | 1             | Minimal context, fastest responses        |
+| `balanced`  | 2             | Default — good coverage, moderate cost    |
+| `wide`      | 4             | Maximum coverage, larger prompts          |
+
+### Runtime Discovery
+
+During a conversation, the AI can also discover and load additional capabilities on demand:
+
+1. **`capabilities_search`** — Searches all indexed methods, tools, and skills in parallel
+2. **`capabilities_load`** — Loads a specific capability into the active session
+
+This means the AI starts with automatically selected skills and can dynamically expand its capabilities as the conversation evolves.
 
 ### Why This Matters
 
-- **More room for conversation** — Your messages and the AI's responses have more space
-- **Faster responses** — Less context to process means quicker replies
-- **Better focus** — The AI works with relevant skills, not everything at once
-
-### In Practice
-
-You don't need to do anything special. When you start a chat with skills enabled, the AI automatically:
-
-1. Reviews available skills from the catalog
-2. Selects appropriate skills based on your first message
-3. Uses those skills throughout the conversation
-4. Can add more skills later if the conversation shifts
+- **Zero configuration** — Skills are selected based on relevance, not manual toggles
+- **Better focus** — Only relevant skills are loaded, keeping context lean
+- **Adaptive** — The AI can discover additional skills mid-conversation if the topic shifts
+- **Works with Methods** — Learned workflows (methods) are searched alongside skills, so the AI benefits from past experience
 
 ---
 
 ## Agent Integration
 
-Skills work seamlessly with Agents. Each agent can have its own skill configuration:
+Skills are available to all agents automatically. The RAG-based preflight search selects relevant skills for each query regardless of which agent is active.
 
-1. Open **Agents** in the Management window
-2. Edit a agent
-3. Enable or disable specific skills for that agent
+**How it works with agents:**
 
-**Example configurations:**
+- Each agent's system prompt guides its behavior and specialization
+- When you send a message, the preflight search finds skills relevant to your query
+- Matching skill instructions are injected into the agent's context
+- The agent can discover additional skills at runtime via `capabilities_search`
 
-| Agent | Enabled Skills |
-|---------|---------------|
-| Code Assistant | Debug Assistant |
-| Research Helper | Research Analyst, Content Summarizer |
-| Creative Writer | Creative Brainstormer |
-| Study Buddy | Study Tutor, Content Summarizer |
-
-When you switch agents, the skill configuration switches too.
+No per-agent skill configuration is needed. The system automatically matches the right skills to the right tasks.
 
 ---
 
@@ -240,8 +237,9 @@ When you switch agents, the skill configuration switches too.
 ### Skills not appearing in chat
 
 - Verify the skill is enabled (toggle is on)
-- Check if the active agent has the skill enabled
+- Check that the skill's description clearly describes its purpose (the RAG search uses this)
 - Start a new chat session
+- Try setting a wider search mode in chat configuration
 
 ### GitHub import fails
 
@@ -252,8 +250,8 @@ When you switch agents, the skill configuration switches too.
 ### Skill instructions not being followed
 
 - Review the skill's instructions for clarity
-- Ensure the skill is selected (check the AI's first response)
-- Try being more explicit in your request
+- Ensure the skill's description is specific enough for the RAG search to match it
+- Try being more explicit in your request to improve search relevance
 
 ### Import format errors
 
@@ -268,3 +266,5 @@ When you switch agents, the skill configuration switches too.
 - [Agents](../README.md#agents) — Custom AI assistants
 - [Tools & Plugins](PLUGIN_AUTHORING.md) — Extend with custom tools
 - [Agent Skills Specification](https://agentskills.io/) — Open format documentation
+- [Features: Methods](FEATURES.md#methods) — Reusable learned workflows
+- [Features: Context Management](FEATURES.md#context-management) — Automated capability selection

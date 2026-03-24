@@ -159,6 +159,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
+        // Initialize context management system (methods, tool index, skill search)
+        Task {
+            async let methodsInit: Void = {
+                try? MethodDatabase.shared.open()
+                await MethodSearchService.shared.initialize()
+            }()
+            async let toolsInit: Void = {
+                try? ToolDatabase.shared.open()
+                await ToolSearchService.shared.initialize()
+            }()
+            async let skillsInit: Void = SkillSearchService.shared.initialize()
+
+            _ = await (methodsInit, toolsInit, skillsInit)
+            await ToolIndexService.shared.syncFromRegistry()
+            await SkillSearchService.shared.rebuildIndex()
+            await MethodSearchService.shared.rebuildIndex()
+        }
+
         // Auto-start server on app launch
         Task { @MainActor in
             await serverController.startServer()
@@ -654,6 +672,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         self.popover = popover
 
         popover.show(relativeTo: statusButton.bounds, of: statusButton, preferredEdge: .minY)
+
+        // ensure popover window can join all spaces and appear over full screen apps
+        if let popoverWindow = popover.contentViewController?.view.window {
+            popoverWindow.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
+
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -885,6 +909,7 @@ extension AppDelegate {
         window.contentViewController = hostingController
         window.center()
         window.isReleasedWhenClosed = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         Self.acknowledgementsWindow = window
 
@@ -958,6 +983,7 @@ extension AppDelegate {
         window.standardWindowButton(.zoomButton)?.isHidden = true
         window.backgroundColor = NSColor(themeManager.currentTheme.primaryBackground)
         window.isMovableByWindowBackground = true
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         Self.onboardingWindow = window
 

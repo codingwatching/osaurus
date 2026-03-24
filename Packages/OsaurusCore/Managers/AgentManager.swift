@@ -75,8 +75,6 @@ public final class AgentManager: ObservableObject {
         name: String,
         description: String = "",
         systemPrompt: String = "",
-        enabledTools: [String: Bool]? = nil,
-        enabledSkills: [String: Bool]? = nil,
         themeId: UUID? = nil,
         defaultModel: String? = nil,
         temperature: Float? = nil,
@@ -87,8 +85,6 @@ public final class AgentManager: ObservableObject {
             name: name,
             description: description,
             systemPrompt: systemPrompt,
-            enabledTools: enabledTools,
-            enabledSkills: enabledSkills,
             themeId: themeId,
             defaultModel: defaultModel,
             temperature: temperature,
@@ -302,63 +298,6 @@ extension AgentManager {
         return agent.systemPrompt
     }
 
-    /// Get the effective tool overrides for an agent
-    public func effectiveToolOverrides(for agentId: UUID) -> [String: Bool]? {
-        guard let agent = agent(for: agentId) else {
-            return nil
-        }
-
-        // Default agent uses global settings
-        if agent.id == Agent.defaultId {
-            return nil
-        }
-
-        return agent.enabledTools
-    }
-
-    /// Get the effective skill overrides for an agent
-    public func effectiveSkillOverrides(for agentId: UUID) -> [String: Bool]? {
-        guard let agent = agent(for: agentId) else {
-            return nil
-        }
-
-        // Default agent uses global settings
-        if agent.id == Agent.defaultId {
-            return nil
-        }
-
-        return agent.enabledSkills
-    }
-
-    /// Get the effective plugin overrides for an agent.
-    /// Returns `nil` only for the default agent (all plugins enabled).
-    /// Custom agents return their explicit overrides or an empty dict
-    /// so that newly installed plugins default to disabled.
-    public func effectivePluginOverrides(for agentId: UUID) -> [String: Bool]? {
-        guard let agent = agent(for: agentId) else { return nil }
-        if agent.id == Agent.defaultId { return nil }
-        return agent.enabledPlugins ?? [:]
-    }
-
-    /// Check if a plugin is enabled for a given agent.
-    /// nil overrides (default agent) means all plugins are enabled.
-    /// Custom agents must explicitly enable each plugin.
-    public func isPluginEnabled(_ pluginId: String, for agentId: UUID) -> Bool {
-        guard let overrides = effectivePluginOverrides(for: agentId) else { return true }
-        return overrides[pluginId] ?? false
-    }
-
-    /// Returns the primary agent for a plugin: the first custom agent that has
-    /// the plugin enabled, falling back to the default agent.
-    public func primaryAgent(forPlugin pluginId: String) -> UUID? {
-        let custom = agents.filter {
-            $0.id != Agent.defaultId && isPluginEnabled(pluginId, for: $0.id)
-        }
-        if let first = custom.first { return first.id }
-        if isPluginEnabled(pluginId, for: Agent.defaultId) { return Agent.defaultId }
-        return nil
-    }
-
     /// Get the effective model for an agent
     /// For custom agents without a model set, falls back to Default agent's model
     public func effectiveModel(for agentId: UUID) -> String? {
@@ -443,157 +382,4 @@ extension AgentManager {
         refresh()
     }
 
-    // MARK: - Tool/Skill Override Updates
-
-    /// Update a single tool override for an agent
-    /// For Default agent, updates global config. For custom agents, updates agent's enabledTools.
-    public func setToolEnabled(_ enabled: Bool, tool: String, for agentId: UUID) {
-        // Default agent -> update global config (this posts .toolsListChanged)
-        if agentId == Agent.defaultId {
-            ToolRegistry.shared.setEnabled(enabled, for: tool)
-            return
-        }
-
-        // Custom agent -> update agent's enabledTools
-        guard var agent = agent(for: agentId) else { return }
-        var overrides = agent.enabledTools ?? [:]
-        overrides[tool] = enabled
-        agent.enabledTools = overrides
-        agent.updatedAt = Date()
-        AgentStore.save(agent)
-        refresh()
-        // Post notification to trigger token cache invalidation
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-    }
-
-    /// Update a single skill override for an agent
-    /// For Default agent, updates global config. For custom agents, updates agent's enabledSkills.
-    public func setSkillEnabled(_ enabled: Bool, skill: String, for agentId: UUID) {
-        // Default agent -> update global skill config (this posts .skillsListChanged)
-        if agentId == Agent.defaultId {
-            if let s = SkillManager.shared.skill(named: skill) {
-                SkillManager.shared.setEnabled(enabled, for: s.id)
-            }
-            return
-        }
-
-        // Custom agent -> update agent's enabledSkills
-        guard var agent = agent(for: agentId) else { return }
-        var overrides = agent.enabledSkills ?? [:]
-        overrides[skill] = enabled
-        agent.enabledSkills = overrides
-        agent.updatedAt = Date()
-        AgentStore.save(agent)
-        refresh()
-        // Post notification to trigger token cache invalidation
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
-    }
-
-    /// Update a single plugin override for an agent
-    /// Default agent has all plugins enabled (no per-plugin global config).
-    public func setPluginEnabled(_ enabled: Bool, plugin pluginId: String, for agentId: UUID) {
-        if agentId == Agent.defaultId { return }
-
-        guard var agent = agent(for: agentId) else { return }
-        var overrides = agent.enabledPlugins ?? [:]
-        overrides[pluginId] = enabled
-        agent.enabledPlugins = overrides
-        agent.updatedAt = Date()
-        AgentStore.save(agent)
-        refresh()
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-    }
-
-    /// Enable all tools for an agent (batched for efficiency)
-    public func enableAllTools(for agentId: UUID, tools: [String]) {
-        setAllTools(enabled: true, for: agentId, tools: tools)
-    }
-
-    /// Disable all tools for an agent (batched for efficiency)
-    public func disableAllTools(for agentId: UUID, tools: [String]) {
-        setAllTools(enabled: false, for: agentId, tools: tools)
-    }
-
-    /// Enable all skills for an agent (batched for efficiency)
-    public func enableAllSkills(for agentId: UUID, skills: [String]) {
-        setAllSkills(enabled: true, for: agentId, skills: skills)
-    }
-
-    /// Disable all skills for an agent (batched for efficiency)
-    public func disableAllSkills(for agentId: UUID, skills: [String]) {
-        setAllSkills(enabled: false, for: agentId, skills: skills)
-    }
-
-    /// Enable all plugins for an agent (batched for efficiency)
-    public func enableAllPlugins(for agentId: UUID, plugins: [String]) {
-        setAllPlugins(enabled: true, for: agentId, plugins: plugins)
-    }
-
-    /// Disable all plugins for an agent (batched for efficiency)
-    public func disableAllPlugins(for agentId: UUID, plugins: [String]) {
-        setAllPlugins(enabled: false, for: agentId, plugins: plugins)
-    }
-
-    // MARK: - Private Batch Helpers
-
-    private func setAllTools(enabled: Bool, for agentId: UUID, tools: [String]) {
-        // Default agent -> update global config
-        if agentId == Agent.defaultId {
-            for tool in tools {
-                ToolRegistry.shared.setEnabled(enabled, for: tool)
-            }
-            return
-        }
-
-        // Custom agent -> batch update agent's enabledTools
-        guard var agent = agent(for: agentId) else { return }
-        var overrides = agent.enabledTools ?? [:]
-        for tool in tools {
-            overrides[tool] = enabled
-        }
-        agent.enabledTools = overrides
-        agent.updatedAt = Date()
-        AgentStore.save(agent)
-        refresh()
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-    }
-
-    private func setAllSkills(enabled: Bool, for agentId: UUID, skills: [String]) {
-        // Default agent -> update global skill config
-        if agentId == Agent.defaultId {
-            for skillName in skills {
-                if let s = SkillManager.shared.skill(named: skillName) {
-                    SkillManager.shared.setEnabled(enabled, for: s.id)
-                }
-            }
-            return
-        }
-
-        // Custom agent -> batch update agent's enabledSkills
-        guard var agent = agent(for: agentId) else { return }
-        var overrides = agent.enabledSkills ?? [:]
-        for skill in skills {
-            overrides[skill] = enabled
-        }
-        agent.enabledSkills = overrides
-        agent.updatedAt = Date()
-        AgentStore.save(agent)
-        refresh()
-        NotificationCenter.default.post(name: .skillsListChanged, object: nil)
-    }
-
-    private func setAllPlugins(enabled: Bool, for agentId: UUID, plugins: [String]) {
-        if agentId == Agent.defaultId { return }
-
-        guard var agent = agent(for: agentId) else { return }
-        var overrides = agent.enabledPlugins ?? [:]
-        for pluginId in plugins {
-            overrides[pluginId] = enabled
-        }
-        agent.enabledPlugins = overrides
-        agent.updatedAt = Date()
-        AgentStore.save(agent)
-        refresh()
-        NotificationCenter.default.post(name: .toolsListChanged, object: nil)
-    }
 }

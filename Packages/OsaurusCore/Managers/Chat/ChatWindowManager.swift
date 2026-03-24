@@ -200,7 +200,11 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     /// Toggle the last focused window (or create new if none exist)
     public func toggleLastFocused() {
         if let lastId = lastFocusedWindowId, let window = nsWindows[lastId] {
-            if window.isVisible {
+            // smart toggle: only hide if the window is already visible, frontmost, and the app is active
+            // otherwise, toggling should just bring it to the front
+            let isFrontmost = window.isVisible && window.isKeyWindow && NSApp.isActive
+
+            if isFrontmost {
                 hideWindow(id: lastId)
             } else {
                 showWindow(id: lastId)
@@ -470,6 +474,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.hidesOnDeactivate = false
         panel.worksWhenModal = true
         panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true

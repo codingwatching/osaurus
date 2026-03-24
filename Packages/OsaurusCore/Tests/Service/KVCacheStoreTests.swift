@@ -23,120 +23,117 @@ struct KVCacheStoreTests {
         var store = KVCacheStore()
         let cache = makeCache()
 
-        store.putCache(sessionId: "s1", cache: cache, modelName: "llama")
+        store.putCache(sessionId: "s1", cache: cache, tokens: nil, modelName: "llama")
 
         let retrieved = store.getCache(sessionId: "s1", modelName: "llama")
-        #expect(retrieved != nil)
-        #expect(retrieved!.count == 1)
+        #expect(retrieved.0 != nil)
+        #expect(retrieved.0!.count == 1)
     }
 
     @Test func getCacheReturnsNilOnMiss() {
         var store = KVCacheStore()
         let result = store.getCache(sessionId: "nonexistent", modelName: "llama")
-        #expect(result == nil)
+        #expect(result.0 == nil)
     }
 
     @Test func getCacheInvalidatesOnModelChange() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "modelA")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "modelA")
 
         let result = store.getCache(sessionId: "s1", modelName: "modelB")
-        #expect(result == nil)
+        #expect(result.0 == nil)
 
-        // Entry should be fully evicted -- re-getting with original model also fails
         let retry = store.getCache(sessionId: "s1", modelName: "modelA")
-        #expect(retry == nil)
+        #expect(retry.0 == nil)
     }
 
     // MARK: - LRU ordering
 
     @Test func lruOrderMaintainedAcrossAccesses() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
-        store.putCache(sessionId: "s2", cache: makeCache(), modelName: "m")
-        store.putCache(sessionId: "s3", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
+        store.putCache(sessionId: "s2", cache: makeCache(), tokens: nil, modelName: "m")
+        store.putCache(sessionId: "s3", cache: makeCache(), tokens: nil, modelName: "m")
 
         // Access s1 -- should promote it to MRU; s2 becomes coldest
         _ = store.getCache(sessionId: "s1", modelName: "m")
 
         // All three should still be retrievable
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
-        #expect(store.getCache(sessionId: "s2", modelName: "m") != nil)
-        #expect(store.getCache(sessionId: "s3", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
+        #expect(store.getCache(sessionId: "s2", modelName: "m").0 != nil)
+        #expect(store.getCache(sessionId: "s3", modelName: "m").0 != nil)
     }
 
     @Test func putCacheTouchesLRU() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
-        store.putCache(sessionId: "s2", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
+        store.putCache(sessionId: "s2", cache: makeCache(), tokens: nil, modelName: "m")
 
-        // Re-putting s1 should promote it to MRU
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
 
-        // Both should still be retrievable after re-put
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
-        #expect(store.getCache(sessionId: "s2", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
+        #expect(store.getCache(sessionId: "s2", modelName: "m").0 != nil)
     }
 
     // MARK: - ensureBudget
 
     @Test func ensureBudgetIsNoOpWhenUnderBudget() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
 
         // With 0-byte caches, totalHotBytes is 0 which is within any budget
         store.ensureBudget(1024)
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
     }
 
     // MARK: - Invalidation
 
     @Test func invalidateRemovesSession() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
 
         store.invalidate(sessionId: "s1")
-        #expect(store.getCache(sessionId: "s1", modelName: "m") == nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 == nil)
     }
 
     @Test func invalidateIsNoOpForUnknownSession() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
         store.invalidate(sessionId: "unknown")
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
     }
 
     @Test func invalidateModelRemovesAllForModel() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "a1", cache: makeCache(), modelName: "modelA")
-        store.putCache(sessionId: "a2", cache: makeCache(), modelName: "modelA")
-        store.putCache(sessionId: "b1", cache: makeCache(), modelName: "modelB")
+        store.putCache(sessionId: "a1", cache: makeCache(), tokens: nil, modelName: "modelA")
+        store.putCache(sessionId: "a2", cache: makeCache(), tokens: nil, modelName: "modelA")
+        store.putCache(sessionId: "b1", cache: makeCache(), tokens: nil, modelName: "modelB")
 
         store.invalidateModel("modelA")
 
-        #expect(store.getCache(sessionId: "a1", modelName: "modelA") == nil)
-        #expect(store.getCache(sessionId: "a2", modelName: "modelA") == nil)
-        #expect(store.getCache(sessionId: "b1", modelName: "modelB") != nil)
+        #expect(store.getCache(sessionId: "a1", modelName: "modelA").0 == nil)
+        #expect(store.getCache(sessionId: "a2", modelName: "modelA").0 == nil)
+        #expect(store.getCache(sessionId: "b1", modelName: "modelB").0 != nil)
     }
 
     @Test func invalidateModelIsNoOpForUnknownModel() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
         store.invalidateModel("unknown")
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
     }
 
     @Test func clearAllRemovesEverything() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m1")
-        store.putCache(sessionId: "s2", cache: makeCache(), modelName: "m2")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m1")
+        store.putCache(sessionId: "s2", cache: makeCache(), tokens: nil, modelName: "m2")
 
         store.clearAll()
 
         #expect(store.totalHotBytes == 0)
-        #expect(store.getCache(sessionId: "s1", modelName: "m1") == nil)
-        #expect(store.getCache(sessionId: "s2", modelName: "m2") == nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m1").0 == nil)
+        #expect(store.getCache(sessionId: "s2", modelName: "m2").0 == nil)
     }
 
     // MARK: - Prefix cache
@@ -166,7 +163,7 @@ struct KVCacheStoreTests {
         hash: String
     ) {
         let key = KVCacheStore.prefixKey(modelName: modelName, hash: hash)
-        store.putCache(sessionId: key, cache: makeCache(), modelName: modelName)
+        store.putCache(sessionId: key, cache: makeCache(), tokens: nil, modelName: modelName)
     }
 
     @Test func putPrefixCacheRegistersEntry() {
@@ -183,7 +180,7 @@ struct KVCacheStoreTests {
         // getPrefixCache always loads from SSD to avoid shared-reference mutation;
         // seeded entries have no ssdPath so it returns nil.
         let retrieved = store.getPrefixCache(modelName: "llama", hash: "hash1")
-        #expect(retrieved == nil)
+        #expect(retrieved.0 == nil)
     }
 
     @Test func hasPrefixCacheReturnsFalseOnMiss() {
@@ -253,23 +250,23 @@ struct KVCacheStoreTests {
 
     @Test func putCacheUpdatesExistingSession() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
 
         let newCache = makeCache()
-        store.putCache(sessionId: "s1", cache: newCache, modelName: "m")
+        store.putCache(sessionId: "s1", cache: newCache, tokens: nil, modelName: "m")
 
         let retrieved = store.getCache(sessionId: "s1", modelName: "m")
-        #expect(retrieved != nil)
-        #expect(retrieved!.count == 1)
+        #expect(retrieved.0 != nil)
+        #expect(retrieved.0!.count == 1)
     }
 
     @Test func putCacheCanChangeModel() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "old")
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "new")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "old")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "new")
 
-        #expect(store.getCache(sessionId: "s1", modelName: "new") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "new").0 != nil)
     }
 
     // MARK: - totalHotBytes tracking (uses _testPutSized to avoid Metal)
@@ -356,7 +353,7 @@ struct KVCacheStoreTests {
         store.ensureBudget(1000)
 
         // s3 (most recently used) should survive
-        #expect(store.getCache(sessionId: "s3", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s3", modelName: "m").0 != nil)
         #expect(store.totalHotBytes == 1000)
     }
 
@@ -386,11 +383,11 @@ struct KVCacheStoreTests {
 
     @Test func putCacheClearsSsdPath() {
         var store = KVCacheStore()
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
-        store.putCache(sessionId: "s1", cache: makeCache(), modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
+        store.putCache(sessionId: "s1", cache: makeCache(), tokens: nil, modelName: "m")
 
         // After re-put, the entry is still hot-retrievable (ssdPath cleared internally).
-        #expect(store.getCache(sessionId: "s1", modelName: "m") != nil)
+        #expect(store.getCache(sessionId: "s1", modelName: "m").0 != nil)
     }
 
     // MARK: - Prefix key null-byte delimiter

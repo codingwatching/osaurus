@@ -262,7 +262,6 @@ struct AgentsView: View {
             name: newName,
             description: agent.description,
             systemPrompt: agent.systemPrompt,
-            enabledTools: agent.enabledTools,
             themeId: agent.themeId,
             defaultModel: agent.defaultModel,
             temperature: agent.temperature,
@@ -370,32 +369,6 @@ private struct AgentCard: View {
     @State private var showDeleteConfirm = false
 
     private var agentColor: Color { agentColorFor(agent.name) }
-
-    private var enabledToolCount: Int {
-        let overrides = agentManager.effectiveToolOverrides(for: agent.id)
-        let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
-        return tools.filter { $0.enabled }.count
-    }
-
-    private var totalToolCount: Int {
-        ToolRegistry.shared.listTools().count
-    }
-
-    private var enabledSkillCount: Int {
-        let skills = SkillManager.shared.skills
-        return skills.filter { skill in
-            if let overrides = agentManager.effectiveSkillOverrides(for: agent.id),
-                let value = overrides[skill.name]
-            {
-                return value
-            }
-            return skill.enabled
-        }.count
-    }
-
-    private var totalSkillCount: Int {
-        SkillManager.shared.skills.count
-    }
 
     private var scheduleCount: Int {
         scheduleManager.schedules.filter { $0.agentId == agent.id }.count
@@ -567,17 +540,12 @@ private struct AgentCard: View {
     @ViewBuilder
     private var compactStats: some View {
         HStack(spacing: 0) {
-            statItem(icon: "wrench.and.screwdriver", text: "\(enabledToolCount)/\(totalToolCount)")
-            statDot
-            statItem(icon: "sparkles", text: "\(enabledSkillCount)/\(totalSkillCount)")
-
             if scheduleCount > 0 {
-                statDot
                 statItem(icon: "clock", text: "\(scheduleCount)")
             }
 
             if let model = agent.defaultModel {
-                statDot
+                if scheduleCount > 0 { statDot }
                 statItem(icon: "cube", text: formatModelName(model))
             }
 
@@ -608,7 +576,6 @@ private struct AgentCard: View {
 
 private enum DetailTab: String, CaseIterable {
     case configure
-    case abilities
     case sandbox
     case automation
     case memory
@@ -616,7 +583,6 @@ private enum DetailTab: String, CaseIterable {
     var label: String {
         switch self {
         case .configure: return "Configure"
-        case .abilities: return "Tools"
         case .sandbox: return "Sandbox"
         case .automation: return "Automation"
         case .memory: return "Memory"
@@ -626,7 +592,6 @@ private enum DetailTab: String, CaseIterable {
     var icon: String {
         switch self {
         case .configure: return "gear"
-        case .abilities: return "wrench.and.screwdriver"
         case .sandbox: return "shippingbox"
         case .automation: return "clock.badge.checkmark"
         case .memory: return "brain.head.profile"
@@ -636,7 +601,6 @@ private enum DetailTab: String, CaseIterable {
     var helperText: String {
         switch self {
         case .configure: return "Set up instructions, model settings, shortcuts, and appearance."
-        case .abilities: return "Choose which tools and skills this agent can use."
         case .sandbox: return "Configure sandbox execution and relay tunnel access."
         case .automation: return "Set up schedules and file watchers for autonomous behavior."
         case .memory: return "View conversation history, working memory, and summaries."
@@ -728,24 +692,6 @@ struct AgentDetailView: View {
 
     private var agentColor: Color { agentColorFor(name) }
 
-    private var resolvedEnabledToolCount: Int {
-        let overrides = agentManager.effectiveToolOverrides(for: agent.id)
-        let tools = ToolRegistry.shared.listUserTools(withOverrides: overrides, excludeInternal: true)
-        return tools.filter { $0.enabled }.count
-    }
-
-    private var resolvedEnabledSkillCount: Int {
-        let skills = SkillManager.shared.skills
-        return skills.filter { skill in
-            if let overrides = agentManager.effectiveSkillOverrides(for: agent.id),
-                let value = overrides[skill.name]
-            {
-                return value
-            }
-            return skill.enabled
-        }.count
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             detailHeaderBar
@@ -767,8 +713,6 @@ struct AgentDetailView: View {
                         switch selectedTab {
                         case .configure:
                             configureTabContent
-                        case .abilities:
-                            abilitiesTabContent
                         case .sandbox:
                             sandboxTabContent
                         case .automation:
@@ -983,9 +927,6 @@ struct AgentDetailView: View {
     private func tabBadgeCount(for tab: DetailTab) -> Int? {
         switch tab {
         case .configure: return nil
-        case .abilities:
-            let count = resolvedEnabledToolCount + resolvedEnabledSkillCount
-            return count > 0 ? count : nil
         case .sandbox: return nil
         case .automation:
             let count = linkedSchedules.count + linkedWatchers.count
@@ -1062,12 +1003,6 @@ struct AgentDetailView: View {
         generationSection
         quickActionsSection
         themeSection
-    }
-
-    @ViewBuilder
-    private var abilitiesTabContent: some View {
-        tabHelperText(DetailTab.abilities.helperText)
-        capabilitiesSection
     }
 
     @ViewBuilder
@@ -1231,34 +1166,12 @@ struct AgentDetailView: View {
         }
     }
 
-    // MARK: - Tools Tab Sections
-
-    private var capabilitiesSection: some View {
-        AgentDetailSection(
-            title: "Tools & Skills",
-            icon: "wrench.and.screwdriver",
-            subtitle: "\(resolvedEnabledToolCount + resolvedEnabledSkillCount) enabled"
-        ) {
-            CapabilitiesSelectorView(agentId: agent.id, isInline: true)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-    }
-
     // MARK: - Sandbox Tab Sections
 
     @ViewBuilder
     private var sandboxSection: some View {
         let sandboxAvailable = SandboxManager.State.shared.availability.isAvailable
         let sandboxRunning = SandboxManager.State.shared.status == .running
-        let sandboxPlugins = SandboxPluginManager.shared.plugins(for: agent.id.uuidString)
         let execConfig = agentManager.effectiveAutonomousExec(for: agent.id)
         let updateExecConfig: ((inout AutonomousExecConfig) -> Void) -> Void = { update in
             var config = execConfig ?? .default
@@ -1276,7 +1189,7 @@ struct AgentDetailView: View {
         }
 
         let sandboxSubtitle: String = {
-            if sandboxRunning { return "\(sandboxPlugins.count) plugins" }
+            if sandboxRunning { return "Running" }
             if sandboxAvailable { return "Not Running" }
             return "Unavailable"
         }()
@@ -1354,29 +1267,6 @@ struct AgentDetailView: View {
                         }
                     }
 
-                    if !sandboxPlugins.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Sandbox Plugins")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-
-                            ForEach(sandboxPlugins) { installed in
-                                HStack(spacing: 8) {
-                                    Circle()
-                                        .fill(installed.status == .ready ? Color.green : Color.orange)
-                                        .frame(width: 6, height: 6)
-                                    Text(installed.plugin.name)
-                                        .font(.system(size: 12))
-                                        .foregroundColor(theme.primaryText)
-                                    Spacer()
-                                    Text(installed.status.rawValue)
-                                        .font(.system(size: 10))
-                                        .foregroundColor(theme.tertiaryText)
-                                }
-                                .padding(.vertical, 4)
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -2284,15 +2174,12 @@ struct AgentDetailView: View {
     private func saveAgent() {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
-        let current = currentAgent
 
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            enabledTools: current.enabledTools,
-            enabledSkills: current.enabledSkills,
             themeId: selectedThemeId,
             defaultModel: selectedModel,
             temperature: Float(temperature),
@@ -2701,8 +2588,6 @@ private struct AgentEditorSheet: View {
             name: trimmedName,
             description: description.trimmingCharacters(in: .whitespacesAndNewlines),
             systemPrompt: systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines),
-            enabledTools: nil,
-            enabledSkills: nil,
             themeId: selectedThemeId,
             defaultModel: nil,
             temperature: Float(temperature),

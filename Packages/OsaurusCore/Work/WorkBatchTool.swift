@@ -226,8 +226,7 @@ struct WorkBatchTool: OsaurusTool {
             let output = try await WorkExecutionContext.$currentBatchId.withValue(batchId) {
                 try await ToolRegistry.shared.execute(
                     name: op.tool,
-                    argumentsJSON: op.argsJSON,
-                    overrides: [op.tool: true]  // Always enable for batch execution
+                    argumentsJSON: op.argsJSON
                 )
             }
 

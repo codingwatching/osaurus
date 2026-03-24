@@ -320,21 +320,6 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshAgentConfig() } }
         )
-        // Invalidate token cache when tools or skills change (including agent overrides)
-        notificationObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: .toolsListChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in Task { @MainActor in self?.session.invalidateTokenCache() } }
-        )
-        notificationObservers.append(
-            NotificationCenter.default.addObserver(
-                forName: .skillsListChanged,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in Task { @MainActor in self?.session.invalidateTokenCache() } }
-        )
         // Refresh theme when global theme changes (only if agent uses global theme)
         notificationObservers.append(
             NotificationCenter.default.addObserver(

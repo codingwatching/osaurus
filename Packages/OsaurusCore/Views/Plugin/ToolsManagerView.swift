@@ -46,6 +46,8 @@ struct ToolsManagerView: View {
                     availableToolsTabContent
                 case .remote:
                     ProvidersView()
+                case .sandbox:
+                    SandboxPluginsTabContent()
                 }
             }
             .opacity(hasAppeared ? 1 : 0)
@@ -102,6 +104,7 @@ struct ToolsManagerView: View {
                 counts: [
                     .available: filteredEntries.count,
                     .remote: remoteProviderCount,
+                    .sandbox: SandboxPluginLibrary.shared.plugins.count,
                 ],
                 searchText: $searchText,
                 searchPlaceholder: "Search tools"
@@ -327,6 +330,388 @@ struct ToolsManagerView: View {
         toolEntries = ToolRegistry.shared.listTools()
         remoteProviderCount = providerManager.configuration.providers.count
         Task { await updateFilteredLists() }
+    }
+}
+
+// MARK: - Sandbox Plugins Tab
+
+private struct SandboxPluginsTabContent: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var pluginLibrary = SandboxPluginLibrary.shared
+
+    @State private var showCreatePlugin = false
+    @State private var editingPlugin: SandboxPlugin?
+    @State private var pluginToDelete: SandboxPlugin?
+    @State private var showDeleteConfirm = false
+    @State private var actionError: String?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 16) {
+                SectionHeader(
+                    title: "Sandbox Plugins",
+                    description:
+                        "Plugins run inside the sandbox container. They are auto-provisioned when any agent uses them."
+                )
+
+                HStack {
+                    Spacer()
+
+                    Button(action: importPluginFile) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 11))
+                            Text("Import")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(theme.primaryText)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(theme.tertiaryBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(theme.inputBorder, lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(PlainButtonStyle())
+
+                    Button(action: { showCreatePlugin = true }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11))
+                            Text("Create Plugin")
+                                .font(.system(size: 12, weight: .medium))
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
+                    }
+                    .buttonStyle(PlainButtonStyle())
+                }
+
+                if pluginLibrary.plugins.isEmpty {
+                    sandboxPluginEmptyState
+                } else {
+                    ForEach(pluginLibrary.plugins) { plugin in
+                        SandboxPluginToolCard(
+                            plugin: plugin,
+                            onEdit: { editingPlugin = plugin },
+                            onDuplicate: { duplicatePlugin(plugin) },
+                            onExport: { exportPlugin(plugin) },
+                            onDelete: {
+                                pluginToDelete = plugin
+                                showDeleteConfirm = true
+                            }
+                        )
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity)
+        }
+        .sheet(isPresented: $showCreatePlugin) {
+            SandboxPluginEditorView(
+                plugin: .blank(),
+                isNew: true,
+                onSave: { plugin in pluginLibrary.save(plugin) },
+                onDismiss: {}
+            )
+        }
+        .sheet(item: $editingPlugin) { plugin in
+            SandboxPluginEditorView(
+                plugin: plugin,
+                isNew: false,
+                onSave: { updated in
+                    pluginLibrary.update(oldId: plugin.id, plugin: updated)
+                    editingPlugin = nil
+                },
+                onDismiss: { editingPlugin = nil }
+            )
+        }
+        .alert("Remove Plugin?", isPresented: $showDeleteConfirm) {
+            Button("Cancel", role: .cancel) { pluginToDelete = nil }
+            Button("Remove", role: .destructive) {
+                if let p = pluginToDelete {
+                    pluginLibrary.delete(id: p.id)
+                    ToolRegistry.shared.unregisterSandboxPluginTools(pluginId: p.id)
+                    pluginToDelete = nil
+                }
+            }
+        } message: {
+            if let p = pluginToDelete {
+                Text("Remove \"\(p.name)\" from the library? This will also unregister its tools.")
+            }
+        }
+        .alert(
+            "Error",
+            isPresented: Binding(
+                get: { actionError != nil },
+                set: { if !$0 { actionError = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { actionError = nil }
+        } message: {
+            if let error = actionError {
+                Text(error)
+            }
+        }
+    }
+
+    private var sandboxPluginEmptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "puzzlepiece.extension")
+                .font(.system(size: 40, weight: .light))
+                .foregroundColor(theme.tertiaryText)
+
+            Text("No sandbox plugins")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+
+            Text(
+                "Create a plugin or import a JSON recipe. Plugins are automatically provisioned when any agent uses them."
+            )
+            .font(.system(size: 13))
+            .foregroundColor(theme.tertiaryText)
+            .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    private func importPluginFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                let plugin = try pluginLibrary.importFromFile(url)
+                ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+    }
+
+    private func duplicatePlugin(_ plugin: SandboxPlugin) {
+        var copy = plugin
+        copy.name = plugin.name + " Copy"
+        copy.version = nil
+        pluginLibrary.save(copy)
+        ToolRegistry.shared.registerSandboxPluginTools(plugin: copy)
+    }
+
+    private func exportPlugin(_ plugin: SandboxPlugin) {
+        guard let data = pluginLibrary.exportData(for: plugin.id) else { return }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "\(plugin.id).json"
+        if panel.runModal() == .OK, let url = panel.url {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+}
+
+// MARK: - Sandbox Plugin Tool Card
+
+private struct SandboxPluginToolCard: View {
+    @Environment(\.theme) private var theme
+    let plugin: SandboxPlugin
+    let onEdit: () -> Void
+    let onDuplicate: () -> Void
+    let onExport: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isExpanded = false
+    @State private var isHovering = false
+
+    private var toolCount: Int {
+        plugin.tools?.count ?? 0
+    }
+
+    private var toolNames: [String] {
+        plugin.tools?.map { "\(plugin.id)_\($0.id)" } ?? []
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 14) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(theme.accentColor.opacity(0.12))
+                            Image(systemName: "puzzlepiece.extension.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .frame(width: 44, height: 44)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(plugin.name)
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .foregroundColor(theme.primaryText)
+
+                            Text(plugin.description)
+                                .font(.system(size: 13))
+                                .foregroundColor(theme.secondaryText)
+                                .lineLimit(1)
+                        }
+
+                        Spacer()
+
+                        if toolCount > 0 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "wrench.and.screwdriver")
+                                    .font(.system(size: 10))
+                                Text("\(toolCount) tool\(toolCount == 1 ? "" : "s")")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Capsule().fill(theme.tertiaryBackground))
+                        }
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.tertiaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+
+                Menu {
+                    Button(action: onEdit) {
+                        Label("Edit", systemImage: "pencil")
+                    }
+                    Button(action: onDuplicate) {
+                        Label("Duplicate", systemImage: "plus.square.on.square")
+                    }
+                    Button(action: onExport) {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    Divider()
+                    Button(role: .destructive, action: onDelete) {
+                        Label("Remove", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 16))
+                        .foregroundColor(theme.secondaryText)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(theme.tertiaryBackground.opacity(isHovering ? 1 : 0))
+                        )
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+
+            if isExpanded {
+                Divider()
+                    .padding(.vertical, 4)
+
+                if let tools = plugin.tools, !tools.isEmpty {
+                    LazyVStack(spacing: 8) {
+                        ForEach(tools, id: \.id) { spec in
+                            let toolName = "\(plugin.id)_\(spec.id)"
+                            let entry = ToolRegistry.shared.listTools().first { $0.name == toolName }
+                            sandboxToolRow(spec: spec, entry: entry)
+                        }
+                    }
+                } else {
+                    HStack {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("No tools defined in this plugin")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(8)
+                }
+
+                if let deps = plugin.dependencies, !deps.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "shippingbox")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("Dependencies: \(deps.joined(separator: ", "))")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity)
+        .background(cardBackground)
+        .onHover { hovering in isHovering = hovering }
+    }
+
+    private func sandboxToolRow(spec: SandboxToolSpec, entry: ToolRegistry.ToolEntry?) -> some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(theme.accentColor.opacity(0.08))
+                Image(systemName: "terminal")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+            }
+            .frame(width: 28, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(spec.id)
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(theme.primaryText)
+                Text(spec.description)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            if let entry = entry {
+                ToolEnableToggle(entry: entry, onChange: {})
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(theme.tertiaryBackground.opacity(0.5))
+        )
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(theme.cardBackground)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(
+                        isHovering ? theme.accentColor.opacity(0.2) : theme.cardBorder,
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(theme.shadowOpacity),
+                radius: theme.cardShadowRadius,
+                x: 0,
+                y: theme.cardShadowY
+            )
+            .drawingGroup()
     }
 }
 

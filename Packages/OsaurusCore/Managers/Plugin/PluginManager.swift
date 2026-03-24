@@ -153,7 +153,6 @@ final class PluginManager {
         }
 
         if loadedNew || removedSomething || !failedPlugins.isEmpty {
-            await MCPServerManager.shared.notifyToolsListChanged()
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }
 
@@ -170,8 +169,8 @@ final class PluginManager {
         for entry in scanResult.loadResults {
             guard case .success(let loaded) = entry.result else { continue }
             let pluginId = loaded.plugin.id
-            guard let agentId = AgentManager.shared.primaryAgent(forPlugin: pluginId),
-                let configSpec = loaded.plugin.manifest.capabilities.config,
+            let agentId = Agent.defaultId
+            guard let configSpec = loaded.plugin.manifest.capabilities.config,
                 let hostCtx = PluginHostContext.getContext(for: pluginId)
             else { continue }
 
@@ -211,11 +210,7 @@ final class PluginManager {
             let legacySecrets = ToolSecretsKeychain.legacySecrets(for: pluginId)
             guard !legacySecrets.isEmpty else { continue }
 
-            let targetAgents = agents.filter { agent in
-                AgentManager.shared.isPluginEnabled(pluginId, for: agent.id)
-            }
-            // If no agents have the plugin explicitly enabled, migrate to the default agent.
-            let destinations = targetAgents.isEmpty ? [Agent.defaultId] : targetAgents.map { $0.id }
+            let destinations = agents.map { $0.id }
 
             for agentId in destinations {
                 for (key, value) in legacySecrets {
@@ -249,8 +244,6 @@ final class PluginManager {
             let pluginId = loaded.plugin.id
 
             for (agentId, status) in statuses {
-                guard AgentManager.shared.isPluginEnabled(pluginId, for: agentId) else { continue }
-
                 let tunnelURL: String? = {
                     if case .connected(let url) = status { return url }
                     return nil

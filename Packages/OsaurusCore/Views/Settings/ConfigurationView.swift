@@ -24,7 +24,7 @@ struct ConfigurationView: View {
     @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
-    @State private var tempPhasedContextLoading: Bool = true
+    @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
 
     // Work generation settings state
     @State private var tempAgentTemperature: String = ""
@@ -175,7 +175,8 @@ struct ConfigurationView: View {
                             "Top P",
                             "Max Tool Attempts",
                             "Generation",
-                            "Chat Phased Capability Loading"
+                            "Preflight",
+                            "Capability Search"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -241,12 +242,21 @@ struct ConfigurationView: View {
 
                                     SettingsDivider()
 
-                                    SettingsToggle(
-                                        title: "Chat Phased Capability Loading",
-                                        description:
-                                            "ChatView only. Load tools and skills in two phases to reduce token usage. When disabled, chat loads all capabilities upfront.",
-                                        isOn: $tempPhasedContextLoading
-                                    )
+                                    SettingsSubsection(label: "Capability Search") {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Picker("", selection: $tempPreflightSearchMode) {
+                                                ForEach(PreflightSearchMode.allCases, id: \.self) { mode in
+                                                    Text(mode.rawValue.capitalized).tag(mode)
+                                                }
+                                            }
+                                            .pickerStyle(.segmented)
+                                            .labelsHidden()
+
+                                            Text(tempPreflightSearchMode.helpText)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
 
                                 }
                             }
@@ -587,7 +597,7 @@ struct ConfigurationView: View {
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
-        tempPhasedContextLoading = chat.phasedContextLoading
+        tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
 
         // Work generation settings
         tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
@@ -647,7 +657,7 @@ struct ConfigurationView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
-        tempPhasedContextLoading = true
+        tempPreflightSearchMode = .balanced
 
         // Work generation settings - clear to use defaults
         tempAgentTemperature = ""
@@ -807,11 +817,11 @@ struct ConfigurationView: View {
             topPOverride: parsedTopP,
             maxToolAttempts: parsedMaxToolAttempts,
             defaultModel: existingDefaultModel,
-            phasedContextLoading: tempPhasedContextLoading,
             workTemperature: parsedAgentTemp,
             workMaxTokens: parsedAgentMax,
             workTopPOverride: parsedAgentTopP,
-            workMaxIterations: parsedAgentMaxIterations
+            workMaxIterations: parsedAgentMaxIterations,
+            preflightSearchMode: tempPreflightSearchMode
         )
         ChatConfigurationStore.save(chatCfg)
 

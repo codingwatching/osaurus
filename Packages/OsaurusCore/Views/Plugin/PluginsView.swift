@@ -790,14 +790,12 @@ private struct PluginCard: View {
             hasMissingSecrets = false
             return
         }
-        let mgr = AgentManager.shared
-        hasMissingSecrets = mgr.agents.contains { agent in
-            mgr.isPluginEnabled(plugin.pluginId, for: agent.id)
-                && !ToolSecretsKeychain.hasAllRequiredSecrets(
-                    specs: cachedSecrets,
-                    for: plugin.pluginId,
-                    agentId: agent.id
-                )
+        hasMissingSecrets = AgentManager.shared.agents.contains { agent in
+            !ToolSecretsKeychain.hasAllRequiredSecrets(
+                specs: cachedSecrets,
+                for: plugin.pluginId,
+                agentId: agent.id
+            )
         }
     }
 }
@@ -1383,11 +1381,10 @@ private struct PluginDetailView: View {
     }
 
     private func agentPluginRow(agent: Agent) -> some View {
-        let isEnabled = agentManager.isPluginEnabled(plugin.pluginId, for: agent.id)
         let isExpanded = expandedAgents.contains(agent.id)
         let hasConfig = loadedPlugin?.plugin.manifest.capabilities.config != nil
         let hasRoutes = !(loadedPlugin?.routes.isEmpty ?? true)
-        let canExpand = isEnabled && (hasConfig || hasRoutes)
+        let canExpand = hasConfig || hasRoutes
         let tunnelStatus = relayManager.agentStatuses[agent.id]
         let tunnelURL: String? = {
             if case .connected(let baseURL) = tunnelStatus {
@@ -1398,20 +1395,9 @@ private struct PluginDetailView: View {
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { isEnabled },
-                        set: { newValue in
-                            agentManager.setPluginEnabled(newValue, plugin: plugin.pluginId, for: agent.id)
-                            if !newValue {
-                                expandedAgents.remove(agent.id)
-                            }
-                        }
-                    )
-                )
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundColor(theme.accentColor)
 
                 Text(agent.name)
                     .font(.system(size: 13, weight: .medium))
@@ -1439,7 +1425,7 @@ private struct PluginDetailView: View {
                 }
             }
 
-            if isEnabled && isExpanded {
+            if isExpanded {
                 VStack(alignment: .leading, spacing: 12) {
                     if hasRoutes {
                         agentRelaySection(agent: agent, tunnelStatus: tunnelStatus, tunnelURL: tunnelURL)
@@ -1462,7 +1448,7 @@ private struct PluginDetailView: View {
         }
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(isEnabled ? theme.tertiaryBackground.opacity(0.3) : Color.clear)
+                .fill(theme.tertiaryBackground.opacity(0.3))
         )
     }
 
@@ -1750,12 +1736,11 @@ private struct PluginDetailView: View {
             return
         }
         hasMissingSecrets = agentManager.agents.contains { agent in
-            agentManager.isPluginEnabled(plugin.pluginId, for: agent.id)
-                && !ToolSecretsKeychain.hasAllRequiredSecrets(
-                    specs: cachedSecrets,
-                    for: plugin.pluginId,
-                    agentId: agent.id
-                )
+            !ToolSecretsKeychain.hasAllRequiredSecrets(
+                specs: cachedSecrets,
+                for: plugin.pluginId,
+                agentId: agent.id
+            )
         }
     }
 }

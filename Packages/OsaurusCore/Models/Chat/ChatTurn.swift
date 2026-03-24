@@ -159,8 +159,33 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var toolResults: [String: String] = [:]
     /// Tool name detected during streaming before the full invocation is ready
     @Published var pendingToolName: String? = nil
+    /// Accumulated preview of tool arguments during streaming (tail-truncated)
+    @Published var pendingToolArgPreview: String? = nil
+    /// Total bytes of tool arguments received during streaming
+    @Published var pendingToolArgSize: Int = 0
     /// Pending clarification request for work mode (displayed as ClarificationCardView)
     var pendingClarification: ClarificationRequest? = nil
+    /// Capabilities selected by preflight search (ephemeral, not persisted)
+    var preflightCapabilities: [PreflightCapabilityItem]? = nil
+
+    private static let maxArgPreviewLength = 500
+
+    /// Appends a tool-argument fragment to the preview, keeping only the trailing window.
+    func appendToolArgFragment(_ fragment: String) {
+        pendingToolArgSize += fragment.utf8.count
+        let current = pendingToolArgPreview ?? ""
+        let updated = current + fragment
+        pendingToolArgPreview =
+            updated.count > Self.maxArgPreviewLength
+            ? String(updated.suffix(Self.maxArgPreviewLength))
+            : updated
+    }
+
+    /// Resets pending tool-call argument preview state.
+    func clearPendingToolArgs() {
+        pendingToolArgPreview = nil
+        pendingToolArgSize = 0
+    }
 
     // MARK: - Initializers
 

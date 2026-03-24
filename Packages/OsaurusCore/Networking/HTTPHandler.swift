@@ -464,22 +464,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
 
-            // Check if this plugin is enabled for the requesting agent
-            guard AgentManager.shared.isPluginEnabled(pluginId, for: agentUUID) else {
-                return self.sendPluginErrorFromTask(
-                    loop: loop,
-                    ctxBound: ctxBound,
-                    version: version,
-                    status: .notFound,
-                    message: "Plugin not available for this agent",
-                    corsHeaders: corsHeaders,
-                    startTime: startTime,
-                    method: method,
-                    path: path,
-                    userAgent: userAgent
-                )
-            }
-
             // Set the agent context so config_get/set resolve to this agent's config
             PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentUUID
 

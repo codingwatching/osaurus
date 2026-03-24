@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Work folder tools for file operations, code editing, and git integration.
-//  These tools are internal to work mode and do NOT appear in CapabilitiesSelectorView.
+//  These tools are internal to work mode and are always loaded automatically.
 //
 
 import Foundation
