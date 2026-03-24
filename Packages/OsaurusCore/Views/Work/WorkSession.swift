@@ -1427,6 +1427,12 @@ extension WorkSession: WorkEngineDelegate {
         notifyIfSelected(issue.id)
     }
 
+    public func workEngine(_ engine: WorkEngine, didReceiveToolArgFragment fragment: String, forIssue issue: Issue) {
+        let turn = lastAssistantTurn()
+        turn.appendToolArgFragment(fragment)
+        notifyIfSelected(issue.id)
+    }
+
     public func workEngine(_ engine: WorkEngine, didShareArtifact artifact: SharedArtifact, forIssue issue: Issue) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -1577,6 +1583,7 @@ extension WorkSession: WorkEngineDelegate {
 
         let assistantTurn = lastAssistantTurn()
         assistantTurn.pendingToolName = nil
+        assistantTurn.clearPendingToolArgs()
 
         // Clean up any leaked function-call JSON from the assistant turn's content
         // This handles cases where raw function call text was streamed before detection

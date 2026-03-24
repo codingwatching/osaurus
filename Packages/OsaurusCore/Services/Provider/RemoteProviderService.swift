@@ -337,6 +337,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                         args: argsString,
                                                         thoughtSignature: funcCall.thoughtSignature
                                                     )
+                                                    continuation.yield(StreamingToolHint.encodeArgs(argsString))
                                                 case .inlineData(let imageData):
                                                     if accumulatedToolCalls.isEmpty {
                                                         continuation.yield(
@@ -405,6 +406,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                             )
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
+                                                        continuation.yield(
+                                                            StreamingToolHint.encodeArgs(jsonDelta.partial_json)
+                                                        )
                                                     }
                                                 }
                                             case "content_block_start":
@@ -486,6 +490,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                         )
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
+                                                    continuation.yield(StreamingToolHint.encodeArgs(deltaEvent.delta))
                                                 }
                                             case "response.completed":
                                                 if let invocation = Self.makeToolInvocation(from: accumulatedToolCalls)
@@ -522,6 +527,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                 }
                                                 if let args = toolCall.function?.arguments {
                                                     current.args += args
+                                                    continuation.yield(StreamingToolHint.encodeArgs(args))
                                                 }
                                                 accumulatedToolCalls[idx] = current
                                             }
@@ -848,6 +854,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                         "[Osaurus] Gemini tool call detected: index=\(idx), name=\(funcCall.name)"
                                                     )
                                                     continuation.yield(StreamingToolHint.encode(funcCall.name))
+                                                    continuation.yield(StreamingToolHint.encodeArgs(argsString))
                                                 case .inlineData(let imageData):
                                                     if accumulatedToolCalls.isEmpty {
                                                         continuation.yield(
@@ -921,6 +928,9 @@ public actor RemoteProviderService: ToolCapableService {
                                                             )
                                                         current.args += jsonDelta.partial_json
                                                         accumulatedToolCalls[idx] = current
+                                                        continuation.yield(
+                                                            StreamingToolHint.encodeArgs(jsonDelta.partial_json)
+                                                        )
                                                     }
                                                 }
                                             case "content_block_start":
@@ -1017,6 +1027,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                         )
                                                     current.args += deltaEvent.delta
                                                     accumulatedToolCalls[idx] = current
+                                                    continuation.yield(StreamingToolHint.encodeArgs(deltaEvent.delta))
                                                 }
                                             case "response.completed":
                                                 lastFinishReason = "completed"
@@ -1059,6 +1070,7 @@ public actor RemoteProviderService: ToolCapableService {
                                                 }
                                                 if let args = toolCall.function?.arguments {
                                                     current.args += args
+                                                    continuation.yield(StreamingToolHint.encodeArgs(args))
                                                 }
                                                 accumulatedToolCalls[idx] = current
                                             }

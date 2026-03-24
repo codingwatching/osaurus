@@ -926,6 +926,11 @@ final class ChatSession: ObservableObject {
                                 self.objectWillChange.send()
                                 continue
                             }
+                            if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                                assistantTurn.appendToolArgFragment(argFragment)
+                                self.objectWillChange.send()
+                                continue
+                            }
                             if !delta.isEmpty {
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
@@ -958,6 +963,7 @@ final class ChatSession: ObservableObject {
                             geminiThoughtSignature: inv.geminiThoughtSignature
                         )
                         assistantTurn.pendingToolName = nil
+                        assistantTurn.clearPendingToolArgs()
                         if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
                         assistantTurn.toolCalls!.append(call)
 

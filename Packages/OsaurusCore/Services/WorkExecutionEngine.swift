@@ -506,6 +506,9 @@ public actor WorkExecutionEngine {
     /// Callback type for tool hint (pending tool name detected during streaming)
     public typealias ToolHintCallback = @MainActor @Sendable (String) async -> Void
 
+    /// Callback type for tool argument fragment (partial args detected during streaming)
+    public typealias ToolArgHintCallback = @MainActor @Sendable (String) async -> Void
+
     /// Callback type for token consumption (inputTokens, outputTokens)
     public typealias TokenConsumptionCallback = @MainActor @Sendable (Int, Int) async -> Void
     public typealias InterruptCheckCallback = @Sendable () async -> Bool
@@ -554,6 +557,7 @@ public actor WorkExecutionEngine {
         onIterationStart: @escaping IterationStartCallback,
         onDelta: @escaping IterationStreamingCallback,
         onToolHint: @escaping ToolHintCallback,
+        onToolArgHint: @escaping ToolArgHintCallback,
         onToolCall: @escaping ToolCallCallback,
         onStatusUpdate: @escaping StatusCallback,
         onArtifact: @escaping ArtifactCallback,
@@ -696,6 +700,10 @@ public actor WorkExecutionEngine {
                     }
                     if let toolName = StreamingToolHint.decode(delta) {
                         await onToolHint(toolName)
+                        continue
+                    }
+                    if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                        await onToolArgHint(argFragment)
                         continue
                     }
                     responseContent += delta

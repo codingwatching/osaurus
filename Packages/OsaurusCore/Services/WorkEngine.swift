@@ -466,6 +466,10 @@ public actor WorkEngine {
                     guard let self = self else { return }
                     self.delegate?.workEngine(self, didDetectPendingTool: toolName, forIssue: issue)
                 },
+                onToolArgHint: { [weak self] argFragment in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(self, didReceiveToolArgFragment: argFragment, forIssue: issue)
+                },
                 onToolCall: { [weak self] toolName, args, result in
                     guard let self = self else { return }
                     self.delegate?.workEngine(
@@ -957,6 +961,7 @@ public protocol WorkEngineDelegate: AnyObject {
     func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue)
     func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
     func workEngine(_ engine: WorkEngine, didDetectPendingTool toolName: String, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didReceiveToolArgFragment fragment: String, forIssue issue: Issue)
     func workEngine(
         _ engine: WorkEngine,
         didCallTool toolName: String,
@@ -992,6 +997,7 @@ extension WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue) {}
     public func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
     public func workEngine(_ engine: WorkEngine, didDetectPendingTool toolName: String, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didReceiveToolArgFragment fragment: String, forIssue issue: Issue) {}
     public func workEngine(
         _ engine: WorkEngine,
         didCallTool toolName: String,

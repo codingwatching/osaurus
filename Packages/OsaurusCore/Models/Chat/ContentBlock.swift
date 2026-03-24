@@ -33,7 +33,7 @@ enum ContentBlockKind: Equatable {
     case thinking(index: Int, text: String, isStreaming: Bool)
     case userMessage(text: String, attachments: [Attachment])
     case sharedArtifact(artifact: SharedArtifact)
-    case pendingToolCall(toolName: String)
+    case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
     case typingIndicator
     case groupSpacer
 
@@ -68,8 +68,8 @@ enum ContentBlockKind: Equatable {
         case let (.sharedArtifact(lArt), .sharedArtifact(rArt)):
             return lArt == rArt
 
-        case let (.pendingToolCall(lName), .pendingToolCall(rName)):
-            return lName == rName
+        case let (.pendingToolCall(lName, _, lSize), .pendingToolCall(rName, _, rSize)):
+            return lName == rName && lSize == rSize
 
         case (.typingIndicator, .typingIndicator):
             return true
@@ -181,11 +181,17 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
-    static func pendingToolCall(turnId: UUID, toolName: String, position: BlockPosition) -> ContentBlock {
+    static func pendingToolCall(
+        turnId: UUID,
+        toolName: String,
+        argPreview: String?,
+        argSize: Int,
+        position: BlockPosition
+    ) -> ContentBlock {
         ContentBlock(
             id: "pending-tool-\(turnId.uuidString)",
             turnId: turnId,
-            kind: .pendingToolCall(toolName: toolName),
+            kind: .pendingToolCall(toolName: toolName, argPreview: argPreview, argSize: argSize),
             position: position
         )
     }
@@ -319,7 +325,15 @@ extension ContentBlock {
             }
 
             if isStreaming, let pendingName = turn.pendingToolName {
-                turnBlocks.append(.pendingToolCall(turnId: turn.id, toolName: pendingName, position: .middle))
+                turnBlocks.append(
+                    .pendingToolCall(
+                        turnId: turn.id,
+                        toolName: pendingName,
+                        argPreview: turn.pendingToolArgPreview,
+                        argSize: turn.pendingToolArgSize,
+                        position: .middle
+                    )
+                )
             }
 
             blocks.append(contentsOf: assignPositions(to: turnBlocks))
