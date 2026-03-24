@@ -35,21 +35,24 @@ class MCPBundleManager {
             let process = Process()
             process.currentDirectoryPath = workingDirectory
 
+            // Get entry point from manifest (supports both formats)
+            let (cmdName, args, _) = manifest.getEntryPoint()
+
             // Resolve executable path
             let cmdPath: String
-            if manifest.entry.command.hasPrefix("/") {
-                cmdPath = manifest.entry.command
+            if cmdName.hasPrefix("/") {
+                cmdPath = cmdName
             } else {
                 // Try to find in PATH
-                if let resolved = Shell.which(manifest.entry.command) {
+                if let resolved = Shell.which(cmdName) {
                     cmdPath = resolved
                 } else {
-                    cmdPath = manifest.entry.command
+                    cmdPath = cmdName
                 }
             }
 
             process.executableURL = URL(fileURLWithPath: cmdPath)
-            process.arguments = manifest.entry.args
+            process.arguments = args
 
             // Set up environment
             var env = ProcessInfo.processInfo.environment
