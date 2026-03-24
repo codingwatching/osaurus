@@ -42,6 +42,7 @@ struct ThinkingBlockView: View {
 
             // Expandable content with smooth height animation
             VStack(spacing: 0) {
+
                 Rectangle()
                     .fill(
                         LinearGradient(
@@ -88,6 +89,26 @@ struct ThinkingBlockView: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .onAppear {
+            // Auto-expand while streaming AND there's content to show
+            if isStreaming && characterCount > 0 {
+                expandedStore.expand(blockId)
+            }
+        }
+        .onChange(of: isStreaming) { _, nowStreaming in
+            if nowStreaming {
+                if characterCount > 0 { expandedStore.expand(blockId) }
+            } else {
+                // Collapse once thinking is done
+                expandedStore.collapse(blockId)
+            }
+        }
+        .onChange(of: characterCount) { _, newCount in
+            // Auto-expand the first time content arrives during streaming
+            if isStreaming && newCount > 0 {
+                expandedStore.expand(blockId)
+            }
+        }
     }
 
     private var header: some View {
@@ -123,7 +144,7 @@ struct ThinkingBlockView: View {
                 Spacer()
 
                 // Character count hint when collapsed
-                if !isExpanded {
+                if !isExpanded && characterCount > 0 {
                     Text(formatCharacterCount(characterCount))
                         .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                         .foregroundColor(theme.tertiaryText)

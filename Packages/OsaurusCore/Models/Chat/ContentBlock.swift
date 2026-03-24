@@ -321,6 +321,17 @@ extension ContentBlock {
             if isStreaming && turn.contentIsEmpty && !turn.hasThinking
                 && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
             {
+                // Show a "Thinking…" placeholder block so the user knows the model
+                // is working even before the first <think> token arrives (prefill phase).
+                turnBlocks.append(
+                    .thinking(
+                        turnId: turn.id,
+                        index: 0,
+                        text: "",
+                        isStreaming: true,
+                        position: .middle
+                    )
+                )
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 
