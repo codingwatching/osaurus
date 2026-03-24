@@ -73,6 +73,9 @@ public final class WorkSession: ObservableObject {
     /// Shared processor for delta buffering, thinking tag parsing, and throttled UI updates.
     private var deltaProcessor: StreamingDeltaProcessor?
 
+    /// Tracks the active request's token breakdown during execution.
+    private let budgetTracker = ContextBudgetTracker()
+
     // MARK: - Block Caching
 
     private let blockMemoizer = BlockMemoizer()
@@ -328,8 +331,16 @@ public final class WorkSession: ObservableObject {
     }
 
     /// Per-category context token breakdown for the current work-mode request context.
+    /// During execution, returns the snapshot from the active request with live
+    /// output tokens (O(1)). Otherwise falls back to full recomputation.
     var estimatedContextBreakdown: ContextTokenBreakdown {
-        estimateContextBreakdown(for: activeIssue ?? selectedIssue)
+        if let active = budgetTracker.activeBreakdown(
+            isActive: isExecuting,
+            outputTurn: liveExecutionTurns.last
+        ) {
+            return active
+        }
+        return estimateContextBreakdown(for: activeIssue ?? selectedIssue)
     }
 
     func estimateContextBreakdown(for issue: Issue?) -> ContextTokenBreakdown {
@@ -373,30 +384,12 @@ public final class WorkSession: ObservableObject {
 
         conversationTokens += ContextBudgetManager.estimateTokens(for: firstMessageContent)
 
-        for turn in currentTurns {
-            if !turn.contentIsEmpty {
-                conversationTokens += max(1, turn.contentLength / 4)
-            }
-            if let toolCalls = turn.toolCalls {
-                for call in toolCalls {
-                    conversationTokens += max(1, (call.function.name.count + call.function.arguments.count) / 4)
-                }
-            }
-            for (_, result) in turn.toolResults {
-                conversationTokens += max(1, result.count / 4)
-            }
-            if turn.hasThinking {
-                conversationTokens += max(1, turn.thinkingLength / 4)
-            }
-            for attachment in turn.attachments {
-                conversationTokens += attachment.estimatedTokens
-            }
-        }
+        conversationTokens += ContextBudgetManager.estimateTokens(for: currentTurns)
         breakdown.conversation = conversationTokens
 
         var inputTokens = 0
         if !input.isEmpty {
-            inputTokens += max(1, input.count / 4)
+            inputTokens += ContextBudgetManager.estimateTokens(for: input)
         }
         for attachment in pendingAttachments {
             inputTokens += attachment.estimatedTokens
@@ -783,6 +776,13 @@ public final class WorkSession: ObservableObject {
             systemPrompt += "\n\n" + preflight.contextSnippet
         }
 
+        budgetTracker.snapshot(
+            systemPromptChars: systemPrompt.count,
+            memoryTokens: windowState?.session.estimatedContextBreakdown.memory ?? 0,
+            toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools)
+        )
+        objectWillChange.send()
+
         executionTask = Task { [weak self, engine] in
             do {
                 let result =
@@ -818,6 +818,7 @@ public final class WorkSession: ObservableObject {
         streamingContent = ""
         deltaProcessor?.finalize()
         deltaProcessor = nil
+        budgetTracker.clear()
         currentStep = 0
         let configuredMaxIterations =
             ChatConfigurationStore.load().workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations
@@ -1005,6 +1006,7 @@ public final class WorkSession: ObservableObject {
         preserveLiveExecutionTurns()
         executionTask = nil
         isExecuting = false
+        budgetTracker.clear()
         activeIssue = nil
         loopState = nil
         retryAttempt = 0
@@ -1305,6 +1307,13 @@ public final class WorkSession: ObservableObject {
             systemPrompt += "\n\n" + preflight.contextSnippet
         }
 
+        budgetTracker.snapshot(
+            systemPromptChars: systemPrompt.count,
+            memoryTokens: windowState?.session.estimatedContextBreakdown.memory ?? 0,
+            toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: tools)
+        )
+        objectWillChange.send()
+
         executionTask = Task { [weak self, engine] in
             do {
                 let result = try await engine.resume(
@@ -1519,6 +1528,10 @@ extension WorkSession: WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue) {
         // Flush any buffered streaming deltas before starting a new iteration
         deltaProcessor?.flush()
+
+        budgetTracker.updateConversation(
+            tokens: ContextBudgetManager.estimateTokens(for: liveExecutionTurns)
+        )
 
         // Update current iteration for progress tracking
         currentStep = iteration

@@ -17,9 +17,10 @@ public struct ContextTokenBreakdown: Equatable, Sendable {
     public var tools: Int = 0
     public var conversation: Int = 0
     public var input: Int = 0
+    public var output: Int = 0
 
     public var total: Int {
-        systemPrompt + memory + tools + conversation + input
+        systemPrompt + memory + tools + conversation + input + output
     }
 
     public static let zero = ContextTokenBreakdown()
@@ -46,6 +47,7 @@ public struct ContextTokenBreakdown: Equatable, Sendable {
                 Category(label: "Tools", tokens: b.tools, tint: .orange),
                 Category(label: "Conversation", tokens: b.conversation, tint: .gray),
                 Category(label: "Input", tokens: b.input, tint: .cyan),
+                Category(label: "Output", tokens: b.output, tint: .green),
             ]
         }
     }
@@ -120,6 +122,29 @@ public struct ContextBudgetManager: Sendable {
     public static func estimateTokens(for text: String?) -> Int {
         guard let text = text, !text.isEmpty else { return 0 }
         return max(1, text.count / charsPerToken)
+    }
+
+    /// Estimate token count for a set of chat turns (conversation history).
+    static func estimateTokens(for turns: [ChatTurn]) -> Int {
+        turns.reduce(0) { total, turn in
+            var t = 0
+            if !turn.contentIsEmpty { t += max(1, turn.contentLength / charsPerToken) }
+            if let calls = turn.toolCalls {
+                for call in calls {
+                    t += max(1, (call.function.name.count + call.function.arguments.count) / charsPerToken)
+                }
+            }
+            for (_, result) in turn.toolResults {
+                t += max(1, result.count / charsPerToken)
+            }
+            if turn.hasThinking {
+                t += max(1, turn.thinkingLength / charsPerToken)
+            }
+            for attachment in turn.attachments {
+                t += attachment.estimatedTokens
+            }
+            return total + t
+        }
     }
 
     /// Estimate total tokens for a message array
@@ -290,4 +315,55 @@ public struct ContextBudgetManager: Sendable {
         // Small results are kept as-is
         return content
     }
+}
+
+// MARK: - Context Budget Tracker
+
+/// Tracks the active request's token breakdown during streaming/execution.
+///
+/// Both `ChatSession` and `WorkSession` own an instance. The lifecycle is:
+/// 1. `snapshot()` — after preflight, captures the actual system prompt, memory, and tool tokens
+/// 2. `updateConversation()` — at each agent-loop iteration, updates conversation tokens
+/// 3. `activeBreakdown()` — O(1) read returning the snapshot + live output tokens
+/// 4. `clear()` — on completion/error/cancellation
+@MainActor
+final class ContextBudgetTracker {
+    private var breakdown: ContextTokenBreakdown?
+
+    /// Snapshot the fixed components of the actual request context.
+    func snapshot(systemPromptChars: Int, memoryTokens: Int, toolTokens: Int) {
+        var bd = ContextTokenBreakdown()
+        bd.systemPrompt = max(1, systemPromptChars / ContextBudgetManager.charsPerToken)
+        bd.memory = memoryTokens
+        bd.tools = toolTokens
+        breakdown = bd
+    }
+
+    /// Update conversation tokens at each agent-loop iteration start.
+    /// Resets output to 0 since a new LLM call is beginning.
+    func updateConversation(tokens: Int) {
+        breakdown?.conversation = tokens
+        breakdown?.output = 0
+    }
+
+    /// Returns the snapshot with live output tokens appended, or nil if
+    /// no snapshot is active (caller falls back to full recomputation).
+    func activeBreakdown(isActive: Bool, outputTurn: ChatTurn?) -> ContextTokenBreakdown? {
+        guard var bd = breakdown, isActive else { return nil }
+        if let turn = outputTurn, turn.role == .assistant {
+            bd.output = max(
+                0,
+                (turn.contentLength + turn.thinkingLength)
+                    / ContextBudgetManager.charsPerToken
+            )
+        }
+        return bd
+    }
+
+    /// Clear the active snapshot. Next read falls back to full recomputation.
+    func clear() {
+        breakdown = nil
+    }
+
+    var hasActiveSnapshot: Bool { breakdown != nil }
 }

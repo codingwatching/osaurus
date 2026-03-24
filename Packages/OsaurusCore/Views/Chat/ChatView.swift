@@ -48,8 +48,8 @@ final class ChatSession: ObservableObject {
     private var _tokenCacheValid: Bool = false
     private var _lastTokenTurnsCount: Int = 0
     private var _lastTokenAttachmentsCount: Int = 0
-    private var _lastTokenComputeTime: Date = .distantPast
     private var _memoryContextTokens: Int = 0
+    private let budgetTracker = ContextBudgetTracker()
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -225,15 +225,19 @@ final class ChatSession: ObservableObject {
     }
 
     /// Per-category breakdown of estimated context tokens.
-    /// Uses the same caching / throttling as the scalar total.
+    /// During streaming, returns the snapshot from the active request with live
+    /// output tokens (O(1)). Otherwise uses cached full recomputation.
     var estimatedContextBreakdown: ContextTokenBreakdown {
+        if let active = budgetTracker.activeBreakdown(
+            isActive: isStreaming,
+            outputTurn: turns.last
+        ) {
+            return active
+        }
+
         if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount
             && pendingAttachments.count == _lastTokenAttachmentsCount
         {
-            return _cachedBreakdown
-        }
-
-        if isStreaming && _tokenCacheValid && Date().timeIntervalSince(_lastTokenComputeTime) < 0.5 {
             return _cachedBreakdown
         }
 
@@ -249,54 +253,27 @@ final class ChatSession: ObservableObject {
             executionMode: executionMode,
             compact: compact
         )
-        if !systemPrompt.isEmpty {
-            breakdown.systemPrompt = max(1, systemPrompt.count / 4)
-        }
+        breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: systemPrompt)
 
         breakdown.memory = _memoryContextTokens
 
         let toolSpecs = buildToolSpecs(executionMode: executionMode)
         breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
+        breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns)
 
-        // All turns
-        var conversationTokens = 0
-        for turn in turns {
-            if !turn.contentIsEmpty {
-                conversationTokens += max(1, turn.contentLength / 4)
-            }
-            if let toolCalls = turn.toolCalls {
-                for call in toolCalls {
-                    conversationTokens += max(1, (call.function.name.count + call.function.arguments.count) / 4)
-                }
-            }
-            for (_, result) in turn.toolResults {
-                conversationTokens += max(1, result.count / 4)
-            }
-            if turn.hasThinking {
-                conversationTokens += max(1, turn.thinkingLength / 4)
-            }
-            for attachment in turn.attachments {
-                conversationTokens += attachment.estimatedTokens
-            }
-        }
-        breakdown.conversation = conversationTokens
-
-        // Current input + pending attachments
         var inputTokens = 0
         if !input.isEmpty {
-            inputTokens += max(1, input.count / 4)
+            inputTokens += ContextBudgetManager.estimateTokens(for: input)
         }
         for attachment in pendingAttachments {
             inputTokens += attachment.estimatedTokens
         }
         breakdown.input = inputTokens
 
-        // Update cache
         _cachedBreakdown = breakdown
         _tokenCacheValid = true
         _lastTokenTurnsCount = turns.count
         _lastTokenAttachmentsCount = pendingAttachments.count
-        _lastTokenComputeTime = Date()
 
         return breakdown
     }
@@ -394,7 +371,7 @@ final class ChatSession: ObservableObject {
     /// Invalidate the token cache (called when tools/skills change)
     func invalidateTokenCache() {
         _tokenCacheValid = false
-        // Notify SwiftUI to re-render views that depend on estimatedContextTokens
+        budgetTracker.clear()
         objectWillChange.send()
     }
 
@@ -606,6 +583,8 @@ final class ChatSession: ObservableObject {
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
+        budgetTracker.clear()
+        _tokenCacheValid = false
         ServerController.signalGenerationEnd()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
@@ -827,6 +806,12 @@ final class ChatSession: ObservableObject {
                     toolSpecs.append(spec)
                 }
 
+                budgetTracker.snapshot(
+                    systemPromptChars: sys.count,
+                    memoryTokens: _memoryContextTokens,
+                    toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
+                )
+
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 
                 /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
@@ -892,9 +877,15 @@ final class ChatSession: ObservableObject {
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
+                    let msgs = buildMessages()
+                    let convTokens =
+                        msgs
+                        .filter { $0.role != "system" }
+                        .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
+                    budgetTracker.updateConversation(tokens: convTokens)
                     var req = ChatCompletionRequest(
                         model: selectedModel ?? "default",
-                        messages: buildMessages(),
+                        messages: msgs,
                         temperature: effectiveTemp,
                         max_tokens: effectiveMaxTokensForAgent ?? 16384,
                         stream: true,

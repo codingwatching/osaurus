@@ -945,10 +945,8 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private var contextIndicatorChip: some View {
-        // In work mode, show cumulative usage; in chat mode, show context estimate
-        if let cumulative = cumulativeTokens, cumulative > 0, workInputState != nil {
-            // Work mode: show cumulative tokens used
-            HStack(spacing: 4) {
+        HStack(spacing: 4) {
+            if let cumulative = cumulativeTokens, cumulative > 0, workInputState != nil {
                 Text("\(formatTokenCount(cumulative))")
                     .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.accentColor)
@@ -958,20 +956,17 @@ extension FloatingInputCard {
                         .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                         .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }
-            }
-            .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
-        } else {
-            // Chat mode: show context estimate
-            HStack(spacing: 4) {
-                if let maxCtx = maxContextTokens {
-                    Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                } else {
-                    Text("~\(formatTokenCount(displayContextTokens))")
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                }
+            } else {
+                let prefix = isStreaming ? "" : "~"
+                let tokenText =
+                    if let maxCtx = maxContextTokens {
+                        "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
+                    } else {
+                        "\(prefix)\(formatTokenCount(displayContextTokens))"
+                    }
+                Text(tokenText)
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(isStreaming ? theme.secondaryText : theme.tertiaryText)
 
                 if !isCompact {
                     Text("tokens")
@@ -979,25 +974,27 @@ extension FloatingInputCard {
                         .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }
             }
-            .onHover { hovering in
-                contextHoverTask?.cancel()
-                if hovering {
-                    contextHoverTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 300_000_000)
-                        guard !Task.isCancelled else { return }
-                        showContextBreakdown = true
-                    }
-                } else {
-                    showContextBreakdown = false
+        }
+        .onHover { hovering in
+            contextHoverTask?.cancel()
+            if hovering {
+                contextHoverTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled else { return }
+                    showContextBreakdown = true
                 }
+            } else {
+                showContextBreakdown = false
             }
-            .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
-                ContextBreakdownPopover(
-                    breakdown: displayContextBreakdown,
-                    maxTokens: maxContextTokens,
-                    formatTokenCount: formatTokenCount
-                )
-            }
+        }
+        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
+            ContextBreakdownPopover(
+                breakdown: displayContextBreakdown,
+                maxTokens: maxContextTokens,
+                isStreaming: isStreaming,
+                cumulativeTokens: workInputState != nil ? cumulativeTokens : nil,
+                formatTokenCount: formatTokenCount
+            )
         }
     }
 
@@ -2008,6 +2005,8 @@ extension NSImage {
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextTokenBreakdown
     let maxTokens: Int?
+    let isStreaming: Bool
+    let cumulativeTokens: Int?
     let formatTokenCount: (Int) -> String
 
     @Environment(\.theme) private var theme
@@ -2025,25 +2024,52 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
+    /// Categories split into input context vs output for visual grouping.
+    private var inputCategories: [ContextTokenBreakdown.Category] {
+        breakdown.categories.filter { $0.tint != .green }
+    }
+
+    private var outputCategory: ContextTokenBreakdown.Category? {
+        breakdown.categories.first { $0.tint == .green }
+    }
+
     // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Context Budget")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+            HStack(spacing: 6) {
+                Text("Context Budget")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                if isStreaming {
+                    Circle()
+                        .fill(color(for: .green))
+                        .frame(width: 5, height: 5)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
 
             barChart
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
 
             divider
-            legend.padding(.horizontal, 12).padding(.vertical, 8)
+            inputLegend.padding(.horizontal, 12).padding(.vertical, 8)
+
+            if let output = outputCategory {
+                divider
+                categoryRow(output, highlighted: true).padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
             divider
             totalRow.padding(.horizontal, 12).padding(.vertical, 8)
+
+            if let cumulative = cumulativeTokens, cumulative > 0 {
+                divider
+                cumulativeRow(cumulative).padding(.horizontal, 12).padding(.vertical, 8)
+            }
         }
         .frame(width: 240)
         .background(popoverBackground)
@@ -2074,50 +2100,72 @@ private struct ContextBreakdownPopover: View {
 
     // MARK: - Legend
 
-    private var legend: some View {
+    private var inputLegend: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(breakdown.categories) { cat in
-                HStack(spacing: 0) {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(color(for: cat.tint).opacity(0.85))
-                        .frame(width: 3, height: 12)
-                        .padding(.trailing, 8)
-
-                    Text(cat.label)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-
-                    Spacer()
-
-                    Text(formatTokenCount(cat.tokens))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(budgetCap > 0 ? "\(cat.tokens * 100 / budgetCap)%" : "0%")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 32, alignment: .trailing)
-                }
+            ForEach(inputCategories) { cat in
+                categoryRow(cat)
             }
+        }
+    }
+
+    private func categoryRow(_ cat: ContextTokenBreakdown.Category, highlighted: Bool = false) -> some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(color(for: cat.tint).opacity(0.85))
+                .frame(width: 3, height: 12)
+                .padding(.trailing, 8)
+
+            Text(cat.label)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            Spacer()
+
+            Text(formatTokenCount(cat.tokens))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(highlighted ? color(for: cat.tint) : theme.primaryText)
+                .contentTransition(highlighted ? .numericText() : .identity)
+
+            Text(budgetCap > 0 ? "\(cat.tokens * 100 / budgetCap)%" : "0%")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 32, alignment: .trailing)
         }
     }
 
     // MARK: - Total
 
     private var totalRow: some View {
-        HStack(spacing: 4) {
+        let prefix = isStreaming ? "" : "~"
+        return HStack(spacing: 4) {
             Text("Total")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
             Spacer()
-            Text("~\(formatTokenCount(breakdown.total))")
+            Text("\(prefix)\(formatTokenCount(breakdown.total))")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundColor(theme.primaryText)
+                .contentTransition(.numericText())
             if let max = maxTokens {
                 Text("/ \(formatTokenCount(max))")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
             }
+        }
+    }
+
+    // MARK: - Cumulative (Work Mode)
+
+    private func cumulativeRow(_ tokens: Int) -> some View {
+        HStack(spacing: 4) {
+            Text("Session Total")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(formatTokenCount(tokens))
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(theme.accentColor)
+                .contentTransition(.numericText())
         }
     }
 
