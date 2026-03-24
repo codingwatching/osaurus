@@ -37,9 +37,28 @@ public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
     }
 }
 
+struct PreflightCapabilityItem: Equatable, Sendable {
+    enum CapabilityType: String, Equatable, Sendable {
+        case method, tool, skill
+
+        var icon: String {
+            switch self {
+            case .method: return "doc.text"
+            case .tool: return "wrench"
+            case .skill: return "lightbulb"
+            }
+        }
+    }
+
+    let type: CapabilityType
+    let name: String
+    let description: String
+}
+
 struct PreflightResult: Sendable {
     let toolSpecs: [Tool]
     let contextSnippet: String
+    let items: [PreflightCapabilityItem]
 }
 
 enum PreflightCapabilitySearch {
@@ -47,7 +66,7 @@ enum PreflightCapabilitySearch {
     /// Searches methods, tools, and skills in parallel and returns
     /// tool specs + a context snippet for system prompt injection.
     static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
-        let empty = PreflightResult(toolSpecs: [], contextSnippet: "")
+        let empty = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
 
         guard mode != .off else { return empty }
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -133,6 +152,11 @@ enum PreflightCapabilitySearch {
 
         let snippet = sections.joined(separator: "\n")
 
+        let items: [PreflightCapabilityItem] =
+            methods.map { .init(type: .method, name: $0.method.name, description: $0.method.description) }
+            + tools.map { .init(type: .tool, name: $0.name, description: $0.description) }
+            + skills.map { .init(type: .skill, name: $0.name, description: $0.description) }
+
         if !toolSpecsToAdd.isEmpty || !snippet.isEmpty {
             let tc = toolSpecsToAdd.count
             let mc = methods.count
@@ -140,6 +164,6 @@ enum PreflightCapabilitySearch {
             logger.info("Pre-flight loaded \(tc) tools, \(mc) methods, \(sc) skills")
         }
 
-        return PreflightResult(toolSpecs: toolSpecsToAdd, contextSnippet: snippet)
+        return PreflightResult(toolSpecs: toolSpecsToAdd, contextSnippet: snippet, items: items)
     }
 }

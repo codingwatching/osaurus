@@ -270,6 +270,8 @@ public final class WorkSession: ObservableObject {
 
     /// Preserve existing transcript when the next execution start is a resume/continue.
     private var preserveTurnsOnNextExecutionStart: Bool = false
+    /// Stashed preflight items to apply to the assistant turn once created.
+    private var pendingPreflightCapabilities: [PreflightCapabilityItem]?
     @Published public var pausedIssueId: String?
     @Published public var pausedExecutionReason: ExecutionResult.PauseReason?
 
@@ -767,6 +769,7 @@ public final class WorkSession: ObservableObject {
         let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
         let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
         let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
+        pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
 
         for spec in preflight.toolSpecs
         where !tools.contains(where: { $0.function.name == spec.function.name }) {
@@ -1299,6 +1302,7 @@ public final class WorkSession: ObservableObject {
         let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
         let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
         let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
+        pendingPreflightCapabilities = preflight.items.isEmpty ? nil : preflight.items
 
         for spec in preflight.toolSpecs
         where !tools.contains(where: { $0.function.name == spec.function.name }) {
@@ -1395,16 +1399,22 @@ extension WorkSession: WorkEngineDelegate {
     /// Ensures an assistant turn exists for streaming response
     private func ensureAssistantTurnExists() {
         if liveExecutionTurns.last?.role != .assistant {
-            liveExecutionTurns.append(ChatTurn(role: .assistant, content: ""))
+            let turn = ChatTurn(role: .assistant, content: "")
+            turn.preflightCapabilities = pendingPreflightCapabilities
+            pendingPreflightCapabilities = nil
+            liveExecutionTurns.append(turn)
         }
     }
 
     /// Initializes turns for a fresh issue execution
     private func initializeTurns(for issue: Issue) {
         let displayContent = issueDisplayContent(issue)
+        let assistantTurn = ChatTurn(role: .assistant, content: "")
+        assistantTurn.preflightCapabilities = pendingPreflightCapabilities
+        pendingPreflightCapabilities = nil
         liveExecutionTurns = [
             ChatTurn(role: .user, content: displayContent),
-            ChatTurn(role: .assistant, content: ""),
+            assistantTurn,
         ]
     }
 

@@ -788,6 +788,10 @@ final class ChatSession: ObservableObject {
                 let preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
                 guard isRunActive(runId) else { return }
 
+                if !preflight.items.isEmpty {
+                    assistantTurn.preflightCapabilities = preflight.items
+                }
+
                 let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,

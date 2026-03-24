@@ -165,6 +165,8 @@ final class ChatTurn: ObservableObject, Identifiable {
     @Published var pendingToolArgSize: Int = 0
     /// Pending clarification request for work mode (displayed as ClarificationCardView)
     var pendingClarification: ClarificationRequest? = nil
+    /// Capabilities selected by preflight search (ephemeral, not persisted)
+    var preflightCapabilities: [PreflightCapabilityItem]? = nil
 
     private static let maxArgPreviewLength = 500
 

@@ -34,6 +34,7 @@ enum ContentBlockKind: Equatable {
     case userMessage(text: String, attachments: [Attachment])
     case sharedArtifact(artifact: SharedArtifact)
     case pendingToolCall(toolName: String, argPreview: String?, argSize: Int)
+    case preflightCapabilities(items: [PreflightCapabilityItem])
     case typingIndicator
     case groupSpacer
 
@@ -71,6 +72,9 @@ enum ContentBlockKind: Equatable {
         case let (.pendingToolCall(lName, _, lSize), .pendingToolCall(rName, _, rSize)):
             return lName == rName && lSize == rSize
 
+        case let (.preflightCapabilities(lItems), .preflightCapabilities(rItems)):
+            return lItems == rItems
+
         case (.typingIndicator, .typingIndicator):
             return true
 
@@ -96,7 +100,8 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         switch kind {
         case let .header(role, _, _): return role
         case let .paragraph(_, _, _, role): return role
-        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .typingIndicator, .groupSpacer:
+        case .toolCallGroup, .thinking, .sharedArtifact, .pendingToolCall, .preflightCapabilities,
+            .typingIndicator, .groupSpacer:
             return .assistant
         case .userMessage: return .user
         }
@@ -209,6 +214,17 @@ struct ContentBlock: Identifiable, Equatable, Hashable {
         )
     }
 
+    static func preflightCapabilities(turnId: UUID, items: [PreflightCapabilityItem], position: BlockPosition)
+        -> ContentBlock
+    {
+        ContentBlock(
+            id: "preflight-\(turnId.uuidString)",
+            turnId: turnId,
+            kind: .preflightCapabilities(items: items),
+            position: position
+        )
+    }
+
     static func groupSpacer(afterTurnId: UUID, associatedWithTurnId: UUID? = nil) -> ContentBlock {
         let turnId = associatedWithTurnId ?? afterTurnId
         return ContentBlock(id: "spacer-\(afterTurnId.uuidString)", turnId: turnId, kind: .groupSpacer, position: .only)
@@ -268,6 +284,12 @@ extension ContentBlock {
                         isFirstInGroup: true,
                         position: .first
                     )
+                )
+            }
+
+            if let capabilities = turn.preflightCapabilities, !capabilities.isEmpty {
+                turnBlocks.append(
+                    .preflightCapabilities(turnId: turn.id, items: capabilities, position: .middle)
                 )
             }
 
