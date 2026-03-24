@@ -12,6 +12,31 @@ import os
 
 private let logger = Logger(subsystem: "ai.osaurus", category: "PreflightSearch")
 
+public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
+    case off
+    case narrow
+    case balanced
+    case wide
+
+    var topKValues: (methods: Int, tools: Int, skills: Int) {
+        switch self {
+        case .off: return (0, 0, 0)
+        case .narrow: return (1, 2, 1)
+        case .balanced: return (3, 5, 2)
+        case .wide: return (5, 8, 4)
+        }
+    }
+
+    public var helpText: String {
+        switch self {
+        case .off: return "Disable pre-flight search. Only explicit tool calls are used."
+        case .narrow: return "Minimal context injection. Fewer methods, tools, and skills loaded."
+        case .balanced: return "Default. Loads a moderate set of relevant capabilities."
+        case .wide: return "Aggressive search. More context loaded, may increase prompt size."
+        }
+    }
+}
+
 struct PreflightResult: Sendable {
     let toolSpecs: [Tool]
     let contextSnippet: String
@@ -21,14 +46,18 @@ enum PreflightCapabilitySearch {
 
     /// Searches methods, tools, and skills in parallel and returns
     /// tool specs + a context snippet for system prompt injection.
-    static func search(query: String) async -> PreflightResult {
+    static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
+        let empty = PreflightResult(toolSpecs: [], contextSnippet: "")
+
+        guard mode != .off else { return empty }
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return PreflightResult(toolSpecs: [], contextSnippet: "")
+            return empty
         }
 
-        async let methodHits = MethodSearchService.shared.search(query: query, topK: 3)
-        async let toolHits = ToolSearchService.shared.search(query: query, topK: 5)
-        async let skillHits = SkillSearchService.shared.search(query: query, topK: 2)
+        let topK = mode.topKValues
+        async let methodHits = MethodSearchService.shared.search(query: query, topK: topK.methods)
+        async let toolHits = ToolSearchService.shared.search(query: query, topK: topK.tools)
+        async let skillHits = SkillSearchService.shared.search(query: query, topK: topK.skills)
 
         let methods = await methodHits
         let tools = await toolHits

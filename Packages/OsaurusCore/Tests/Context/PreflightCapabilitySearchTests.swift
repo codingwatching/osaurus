@@ -45,4 +45,31 @@ struct PreflightCapabilitySearchTests {
             "Pre-flight specs should not contain internal duplicates"
         )
     }
+
+    // MARK: - PreflightSearchMode Tests
+
+    @Test func offModeReturnsEmptyResult() async {
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .off)
+        #expect(result.toolSpecs.isEmpty)
+        #expect(result.contextSnippet.isEmpty)
+    }
+
+    @Test func narrowModeReturnsNoDuplicates() async {
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .narrow)
+        let names = result.toolSpecs.map { $0.function.name }
+        #expect(Set(names).count == names.count)
+    }
+
+    @Test func wideModeReturnsNoDuplicates() async {
+        let result = await PreflightCapabilitySearch.search(query: "deploy build test", mode: .wide)
+        let names = result.toolSpecs.map { $0.function.name }
+        #expect(Set(names).count == names.count)
+    }
+
+    @Test func topKValuesAreCorrect() {
+        #expect(PreflightSearchMode.off.topKValues == (0, 0, 0))
+        #expect(PreflightSearchMode.narrow.topKValues == (1, 2, 1))
+        #expect(PreflightSearchMode.balanced.topKValues == (3, 5, 2))
+        #expect(PreflightSearchMode.wide.topKValues == (5, 8, 4))
+    }
 }

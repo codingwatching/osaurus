@@ -53,6 +53,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Global sandbox execution config used by the built-in Default agent.
     public var defaultAutonomousExec: AutonomousExecConfig?
 
+    // MARK: - Preflight Search Settings
+    /// Controls how aggressively pre-flight capability search loads context (nil defaults to .balanced)
+    public var preflightSearchMode: PreflightSearchMode?
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -66,7 +70,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         workMaxTokens: Int? = nil,
         workTopPOverride: Float? = nil,
         workMaxIterations: Int? = nil,
-        defaultAutonomousExec: AutonomousExecConfig? = nil
+        defaultAutonomousExec: AutonomousExecConfig? = nil,
+        preflightSearchMode: PreflightSearchMode? = nil
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -81,6 +86,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.workTopPOverride = workTopPOverride
         self.workMaxIterations = workMaxIterations
         self.defaultAutonomousExec = defaultAutonomousExec
+        self.preflightSearchMode = preflightSearchMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -101,6 +107,10 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             AutonomousExecConfig.self,
             forKey: .defaultAutonomousExec
         )
+        preflightSearchMode = try container.decodeIfPresent(
+            PreflightSearchMode.self,
+            forKey: .preflightSearchMode
+        )
     }
 
     public static var `default`: ChatConfiguration {
@@ -120,7 +130,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             workMaxTokens: 4096,  // Conservative per-iteration limit for work steps
             workTopPOverride: nil,
             workMaxIterations: 50,  // Default reasoning loop iterations
-            defaultAutonomousExec: nil
+            defaultAutonomousExec: nil,
+            preflightSearchMode: .balanced
         )
     }
 }

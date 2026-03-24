@@ -764,8 +764,9 @@ public final class WorkSession: ObservableObject {
         var tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: config.executionMode)
 
         // Pre-flight RAG: search capabilities based on issue
+        let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
         let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
-        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery)
+        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
 
         for spec in preflight.toolSpecs
         where !tools.contains(where: { $0.function.name == spec.function.name }) {
@@ -1295,8 +1296,9 @@ public final class WorkSession: ObservableObject {
         let config = await buildExecutionConfig()
         var tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: config.executionMode)
 
+        let preflightMode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
         let preflightQuery = [issue.title, issue.description].compactMap { $0 }.joined(separator: " ")
-        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery)
+        let preflight = await PreflightCapabilitySearch.search(query: preflightQuery, mode: preflightMode)
 
         for spec in preflight.toolSpecs
         where !tools.contains(where: { $0.function.name == spec.function.name }) {

@@ -24,6 +24,7 @@ struct ConfigurationView: View {
     @State private var tempChatContextLength: String = ""
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
+    @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
 
     // Work generation settings state
     @State private var tempAgentTemperature: String = ""
@@ -173,7 +174,9 @@ struct ConfigurationView: View {
                             "Context Length",
                             "Top P",
                             "Max Tool Attempts",
-                            "Generation"
+                            "Generation",
+                            "Preflight",
+                            "Capability Search"
                         ) {
                             SettingsSection(title: "Chat", icon: "message") {
                                 VStack(alignment: .leading, spacing: 20) {
@@ -238,6 +241,22 @@ struct ConfigurationView: View {
                                     }
 
                                     SettingsDivider()
+
+                                    SettingsSubsection(label: "Capability Search") {
+                                        VStack(alignment: .leading, spacing: 10) {
+                                            Picker("", selection: $tempPreflightSearchMode) {
+                                                ForEach(PreflightSearchMode.allCases, id: \.self) { mode in
+                                                    Text(mode.rawValue.capitalized).tag(mode)
+                                                }
+                                            }
+                                            .pickerStyle(.segmented)
+                                            .labelsHidden()
+
+                                            Text(tempPreflightSearchMode.helpText)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
 
                                 }
                             }
@@ -578,6 +597,7 @@ struct ConfigurationView: View {
         tempChatContextLength = chat.contextLength.map(String.init) ?? ""
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
+        tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
 
         // Work generation settings
         tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
@@ -637,6 +657,7 @@ struct ConfigurationView: View {
         tempChatContextLength = ""
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
+        tempPreflightSearchMode = .balanced
 
         // Work generation settings - clear to use defaults
         tempAgentTemperature = ""
@@ -799,7 +820,8 @@ struct ConfigurationView: View {
             workTemperature: parsedAgentTemp,
             workMaxTokens: parsedAgentMax,
             workTopPOverride: parsedAgentTopP,
-            workMaxIterations: parsedAgentMaxIterations
+            workMaxIterations: parsedAgentMaxIterations,
+            preflightSearchMode: tempPreflightSearchMode
         )
         ChatConfigurationStore.save(chatCfg)
 

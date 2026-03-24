@@ -784,7 +784,8 @@ final class ChatSession: ObservableObject {
                 updateMemoryTokens(fromContext: memoryContext)
 
                 // Pre-flight RAG: search capabilities based on user's message
-                let preflight = await PreflightCapabilitySearch.search(query: trimmed)
+                let preflightMode = chatCfg.preflightSearchMode ?? .balanced
+                let preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
                 guard isRunActive(runId) else { return }
 
                 let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
