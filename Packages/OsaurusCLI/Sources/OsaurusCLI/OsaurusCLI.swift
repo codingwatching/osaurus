@@ -21,6 +21,7 @@ struct OsaurusCLI {
         case ui
         case tools([String])
         case manifest([String])
+        case bundle([String])
         case version
         case help
     }
@@ -43,6 +44,7 @@ struct OsaurusCLI {
         case "ui": return .ui
         case "tools": return .tools(rest)
         case "manifest": return .manifest(rest)
+        case "bundle": return .bundle(rest)
         case "version", "--version", "-v": return .version
         case "help", "-h", "--help": return .help
         default: return nil
@@ -78,6 +80,8 @@ struct OsaurusCLI {
             await ToolsCommand.execute(args: args)
         case .manifest(let args):
             await ManifestCommand.execute(args: args)
+        case .bundle(let args):
+            await BundleCommand.execute(args: args)
         case .version:
             await VersionCommand.execute(args: [])
         case .help:
@@ -123,6 +127,8 @@ struct OsaurusCLI {
                                       Dev mode with hot reload and optional web proxy
               osaurus manifest extract <dylib>
                                       Extract manifest JSON from built plugin
+              osaurus bundle load <path.mcpb> [--name "Display Name"]
+                                      Load and run an MCP Bundle (.mcpb file)
               osaurus help            Show this help
 
             """
