@@ -180,7 +180,7 @@ struct VoiceInputSettingsTab: View {
 
                 Spacer()
             }
-            
+
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Paste via Clipboard (Recommended)")
@@ -195,16 +195,15 @@ struct VoiceInputSettingsTab: View {
                     .font(.system(size: 11))
                     .foregroundColor(theme.tertiaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                    
-                    
+
                 }
-                
+
                 Spacer()
-                
+
                 Toggle("", isOn: $useClipboardPaste).toggleStyle(SwitchToggleStyle(tint: theme.successColor))
-                .onChange(of: useClipboardPaste) { _, _ in
-                    saveSettings()
-                }
+                    .onChange(of: useClipboardPaste) { _, _ in
+                        saveSettings()
+                    }
             }
         }
         .padding(20)

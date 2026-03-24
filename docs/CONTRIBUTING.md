@@ -38,14 +38,14 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 **Models** — Pure data. No logic, no side effects, no singletons.
 
 - Structs, enums, Codable types, API DTOs, configuration types
-- Organized into domain subfolders: `API/`, `Chat/`, `Agent/`, `Configuration/`, `Plugin/`, `Memory/`, `Voice/`, `Theme/`, `Tool/`, `Work/`, `Schedule/`, `Watcher/`
+- Organized into domain subfolders: `API/`, `Chat/`, `Agent/`, `Configuration/`, `Method/`, `Plugin/`, `Memory/`, `Voice/`, `Theme/`, `Tool/`, `Work/`, `Schedule/`, `Watcher/`
 - Rule: if it has `@Published` or `static let shared`, it does not belong here
 
 **Services** — Business logic. Not observable. Not UI-aware.
 
 - Swift `actor` for concurrent work (ChatEngine, MemoryService, WorkEngine)
 - Stateless `struct` for pure functions (Router, PromptBuilder)
-- Organized into domain subfolders: `Chat/`, `Inference/`, `ModelRuntime/`, `MCP/`, `Memory/`, `Sandbox/`, `Voice/`, `Provider/`, `Plugin/`, `Keychain/`
+- Organized into domain subfolders: `Chat/`, `Context/`, `Inference/`, `Method/`, `ModelRuntime/`, `MCP/`, `Memory/`, `Sandbox/`, `Skill/`, `Tool/`, `Voice/`, `Provider/`, `Plugin/`, `Keychain/`
 - Rule: services do NOT conform to `ObservableObject` or `@Observable`
 - Rule: if it drives UI directly, it is a Manager, not a Service
 - Naming: suffix with `Service` or `Engine`
@@ -95,7 +95,7 @@ The core library (`Packages/OsaurusCore/`) follows a layered architecture. Each 
 | Actor-based business logic | `Service` or `Engine` | `MemoryService`, `ChatEngine`      |
 | Stateless logic            | `Service` or none     | `PromptBuilder`, `SearchService`   |
 | JSON file persistence      | `Store`               | `AgentStore`, `ScheduleStore`      |
-| SQLite persistence         | `Database`            | `MemoryDatabase`, `WorkDatabase`   |
+| SQLite persistence         | `Database`            | `MemoryDatabase`, `MethodDatabase` |
 | SwiftUI view               | `View`                | `ChatView`, `AgentsView`           |
 | Test file                  | `Tests` suffix        | `ChatEngineTests`, `MemoryTests`   |
 

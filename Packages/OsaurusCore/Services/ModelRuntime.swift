@@ -533,6 +533,7 @@ actor ModelRuntime {
                         if !s.isEmpty { continuation.yield(s) }
                     case .toolInvocation(let name, let argsJSON):
                         continuation.yield(StreamingToolHint.encode(name))
+                        continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
                         continuation.finish(
                             throwing: ServiceToolInvocation(toolName: name, jsonArguments: argsJSON)
                         )

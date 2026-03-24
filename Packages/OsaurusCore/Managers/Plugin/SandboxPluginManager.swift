@@ -105,9 +105,7 @@ public final class SandboxPluginManager: ObservableObject {
                         agentId: agentId
                     )
                 )
-                // Write directly to the VirtioFS host mount — instant visibility in the container
-                let hostPluginDir = OsaurusPaths.containerWorkspace()
-                    .appendingPathComponent("agents/\(agentName)/plugins/\(plugin.id)")
+                let hostPluginDir = self.hostPluginDir(agentName: agentName, pluginId: plugin.id)
                 for (path, content) in files {
                     let fullPath = hostPluginDir.appendingPathComponent(path)
                     let dir = fullPath.deletingLastPathComponent()
@@ -118,20 +116,6 @@ public final class SandboxPluginManager: ObservableObject {
                 _ = try await SandboxManager.shared.execAsRoot(
                     command: "chown -R agent-\(agentName):agent-\(agentName) \(pluginDir)"
                 )
-            }
-
-            if let secrets = plugin.secrets, !secrets.isEmpty {
-                setProgress(
-                    key: key,
-                    InstallProgress(
-                        pluginName: plugin.name,
-                        phase: "Configuring secrets...",
-                        agentId: agentId
-                    )
-                )
-                // Secrets are prompted in the UI and stored in Keychain.
-                // At exec time they are injected as env vars by SandboxPluginTool
-                // and are also available via `osaurus-host secrets get <name>`.
             }
 
             if plugin.setup != nil {
@@ -189,9 +173,7 @@ public final class SandboxPluginManager: ObservableObject {
             )
         }
 
-        let hostDir = OsaurusPaths.containerAgentDir(agentName)
-            .appendingPathComponent("plugins/\(pluginId)", isDirectory: true)
-        try? FileManager.default.removeItem(at: hostDir)
+        try? FileManager.default.removeItem(at: hostPluginDir(agentName: agentName, pluginId: pluginId))
 
         list.remove(at: index)
         installedPlugins[agentId] = list
@@ -235,11 +217,11 @@ public final class SandboxPluginManager: ObservableObject {
     }
 
     /// Re-installs system dependencies and re-runs the setup command for a
-    /// single plugin without re-seeding files (they persist on VirtioFS).
+    /// single plugin. If VirtioFS files are intact, only restores ephemeral
+    /// deps. If files are missing, does a full reinstall.
     @discardableResult
     public func repairPlugin(_ plugin: SandboxPlugin, for agentId: String) async -> Bool {
         let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
-        let pluginDir = OsaurusPaths.inContainerPluginDir(agentName, plugin.id)
         let key = progressKey(plugin: plugin.id, agent: agentId)
 
         setProgress(
@@ -248,18 +230,20 @@ public final class SandboxPluginManager: ObservableObject {
         )
         defer { clearProgress(key: key) }
 
-        do {
-            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
-
-            let checkResult = try await SandboxManager.shared.execAsAgent(
-                agentName,
-                command: "test -d \(pluginDir)"
-            )
-            guard checkResult.succeeded else {
-                NSLog("[SandboxPluginManager] Plugin directory missing for '\(plugin.id)' (agent \(agentId))")
+        guard hostFilesIntact(plugin: plugin, agentName: agentName) else {
+            NSLog("[SandboxPluginManager] Plugin files missing for '\(plugin.id)' (agent \(agentId)), reinstalling")
+            do {
+                try await reinstall(plugin: plugin, for: agentId)
+                return true
+            } catch {
+                NSLog("[SandboxPluginManager] Reinstall failed for '\(plugin.id)': \(error.localizedDescription)")
                 markPluginFailed(plugin.id, for: agentId)
                 return false
             }
+        }
+
+        do {
+            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
 
             if plugin.dependencies != nil {
                 setProgress(
@@ -309,6 +293,57 @@ public final class SandboxPluginManager: ObservableObject {
                 && plugins.contains { $0.id == pluginId }
                 && isOutdated(pluginId: pluginId, agentId: agentId)
         }
+    }
+
+    // MARK: - On-Demand Provisioning
+
+    /// Ensures a plugin is installed and ready for a given agent.
+    /// Verifies host-side files are intact (fast local FS check). If anything
+    /// is missing — directory, files, or metadata — does a full reinstall.
+    public func ensureReady(pluginId: String, plugin: SandboxPlugin, for agentId: String) async -> Bool {
+        let agentName = SandboxAgentProvisioner.linuxName(for: agentId)
+        let existing = self.plugin(id: pluginId, for: agentId)
+
+        if existing?.status == .ready,
+            hostFilesIntact(plugin: plugin, agentName: agentName)
+        {
+            return true
+        }
+
+        do {
+            if existing != nil {
+                NSLog("[SandboxPluginManager] Plugin '\(pluginId)' stale — reinstalling")
+                try await uninstall(pluginId: pluginId, from: agentId)
+            }
+            try await install(plugin: plugin, for: agentId)
+            return true
+        } catch {
+            NSLog("[SandboxPluginManager] On-demand provision failed for '\(pluginId)': \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func hostFilesIntact(plugin: SandboxPlugin, agentName: String) -> Bool {
+        let dir = hostPluginDir(agentName: agentName, pluginId: plugin.id)
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dir.path) else { return false }
+        guard let files = plugin.files, !files.isEmpty else { return true }
+        return files.allSatisfy { (path, _) in
+            fm.fileExists(atPath: dir.appendingPathComponent(path).path)
+        }
+    }
+
+    // MARK: - Global Plugin Listing
+
+    /// Returns deduplicated plugin definitions across all agents (by plugin ID).
+    public func allUniquePlugins() -> [SandboxPlugin] {
+        var seen = Set<String>()
+        return installedPlugins.values.flatMap { $0 }
+            .filter { $0.status == .ready }
+            .compactMap { installed in
+                guard seen.insert(installed.plugin.id).inserted else { return nil }
+                return installed.plugin
+            }
     }
 
     // MARK: - Query
@@ -449,6 +484,11 @@ public final class SandboxPluginManager: ObservableObject {
     private func secretsEnvironment(agentId: String, pluginId: String) -> [String: String] {
         guard let uuid = UUID(uuidString: agentId) else { return [:] }
         return AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: pluginId)
+    }
+
+    private func hostPluginDir(agentName: String, pluginId: String) -> URL {
+        OsaurusPaths.containerWorkspace()
+            .appendingPathComponent("agents/\(agentName)/plugins/\(pluginId)")
     }
 
     private func progressKey(plugin: String, agent: String) -> String {

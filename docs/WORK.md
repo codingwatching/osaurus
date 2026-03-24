@@ -169,6 +169,15 @@ Agents have access to specialized tools for file and system operations:
 | `request_clarification` | Pause execution to ask the user a question                 |
 | `generate_artifact`     | Generate a standalone document (report, analysis, etc.)    |
 
+### Capability & Method Tools
+
+| Tool                    | Description                                                |
+| ----------------------- | ---------------------------------------------------------- |
+| `capabilities_search`   | Search for methods, tools, and skills across all indexes   |
+| `capabilities_load`     | Load a capability into the active session by ID            |
+| `methods_save`          | Save a reusable method (YAML workflow) for future use      |
+| `methods_report`        | Report method success or failure to update scoring         |
+
 All tools:
 
 - Validate paths are within the working directory
@@ -241,17 +250,16 @@ Each task is associated with a **agent**:
 
 - The active agent when you start a task is used throughout
 - Agent's system prompt guides the agent's behavior
-- Tool permissions from the agent apply to the task
 
-### Skills
+### Skills & Methods
 
-Agents use **two-phase capability selection**:
+Capabilities are automatically selected via **preflight RAG search**:
 
-1. **Catalog phase** — Lightweight skill descriptions loaded initially
-2. **Selection phase** — Agent chooses relevant skills for the task
-3. **Execution phase** — Full skill instructions loaded for selected items
-
-This reduces token usage while maintaining access to all capabilities.
+- Before each agent loop, Osaurus searches indexed skills, methods, and tools using the task context
+- Relevant skill instructions and method workflows are injected into the system prompt
+- Matching tool definitions are merged into the active tool set
+- The agent can dynamically discover and load additional capabilities at runtime via `capabilities_search` and `capabilities_load`
+- Successful tool-call sequences can be saved as methods via `methods_save` for reuse in future tasks
 
 ---
 

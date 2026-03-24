@@ -124,7 +124,9 @@ public final class KeyboardSimulationService: ObservableObject {
     public func pasteText(_ text: String, restoreClipboard: Bool = true) -> Bool {
         // use cached permission to avoid blocking main thread
         guard hasAccessibilityPermission else {
-            print("[KeyboardSimulationService] Cannot paste: accessibility permission not granted (using cached status)")
+            print(
+                "[KeyboardSimulationService] Cannot paste: accessibility permission not granted (using cached status)"
+            )
             // trigger a refresh for the next time
             checkAccessibilityPermission()
             return false

@@ -20,6 +20,7 @@ final class BlockMemoizer {
     private var lastContentLen = 0
     private var lastThinkingLen = 0
     private var lastPendingToolName: String?
+    private var lastPendingToolArgSize = 0
     private var lastVersion = -1
     private let maxBlocks = 80
 
@@ -38,11 +39,13 @@ final class BlockMemoizer {
         let contentLen = turns.last?.contentLength ?? 0
         let thinkingLen = turns.last?.thinkingLength ?? 0
         let pendingToolName = turns.last?.pendingToolName
+        let pendingToolArgSize = turns.last?.pendingToolArgSize ?? 0
 
         // Fast path: nothing changed
         if count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
             && pendingToolName == lastPendingToolName
+            && pendingToolArgSize == lastPendingToolArgSize
             && version == lastVersion && !cached.isEmpty
         {
             return limited(streaming: streamingTurnId != nil)
@@ -95,6 +98,7 @@ final class BlockMemoizer {
         lastContentLen = contentLen
         lastThinkingLen = thinkingLen
         lastPendingToolName = pendingToolName
+        lastPendingToolArgSize = pendingToolArgSize
         lastVersion = version
         cachedGroupHeaderMap = Self.buildGroupHeaderMap(from: cached)
 
@@ -159,6 +163,7 @@ final class BlockMemoizer {
         lastContentLen = 0
         lastThinkingLen = 0
         lastPendingToolName = nil
+        lastPendingToolArgSize = 0
         lastVersion = -1
     }
 

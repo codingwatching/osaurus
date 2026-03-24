@@ -1,0 +1,169 @@
+//
+//  PreflightCapabilitySearch.swift
+//  osaurus
+//
+//  Runs RAG across methods, tools, and skills before the agent loop starts.
+//  Returns tool specs to merge into the active tool set and context snippets
+//  to inject into the system prompt.
+//
+
+import Foundation
+import os
+
+private let logger = Logger(subsystem: "ai.osaurus", category: "PreflightSearch")
+
+public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
+    case off
+    case narrow
+    case balanced
+    case wide
+
+    var topKValues: (methods: Int, tools: Int, skills: Int) {
+        switch self {
+        case .off: return (0, 0, 0)
+        case .narrow: return (1, 2, 1)
+        case .balanced: return (3, 5, 2)
+        case .wide: return (5, 8, 4)
+        }
+    }
+
+    public var helpText: String {
+        switch self {
+        case .off: return "Disable pre-flight search. Only explicit tool calls are used."
+        case .narrow: return "Minimal context injection. Fewer methods, tools, and skills loaded."
+        case .balanced: return "Default. Loads a moderate set of relevant capabilities."
+        case .wide: return "Aggressive search. More context loaded, may increase prompt size."
+        }
+    }
+}
+
+struct PreflightCapabilityItem: Equatable, Sendable {
+    enum CapabilityType: String, Equatable, Sendable {
+        case method, tool, skill
+
+        var icon: String {
+            switch self {
+            case .method: return "doc.text"
+            case .tool: return "wrench"
+            case .skill: return "lightbulb"
+            }
+        }
+    }
+
+    let type: CapabilityType
+    let name: String
+    let description: String
+}
+
+struct PreflightResult: Sendable {
+    let toolSpecs: [Tool]
+    let contextSnippet: String
+    let items: [PreflightCapabilityItem]
+}
+
+enum PreflightCapabilitySearch {
+
+    /// Searches methods, tools, and skills in parallel and returns
+    /// tool specs + a context snippet for system prompt injection.
+    static func search(query: String, mode: PreflightSearchMode = .balanced) async -> PreflightResult {
+        let empty = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
+
+        guard mode != .off else { return empty }
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return empty
+        }
+
+        let topK = mode.topKValues
+        async let methodHits = MethodSearchService.shared.search(query: query, topK: topK.methods)
+        async let toolHits = ToolSearchService.shared.search(query: query, topK: topK.tools)
+        async let skillHits = SkillSearchService.shared.search(query: query, topK: topK.skills)
+
+        let methods = await methodHits
+        let tools = await toolHits
+        let skills = await skillHits
+
+        // Enabled tool names for filtering method-cascaded tool references
+        let enabledToolNames = await MainActor.run {
+            Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
+        }
+
+        // Collect tool specs to inject
+        var toolSpecsToAdd: [Tool] = []
+        var toolNamesAdded: Set<String> = []
+
+        // Tools matched directly by search (already filtered by ToolSearchService)
+        for entry in tools {
+            let specs = await MainActor.run {
+                ToolRegistry.shared.specs(forTools: [entry.name])
+            }
+            for spec in specs where !toolNamesAdded.contains(spec.function.name) {
+                toolSpecsToAdd.append(spec)
+                toolNamesAdded.insert(spec.function.name)
+            }
+        }
+
+        // Tools referenced by matched methods (cascading — filter by enabled)
+        for result in methods {
+            let method = result.method
+            for toolName in method.toolsUsed
+            where enabledToolNames.contains(toolName) && !toolNamesAdded.contains(toolName) {
+                let specs = await MainActor.run {
+                    ToolRegistry.shared.specs(forTools: [toolName])
+                }
+                for spec in specs {
+                    toolSpecsToAdd.append(spec)
+                    toolNamesAdded.insert(spec.function.name)
+                }
+            }
+        }
+
+        // Build context snippet for methods and skills
+        var sections: [String] = []
+
+        if !methods.isEmpty {
+            sections.append("## Pre-loaded Methods\n")
+            for result in methods {
+                let m = result.method
+                sections.append("### \(m.name)\n")
+                sections.append("*\(m.description)*\n")
+                if !m.toolsUsed.isEmpty {
+                    sections.append("Tools: \(m.toolsUsed.joined(separator: ", "))\n")
+                }
+                sections.append("\n\(m.body)\n")
+            }
+        }
+
+        if !skills.isEmpty {
+            sections.append("## Pre-loaded Skills\n")
+            for skill in skills {
+                let instructions = await MainActor.run {
+                    SkillManager.shared.loadInstructions(for: [skill.name])
+                }
+                sections.append("### \(skill.name)\n")
+                if !skill.description.isEmpty {
+                    sections.append("*\(skill.description)*\n")
+                }
+                if let content = instructions[skill.name] {
+                    sections.append("\(content)\n")
+                }
+                sections.append("---\n")
+            }
+        }
+
+        let snippet = sections.joined(separator: "\n")
+
+        let items: [PreflightCapabilityItem] =
+            methods.map { .init(type: .method, name: $0.method.name, description: $0.method.description) }
+            + tools.map { .init(type: .tool, name: $0.name, description: $0.description) }
+            + skills.map { .init(type: .skill, name: $0.name, description: $0.description) }
+
+        if !toolSpecsToAdd.isEmpty || !snippet.isEmpty {
+            let tc = toolSpecsToAdd.count
+            let mc = methods.count
+            let sc = skills.count
+            logger.info("Pre-flight loaded \(tc) tools, \(mc) methods, \(sc) skills")
+        }
+
+        return PreflightResult(toolSpecs: toolSpecsToAdd, contextSnippet: snippet, items: items)
+    }
+}

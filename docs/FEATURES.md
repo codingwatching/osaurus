@@ -15,7 +15,9 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | PLUGIN_AUTHORING.md           | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
-| Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/CapabilityService.swift |
+| Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
+| Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift, Tools/MethodTools.swift |
+| Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/PreflightCapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
 | Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
 | Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
 | Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
@@ -86,8 +88,15 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── AgentManager (Agent lifecycle and active agent)           │
 │  ├── Skills                                                              │
 │  │   ├── SkillManager (Skill CRUD and loading)                           │
-│  │   ├── CapabilityService (Two-phase capability selection)              │
+│  │   ├── SkillSearchService (RAG-based skill search)                     │
 │  │   └── GitHubSkillService (GitHub import)                              │
+│  ├── Methods                                                             │
+│  │   ├── MethodService (Method CRUD and scoring)                         │
+│  │   └── MethodSearchService (RAG-based method search)                   │
+│  ├── Context                                                             │
+│  │   ├── PreflightCapabilitySearch (Automated pre-flight RAG search)     │
+│  │   ├── ToolSearchService (RAG-based tool search)                       │
+│  │   └── ToolIndexService (Tool registry sync and indexing)              │
 │  ├── Scheduling                                                          │
 │  │   └── ScheduleManager (Schedule lifecycle and execution)              │
 │  ├── Watchers                                                            │
@@ -359,7 +368,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 **Features:**
 
 - **Custom System Prompts** — Define unique instructions for each agent
-- **Tool Configuration** — Enable or disable specific tools per agent
+- **Automated Capabilities** — Tools, skills, and methods are automatically selected via RAG search based on the task
 - **Visual Themes** — Assign a custom theme that activates with the agent
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
@@ -371,8 +380,6 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | `name` | Display name (required) |
 | `description` | Brief description of the agent |
 | `systemPrompt` | Instructions prepended to all chats |
-| `enabledTools` | Map of tool name → enabled/disabled |
-| `enabledPlugins` | Map of plugin ID → enabled/disabled |
 | `themeId` | Optional custom theme to apply |
 | `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
@@ -684,7 +691,6 @@ Read-only tools are always available. Write/exec/package tools require `autonomo
 - Automatic session persistence
 - Session history with sidebar navigation
 - Per-session model selection
-- Per-session tool configuration overrides
 - Context token estimation display
 - Auto-generated titles from first message
 
@@ -725,7 +731,7 @@ Read-only tools are always available. Write/exec/package tools require `autonomo
 | Web        | `capabilities.web`    | Static frontend serving with context injection       |
 | Docs       | `docs`                | README, changelog, and external links                |
 
-Routes are agent-scoped via the `enabledPlugins` map on each agent. See [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md) for the full reference.
+See [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md) for the full reference.
 
 ---
 
@@ -736,11 +742,9 @@ Routes are agent-scoped via the `enabledPlugins` map on each agent. See [PLUGIN_
 **Components:**
 
 - `Managers/SkillManager.swift` — Skill CRUD, persistence, and loading
-- `Services/CapabilityService.swift` — Two-phase capability selection
+- `Services/Skill/SkillSearchService.swift` — RAG-based skill search
 - `Services/GitHubSkillService.swift` — GitHub repository import
 - `Models/Agent/Skill.swift` — Skill data model
-- `Models/Configuration/CapabilityCatalog.swift` — Capability catalog structure
-- `Tools/SelectCapabilitiesTool.swift` — AI tool for selecting capabilities
 - `Views/Skill/SkillsView.swift` — Skill management UI
 - `Views/Skill/SkillEditorSheet.swift` — Skill editor
 
@@ -752,23 +756,7 @@ Routes are agent-scoped via the `enabledPlugins` map on each agent. See [PLUGIN_
 - **Reference Files** — Attach text files loaded into skill context
 - **Asset Files** — Support files for skills
 - **Categories** — Organize skills by type
-- **Agent Integration** — Per-agent skill enable/disable
-
-**Two-Phase Capability Selection:**
-
-A context optimization system that reduces token usage by ~80%:
-
-| Phase               | What's Loaded                         | Token Usage             |
-| ------------------- | ------------------------------------- | ----------------------- |
-| Phase 1 (Selection) | Catalog only (name + description)     | ~10-20 tokens per skill |
-| Phase 2 (Execution) | Full instructions for selected skills | Full content            |
-
-**Workflow:**
-
-1. System prompt includes lightweight capability catalog
-2. AI calls `select_capabilities` with desired tools/skills
-3. Full schemas/instructions loaded for selected items only
-4. Subsequent messages use selected capabilities
+- **Automated Selection** — Skills are automatically selected via RAG-based preflight search
 
 **Skill Properties:**
 
@@ -784,6 +772,115 @@ A context optimization system that reduces token usage by ~80%:
 | `assets/`      | Supporting files                   |
 
 **Storage:** `~/.osaurus/skills/{skill-name}/SKILL.md`
+
+---
+
+### Methods
+
+**Purpose:** Reusable, scored workflows that agents save and learn from over time.
+
+Methods are YAML sequences of tool-call steps that represent learned procedures. When an agent discovers an effective approach, it saves the workflow as a method. Methods are indexed for RAG search and scored based on success rate and recency, so high-quality procedures surface automatically in future tasks.
+
+**Components:**
+
+- `Models/Method/Method.swift` — Method data model with scoring and event tracking
+- `Storage/MethodDatabase.swift` — SQLite storage (methods, events, scores)
+- `Services/Method/MethodService.swift` — CRUD orchestrator, YAML extraction, scoring
+- `Services/Method/MethodSearchService.swift` — VecturaKit hybrid search (BM25 + vector)
+- `Tools/MethodTools.swift` — Agent-facing tools (`methods_save`, `methods_report`)
+- `Utils/MethodLogger.swift` — Structured logging
+
+**Features:**
+
+- **YAML Workflows** — Methods store step-by-step tool-call sequences as YAML
+- **Auto-Extraction** — Tool and skill references are automatically extracted from the YAML body
+- **Scoring System** — Each method tracks success rate and recency; a composite score ranks methods in search results
+- **RAG Search** — Methods are indexed by description and trigger text for hybrid BM25 + vector search
+- **Trigger Text** — Optional phrases that activate a method (e.g., "deploy to staging")
+
+**Method Properties:**
+
+| Property       | Description                                   |
+| -------------- | --------------------------------------------- |
+| `name`         | Display name (required)                       |
+| `description`  | Brief description of what the method does     |
+| `triggerText`  | Optional phrases that trigger this method     |
+| `body`         | YAML steps (the workflow definition)          |
+| `toolsUsed`    | Auto-extracted tool references from YAML      |
+| `skillsUsed`   | Auto-extracted skill references from YAML     |
+| `tokenCount`   | Estimated token count for context budgeting   |
+| `version`      | Incremented on each update                    |
+
+**Scoring:**
+
+Methods are scored using a recency-weighted success rate:
+
+```
+score = successRate × recencyWeight
+recencyWeight = 1.0 / (1.0 + daysSinceUsed / 30.0)
+```
+
+Each time a method is used, a `MethodEvent` is recorded (`loaded`, `succeeded`, `failed`), and the score is recalculated.
+
+**Agent Tools:**
+
+| Tool              | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| `methods_save`    | Save a new method from a YAML workflow           |
+| `methods_report`  | Report success or failure to update method score |
+
+**Storage:** `~/.osaurus/methods/methods.db` (SQLite with WAL mode)
+
+---
+
+### Context Management
+
+**Purpose:** Automatically select and inject relevant capabilities (methods, tools, and skills) into each agent session via RAG search.
+
+Context management replaces manual per-agent tool and skill configuration with a fully automated system. Before each agent loop, a preflight RAG search runs across all indexed methods, tools, and skills, injecting relevant context and tool definitions based on the user's query.
+
+**Components:**
+
+- `Services/Context/PreflightCapabilitySearch.swift` — Pre-flight RAG search orchestrator
+- `Services/Tool/ToolSearchService.swift` — VecturaKit hybrid search over tools
+- `Services/Tool/ToolIndexService.swift` — Syncs ToolRegistry into searchable index
+- `Storage/ToolDatabase.swift` — SQLite storage for tool index
+- `Tools/CapabilityTools.swift` — Runtime capability search and load tools
+
+**Preflight Search Modes:**
+
+| Mode        | Methods | Tools | Skills | Use Case                              |
+| ----------- | ------- | ----- | ------ | ------------------------------------- |
+| `off`       | 0       | 0     | 0      | Disable automatic selection           |
+| `narrow`    | 1       | 2     | 1      | Minimal context, fastest responses    |
+| `balanced`  | 3       | 5     | 2      | Default — good coverage, moderate cost|
+| `wide`      | 5       | 8     | 4      | Maximum coverage, larger prompts      |
+
+The preflight search produces a `PreflightResult` containing:
+
+- **Tool specs** — Tool definitions merged into the active tool set (direct matches + tools cascaded from matched methods)
+- **Context snippet** — Markdown-formatted method bodies and skill instructions injected into the system prompt
+
+**Runtime Capability Tools:**
+
+For on-demand discovery during a session, agents can use:
+
+| Tool                  | Description                                                       |
+| --------------------- | ----------------------------------------------------------------- |
+| `capabilities_search` | Search methods, tools, and skills across all indexes in parallel  |
+| `capabilities_load`   | Load a capability by ID into the active session (hot-loads tools) |
+
+When `capabilities_load` is called, new tool specs are queued in a `CapabilityLoadBuffer` and drained into the active tool set after each invocation, allowing the agent to dynamically expand its capabilities mid-session.
+
+**Search Infrastructure:**
+
+All three search services use VecturaKit (hybrid BM25 + vector search):
+
+| Service               | Indexes                            |
+| --------------------- | ---------------------------------- |
+| `MethodSearchService` | Method descriptions + trigger text |
+| `ToolSearchService`   | Tool names + descriptions          |
+| `SkillSearchService`  | Skill names + descriptions         |
 
 ---
 
@@ -1033,7 +1130,7 @@ Results are cached for 10 seconds per agent.
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
-| [SKILLS.md](SKILLS.md)                                         | Skills and capability selection guide             |
+| [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |
 | [MEMORY.md](MEMORY.md)                                         | Memory system and configuration guide            |
 | [SANDBOX.md](SANDBOX.md)                                       | Sandbox VM and plugin guide                       |
 | [PLUGIN_AUTHORING.md](PLUGIN_AUTHORING.md)                     | Creating custom plugins                           |

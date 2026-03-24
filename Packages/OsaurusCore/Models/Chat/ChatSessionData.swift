@@ -48,11 +48,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         agentId =
             try container.decodeIfPresent(UUID.self, forKey: .agentId)
             ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
-        // Note: enabledToolOverrides was removed - old values are ignored for backward compatibility
-        _ = try? container.decodeIfPresent([String: Bool].self, forKey: .enabledToolOverrides)
     }
 
-    // Custom encoder (enabledToolOverrides removed but kept in CodingKeys for decode compatibility)
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(id, forKey: .id)
@@ -65,7 +62,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, selectedModel, turns, enabledToolOverrides, agentId
+        case id, title, createdAt, updatedAt, selectedModel, turns, agentId
         case personaId  // legacy key for migration
     }
 

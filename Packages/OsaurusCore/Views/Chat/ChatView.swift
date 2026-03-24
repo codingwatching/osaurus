@@ -33,12 +33,6 @@ final class ChatSession: ObservableObject {
     /// The agent this session belongs to
     @Published var agentId: UUID?
 
-    // MARK: - Two-Phase Capability Selection (internal state, not @Published)
-    var capabilitiesSelected: Bool = false
-    var selectedToolNames: [String] = []
-    var selectedSkillNames: [String] = []
-    var selectedSkillInstructions: String = ""
-
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
     @Published var title: String = "New Chat"
@@ -54,8 +48,8 @@ final class ChatSession: ObservableObject {
     private var _tokenCacheValid: Bool = false
     private var _lastTokenTurnsCount: Int = 0
     private var _lastTokenAttachmentsCount: Int = 0
-    private var _lastTokenComputeTime: Date = .distantPast
     private var _memoryContextTokens: Int = 0
+    private let budgetTracker = ContextBudgetTracker()
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -108,7 +102,7 @@ final class ChatSession: ObservableObject {
                 guard let self = self, !self.isLoadingModel, let model = newModel else { return }
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
-                
+
                 // Load persisted options or use defaults
                 if let persisted = ModelOptionsStore.shared.loadOptions(for: model) {
                     self.activeModelOptions = persisted
@@ -231,100 +225,56 @@ final class ChatSession: ObservableObject {
     }
 
     /// Per-category breakdown of estimated context tokens.
-    /// Uses the same caching / throttling as the scalar total.
+    /// During streaming, returns the snapshot from the active request with live
+    /// output tokens (O(1)). Otherwise uses cached full recomputation.
     var estimatedContextBreakdown: ContextTokenBreakdown {
+        if let active = budgetTracker.activeBreakdown(
+            isActive: isStreaming,
+            outputTurn: turns.last
+        ) {
+            return active
+        }
+
         if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount
             && pendingAttachments.count == _lastTokenAttachmentsCount
         {
             return _cachedBreakdown
         }
 
-        if isStreaming && _tokenCacheValid && Date().timeIntervalSince(_lastTokenComputeTime) < 0.5 {
-            return _cachedBreakdown
-        }
-
         var breakdown = ContextTokenBreakdown()
         let effectiveId = agentId ?? Agent.defaultId
-        let toolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveId)
         let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
-        let catalog = CapabilityCatalogBuilder.build(for: effectiveId)
-        let hasCapabilities = !catalog.isEmpty
-        let phasedLoading = ChatConfigurationStore.load().phasedContextLoading
-        let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
         let compact = SystemPromptBuilder.isLocalModel(selectedModel)
         let systemPrompt = buildSystemPrompt(
             base: AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
                 .trimmingCharacters(in: .whitespacesAndNewlines),
             agentId: effectiveId,
-            needsSelection: needsCapabilitySelection,
             executionMode: executionMode,
             compact: compact
         )
-        if !systemPrompt.isEmpty {
-            breakdown.systemPrompt = max(1, systemPrompt.count / 4)
-        }
+        breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: systemPrompt)
 
-        // Memory context (profile, working memory, summaries, graph)
         breakdown.memory = _memoryContextTokens
 
-        let toolSpecs = buildToolSpecs(
-            needsSelection: needsCapabilitySelection,
-            hasCapabilities: phasedLoading && hasCapabilities,
-            overrides: toolOverrides,
-            executionMode: executionMode
-        )
+        let toolSpecs = buildToolSpecs(executionMode: executionMode)
         breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
+        breakdown.output = ContextBudgetManager.estimateOutputTokens(for: turns)
+        breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns) - breakdown.output
 
-        if phasedLoading && !capabilitiesSelected {
-            breakdown.skills = CapabilityService.shared.estimateCatalogSkillTokens(for: effectiveId)
-        } else if phasedLoading && capabilitiesSelected {
-            if !selectedSkillInstructions.isEmpty {
-                breakdown.skills = max(1, selectedSkillInstructions.count / 4)
-            }
-        } else {
-            breakdown.skills = CapabilityService.shared.estimateSkillTokens(for: effectiveId)
-        }
-
-        // All turns
-        var conversationTokens = 0
-        for turn in turns {
-            if !turn.contentIsEmpty {
-                conversationTokens += max(1, turn.contentLength / 4)
-            }
-            if let toolCalls = turn.toolCalls {
-                for call in toolCalls {
-                    conversationTokens += max(1, (call.function.name.count + call.function.arguments.count) / 4)
-                }
-            }
-            for (_, result) in turn.toolResults {
-                conversationTokens += max(1, result.count / 4)
-            }
-            if turn.hasThinking {
-                conversationTokens += max(1, turn.thinkingLength / 4)
-            }
-            for attachment in turn.attachments {
-                conversationTokens += attachment.estimatedTokens
-            }
-        }
-        breakdown.conversation = conversationTokens
-
-        // Current input + pending attachments
         var inputTokens = 0
         if !input.isEmpty {
-            inputTokens += max(1, input.count / 4)
+            inputTokens += ContextBudgetManager.estimateTokens(for: input)
         }
         for attachment in pendingAttachments {
             inputTokens += attachment.estimatedTokens
         }
         breakdown.input = inputTokens
 
-        // Update cache
         _cachedBreakdown = breakdown
         _tokenCacheValid = true
         _lastTokenTurnsCount = turns.count
         _lastTokenAttachmentsCount = pendingAttachments.count
-        _lastTokenComputeTime = Date()
 
         return breakdown
     }
@@ -393,8 +343,6 @@ final class ChatSession: ObservableObject {
         createdAt = Date()
         updatedAt = Date()
         isDirty = false
-        // Reset capability selection for new conversation
-        resetCapabilitySelection()
         // Keep current agentId - don't reset when creating new chat within same agent
 
         // Clear caches
@@ -424,7 +372,7 @@ final class ChatSession: ObservableObject {
     /// Invalidate the token cache (called when tools/skills change)
     func invalidateTokenCache() {
         _tokenCacheValid = false
-        // Notify SwiftUI to re-render views that depend on estimatedContextTokens
+        budgetTracker.clear()
         objectWillChange.send()
     }
 
@@ -508,10 +456,6 @@ final class ChatSession: ObservableObject {
         input = ""
         pendingAttachments = []
         isDirty = false  // Fresh load, not dirty
-        // Reset capability selection for loaded conversation
-        // (capabilities will be re-selected on next message if skills are enabled)
-        resetCapabilitySelection()
-
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
         _tokenCacheValid = false
@@ -573,34 +517,6 @@ final class ChatSession: ObservableObject {
 
         // Regenerate
         send("")
-    }
-
-    // MARK: - Two-Phase Capability Selection
-
-    /// Handle the select_capabilities tool call and update session state
-    private func handleSelectCapabilities(argumentsJSON: String) async throws -> String {
-        let effectiveAgentId = agentId ?? Agent.defaultId
-        let selection = try await CapabilityService.shared.resolveSelection(
-            argumentsJSON: argumentsJSON,
-            agentId: effectiveAgentId
-        )
-
-        capabilitiesSelected = true
-        selectedToolNames = selection.selectedTools
-        selectedSkillNames = selection.selectedSkills
-        selectedSkillInstructions = CapabilityService.shared.combineSkillInstructions(
-            selection.loadedSkillInstructions
-        )
-
-        return SelectCapabilitiesTool.buildCompactResponse(selection)
-    }
-
-    /// Reset capability selection state (for new conversations)
-    func resetCapabilitySelection() {
-        capabilitiesSelected = false
-        selectedToolNames = []
-        selectedSkillNames = []
-        selectedSkillInstructions = ""
     }
 
     // MARK: - Share Artifact Processing
@@ -668,6 +584,8 @@ final class ChatSession: ObservableObject {
     private func completeRunCleanup() {
         currentTask = nil
         isStreaming = false
+        budgetTracker.clear()
+        _tokenCacheValid = false
         ServerController.signalGenerationEnd()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
@@ -757,63 +675,23 @@ final class ChatSession: ObservableObject {
         ActivityTracker.shared.recordActivity(agentId: context.memoryAgentId)
     }
 
-    func prepareChatExecutionMode(agentId: UUID, overrides: [String: Bool]?) async -> WorkExecutionMode {
+    func prepareChatExecutionMode(agentId: UUID) async -> WorkExecutionMode {
         guard AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true else {
             return .none
         }
 
         await SandboxToolRegistrar.shared.registerTools(for: agentId)
-        return ToolRegistry.shared.resolveWorkExecutionMode(
-            withOverrides: overrides,
-            folderContext: nil
-        )
+        return ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
     }
 
-    /// Build system prompt based on capability selection state.
-    /// When `compact` is true, uses shorter variants suited for local models.
+    /// Build system prompt with execution-mode-specific sections (sandbox instructions, etc.).
     func buildSystemPrompt(
         base: String,
         agentId: UUID,
-        needsSelection: Bool,
         executionMode: WorkExecutionMode,
         compact: Bool = false
     ) -> String {
-        let prompt: String
-        if needsSelection {
-            prompt = CapabilityService.shared.buildSystemPromptWithCatalog(
-                basePrompt: base,
-                agentId: agentId,
-                compact: compact
-            )
-        } else if capabilitiesSelected {
-            var selectedPrompt = base
-
-            if !selectedSkillInstructions.isEmpty {
-                if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
-                selectedPrompt += "## Active Skills\n\n"
-                selectedPrompt += selectedSkillInstructions
-            }
-
-            let catalog = CapabilityCatalogBuilder.build(for: agentId)
-            let unselectedTools = catalog.tools.map { $0.name }.filter { !selectedToolNames.contains($0) }
-            let unselectedSkills = catalog.skills.map { $0.name }.filter { !selectedSkillNames.contains($0) }
-
-            if !unselectedTools.isEmpty || !unselectedSkills.isEmpty {
-                if !selectedPrompt.isEmpty { selectedPrompt += "\n\n" }
-                selectedPrompt += "## Additional Capabilities Available\n"
-                selectedPrompt += "Call `select_capabilities` to add more:\n"
-                if !unselectedTools.isEmpty {
-                    selectedPrompt += "- tools: \(unselectedTools.joined(separator: ", "))\n"
-                }
-                if !unselectedSkills.isEmpty {
-                    selectedPrompt += "- skills: \(unselectedSkills.joined(separator: ", "))"
-                }
-            }
-
-            prompt = selectedPrompt
-        } else {
-            prompt = base
-        }
+        let prompt = base.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard executionMode.usesSandboxTools else { return prompt }
         let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
@@ -825,31 +703,9 @@ final class ChatSession: ObservableObject {
         return prompt + "\n\n" + sandboxSection
     }
 
-    /// Build tool specifications based on capability selection state
-    func buildToolSpecs(
-        needsSelection: Bool,
-        hasCapabilities: Bool,
-        overrides: [String: Bool]?,
-        executionMode: WorkExecutionMode
-    ) -> [Tool] {
-        if needsSelection {
-            // Phase 1: Only capability selection plus runtime chat infrastructure.
-            return ToolRegistry.shared.chatSpecs(forTools: ["select_capabilities"], mode: executionMode)
-        } else if capabilitiesSelected && !selectedToolNames.isEmpty {
-            // Phase 2: Selected tools + select_capabilities for adding more
-            var toolNames = selectedToolNames
-            if hasCapabilities && !toolNames.contains("select_capabilities") {
-                toolNames.append("select_capabilities")
-            }
-            return ToolRegistry.shared.chatSpecs(forTools: toolNames, mode: executionMode)
-        } else {
-            // Default: All enabled tools + select_capabilities (if capabilities exist)
-            var specs = ToolRegistry.shared.chatSpecs(withOverrides: overrides, mode: executionMode)
-            if hasCapabilities && !specs.contains(where: { $0.function.name == "select_capabilities" }) {
-                specs.append(contentsOf: ToolRegistry.shared.selectCapabilitiesSpec())
-            }
-            return specs
-        }
+    /// Build tool specifications: always-loaded set for chat mode.
+    func buildToolSpecs(executionMode: WorkExecutionMode) -> [Tool] {
+        ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
     }
 
     func send(_ text: String, attachments: [Attachment] = []) {
@@ -910,26 +766,15 @@ final class ChatSession: ObservableObject {
                 let engine = chatEngineFactory()
                 let chatCfg = ChatConfigurationStore.load()
 
-                // MARK: - Two-Phase Capability Selection
+                // MARK: - Capability Setup
                 let effectiveAgentId = agentId ?? Agent.defaultId
-                let effectiveToolOverrides = AgentManager.shared.effectiveToolOverrides(for: effectiveAgentId)
-                let executionMode = await prepareChatExecutionMode(
-                    agentId: effectiveAgentId,
-                    overrides: effectiveToolOverrides
-                )
+                let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                 guard isRunActive(runId) else { return }
-
-                // Check if there are any capabilities to select
-                let catalog = CapabilityCatalogBuilder.build(for: effectiveAgentId)
-                let hasCapabilities = !catalog.isEmpty
-                let phasedLoading = chatCfg.phasedContextLoading
-                let needsCapabilitySelection = phasedLoading && !capabilitiesSelected && hasCapabilities
 
                 let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
                     AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
                 )
 
-                // Inject memory context before the system prompt (async to avoid main thread blocking)
                 let memoryConfig = MemoryConfigurationStore.load()
                 let memoryContext = await MemoryContextAssembler.assembleContext(
                     agentId: effectiveAgentId.uuidString,
@@ -938,21 +783,39 @@ final class ChatSession: ObservableObject {
                 guard isRunActive(runId) else { return }
                 updateMemoryTokens(fromContext: memoryContext)
 
+                // Pre-flight RAG: search capabilities based on user's message
+                let preflightMode = chatCfg.preflightSearchMode ?? .balanced
+                let preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
+                guard isRunActive(runId) else { return }
+
+                if !preflight.items.isEmpty {
+                    assistantTurn.preflightCapabilities = preflight.items
+                }
+
                 let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
                 var sys = buildSystemPrompt(
                     base: baseSystemPrompt,
                     agentId: effectiveAgentId,
-                    needsSelection: needsCapabilitySelection,
                     executionMode: executionMode,
                     compact: isCompact
                 )
 
+                if !preflight.contextSnippet.isEmpty {
+                    sys += "\n\n" + preflight.contextSnippet
+                }
+
                 sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
-                var toolSpecs = buildToolSpecs(
-                    needsSelection: needsCapabilitySelection,
-                    hasCapabilities: phasedLoading && hasCapabilities,
-                    overrides: effectiveToolOverrides,
-                    executionMode: executionMode
+                var toolSpecs = buildToolSpecs(executionMode: executionMode)
+
+                for spec in preflight.toolSpecs
+                where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
+                    toolSpecs.append(spec)
+                }
+
+                budgetTracker.snapshot(
+                    systemPromptChars: sys.count,
+                    memoryTokens: _memoryContextTokens,
+                    toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
                 )
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
@@ -1020,9 +883,15 @@ final class ChatSession: ObservableObject {
 
                 outer: while attempts < maxAttempts {
                     attempts += 1
+                    let msgs = buildMessages()
+                    let convTokens =
+                        msgs
+                        .filter { $0.role != "system" }
+                        .reduce(0) { $0 + ContextBudgetManager.estimateTokens(for: $1.content) }
+                    budgetTracker.updateConversation(tokens: convTokens, finishedOutputTurn: assistantTurn)
                     var req = ChatCompletionRequest(
                         model: selectedModel ?? "default",
-                        messages: buildMessages(),
+                        messages: msgs,
                         temperature: effectiveTemp,
                         max_tokens: effectiveMaxTokensForAgent ?? 16384,
                         stream: true,
@@ -1063,6 +932,11 @@ final class ChatSession: ObservableObject {
                                 self.objectWillChange.send()
                                 continue
                             }
+                            if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                                assistantTurn.appendToolArgFragment(argFragment)
+                                self.objectWillChange.send()
+                                continue
+                            }
                             if !delta.isEmpty {
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
@@ -1095,6 +969,7 @@ final class ChatSession: ObservableObject {
                             geminiThoughtSignature: inv.geminiThoughtSignature
                         )
                         assistantTurn.pendingToolName = nil
+                        assistantTurn.clearPendingToolArgs()
                         if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
                         assistantTurn.toolCalls!.append(call)
 
@@ -1107,43 +982,26 @@ final class ChatSession: ObservableObject {
                                 "[Osaurus][Tool] Executing: \(inv.toolName) with args: \(truncatedArgs)\(inv.jsonArguments.count > 200 ? "..." : "")"
                             )
 
-                            // Handle select_capabilities specially for two-phase loading
-                            if inv.toolName == "select_capabilities" {
-                                resultText = try await handleSelectCapabilities(argumentsJSON: inv.jsonArguments)
+                            if executionMode.usesSandboxTools {
+                                await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
                                 if !isRunActive(runId) { break outer }
+                            }
 
-                                sys = buildSystemPrompt(
-                                    base: baseSystemPrompt,
-                                    agentId: effectiveAgentId,
-                                    needsSelection: false,
-                                    executionMode: executionMode,
-                                    compact: isCompact
-                                )
-                                toolSpecs = buildToolSpecs(
-                                    needsSelection: false,
-                                    hasCapabilities: hasCapabilities,
-                                    overrides: effectiveToolOverrides,
-                                    executionMode: executionMode
-                                )
-                            } else {
-                                // Build effective overrides: if capabilities were selected, allow those tools
-                                var executionOverrides = effectiveToolOverrides ?? [:]
-                                if capabilitiesSelected && selectedToolNames.contains(inv.toolName) {
-                                    // Tool was explicitly selected via select_capabilities, allow it
-                                    executionOverrides[inv.toolName] = true
-                                }
-
-                                if executionMode.usesSandboxTools {
-                                    await SandboxToolRegistrar.shared.registerTools(for: effectiveAgentId)
-                                    if !isRunActive(runId) { break outer }
-                                }
-
-                                resultText = try await ToolRegistry.shared.execute(
+                            resultText = try await WorkExecutionContext.$currentAgentId.withValue(effectiveAgentId) {
+                                try await ToolRegistry.shared.execute(
                                     name: inv.toolName,
-                                    argumentsJSON: inv.jsonArguments,
-                                    overrides: executionOverrides.isEmpty ? nil : executionOverrides
+                                    argumentsJSON: inv.jsonArguments
                                 )
-                                if !isRunActive(runId) { break outer }
+                            }
+                            if !isRunActive(runId) { break outer }
+
+                            // Hot-load tools injected by capabilities_load
+                            if inv.toolName == "capabilities_load" {
+                                let newTools = await CapabilityLoadBuffer.shared.drain()
+                                for tool in newTools
+                                where !toolSpecs.contains(where: { $0.function.name == tool.function.name }) {
+                                    toolSpecs.append(tool)
+                                }
                             }
 
                             if inv.toolName == "share_artifact" {
@@ -1646,11 +1504,6 @@ struct ChatView: View {
             .allowsHitTesting(false)
     }
 
-    /// Close this window via ChatWindowManager
-    private func closeWindow() {
-        ChatWindowManager.shared.closeWindow(id: windowState.windowId)
-    }
-
     // MARK: - Message Thread
 
     /// Isolated message thread view to prevent cascading re-renders
@@ -1755,15 +1608,6 @@ struct ChatView: View {
     private func cancelEditing() {
         editingTurnId = nil
         editText = ""
-    }
-
-    // MARK: - Helpers
-
-    private func displayModelName(_ raw: String?) -> String {
-        guard let raw else { return "Model" }
-        if raw.lowercased() == "foundation" { return "Foundation" }
-        if let last = raw.split(separator: "/").last { return String(last) }
-        return raw
     }
 
     // Key monitor for Esc to cancel voice or close window

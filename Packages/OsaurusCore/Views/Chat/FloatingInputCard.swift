@@ -110,8 +110,6 @@ struct FloatingInputCard: View {
     }
 
     // Observe managers for reactive updates
-    @ObservedObject private var toolRegistry = ToolRegistry.shared
-    private var skillManager = SkillManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
@@ -124,7 +122,6 @@ struct FloatingInputCard: View {
     @State private var isDragOver = false
     @State private var showModelPicker = false
     @State private var showModelOptionsPicker = false
-    @State private var showCapabilitiesPicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
@@ -132,10 +129,6 @@ struct FloatingInputCard: View {
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
-    // Cache tool/skill availability to avoid calling singleton methods on every body evaluation
-    @State private var hasTools: Bool = false
-    @State private var hasSkills: Bool = false
-
     // MARK: - Voice Input State
     @ObservedObject private var speechService = SpeechService.shared
     @ObservedObject private var speechModelManager = SpeechModelManager.shared
@@ -240,7 +233,7 @@ struct FloatingInputCard: View {
 
     private var mainContent: some View {
         VStack(spacing: 12) {
-            if (pickerItems.count > 1 || hasTools || hasSkills
+            if (pickerItems.count > 1
                 || displayContextTokens > 0 || isSandboxAvailable) && !showVoiceOverlay
             {
                 selectorRow
@@ -299,10 +292,6 @@ struct FloatingInputCard: View {
 
                 // Focus immediately when view appears
                 isFocused = true
-
-                // Initialize cached tool/skill availability
-                hasTools = !toolRegistry.listTools().isEmpty
-                hasSkills = !skillManager.skills.isEmpty
 
                 // Load voice config (cached after first load)
                 loadVoiceConfig()
@@ -473,16 +462,6 @@ struct FloatingInputCard: View {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 logVoiceState(trigger: "onAppear")
             }
-            .onReceive(toolRegistry.objectWillChange) { _ in
-                DispatchQueue.main.async {
-                    let newValue = !toolRegistry.listTools().isEmpty
-                    if newValue != hasTools { hasTools = newValue }
-                }
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .skillsListChanged)) { _ in
-                let newValue = !skillManager.skills.isEmpty
-                if newValue != hasSkills { hasSkills = newValue }
-            }
     }
 
     // MARK: - Voice Input Methods
@@ -492,23 +471,25 @@ struct FloatingInputCard: View {
     }
 
     private func logVoiceState(trigger: String) {
-        let enabled     = voiceConfig.voiceInputEnabled
-        let permission  = speechService.microphonePermissionGranted
-        let downloaded  = speechModelManager.downloadedModelsCount
-        let loading     = speechService.isLoadingModel
-        let loaded      = speechService.isModelLoaded
-        let configured  = isVoiceConfigured
-        let available   = isVoiceAvailable
-        print("""
-[VoiceDebug] [\(trigger)] \
-enabled=\(enabled) | \
-micPermission=\(permission) | \
-downloadedCount=\(downloaded) | \
-isLoading=\(loading) | \
-isLoaded=\(loaded) | \
-→ isVoiceConfigured=\(configured) | \
-→ isVoiceAvailable=\(available)
-""")
+        let enabled = voiceConfig.voiceInputEnabled
+        let permission = speechService.microphonePermissionGranted
+        let downloaded = speechModelManager.downloadedModelsCount
+        let loading = speechService.isLoadingModel
+        let loaded = speechService.isModelLoaded
+        let configured = isVoiceConfigured
+        let available = isVoiceAvailable
+        print(
+            """
+            [VoiceDebug] [\(trigger)] \
+            enabled=\(enabled) | \
+            micPermission=\(permission) | \
+            downloadedCount=\(downloaded) | \
+            isLoading=\(loading) | \
+            isLoaded=\(loaded) | \
+            → isVoiceConfigured=\(configured) | \
+            → isVoiceAvailable=\(available)
+            """
+        )
     }
 
 }
@@ -525,17 +506,19 @@ fileprivate func voiceDebugLog(
     isLoaded: Bool
 ) {
     let configured = enabled && micPermission && downloadedCount > 0
-    let available  = configured && isLoaded
-    print("""
-[VoiceDebug] [\(trigger)] \
-enabled=\(enabled) | \
-micPermission=\(micPermission) | \
-downloadedCount=\(downloadedCount) | \
-isLoading=\(isLoading) | \
-isLoaded=\(isLoaded) | \
-→ isVoiceConfigured=\(configured) | \
-→ isVoiceAvailable=\(available)
-""")
+    let available = configured && isLoaded
+    print(
+        """
+        [VoiceDebug] [\(trigger)] \
+        enabled=\(enabled) | \
+        micPermission=\(micPermission) | \
+        downloadedCount=\(downloadedCount) | \
+        isLoading=\(isLoading) | \
+        isLoaded=\(isLoaded) | \
+        → isVoiceConfigured=\(configured) | \
+        → isVoiceAvailable=\(available)
+        """
+    )
 }
 
 // MARK: - Voice Debug Observers
@@ -591,7 +574,9 @@ extension FloatingInputCard {
 
     fileprivate func startVoiceInput() {
         guard isVoiceAvailable else {
-            print("[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible")
+            print(
+                "[VoiceDebug] startVoiceInput called but isVoiceAvailable=false — triggering emergency load if possible"
+            )
             // Model may not be loaded yet — kick off load and bail; once loaded the button will become tappable.
             if let model = SpeechModelManager.shared.selectedModel, !speechService.isLoadingModel {
                 Task { try? await speechService.loadModel(model.id) }
@@ -921,24 +906,21 @@ extension FloatingInputCard {
         return ModelProfileRegistry.options(for: model)
     }
 
+    private var hasNonThinkingOptions: Bool {
+        let thinkingId = selectedModel.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption?.id }
+        return activeProfileOptions.contains { $0.id != thinkingId }
+    }
+
     private var selectorRow: some View {
         HStack(spacing: 6) {
-            // Model selector (when multiple models available)
             if pickerItems.count > 1 {
                 modelSelectorChip
             }
 
-            // Dedicated Thinking Toggle
             thinkingToggleChip
 
-            // Model-specific options (single grouped entry point)
-//            if !activeProfileOptions.isEmpty {
-//                modelOptionsSelectorChip
-//            }
-
-            // Capabilities selector (tools + skills combined)
-            if hasTools || hasSkills {
-                capabilitiesSelectorChip
+            if hasNonThinkingOptions {
+                modelOptionsSelectorChip
             }
 
             // Sandbox toggle (visible when sandbox is available on this system, hidden when folder context is active)
@@ -965,10 +947,8 @@ extension FloatingInputCard {
 
     @ViewBuilder
     private var contextIndicatorChip: some View {
-        // In work mode, show cumulative usage; in chat mode, show context estimate
-        if let cumulative = cumulativeTokens, cumulative > 0, workInputState != nil {
-            // Work mode: show cumulative tokens used
-            HStack(spacing: 4) {
+        HStack(spacing: 4) {
+            if let cumulative = cumulativeTokens, cumulative > 0, workInputState != nil {
                 Text("\(formatTokenCount(cumulative))")
                     .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
                     .foregroundColor(theme.accentColor)
@@ -978,20 +958,17 @@ extension FloatingInputCard {
                         .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
                         .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }
-            }
-            .help("Total tokens consumed: \(cumulative) (input + output across all API calls)")
-        } else {
-            // Chat mode: show context estimate
-            HStack(spacing: 4) {
-                if let maxCtx = maxContextTokens {
-                    Text("~\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))")
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                } else {
-                    Text("~\(formatTokenCount(displayContextTokens))")
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                }
+            } else {
+                let prefix = isStreaming ? "" : "~"
+                let tokenText =
+                    if let maxCtx = maxContextTokens {
+                        "\(prefix)\(formatTokenCount(displayContextTokens)) / \(formatTokenCount(maxCtx))"
+                    } else {
+                        "\(prefix)\(formatTokenCount(displayContextTokens))"
+                    }
+                Text(tokenText)
+                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
+                    .foregroundColor(isStreaming ? theme.secondaryText : theme.tertiaryText)
 
                 if !isCompact {
                     Text("tokens")
@@ -999,25 +976,27 @@ extension FloatingInputCard {
                         .foregroundColor(theme.tertiaryText.opacity(0.7))
                 }
             }
-            .onHover { hovering in
-                contextHoverTask?.cancel()
-                if hovering {
-                    contextHoverTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 300_000_000)
-                        guard !Task.isCancelled else { return }
-                        showContextBreakdown = true
-                    }
-                } else {
-                    showContextBreakdown = false
+        }
+        .onHover { hovering in
+            contextHoverTask?.cancel()
+            if hovering {
+                contextHoverTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled else { return }
+                    showContextBreakdown = true
                 }
+            } else {
+                showContextBreakdown = false
             }
-            .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
-                ContextBreakdownPopover(
-                    breakdown: displayContextBreakdown,
-                    maxTokens: maxContextTokens,
-                    formatTokenCount: formatTokenCount
-                )
-            }
+        }
+        .popover(isPresented: $showContextBreakdown, arrowEdge: .top) {
+            ContextBreakdownPopover(
+                breakdown: displayContextBreakdown,
+                maxTokens: maxContextTokens,
+                isStreaming: isStreaming,
+                cumulativeTokens: workInputState != nil ? cumulativeTokens : nil,
+                formatTokenCount: formatTokenCount
+            )
         }
     }
 
@@ -1110,10 +1089,11 @@ extension FloatingInputCard {
     @ViewBuilder
     private var thinkingToggleChip: some View {
         if let model = selectedModel,
-           let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption {
+            let thinkingOpt = ModelProfileRegistry.profile(for: model)?.thinkingOption
+        {
             let isCurrentlyEnabled = activeModelOptions[thinkingOpt.id]?.boolValue ?? false
             let isEnabled = thinkingOpt.inverted ? !isCurrentlyEnabled : isCurrentlyEnabled
-            
+
             SelectorChip(isActive: isEnabled) {
                 toggleThinking(id: thinkingOpt.id)
             } content: {
@@ -1135,66 +1115,13 @@ extension FloatingInputCard {
     private func toggleThinking(id: String) {
         let current = activeModelOptions[id]?.boolValue ?? false
         let newVal = !current
-        
+
         withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
             activeModelOptions[id] = .bool(newVal)
         }
-        
-        // Persist the change for this model
+
         if let model = selectedModel {
             ModelOptionsStore.shared.saveOptions(activeModelOptions, for: model)
-        }
-    }
-
-    // MARK: - Capabilities Selector (Tools + Skills)
-
-    private var effectiveAgentId: UUID {
-        agentId ?? Agent.defaultId
-    }
-
-    private var toolOverrides: [String: Bool]? {
-        agentManager.effectiveToolOverrides(for: effectiveAgentId)
-    }
-
-    private var skillOverrides: [String: Bool]? {
-        agentManager.effectiveSkillOverrides(for: effectiveAgentId)
-    }
-
-    /// Count of enabled tools (with agent overrides applied, excluding work tools)
-    private var enabledToolCount: Int {
-        toolRegistry.listSelectableCapabilityTools(withOverrides: toolOverrides)
-            .filter { $0.enabled }
-            .count
-    }
-
-    /// Count of enabled skills (with agent overrides applied)
-    private var enabledSkillCount: Int {
-        skillManager.skills.filter { skill in
-            if let overrides = skillOverrides, let value = overrides[skill.name] {
-                return value
-            }
-            return skill.enabled
-        }.count
-    }
-
-    /// Total enabled capabilities count
-    private var totalEnabledCapabilities: Int {
-        enabledToolCount + enabledSkillCount
-    }
-
-    /// Human-readable description of enabled capabilities
-    private var capabilitiesDescription: String {
-        let toolText = enabledToolCount == 1 ? "1 tool" : "\(enabledToolCount) tools"
-        let skillText = enabledSkillCount == 1 ? "1 skill" : "\(enabledSkillCount) skills"
-
-        if enabledToolCount > 0 && enabledSkillCount > 0 {
-            return "\(toolText), \(skillText)"
-        } else if enabledToolCount > 0 {
-            return toolText
-        } else if enabledSkillCount > 0 {
-            return skillText
-        } else {
-            return "Capabilities"
         }
     }
 
@@ -1249,39 +1176,11 @@ extension FloatingInputCard {
         }
     }
 
-    // MARK: - Capabilities Chip
-
-    private var capabilitiesSelectorChip: some View {
-        SelectorChip(isActive: showCapabilitiesPicker) {
-            showCapabilitiesPicker.toggle()
-        } content: {
-            HStack(spacing: 4) {
-                Image(systemName: "sparkles")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 2))
-                    .foregroundColor(theme.tertiaryText)
-
-                Text("Capabilities")
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-
-                if totalEnabledCapabilities > 0 {
-                    Text("\(totalEnabledCapabilities)")
-                        .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .bold, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
-                }
-
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(theme.font(size: CGFloat(theme.captionSize) - 3, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-        .popover(isPresented: $showCapabilitiesPicker, arrowEdge: .top) {
-            CapabilitiesSelectorView(agentId: effectiveAgentId, isWorkMode: workInputState != nil)
-        }
-    }
-
     // MARK: - Sandbox Toggle Chip
+
+    private var effectiveAgentId: UUID {
+        agentId ?? Agent.defaultId
+    }
 
     private var isSandboxAvailable: Bool {
         sandboxState.availability.isAvailable
@@ -2107,6 +2006,8 @@ extension NSImage {
 private struct ContextBreakdownPopover: View {
     let breakdown: ContextTokenBreakdown
     let maxTokens: Int?
+    let isStreaming: Bool
+    let cumulativeTokens: Int?
     let formatTokenCount: (Int) -> String
 
     @Environment(\.theme) private var theme
@@ -2124,25 +2025,52 @@ private struct ContextBreakdownPopover: View {
         }
     }
 
+    /// Categories split into input context vs output for visual grouping.
+    private var inputCategories: [ContextTokenBreakdown.Category] {
+        breakdown.categories.filter { $0.tint != .green }
+    }
+
+    private var outputCategory: ContextTokenBreakdown.Category? {
+        breakdown.categories.first { $0.tint == .green }
+    }
+
     // MARK: - Body
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Context Budget")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+            HStack(spacing: 6) {
+                Text("Context Budget")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                if isStreaming {
+                    Circle()
+                        .fill(color(for: .green))
+                        .frame(width: 5, height: 5)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
 
             barChart
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
 
             divider
-            legend.padding(.horizontal, 12).padding(.vertical, 8)
+            inputLegend.padding(.horizontal, 12).padding(.vertical, 8)
+
+            if let output = outputCategory {
+                divider
+                categoryRow(output, highlighted: true).padding(.horizontal, 12).padding(.vertical, 8)
+            }
+
             divider
             totalRow.padding(.horizontal, 12).padding(.vertical, 8)
+
+            if let cumulative = cumulativeTokens, cumulative > 0 {
+                divider
+                cumulativeRow(cumulative).padding(.horizontal, 12).padding(.vertical, 8)
+            }
         }
         .frame(width: 240)
         .background(popoverBackground)
@@ -2173,50 +2101,72 @@ private struct ContextBreakdownPopover: View {
 
     // MARK: - Legend
 
-    private var legend: some View {
+    private var inputLegend: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(breakdown.categories) { cat in
-                HStack(spacing: 0) {
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(color(for: cat.tint).opacity(0.85))
-                        .frame(width: 3, height: 12)
-                        .padding(.trailing, 8)
-
-                    Text(cat.label)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-
-                    Spacer()
-
-                    Text(formatTokenCount(cat.tokens))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(budgetCap > 0 ? "\(cat.tokens * 100 / budgetCap)%" : "0%")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(width: 32, alignment: .trailing)
-                }
+            ForEach(inputCategories) { cat in
+                categoryRow(cat)
             }
+        }
+    }
+
+    private func categoryRow(_ cat: ContextTokenBreakdown.Category, highlighted: Bool = false) -> some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(color(for: cat.tint).opacity(0.85))
+                .frame(width: 3, height: 12)
+                .padding(.trailing, 8)
+
+            Text(cat.label)
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+
+            Spacer()
+
+            Text(formatTokenCount(cat.tokens))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundColor(highlighted ? color(for: cat.tint) : theme.primaryText)
+                .contentTransition(highlighted ? .numericText() : .identity)
+
+            Text(budgetCap > 0 ? "\(cat.tokens * 100 / budgetCap)%" : "0%")
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 32, alignment: .trailing)
         }
     }
 
     // MARK: - Total
 
     private var totalRow: some View {
-        HStack(spacing: 4) {
+        let prefix = isStreaming ? "" : "~"
+        return HStack(spacing: 4) {
             Text("Total")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
             Spacer()
-            Text("~\(formatTokenCount(breakdown.total))")
+            Text("\(prefix)\(formatTokenCount(breakdown.total))")
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundColor(theme.primaryText)
+                .contentTransition(.numericText())
             if let max = maxTokens {
                 Text("/ \(formatTokenCount(max))")
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(theme.tertiaryText)
             }
+        }
+    }
+
+    // MARK: - Cumulative (Work Mode)
+
+    private func cumulativeRow(_ tokens: Int) -> some View {
+        HStack(spacing: 4) {
+            Text("Session Total")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(theme.secondaryText)
+            Spacer()
+            Text(formatTokenCount(tokens))
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundColor(theme.accentColor)
+                .contentTransition(.numericText())
         }
     }
 
@@ -2258,7 +2208,7 @@ private struct ContextBreakdownPopover: View {
 
 // MARK: - Selector Chip
 
-/// Polished selector chip for model/capabilities pickers
+/// Polished selector chip for model pickers
 private struct SelectorChip<Content: View>: View {
     let isActive: Bool
     let action: () -> Void
@@ -2332,8 +2282,7 @@ private struct SelectorChip<Content: View>: View {
 
 // MARK: - Model Options Selector View
 
-/// Popover that groups all model-specific options into a single panel,
-/// matching the visual language of CapabilitiesSelectorView.
+/// Popover that groups all model-specific options into a single panel.
 private struct ModelOptionsSelectorView: View {
     let options: [ModelOptionDefinition]
     @Binding var values: [String: ModelOptionValue]
@@ -2412,7 +2361,7 @@ private struct ModelOptionsSelectorView: View {
 
     private var optionRows: some View {
         let filteredOptions = options.filter { $0.id != thinkingOptionId }
-        
+
         return VStack(spacing: 0) {
             ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
                 if index > 0 {
@@ -2913,7 +2862,7 @@ private struct EndTaskButton: View {
                         isStreaming: false,
                         supportsImages: true,
                         estimatedContextTokens: 2450,
-                        onSend: {_ in },
+                        onSend: { _ in },
                         onStop: {}
                     )
                 }

@@ -36,6 +36,9 @@ public actor WorkEngine {
     /// Set by WorkSession before execution when running in sandbox mode.
     public nonisolated(unsafe) var sandboxAgentName: String?
 
+    /// Agent UUID for execution context binding. Set by WorkSession.
+    public nonisolated(unsafe) var agentId: UUID?
+
     /// Delegate for execution events
     public nonisolated(unsafe) weak var delegate: WorkEngineDelegate?
 
@@ -78,8 +81,6 @@ public actor WorkEngine {
     ///   - model: Model to use for execution
     ///   - systemPrompt: System prompt to use
     ///   - tools: Available tools
-    ///   - toolOverrides: Per-session tool overrides
-    ///   - skillCatalog: Available skills for capability selection
     /// - Returns: The execution result
     func run(
         query: String,
@@ -87,9 +88,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        executionMode: WorkExecutionMode
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -113,9 +112,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            executionMode: executionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            executionMode: executionMode
         )
     }
 
@@ -125,9 +122,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        executionMode: WorkExecutionMode
     ) async throws -> ExecutionResult {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -143,8 +138,6 @@ public actor WorkEngine {
             systemPrompt: systemPrompt,
             tools: tools,
             executionMode: executionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog,
             attemptResume: true
         )
     }
@@ -155,9 +148,7 @@ public actor WorkEngine {
         model: String?,
         systemPrompt: String,
         tools: [Tool],
-        executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = []
+        executionMode: WorkExecutionMode
     ) async throws -> ExecutionResult? {
         guard !isExecuting else {
             throw WorkEngineError.alreadyExecuting
@@ -174,9 +165,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            executionMode: executionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            executionMode: executionMode
         )
     }
 
@@ -347,8 +336,6 @@ public actor WorkEngine {
         systemPrompt: String,
         tools: [Tool],
         executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]?,
-        skillCatalog: [CapabilityEntry] = [],
         images: [Data] = [],
         attemptResume: Bool = false
     ) async throws -> ExecutionResult {
@@ -379,9 +366,6 @@ public actor WorkEngine {
             await WorkFileOperationLog.shared.setRootPath(rootPath)
         }
 
-        // Load skill instructions if any skills are selected
-        let skillInstructions = await buildSkillInstructions(from: skillCatalog)
-
         let initialMessages =
             if attemptResume,
                 let existing = activeSession,
@@ -408,10 +392,10 @@ public actor WorkEngine {
             else { return [] }
             return Array(AgentSecretsKeychain.getAllSecrets(agentId: uuid).keys)
         }()
+
         let agentSystemPrompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: systemPrompt,
             executionMode: resolvedExecutionMode,
-            skillInstructions: skillInstructions,
             compact: compact,
             secretNames: secretNames
         )
@@ -446,9 +430,7 @@ public actor WorkEngine {
             model: model,
             systemPrompt: systemPrompt,
             tools: tools,
-            executionMode: resolvedExecutionMode,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            executionMode: resolvedExecutionMode
         )
 
         var messages = activeSession?.messages ?? initialMessages
@@ -462,7 +444,6 @@ public actor WorkEngine {
                 systemPrompt: agentSystemPrompt,
                 model: model,
                 tools: tools,
-                toolOverrides: toolOverrides,
                 temperature: agentCfg.workTemperature,
                 maxTokens: agentCfg.workMaxTokens,
                 topPOverride: agentCfg.workTopPOverride,
@@ -471,6 +452,7 @@ public actor WorkEngine {
                 maxIterations: agentCfg.workMaxIterations ?? WorkExecutionEngine.defaultMaxIterations,
                 executionMode: resolvedExecutionMode,
                 sandboxAgentName: sandboxAgentName,
+                agentId: agentId,
                 shouldInterrupt: { await self.shouldInterruptExecution(for: issue.id) },
                 onIterationStart: { [weak self] iteration in
                     guard let self = self else { return }
@@ -483,6 +465,10 @@ public actor WorkEngine {
                 onToolHint: { [weak self] toolName in
                     guard let self = self else { return }
                     self.delegate?.workEngine(self, didDetectPendingTool: toolName, forIssue: issue)
+                },
+                onToolArgHint: { [weak self] argFragment in
+                    guard let self = self else { return }
+                    self.delegate?.workEngine(self, didReceiveToolArgFragment: argFragment, forIssue: issue)
                 },
                 onToolCall: { [weak self] toolName, args, result in
                     guard let self = self else { return }
@@ -572,6 +558,7 @@ public actor WorkEngine {
 
             await delegate?.workEngine(self, didCompleteIssue: issue, success: true)
             clearPersistedExecutionState(issueId: issue.id)
+
             activeSession = nil
             awaitingClarification = nil
             pendingExecutionContext = nil
@@ -677,7 +664,7 @@ public actor WorkEngine {
             break
         }
 
-        if let context = issue.context, !context.contains("[Selected Capabilities]") {
+        if let context = issue.context {
             firstMessageContent += "\n[Prior Context]:\n\(context)\n"
         }
 
@@ -851,31 +838,8 @@ public actor WorkEngine {
             systemPrompt: context.systemPrompt,
             tools: context.tools,
             executionMode: context.executionMode,
-            toolOverrides: context.toolOverrides,
-            skillCatalog: context.skillCatalog,
             attemptResume: true
         )
-    }
-
-    /// Builds skill instructions — inlines small single skills, otherwise emits a compact listing.
-    /// The agent loads full instructions on demand via `load_skill`.
-    @MainActor
-    private func buildSkillInstructions(from skillCatalog: [CapabilityEntry]) async -> String? {
-        guard !skillCatalog.isEmpty else { return nil }
-
-        // Exception: single small skill — inline it directly
-        if skillCatalog.count == 1, let entry = skillCatalog.first {
-            let map = SkillManager.shared.loadInstructions(for: [entry.name])
-            if let content = map[entry.name], content.count < 2000 {
-                return "## \(entry.name)\n\n\(content)"
-            }
-        }
-
-        var listing = "## Available Skills\nUse `load_skill` to load full instructions when needed.\n"
-        for entry in skillCatalog {
-            listing += "- \(entry.name): \(entry.description)\n"
-        }
-        return listing
     }
 
     // MARK: - Retry Logic
@@ -887,8 +851,6 @@ public actor WorkEngine {
         systemPrompt: String,
         tools: [Tool],
         executionMode: WorkExecutionMode,
-        toolOverrides: [String: Bool]? = nil,
-        skillCatalog: [CapabilityEntry] = [],
         images: [Data] = []
     ) async throws -> ExecutionResult {
         guard let issue = try IssueStore.getIssue(id: issueId) else {
@@ -918,8 +880,6 @@ public actor WorkEngine {
                     systemPrompt: systemPrompt,
                     tools: tools,
                     executionMode: executionMode,
-                    toolOverrides: toolOverrides,
-                    skillCatalog: skillCatalog,
                     images: images,
                     attemptResume: attempt > 0
                 )
@@ -1001,6 +961,7 @@ public protocol WorkEngineDelegate: AnyObject {
     func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue)
     func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int)
     func workEngine(_ engine: WorkEngine, didDetectPendingTool toolName: String, forIssue issue: Issue)
+    func workEngine(_ engine: WorkEngine, didReceiveToolArgFragment fragment: String, forIssue issue: Issue)
     func workEngine(
         _ engine: WorkEngine,
         didCallTool toolName: String,
@@ -1036,6 +997,7 @@ extension WorkEngineDelegate {
     public func workEngine(_ engine: WorkEngine, didStartIteration iteration: Int, forIssue issue: Issue) {}
     public func workEngine(_ engine: WorkEngine, didReceiveStreamingDelta delta: String, forStep stepIndex: Int) {}
     public func workEngine(_ engine: WorkEngine, didDetectPendingTool toolName: String, forIssue issue: Issue) {}
+    public func workEngine(_ engine: WorkEngine, didReceiveToolArgFragment fragment: String, forIssue issue: Issue) {}
     public func workEngine(
         _ engine: WorkEngine,
         didCallTool toolName: String,
@@ -1073,8 +1035,6 @@ struct PendingExecutionContext {
     let systemPrompt: String
     let tools: [Tool]
     let executionMode: WorkExecutionMode
-    let toolOverrides: [String: Bool]?
-    let skillCatalog: [CapabilityEntry]
 }
 
 extension PendingExecutionContext {
@@ -1099,9 +1059,7 @@ extension PendingExecutionContext {
             systemPrompt: systemPrompt,
             tools: tools,
             executionMode: executionModeSnapshot,
-            hostFolderRootPath: hostFolderRootPath,
-            toolOverrides: toolOverrides,
-            skillCatalog: skillCatalog
+            hostFolderRootPath: hostFolderRootPath
         )
     }
 
@@ -1127,9 +1085,7 @@ extension PendingExecutionContext {
             model: persisted.model,
             systemPrompt: persisted.systemPrompt,
             tools: persisted.tools,
-            executionMode: executionMode,
-            toolOverrides: persisted.toolOverrides,
-            skillCatalog: persisted.skillCatalog
+            executionMode: executionMode
         )
     }
 }

@@ -58,23 +58,31 @@ struct ServiceToolInvocation: Error, Sendable {
     }
 }
 
-/// In-band signaling for tool name detection during streaming.
+/// In-band signaling for tool name and argument detection during streaming.
 /// The stream type is `AsyncThrowingStream<String, Error>`, so we encode the
-/// detected tool name as a sentinel string using a Unicode non-character prefix
-/// that can never appear in normal LLM output.
+/// detected tool name (and argument fragments) as sentinel strings using a
+/// Unicode non-character prefix that can never appear in normal LLM output.
 enum StreamingToolHint: Sendable {
     private static let sentinel: Character = "\u{FFFE}"
-    private static let prefix = "\u{FFFE}tool:"
+    private static let toolPrefix = "\u{FFFE}tool:"
+    private static let argsPrefix = "\u{FFFE}args:"
 
-    static func encode(_ toolName: String) -> String { prefix + toolName }
+    static func encode(_ toolName: String) -> String { toolPrefix + toolName }
+    static func encodeArgs(_ fragment: String) -> String { argsPrefix + fragment }
 
-    /// O(1) check — only inspects the first character.
+    /// O(1) check — only inspects the first character. Covers both tool and args sentinels.
     static func isSentinel(_ delta: String) -> Bool { delta.first == sentinel }
 
     /// Extracts the tool name from a sentinel delta, or nil if not a sentinel.
     static func decode(_ delta: String) -> String? {
-        guard delta.hasPrefix(prefix) else { return nil }
-        return String(delta.dropFirst(prefix.count))
+        guard delta.hasPrefix(toolPrefix) else { return nil }
+        return String(delta.dropFirst(toolPrefix.count))
+    }
+
+    /// Extracts an argument fragment from a sentinel delta, or nil if not an args sentinel.
+    static func decodeArgs(_ delta: String) -> String? {
+        guard delta.hasPrefix(argsPrefix) else { return nil }
+        return String(delta.dropFirst(argsPrefix.count))
     }
 }
 

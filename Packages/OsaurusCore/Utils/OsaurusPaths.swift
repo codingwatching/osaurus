@@ -121,6 +121,16 @@ public enum OsaurusPaths {
         root().appendingPathComponent("memory", isDirectory: true)
     }
 
+    /// Methods system data directory
+    public static func methods() -> URL {
+        root().appendingPathComponent("methods", isDirectory: true)
+    }
+
+    /// Tool index data directory
+    public static func toolIndex() -> URL {
+        root().appendingPathComponent("tool-index", isDirectory: true)
+    }
+
     /// Plugin binaries directory (`~/.osaurus/Tools/`)
     public static func tools() -> URL {
         root().appendingPathComponent("Tools", isDirectory: true)
@@ -214,6 +224,8 @@ public enum OsaurusPaths {
     public static func mcpProviderConfigFile() -> URL { providers().appendingPathComponent("mcp.json") }
     public static func workDatabaseFile() -> URL { workData().appendingPathComponent("work.db") }
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
+    public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
+    public static func toolIndexDatabaseFile() -> URL { toolIndex().appendingPathComponent("tool_index.sqlite") }
     public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }
     public static func relayConfigFile() -> URL { config().appendingPathComponent("relay.json") }
 

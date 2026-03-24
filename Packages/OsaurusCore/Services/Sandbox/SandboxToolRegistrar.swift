@@ -3,8 +3,12 @@
 //  osaurus
 //
 //  Bridges the sandbox infrastructure with the ToolRegistry by
-//  registering/unregistering sandbox tools in response to agent
-//  switches, plugin installs, and container lifecycle events.
+//  registering/unregistering sandbox tools in response to plugin
+//  installs, and container lifecycle events.
+//
+//  Plugin tools are registered globally (agent-agnostic). Agent
+//  identity is resolved at execution time via WorkExecutionContext.
+//  Builtin sandbox tools remain per-agent.
 //
 
 import Combine
@@ -40,8 +44,7 @@ public final class SandboxToolRegistrar {
                 queue: .main
             ) { [weak self] note in
                 let pluginId = note.userInfo?["pluginId"] as? String
-                let agentId = note.userInfo?["agentId"] as? String
-                Task { @MainActor in await self?.handlePluginInstalled(pluginId: pluginId, agentId: agentId) }
+                Task { @MainActor in await self?.handlePluginInstalled(pluginId: pluginId) }
             }
         )
 
@@ -74,44 +77,37 @@ public final class SandboxToolRegistrar {
         )
 
         Task { @MainActor in
-            await self.registerToolsForCurrentAgent()
+            registerAllPluginTools()
+            await registerTools(for: AgentManager.shared.activeAgent.id)
         }
     }
 
-    // MARK: - Registration
+    // MARK: - Plugin Tools (Global)
 
-    /// Unregisters all sandbox tools and re-registers them for the current
-    /// active agent. Plugin tool specs are registered eagerly from disk;
-    /// builtin sandbox tools require the container to be running.
-    public func registerToolsForCurrentAgent() async {
-        await registerTools(for: AgentManager.shared.activeAgent.id)
+    /// Register all sandbox plugin tools globally (agent-agnostic).
+    /// Plugin tools are available to any agent and resolved at execution time.
+    public func registerAllPluginTools() {
+        let allPlugins = SandboxPluginManager.shared.allUniquePlugins()
+        for plugin in allPlugins {
+            ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
+        }
     }
 
-    /// Re-register sandbox tools for a specific agent. Chat sessions use this to
-    /// avoid depending on whichever agent is globally active.
-    ///
-    /// Plugin tool specs are registered eagerly from disk metadata so that the
-    /// KV prefix cache hash is correct even before the container starts.
-    /// Builtin sandbox tools and agent provisioning still require the container.
+    // MARK: - Builtin Tools (Per-Agent)
+
+    /// Re-register builtin sandbox tools for a specific agent.
+    /// This is the per-agent concern: provisioning + builtin tool registration.
     public func registerTools(for agentId: UUID) async {
-        ToolRegistry.shared.unregisterAllSandboxTools()
+        ToolRegistry.shared.unregisterAllBuiltinSandboxTools()
 
         let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
         let agentIdStr = agent.id.uuidString
         let agentName = SandboxAgentProvisioner.linuxName(for: agentIdStr)
-        let plugins = SandboxPluginManager.shared.plugins(for: agentIdStr)
-
-        for installed in plugins where installed.status == .ready {
-            ToolRegistry.shared.registerSandboxPluginTools(
-                plugin: installed.plugin,
-                agentId: agentIdStr,
-                agentName: agentName
-            )
-        }
 
         guard SandboxManager.State.shared.status == .running else { return }
 
         let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
+        let plugins = SandboxPluginManager.shared.plugins(for: agentIdStr)
         let needsProvisioning = (execConfig?.enabled == true) || plugins.contains { $0.status == .ready }
 
         if needsProvisioning {
@@ -141,34 +137,18 @@ public final class SandboxToolRegistrar {
     // MARK: - Event Handlers
 
     private func handleAgentChanged() async {
-        await registerToolsForCurrentAgent()
+        await registerTools(for: AgentManager.shared.activeAgent.id)
     }
 
     private func handleAgentUpdated(agentId: UUID?) async {
         guard agentId == nil || agentId == AgentManager.shared.activeAgent.id else { return }
-        await registerToolsForCurrentAgent()
+        await registerTools(for: AgentManager.shared.activeAgent.id)
     }
 
-    private func handlePluginInstalled(pluginId: String?, agentId: String?) async {
-        let currentAgentId = AgentManager.shared.activeAgent.id.uuidString
-        guard let pluginId, let agentId,
-            agentId == currentAgentId,
-            let installed = SandboxPluginManager.shared.plugin(id: pluginId, for: agentId),
-            installed.status == .ready
-        else { return }
-
-        do {
-            try await SandboxAgentProvisioner.shared.ensureProvisioned(agentId: agentId)
-        } catch {
-            NSLog("[SandboxToolRegistrar] Failed to provision agent for plugin install: \(error.localizedDescription)")
-            return
-        }
-
-        ToolRegistry.shared.registerSandboxPluginTools(
-            plugin: installed.plugin,
-            agentId: agentId,
-            agentName: SandboxAgentProvisioner.linuxName(for: agentId)
-        )
+    private func handlePluginInstalled(pluginId: String?) async {
+        guard let pluginId else { return }
+        guard let plugin = SandboxPluginLibrary.shared.plugin(id: pluginId) else { return }
+        ToolRegistry.shared.registerSandboxPluginTools(plugin: plugin)
     }
 
     private func handlePluginUninstalled(pluginId: String?) async {
@@ -180,6 +160,7 @@ public final class SandboxToolRegistrar {
         if newStatus == .running {
             await SandboxPluginManager.shared.verifyAndRepairAllPlugins()
         }
-        await registerToolsForCurrentAgent()
+        registerAllPluginTools()
+        await registerTools(for: AgentManager.shared.activeAgent.id)
     }
 }

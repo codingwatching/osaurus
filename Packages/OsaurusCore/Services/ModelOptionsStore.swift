@@ -12,16 +12,16 @@ import Combine
 @MainActor
 final class ModelOptionsStore: ObservableObject {
     static let shared = ModelOptionsStore()
-    
+
     private let userDefaults = UserDefaults.standard
     private let prefix = "model_options_"
-    
+
     private init() {}
-    
+
     /// Load persisted options for a specific model ID
     func loadOptions(for modelId: String) -> [String: ModelOptionValue]? {
         guard let data = userDefaults.data(forKey: prefix + modelId) else { return nil }
-        
+
         do {
             let decoder = JSONDecoder()
             return try decoder.decode([String: ModelOptionValue].self, from: data)
@@ -30,7 +30,7 @@ final class ModelOptionsStore: ObservableObject {
             return nil
         }
     }
-    
+
     /// Save options for a specific model ID
     func saveOptions(_ options: [String: ModelOptionValue], for modelId: String) {
         do {

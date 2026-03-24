@@ -196,9 +196,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             if agentId == nil {
-                agentId = await MainActor.run {
-                    AgentManager.shared.primaryAgent(forPlugin: pluginId)
-                }
+                agentId = Agent.defaultId
             }
 
             if let resolved = agentId {
@@ -285,7 +283,6 @@ final class PluginHostContext: @unchecked Sendable {
         let temperature: Float?
         let maxTokens: Int?
         let tools: [Tool]?
-        let toolOverrides: [String: Bool]?
     }
 
     private struct InferenceOptions {
@@ -302,7 +299,6 @@ final class PluginHostContext: @unchecked Sendable {
     private struct EnrichedInference {
         let request: ChatCompletionRequest
         let tools: [Tool]?
-        let toolOverrides: [String: Bool]?
     }
 
     /// Fully prepared inference state ready for the agentic loop.
@@ -353,16 +349,14 @@ final class PluginHostContext: @unchecked Sendable {
             guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil }
             let mgr = AgentManager.shared
             let id = agent.id
-            let overrides = mgr.effectiveToolOverrides(for: id)
-            let tools = ToolRegistry.shared.specs(withOverrides: overrides)
+            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
             return AgentContext(
                 agentId: id,
                 systemPrompt: mgr.effectiveSystemPrompt(for: id),
                 model: mgr.effectiveModel(for: id),
                 temperature: mgr.effectiveTemperature(for: id),
                 maxTokens: mgr.effectiveMaxTokens(for: id),
-                tools: tools.isEmpty ? nil : tools,
-                toolOverrides: overrides
+                tools: tools.isEmpty ? nil : tools
             )
         }
         guard var ctx = info else { return nil }
@@ -379,8 +373,7 @@ final class PluginHostContext: @unchecked Sendable {
                 model: ctx.model,
                 temperature: ctx.temperature,
                 maxTokens: ctx.maxTokens,
-                tools: ctx.tools,
-                toolOverrides: ctx.toolOverrides
+                tools: ctx.tools
             )
         }
         return ctx
@@ -394,7 +387,7 @@ final class PluginHostContext: @unchecked Sendable {
         options: InferenceOptions
     ) -> EnrichedInference {
         guard let ctx = context else {
-            return EnrichedInference(request: request, tools: request.tools, toolOverrides: nil)
+            return EnrichedInference(request: request, tools: request.tools)
         }
 
         var model = request.model
@@ -432,7 +425,7 @@ final class PluginHostContext: @unchecked Sendable {
             tool_choice: request.tool_choice,
             session_id: request.session_id
         )
-        return EnrichedInference(request: enriched, tools: effectiveTools, toolOverrides: ctx.toolOverrides)
+        return EnrichedInference(request: enriched, tools: effectiveTools)
     }
 
     private static func iterationRequest(
@@ -472,7 +465,7 @@ final class PluginHostContext: @unchecked Sendable {
             contextLength = await MainActor.run { ChatConfigurationStore.load().contextLength ?? 128_000 }
         }
         let toolTokens = await MainActor.run {
-            ToolRegistry.shared.totalEstimatedTokens(withOverrides: inf.toolOverrides)
+            ToolRegistry.shared.totalEstimatedTokens()
         }
         let sysChars = inf.request.messages.first(where: { $0.role == "system" })?.content?.count ?? 0
 
@@ -487,16 +480,14 @@ final class PluginHostContext: @unchecked Sendable {
 
     private static func executeToolCall(
         name: String,
-        argumentsJSON: String,
-        overrides: [String: Bool]?
+        argumentsJSON: String
     ) async -> String {
         await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 do {
                     return try await ToolRegistry.shared.execute(
                         name: name,
-                        argumentsJSON: argumentsJSON,
-                        overrides: overrides
+                        argumentsJSON: argumentsJSON
                     )
                 } catch {
                     return "[REJECTED] \(error.localizedDescription)"
@@ -550,8 +541,7 @@ final class PluginHostContext: @unchecked Sendable {
                         for tc in calls {
                             let result = await Self.executeToolCall(
                                 name: tc.function.name,
-                                argumentsJSON: tc.function.arguments,
-                                overrides: prep.enriched.toolOverrides
+                                argumentsJSON: tc.function.arguments
                             )
                             messages.append(
                                 ChatMessage(
@@ -664,8 +654,7 @@ final class PluginHostContext: @unchecked Sendable {
 
                     let result = await Self.executeToolCall(
                         name: inv.toolName,
-                        argumentsJSON: inv.jsonArguments,
-                        overrides: prep.enriched.toolOverrides
+                        argumentsJSON: inv.jsonArguments
                     )
                     emit(
                         Self.chunkPayload(

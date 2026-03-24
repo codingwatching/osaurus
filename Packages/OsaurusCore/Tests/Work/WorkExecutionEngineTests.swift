@@ -57,11 +57,8 @@ struct WorkExecutionEngineTests {
     }
 
     @Test func buildAgentSystemPrompt_sandboxIncludesWorkflowGuidance() async {
-        let issue = Issue(taskId: "task-1", title: "Build app", description: "Create and test it")
-
         let prompt = WorkExecutionEngine.buildAgentSystemPrompt(
             base: "Base prompt",
-            issue: issue,
             executionMode: .sandbox
         )
 
@@ -112,11 +109,11 @@ struct WorkExecutionEngineTests {
             systemPrompt: "Base",
             model: "mock",
             tools: tools,
-            toolOverrides: nil,
             maxIterations: 15,
             onIterationStart: { _ in },
             onDelta: { _, _ in },
             onToolHint: { _ in },
+            onToolArgHint: { _ in },
             onToolCall: { _, _, _ in },
             onStatusUpdate: { statuses.append($0) },
             onArtifact: { _ in },
@@ -153,7 +150,6 @@ struct WorkExecutionEngineTests {
             systemPrompt: "Base",
             model: "mock",
             tools: tools,
-            toolOverrides: nil,
             maxIterations: 5,
             shouldInterrupt: {
                 await interruptCounter.nextShouldInterrupt()
@@ -161,6 +157,7 @@ struct WorkExecutionEngineTests {
             onIterationStart: { _ in },
             onDelta: { _, _ in },
             onToolHint: { _ in },
+            onToolArgHint: { _ in },
             onToolCall: { _, _, _ in },
             onStatusUpdate: { _ in },
             onArtifact: { _ in },
@@ -193,11 +190,11 @@ struct WorkExecutionEngineTests {
             systemPrompt: "Base",
             model: "mock",
             tools: [clarificationToolSpec()],
-            toolOverrides: nil,
             maxIterations: 2,
             onIterationStart: { _ in },
             onDelta: { _, _ in },
             onToolHint: { _ in },
+            onToolArgHint: { _ in },
             onToolCall: { _, _, _ in },
             onStatusUpdate: { _ in },
             onArtifact: { _ in },
