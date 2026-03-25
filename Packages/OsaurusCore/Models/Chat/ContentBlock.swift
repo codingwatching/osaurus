@@ -238,7 +238,8 @@ extension ContentBlock {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        previousTurn: ChatTurn? = nil
+        previousTurn: ChatTurn? = nil,
+        thinkingEnabled: Bool = false
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
@@ -320,6 +321,7 @@ extension ContentBlock {
 
             if isStreaming && turn.contentIsEmpty && !turn.hasThinking
                 && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && thinkingEnabled
             {
                 // Show a "Thinking…" placeholder block so the user knows the model
                 // is working even before the first <think> token arrives (prefill phase).

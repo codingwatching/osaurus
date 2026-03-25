@@ -209,7 +209,8 @@ final class ChatSession: ObservableObject {
         return blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
-            agentName: displayName
+            agentName: displayName,
+            thinkingEnabled: activeModelOptions["disableThinking"]?.boolValue == false
         )
     }
 
