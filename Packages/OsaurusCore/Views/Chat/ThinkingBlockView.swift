@@ -101,26 +101,6 @@ struct ThinkingBlockView: View {
         .onHover { hovering in
             isHovered = hovering
         }
-        .onAppear {
-            // Auto-expand while streaming AND there's content to show
-            if isStreaming && characterCount > 0 {
-                expandedStore.expand(blockId)
-            }
-        }
-        .onChange(of: isStreaming) { _, nowStreaming in
-            if nowStreaming {
-                if characterCount > 0 { expandedStore.expand(blockId) }
-            } else {
-                // Collapse once thinking is done
-                expandedStore.collapse(blockId)
-            }
-        }
-        .onChange(of: characterCount) { _, newCount in
-            // Auto-expand the first time content arrives during streaming
-            if isStreaming && newCount > 0 {
-                expandedStore.expand(blockId)
-            }
-        }
     }
 
     private var header: some View {
