@@ -133,7 +133,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     private var renderingContext: CellRenderingContext {
         CellRenderingContext(
             groupHeaderMap: groupHeaderMap,
-            width: max(100, width - 64),
+            width: max(100, width),
             agentName: agentName,
             theme: theme,
             expandedBlocksStore: expandedBlocksStore,
