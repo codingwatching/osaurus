@@ -47,12 +47,26 @@ final class DirectoryPickerService: ObservableObject {
         }
 
         var isStale = false
+        // Try security-scoped resolution first
         if let url = try? URL(
             resolvingBookmarkData: bookmarkData,
             options: .withSecurityScope,
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         ), !isStale {
+            cachedBookmarkURL = url
+            cacheLock.unlock()
+            return url
+        }
+
+        // Fallback: resolve without security scope (works for non-sandboxed apps
+        // when the security-scoped bookmark becomes stale, e.g. after volume remount)
+        if let url = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) {
             cachedBookmarkURL = url
             cacheLock.unlock()
             return url
@@ -90,15 +104,29 @@ final class DirectoryPickerService: ObservableObject {
             )
 
             if isStale {
-                // Bookmark is stale, need to recreate it
-                UserDefaults.standard.removeObject(forKey: bookmarkKey)
-                Self.invalidateCache()
+                // Bookmark is stale (e.g. volume remounted), try without security scope
+                if let fallbackURL = try? URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: [],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                ) {
+                    selectedDirectory = fallbackURL
+                    hasValidDirectory = true
+                    Self.updateCache(with: fallbackURL)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                    Self.invalidateCache()
+                }
                 return
             }
 
             // Start accessing the security-scoped resource
             guard url.startAccessingSecurityScopedResource() else {
-                print("Failed to start accessing security-scoped resource")
+                print("Failed to start accessing security-scoped resource, using URL directly")
+                selectedDirectory = url
+                hasValidDirectory = true
+                Self.updateCache(with: url)
                 return
             }
 
@@ -110,9 +138,22 @@ final class DirectoryPickerService: ObservableObject {
             Self.updateCache(with: url)
 
         } catch {
-            print("Failed to resolve security-scoped bookmark: \(error)")
-            UserDefaults.standard.removeObject(forKey: bookmarkKey)
-            Self.invalidateCache()
+            print("Failed to resolve security-scoped bookmark: \(error), trying without scope")
+            // Fallback: resolve without security scope for non-sandboxed apps
+            var fallbackStale = false
+            if let fallbackURL = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &fallbackStale
+            ) {
+                selectedDirectory = fallbackURL
+                hasValidDirectory = true
+                Self.updateCache(with: fallbackURL)
+            } else {
+                UserDefaults.standard.removeObject(forKey: bookmarkKey)
+                Self.invalidateCache()
+            }
         }
     }
 

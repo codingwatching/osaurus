@@ -57,7 +57,9 @@ final class ChatSession: ObservableObject {
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
-    var chatEngineFactory: @Sendable () -> ChatEngineProtocol = { ChatEngine(source: .chatUI) }
+    var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
+        ChatEngine(remoteServices: RemoteProviderManager.shared.connectedServices(), source: .chatUI)
+    }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
     nonisolated(unsafe) private var modelSelectionCancellable: AnyCancellable?
@@ -754,6 +756,7 @@ final class ChatSession: ObservableObject {
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
             guard self.isRunActive(runId) else { return }
+            debugLog("send: task started runId=\(runId) model=\(self.selectedModel ?? "nil")")
             lastStreamError = nil
             isStreaming = true
             ServerController.signalGenerationStart()
@@ -906,6 +909,7 @@ final class ChatSession: ObservableObject {
                         session_id: sessionId?.uuidString
                     )
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                    debugLog("send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")")
                     do {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
@@ -919,10 +923,7 @@ final class ChatSession: ObservableObject {
                         }
 
                         let stream = try await engine.streamChat(request: req)
-                        guard isRunActive(runId) else {
-                            processor.finalize()
-                            break outer
-                        }
+                        debugLog("send: got stream, entering delta loop")
                         for try await delta in stream {
                             if !isRunActive(runId) {
                                 processor.finalize()

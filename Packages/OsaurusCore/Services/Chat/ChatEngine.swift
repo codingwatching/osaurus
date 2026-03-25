@@ -9,6 +9,7 @@ import Foundation
 
 actor ChatEngine: Sendable, ChatEngineProtocol {
     private let services: [ModelService]
+    private let remoteServicesSnapshot: [ModelService]
     private let installedModelsProvider: @Sendable () -> [String]
 
     /// Source of the inference (for logging purposes)
@@ -16,25 +17,30 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     init(
         services: [ModelService] = [FoundationModelService(), MLXService()],
+        remoteServices: [ModelService] = [],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
         source: InferenceSource = .httpAPI
     ) {
         self.services = services
+        self.remoteServicesSnapshot = remoteServices
         self.installedModelsProvider = installedModelsProvider
         self.inferenceSource = source
     }
     struct EngineError: Error {}
 
     private func enrichMessagesWithSystemPrompt(_ messages: [ChatMessage]) async -> [ChatMessage] {
+        debugLog("[ChatEngine] enrichMessages: start count=\(messages.count)")
         if messages.contains(where: { $0.role == "system" }) {
+            debugLog("[ChatEngine] enrichMessages: already has system, returning early")
             return messages
         }
 
         let systemPrompt = await MainActor.run {
             ChatConfigurationStore.load().systemPrompt
         }
+        debugLog("[ChatEngine] enrichMessages: got systemPrompt, injecting")
 
         let effective = SystemPromptBuilder.effectiveBasePrompt(systemPrompt)
         var enriched = messages
@@ -51,7 +57,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     }
 
     func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        debugLog("[ChatEngine] streamChat: start model=\(request.model)")
         let messages = await enrichMessagesWithSystemPrompt(request.messages)
+        debugLog("[ChatEngine] streamChat: enriched messages count=\(messages.count), fetching remote services")
         let temperature = request.temperature
         let maxTokens = request.max_tokens ?? 16384
         let repPenalty: Float? = {
@@ -73,14 +81,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // Candidate services and installed models (injected for testability)
         let services = self.services
 
-        // Get remote provider services
-        let remoteServices = await getRemoteProviderServices()
+        // Use pre-snapshotted remote services (captured on @MainActor at construction time)
+        let remoteServices = self.remoteServicesSnapshot
+        debugLog("[ChatEngine] streamChat: remoteServices=\(remoteServices.count), routing model=\(request.model)")
 
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
             services: services,
             remoteServices: remoteServices
         )
+        debugLog("[ChatEngine] streamChat: route=\(route)")
 
         switch route {
         case .service(let service, let effectiveModel):
@@ -89,6 +99,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // If tools were provided and supported, use message-based tool streaming
             if let tools = request.tools, !tools.isEmpty, let toolSvc = service as? ToolCapableService {
                 let stopSequences = request.stop ?? []
+                debugLog("[ChatEngine] streamChat: calling streamWithTools tools=\(tools.count)")
                 innerStream = try await toolSvc.streamWithTools(
                     messages: messages,
                     parameters: params,
@@ -97,13 +108,16 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     toolChoice: request.tool_choice,
                     requestedModel: request.model
                 )
+                debugLog("[ChatEngine] streamChat: streamWithTools returned")
             } else {
+                debugLog("[ChatEngine] streamChat: calling streamDeltas")
                 innerStream = try await service.streamDeltas(
                     messages: messages,
                     parameters: params,
                     requestedModel: request.model,
                     stopSequences: request.stop ?? []
                 )
+                debugLog("[ChatEngine] streamChat: streamDeltas returned")
             }
 
             // Wrap stream to count tokens and log when complete
@@ -277,8 +291,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
         let services = self.services
 
-        // Get remote provider services
-        let remoteServices = await getRemoteProviderServices()
+        // Use pre-snapshotted remote services (captured on @MainActor at construction time)
+        let remoteServices = self.remoteServicesSnapshot
 
         let route = ModelServiceRouter.resolve(
             requestedModel: request.model,
@@ -438,10 +452,4 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
     // MARK: - Remote Provider Services
 
-    /// Fetch connected remote provider services from the manager
-    private func getRemoteProviderServices() async -> [ModelService] {
-        return await MainActor.run {
-            RemoteProviderManager.shared.connectedServices()
-        }
-    }
 }

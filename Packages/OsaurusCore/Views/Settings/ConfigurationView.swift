@@ -718,8 +718,11 @@ struct ConfigurationView: View {
                 Int(trimmedQuantStart) ?? defaults.genQuantizedKVStart
         }
 
-        configuration.genMaxKVSize = Int(tempMaxKV)
-        configuration.genPrefillStepSize = Int(tempPrefillStep)
+        let trimmedMaxKV = tempMaxKV.trimmingCharacters(in: .whitespacesAndNewlines)
+        configuration.genMaxKVSize = trimmedMaxKV.isEmpty ? nil : Int(trimmedMaxKV)
+
+        let trimmedPrefillStep = tempPrefillStep.trimmingCharacters(in: .whitespacesAndNewlines)
+        configuration.genPrefillStepSize = trimmedPrefillStep.isEmpty ? nil : Int(trimmedPrefillStep)
 
         // Save eviction policy
         configuration.modelEvictionPolicy = tempEvictionPolicy
