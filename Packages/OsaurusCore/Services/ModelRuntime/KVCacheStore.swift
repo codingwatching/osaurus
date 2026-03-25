@@ -188,12 +188,12 @@ struct KVCacheStore {
         let url = ssdCacheDir.appendingPathComponent("\(sessionId).safetensors")
         let bytes = Self.cacheBytes(cache)
         let start = Date()
-        
+
         let box = CacheBox(cache)
-        
+
         // Optimistically set the SSD path so we don't try to save it again
         self.entries[sessionId]?.ssdPath = url
-        
+
         let task = Task.detached(priority: .background) {
             do {
                 var metadata = ["model": modelName]
@@ -204,10 +204,14 @@ struct KVCacheStore {
                 }
                 try savePromptCache(url: url, cache: box.cache, metadata: metadata)
                 let durationMs = Date().timeIntervalSince(start) * 1000
-                print("[KVCacheStore] [BENCHMARK] Saved session \(sessionId.prefix(8)) to SSD (\(bytes / 1024)KB) asynchronously in \(String(format: "%.1f", durationMs))ms")
+                print(
+                    "[KVCacheStore] [BENCHMARK] Saved session \(sessionId.prefix(8)) to SSD (\(bytes / 1024)KB) asynchronously in \(String(format: "%.1f", durationMs))ms"
+                )
             } catch {
                 let durationMs = Date().timeIntervalSince(start) * 1000
-                print("[KVCacheStore] [BENCHMARK] SSD save failed for \(sessionId.prefix(8)) after \(String(format: "%.1f", durationMs))ms: \(error)")
+                print(
+                    "[KVCacheStore] [BENCHMARK] SSD save failed for \(sessionId.prefix(8)) after \(String(format: "%.1f", durationMs))ms: \(error)"
+                )
             }
         }
         self.lastSaveTask = task

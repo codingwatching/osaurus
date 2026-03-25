@@ -209,8 +209,15 @@ actor ModelRuntime {
                 // Combine prompt tokens + generated token IDs for a complete token sequence.
                 let generatedIds = generatedTokenIdsBox()
                 let fullTokens = promptTokens + generatedIds
-                debugLog("[ModelRuntime] wrapWithCacheStore: promptTokens=\(promptTokens.count) generatedIds=\(generatedIds.count) fullTokens=\(fullTokens.count)")
-                storeSessionCache(sessionId: sessionId, cache: capturedCache, promptTokens: fullTokens, modelName: modelName)
+                debugLog(
+                    "[ModelRuntime] wrapWithCacheStore: promptTokens=\(promptTokens.count) generatedIds=\(generatedIds.count) fullTokens=\(fullTokens.count)"
+                )
+                storeSessionCache(
+                    sessionId: sessionId,
+                    cache: capturedCache,
+                    promptTokens: fullTokens,
+                    modelName: modelName
+                )
                 continuation.finish()
             } catch {
                 continuation.finish(throwing: error)
@@ -225,7 +232,9 @@ actor ModelRuntime {
         let budget = currentKVBudget()
         kvCacheStore.ensureBudget(budget)
         let offset = effectiveCacheOffset(cache)
-        debugLog("[ModelRuntime] stored session cache sessionId=\(sessionId.prefix(8)) promptTokens=\(promptTokens.count) effectiveCacheOffset=\(offset) budget=\(budget / 1024 / 1024)MB")
+        debugLog(
+            "[ModelRuntime] stored session cache sessionId=\(sessionId.prefix(8)) promptTokens=\(promptTokens.count) effectiveCacheOffset=\(offset) budget=\(budget / 1024 / 1024)MB"
+        )
     }
 
     // MARK: - Internals
@@ -467,16 +476,22 @@ actor ModelRuntime {
         var newTokens: [Int]
         var genTask: Task<Void, Never>
 
-        debugLog("[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0) sessionId=\(sessionId?.prefix(8) ?? "nil")")
-        genLog.info("generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)")
-        print("[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0)")
+        debugLog(
+            "[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0) sessionId=\(sessionId?.prefix(8) ?? "nil")"
+        )
+        genLog.info(
+            "generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)"
+        )
+        print(
+            "[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0)"
+        )
 
         // Signal that a prefill is starting (count unknown until prepareAndGenerate returns).
         // The UI shows a spinner; once the first generated token arrives prefillDidFinish() clears it.
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
-         do {
-             (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+        do {
+            (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
@@ -485,36 +500,38 @@ actor ModelRuntime {
                 existingCache: existingCache,
                 cachedTokens: cachedTokens
             )
-         } catch {
-             genLog.error("generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)")
-             guard existingCache != nil else {
-                 InferenceProgressManager.shared.prefillDidFinishAsync()
-                 throw error
-             }
-             print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
-             invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
-             // Re-signal for the retry prefill (still unknown count).
-             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
-             do {
-                 (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
-                     container: holder.container,
-                     buildChat: buildChat,
-                     buildToolsSpec: buildTools,
-                     generation: parameters,
-                     runtime: cfg,
-                     existingCache: nil,
-                     cachedTokens: nil
-                 )
-             } catch {
-                 InferenceProgressManager.shared.prefillDidFinishAsync()
-                 throw error
-             }
-         }
-         genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
-         print("[ModelRuntime] generateEventStream: stream created tokenCount=\(newTokens.count)")
-         // Prefill is now complete; update the display with the actual token count while
-         // generation is warming up (the first token clears the indicator).
-         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
+        } catch {
+            genLog.error(
+                "generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)"
+            )
+            guard existingCache != nil else {
+                InferenceProgressManager.shared.prefillDidFinishAsync()
+                throw error
+            }
+            print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
+            invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
+            // Re-signal for the retry prefill (still unknown count).
+            InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
+            do {
+                (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                    container: holder.container,
+                    buildChat: buildChat,
+                    buildToolsSpec: buildTools,
+                    generation: parameters,
+                    runtime: cfg,
+                    existingCache: nil,
+                    cachedTokens: nil
+                )
+            } catch {
+                InferenceProgressManager.shared.prefillDidFinishAsync()
+                throw error
+            }
+        }
+        genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
+        print("[ModelRuntime] generateEventStream: stream created tokenCount=\(newTokens.count)")
+        // Prefill is now complete; update the display with the actual token count while
+        // generation is warming up (the first token clears the indicator).
+        InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
 
         activeGenerationTask = genTask
 

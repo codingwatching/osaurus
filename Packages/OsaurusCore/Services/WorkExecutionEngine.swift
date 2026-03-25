@@ -10,11 +10,19 @@ import Foundation
 
 /// Execution engine for running work tasks via reasoning loop
 public actor WorkExecutionEngine {
-    /// The chat engine for LLM calls
-    private let chatEngine: ChatEngineProtocol
+    /// The chat engine for LLM calls (lazily resolved to snapshot remote services)
+    private var _chatEngine: ChatEngineProtocol?
 
     init(chatEngine: ChatEngineProtocol? = nil) {
-        self.chatEngine = chatEngine ?? ChatEngine(source: .chatUI)
+        self._chatEngine = chatEngine
+    }
+
+    private func resolvedChatEngine() async -> ChatEngineProtocol {
+        if let engine = _chatEngine { return engine }
+        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+        let engine = ChatEngine(remoteServices: remoteServices, source: .chatUI)
+        _chatEngine = engine
+        return engine
     }
 
     // MARK: - Prompt Constants
@@ -450,7 +458,7 @@ public actor WorkExecutionEngine {
             tool_choice: nil
         )
 
-        let response = try await chatEngine.completeChat(request: request)
+        let response = try await resolvedChatEngine().completeChat(request: request)
         guard let summary = response.choices.first?.message.content, !summary.isEmpty else {
             throw WorkExecutionError.unknown("Empty compaction summary")
         }
@@ -689,7 +697,7 @@ public actor WorkExecutionEngine {
             var toolInvoked: ServiceToolInvocation?
 
             do {
-                let stream = try await chatEngine.streamChat(request: request)
+                let stream = try await resolvedChatEngine().streamChat(request: request)
                 for try await delta in stream {
                     if await shouldInterrupt() {
                         return .interrupted(

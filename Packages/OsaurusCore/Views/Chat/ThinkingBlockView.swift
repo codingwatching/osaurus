@@ -35,9 +35,9 @@ struct ThinkingBlockView: View {
     /// NSHostingView requires a real size — `maxHeight: nil` collapses to zero in a table cell.
     /// We estimate height from character count and available width.
     private var streamingContentHeight: CGFloat {
-        let innerWidth = max(baseWidth - 32, 100)   // account for horizontal padding
+        let innerWidth = max(baseWidth - 32, 100)  // account for horizontal padding
         let charsPerLine = max(Int(innerWidth / 7), 20)
-        let lineHeight: CGFloat = 20                 // body font ~13pt + 4pt line spacing + fudge
+        let lineHeight: CGFloat = 20  // body font ~13pt + 4pt line spacing + fudge
         let estimatedLines = max(1, (characterCount + charsPerLine - 1) / charsPerLine)
         let height = CGFloat(estimatedLines) * lineHeight + 16  // +16 for padding
         return min(height, 300)  // cap at 300pt, matching the post-stream ScrollView cap

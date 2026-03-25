@@ -58,7 +58,9 @@ final class StubTokenizer: Tokenizer, @unchecked Sendable {
         tools: [Tokenizers.ToolSpec]?,
         additionalContext: [String: any Sendable]?
     ) throws -> [Int] { [] }
-    func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: Tokenizers.ChatTemplateArgument) throws -> [Int] { [] }
+    func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: Tokenizers.ChatTemplateArgument) throws
+        -> [Int]
+    { [] }
     func applyChatTemplate(messages: [Tokenizers.Message], chatTemplate: String) throws -> [Int] { [] }
     func applyChatTemplate(
         messages: [Tokenizers.Message],
@@ -91,8 +93,7 @@ private func makeTokenStream(_ events: [TokenGeneration]) -> AsyncStream<TokenGe
 
 /// Drains any AsyncSequence of ModelRuntimeEvent and returns accumulated token strings.
 private func drainTokens<S: AsyncSequence>(_ stream: S) async throws -> String
-    where S.Element == ModelRuntimeEvent
-{
+where S.Element == ModelRuntimeEvent {
     var result = ""
     for try await event in stream {
         if case .tokens(let s) = event { result += s }
@@ -102,8 +103,7 @@ private func drainTokens<S: AsyncSequence>(_ stream: S) async throws -> String
 
 /// Drains the stream and returns all events (tokens + tool invocations).
 private func drainEvents<S: AsyncSequence>(_ stream: S) async throws -> [ModelRuntimeEvent]
-    where S.Element == ModelRuntimeEvent
-{
+where S.Element == ModelRuntimeEvent {
     var events: [ModelRuntimeEvent] = []
     for try await event in stream {
         events.append(event)
@@ -134,7 +134,10 @@ struct StreamAccumulatorTests {
         // Token 72 == 'H'
         let stream = makeTokenStream([.token(72)])
         let acc = StreamAccumulator.accumulate(
-            events: stream, tokenizer: stubTokenizer, stopSequences: [], tools: nil
+            events: stream,
+            tokenizer: stubTokenizer,
+            stopSequences: [],
+            tools: nil
         )
         var out = ""
         var iter = acc.makeAsyncIterator()
@@ -151,17 +154,27 @@ struct StreamAccumulatorTests {
     @Test func emitsDecodedTextForMultipleTokens() async throws {
         // 72='H', 73='I' → "HI"
         let stream = makeTokenStream([.token(72), .token(73)])
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream, tokenizer: stubTokenizer, stopSequences: [], tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil
+            )
+        )
         #expect(out == "HI")
     }
 
     @Test func emitsNoTextForEmptyStream() async throws {
         let stream = makeTokenStream([])
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream, tokenizer: stubTokenizer, stopSequences: [], tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil
+            )
+        )
         #expect(out == "")
     }
 
@@ -175,9 +188,14 @@ struct StreamAccumulatorTests {
         )
         // Token 65 = 'A', then an info event, then token 66 = 'B'
         let stream = makeTokenStream([.token(65), .info(info), .token(66)])
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream, tokenizer: stubTokenizer, stopSequences: [], tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil
+            )
+        )
         #expect(out == "AB")
     }
 
@@ -186,26 +204,30 @@ struct StreamAccumulatorTests {
     @Test func onGeneratedTokenIds_receivesAllIds() async throws {
         let stream = makeTokenStream([.token(65), .token(66), .token(67)])
         nonisolated(unsafe) var capturedIds: [Int] = []
-        _ = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: [],
-            tools: nil,
-            onGeneratedTokenIds: { capturedIds = $0 }
-        ))
+        _ = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil,
+                onGeneratedTokenIds: { capturedIds = $0 }
+            )
+        )
         #expect(capturedIds == [65, 66, 67])
     }
 
     @Test func onGeneratedTokenIds_receivesEmptyArrayForEmptyStream() async throws {
         let stream = makeTokenStream([])
         nonisolated(unsafe) var capturedIds: [Int] = [-1]  // sentinel
-        _ = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: [],
-            tools: nil,
-            onGeneratedTokenIds: { capturedIds = $0 }
-        ))
+        _ = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil,
+                onGeneratedTokenIds: { capturedIds = $0 }
+            )
+        )
         #expect(capturedIds == [])
     }
 
@@ -219,13 +241,15 @@ struct StreamAccumulatorTests {
         )
         let stream = makeTokenStream([.info(info)])
         nonisolated(unsafe) var callbackFired = false
-        _ = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: [],
-            tools: nil,
-            onGeneratedTokenIds: { _ in callbackFired = true }
-        ))
+        _ = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil,
+                onGeneratedTokenIds: { _ in callbackFired = true }
+            )
+        )
         // Callback fires on stream finish even when no tokens were generated.
         #expect(callbackFired)
     }
@@ -235,47 +259,55 @@ struct StreamAccumulatorTests {
     @Test func stopSequence_truncatesAtMatch() async throws {
         // Tokens: A B C D E → "ABCDE", stop on "C"
         let stream = makeTokenStream([65, 66, 67, 68, 69].map { TokenGeneration.token($0) })
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: ["C"],
-            tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: ["C"],
+                tools: nil
+            )
+        )
         #expect(out == "AB")
     }
 
     @Test func stopSequence_multiCharMatch() async throws {
         // Tokens: A B C D → "ABCD", stop on "BC"
         let stream = makeTokenStream([65, 66, 67, 68].map { TokenGeneration.token($0) })
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: ["BC"],
-            tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: ["BC"],
+                tools: nil
+            )
+        )
         #expect(out == "A")
     }
 
     @Test func stopSequence_atStartYieldsNothing() async throws {
         // Stop on "A" — the very first character — nothing before it.
         let stream = makeTokenStream([65, 66].map { TokenGeneration.token($0) })
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: ["A"],
-            tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: ["A"],
+                tools: nil
+            )
+        )
         #expect(out == "")
     }
 
     @Test func stopSequence_notPresent_emitsAll() async throws {
         let stream = makeTokenStream([65, 66, 67].map { TokenGeneration.token($0) })
-        let out = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: ["Z"],
-            tools: nil
-        ))
+        let out = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: ["Z"],
+                tools: nil
+            )
+        )
         #expect(out == "ABC")
     }
 
@@ -318,12 +350,14 @@ struct StreamAccumulatorTests {
         try await Task.sleep(for: .milliseconds(50))
 
         let stream = makeTokenStream([])
-        _ = try await drainTokens(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: [],
-            tools: nil
-        ))
+        _ = try await drainTokens(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: nil
+            )
+        )
         try await Task.sleep(for: .milliseconds(50))
 
         let countAfterFinish = await MainActor.run { InferenceProgressManager.shared.prefillTokenCount }
@@ -347,12 +381,14 @@ struct StreamAccumulatorTests {
         let tokens: [TokenGeneration] = json.unicodeScalars.map { .token(Int($0.value)) }
 
         let stream = makeTokenStream(tokens)
-        let events = try await drainEvents(StreamAccumulator.accumulate(
-            events: stream,
-            tokenizer: stubTokenizer,
-            stopSequences: [],
-            tools: [tool]
-        ))
+        let events = try await drainEvents(
+            StreamAccumulator.accumulate(
+                events: stream,
+                tokenizer: stubTokenizer,
+                stopSequences: [],
+                tools: [tool]
+            )
+        )
 
         // The last event must be a .toolInvocation
         guard let last = events.last, case .toolInvocation(let name, let args) = last else {

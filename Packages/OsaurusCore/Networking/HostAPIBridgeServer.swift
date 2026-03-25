@@ -318,7 +318,8 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
                 session_id: nil
             )
 
-            let engine = ChatEngine(source: .plugin)
+            let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+            let engine = ChatEngine(remoteServices: remoteServices, source: .plugin)
             let response = try await engine.completeChat(request: request)
             let content = response.choices.first?.message.content ?? ""
             return .ok("{\"content\":\(jsonEscape(content))}")
