@@ -135,7 +135,7 @@ final class PluginManager {
 
                 // Register tools
                 for tool in loaded.tools {
-                    ToolRegistry.shared.register(tool)
+                    ToolRegistry.shared.registerPluginTool(tool)
                 }
 
                 // Register plugin skills
