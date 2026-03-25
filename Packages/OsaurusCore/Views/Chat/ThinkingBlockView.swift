@@ -31,6 +31,18 @@ struct ThinkingBlockView: View {
         thinkingLength ?? thinking.count
     }
 
+    /// Concrete height for the content area during streaming.
+    /// NSHostingView requires a real size — `maxHeight: nil` collapses to zero in a table cell.
+    /// We estimate height from character count and available width.
+    private var streamingContentHeight: CGFloat {
+        let innerWidth = max(baseWidth - 32, 100)   // account for horizontal padding
+        let charsPerLine = max(Int(innerWidth / 7), 20)
+        let lineHeight: CGFloat = 20                 // body font ~13pt + 4pt line spacing + fudge
+        let estimatedLines = max(1, (characterCount + charsPerLine - 1) / charsPerLine)
+        let height = CGFloat(estimatedLines) * lineHeight + 16  // +16 for padding
+        return min(height, 300)  // cap at 300pt, matching the post-stream ScrollView cap
+    }
+
     /// Accent color for the thinking block - a subtle purple/indigo tone
     private var thinkingColor: Color {
         Color(red: 0.55, green: 0.45, blue: 0.85)
@@ -61,7 +73,7 @@ struct ThinkingBlockView: View {
                 content
                     .padding(.top, 10)
             }
-            .frame(maxHeight: isExpanded ? nil : 0, alignment: .top)
+            .frame(maxHeight: isExpanded ? (isStreaming ? streamingContentHeight : nil) : 0, alignment: .top)
             .clipped()
             .opacity(isExpanded ? 1 : 0)
             .animation(theme.springAnimation(), value: isExpanded)
@@ -170,16 +182,29 @@ struct ThinkingBlockView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Render thinking content as styled text
-            ScrollView {
+            if isStreaming {
+                // During streaming: plain Text with no ScrollView cap.
+                // NSHostingView needs a concrete intrinsic size — the parent VStack is already
+                // capped by streamingContentHeight, so we let the text fill naturally.
+                // .clipped() on the parent handles overflow.
                 Text(thinking)
                     .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
                     .foregroundColor(theme.primaryText.opacity(0.85))
                     .lineSpacing(4)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                // After streaming: restore the scrollable, height-capped view.
+                ScrollView {
+                    Text(thinking)
+                        .font(theme.font(size: CGFloat(theme.bodySize) - 1, weight: .regular))
+                        .foregroundColor(theme.primaryText.opacity(0.85))
+                        .lineSpacing(4)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 300)
             }
-            .frame(maxHeight: 300)  // Limit height with scroll for very long thinking
         }
         .padding(.horizontal, 4)
         .padding(.bottom, 6)
