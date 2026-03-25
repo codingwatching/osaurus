@@ -29,6 +29,28 @@ public enum SpeechModelVersion: String, Codable, Equatable, CaseIterable, Sendab
     }
 }
 
+/// Voice transcription stop mode
+public enum TranscriptionStopMode: String, Codable, Equatable, CaseIterable, Sendable {
+    /// Listens for silence to automatically stop and send
+    case automatic
+    /// Stays active until manually stopped by the user
+    case manual
+
+    public var displayName: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .manual: return "Manual"
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .automatic: return "Automatically sends message after a brief pause"
+        case .manual: return "Waits for you to manually click the stop button"
+        }
+    }
+}
+
 /// Configuration settings for FluidAudio voice transcription
 public struct SpeechConfiguration: Codable, Equatable, Sendable {
     /// ASR model version (.v2 English-only or .v3 multilingual)
@@ -47,6 +69,9 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
 
     /// Whether voice input is enabled in ChatView
     public var voiceInputEnabled: Bool
+
+    /// How to stop voice recording (automatic silence detection or manual)
+    public var transcriptionStopMode: TranscriptionStopMode
 
     /// Seconds of silence before triggering auto-send (0 = disabled, manual send only)
     public var pauseDuration: Double
@@ -76,6 +101,9 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
         self.voiceInputEnabled =
             try container.decodeIfPresent(Bool.self, forKey: .voiceInputEnabled)
             ?? defaults.voiceInputEnabled
+        self.transcriptionStopMode =
+            try container.decodeIfPresent(TranscriptionStopMode.self, forKey: .transcriptionStopMode)
+            ?? defaults.transcriptionStopMode
         self.pauseDuration =
             try container.decodeIfPresent(Double.self, forKey: .pauseDuration)
             ?? defaults.pauseDuration
@@ -96,6 +124,7 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
         selectedInputSource: AudioInputSource = .microphone,
         sensitivity: VoiceSensitivity = .medium,
         voiceInputEnabled: Bool = true,
+        transcriptionStopMode: TranscriptionStopMode = .automatic,
         pauseDuration: Double = 1.5,
         confirmationDelay: Double = 2.0,
         silenceTimeoutSeconds: Double = 30.0,
@@ -106,6 +135,7 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
         self.selectedInputSource = selectedInputSource
         self.sensitivity = sensitivity
         self.voiceInputEnabled = voiceInputEnabled
+        self.transcriptionStopMode = transcriptionStopMode
         self.pauseDuration = pauseDuration
         self.confirmationDelay = confirmationDelay
         self.silenceTimeoutSeconds = silenceTimeoutSeconds
@@ -119,6 +149,7 @@ public struct SpeechConfiguration: Codable, Equatable, Sendable {
             selectedInputSource: .microphone,
             sensitivity: .medium,
             voiceInputEnabled: true,
+            transcriptionStopMode: .automatic,
             pauseDuration: 1.5,
             confirmationDelay: 2.0,
             silenceTimeoutSeconds: 30.0,

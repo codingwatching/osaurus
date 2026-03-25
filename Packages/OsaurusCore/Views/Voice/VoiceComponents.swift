@@ -135,18 +135,30 @@ private struct WaveformBars: View {
     @ViewBuilder
     private func singleBar(index: Int, timestamp: TimeInterval) -> some View {
         let phaseOffset = phaseOffsets.indices.contains(index) ? phaseOffsets[index] : 0
-        let normalizedLevel = CGFloat(max(0.15, min(1.0, level)))
 
-        let wave = sin(timestamp * 5 + phaseOffset)
+        // use the raw level for animation intensity
+        let effectiveLevel = CGFloat(max(0.0, min(1.0, level)))
+
+        // animation wave - faster for more life but only visible when level > 0
+        let wave = sin(timestamp * 10 + phaseOffset)
+
+        // high sensitivity to voice so it's very responsive
+        let voiceSensitivity: CGFloat = 4.0
+
+        // the multiplier is now strictly tied to the audio level.
+        // if level is 0, heightMultiplier will be 0 (when active) or 0.2 (when inactive/static)
         let heightMultiplier: CGFloat =
             isActive
-            ? normalizedLevel * (0.5 + 0.5 * CGFloat(wave + 1) / 2)
+            ? (effectiveLevel * voiceSensitivity) * (0.5 + 0.5 * CGFloat(wave + 1) / 2)
             : 0.2
 
-        let barHeight: CGFloat = max(4, maxBarHeight * heightMultiplier)
+        // the 4px floor is the absolute minimum height.
+        // we only add dynamic height if there is actual audio level.
+        let dynamicRange = maxBarHeight - 4
+        let barHeight: CGFloat = 4 + dynamicRange * min(1.0, heightMultiplier)
 
         RoundedRectangle(cornerRadius: barWidth / 2)
-            .fill(color.opacity(0.85 + 0.15 * Double(heightMultiplier)))
+            .fill(color.opacity(0.8 + 0.2 * Double(min(1.0, heightMultiplier))))
             .frame(width: barWidth, height: barHeight)
     }
 }
@@ -186,9 +198,13 @@ private struct WaveformWaveCanvas: View {
     private func drawWave(context: GraphicsContext, size: CGSize) {
         let midY: CGFloat = size.height / 2
         let levelCG: CGFloat = CGFloat(level)
-        let amplitude: CGFloat = levelCG * size.height * 0.4
-        let wavelength: CGFloat = size.width / 2
-        let currentPhase: CGFloat = isActive ? CGFloat(timestamp * 4) : 0
+
+        // amplitude is now strictly tied to the audio level.
+        // no base amplitude unless the user is actually speaking.
+        let amplitude: CGFloat = levelCG * size.height * 0.8
+
+        let wavelength: CGFloat = size.width / 1.5
+        let currentPhase: CGFloat = isActive ? CGFloat(timestamp * 8) : 0
 
         var path = Path()
         path.move(to: CGPoint(x: 0, y: midY))
@@ -203,13 +219,13 @@ private struct WaveformWaveCanvas: View {
             x += 2
         }
 
-        let gradient = Gradient(colors: [color, color.opacity(0.5)])
+        let gradient = Gradient(colors: [color, color.opacity(0.6)])
         let startPt = CGPoint(x: 0, y: size.height / 2)
         let endPt = CGPoint(x: size.width, y: size.height / 2)
         context.stroke(
             path,
             with: .linearGradient(gradient, startPoint: startPt, endPoint: endPt),
-            lineWidth: 3
+            lineWidth: 3.5
         )
     }
 }
@@ -223,20 +239,21 @@ private struct WaveformCircular: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
-            let phase = isActive ? timeline.date.timeIntervalSinceReferenceDate * 2 : 0
+            let phase = isActive ? timeline.date.timeIntervalSinceReferenceDate * 4 : 0
+            let levelCG = CGFloat(level)
 
             ZStack {
-                // Outer pulsing ring
+                // Outer pulsing ring - intensity tied to level
                 Circle()
                     .stroke(color.opacity(0.2), lineWidth: 2)
                     .frame(width: 50, height: 50)
-                    .scaleEffect(1 + CGFloat(level) * 0.3 * CGFloat(sin(phase * 3)))
+                    .scaleEffect(1 + levelCG * 0.5 * CGFloat(sin(phase * 2.5)))
 
-                // Middle ring
+                // Middle ring - intensity tied to level
                 Circle()
                     .stroke(color.opacity(0.4), lineWidth: 2)
                     .frame(width: 35, height: 35)
-                    .scaleEffect(1 + CGFloat(level) * 0.2 * CGFloat(sin(phase * 4 + 1)))
+                    .scaleEffect(1 + levelCG * 0.4 * CGFloat(sin(phase * 3.5 + 1)))
 
                 // Inner filled circle
                 Circle()
@@ -249,13 +266,12 @@ private struct WaveformCircular: View {
                         )
                     )
                     .frame(width: 20, height: 20)
-                    .scaleEffect(0.8 + CGFloat(level) * 0.4)
+                    .scaleEffect(0.8 + levelCG * 0.8)
             }
         }
         .frame(width: 60, height: 60)
     }
 }
-
 // MARK: - Waveform Minimal
 
 private struct WaveformMinimal: View {

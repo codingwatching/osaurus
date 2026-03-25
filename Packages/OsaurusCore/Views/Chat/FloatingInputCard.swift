@@ -255,6 +255,7 @@ struct FloatingInputCard: View {
                     isContinuousMode: isContinuousVoiceMode,
                     isStreaming: isStreaming,
                     useClipboardPaste: voiceConfig.useClipboardPaste,
+                    transcriptionStopMode: voiceConfig.transcriptionStopMode,
                     onCancel: { cancelVoiceInput() },
                     onSend: { message in sendVoiceMessage(message) },
                     onEdit: { transferToTextInput() }
@@ -663,6 +664,7 @@ extension FloatingInputCard {
 
     private func checkForPause() {
         guard voiceInputState == .recording,
+            voiceConfig.transcriptionStopMode == .automatic,
             voiceConfig.pauseDuration > 0
         else { return }
 
@@ -721,10 +723,10 @@ extension FloatingInputCard {
             let hasContent =
                 !speechService.currentTranscription.isEmpty || !speechService.confirmedTranscription.isEmpty
 
-            if hasContent {
+            if hasContent && voiceConfig.transcriptionStopMode == .automatic {
                 print("[FloatingInputCard] Silence timeout with content - triggering auto-send")
                 voiceInputState = .paused(remaining: voiceConfig.confirmationDelay)
-            } else {
+            } else if !hasContent {
                 print("[FloatingInputCard] Silence timeout without content - closing voice input")
                 stopVoiceInputFromTimeout()
             }

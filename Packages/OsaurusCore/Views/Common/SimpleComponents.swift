@@ -464,19 +464,20 @@ private struct TabButton: View {
     let title: String
     let isSelected: Bool
     let action: () -> Void
-    @State private var isHovering = false
 
     var body: some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
                 .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 10)
                 .padding(.vertical, 10)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
                         .fill(isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
                 )
+                .contentShape(Rectangle())
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(
@@ -485,12 +486,8 @@ private struct TabButton: View {
                         )
                 )
                 .animation(.easeInOut(duration: 0.2), value: isSelected)
-                .scaleEffect(isHovering && !isSelected ? 1.05 : 1.0)
         }
         .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            isHovering = hovering
-        }
     }
 }
 
