@@ -151,17 +151,18 @@ struct TypingIndicator: View {
 
 private struct PrefillShimmerBar: View {
     @State private var phase: CGFloat = 0
+    @Environment(\.theme) private var theme
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.1))
+                    .fill(theme.tertiaryText.opacity(0.15))
 
                 RoundedRectangle(cornerRadius: 2)
                     .fill(
                         LinearGradient(
-                            colors: [.clear, .white.opacity(0.5), .clear],
+                            colors: [.clear, theme.accentColor.opacity(0.6), .clear],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
