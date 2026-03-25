@@ -508,6 +508,18 @@ struct ToolFunction: Codable, Sendable {
     let name: String
     let description: String?
     let parameters: JSONValue?
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(name, forKey: .name)
+        try container.encodeIfPresent(description, forKey: .description)
+        let params = parameters ?? .object(["type": .string("object"), "properties": .object([:])])
+        try container.encode(params, forKey: .parameters)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, description, parameters
+    }
 }
 
 /// tool_choice option

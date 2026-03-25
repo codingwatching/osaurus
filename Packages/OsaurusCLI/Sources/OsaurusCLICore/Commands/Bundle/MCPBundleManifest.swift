@@ -11,16 +11,16 @@ import Foundation
 struct MCPBundleManifest: Codable {
     // Standard MCPB format
     let mcpVersion: String?
-    
+
     // Claude Desktop format
     let manifestVersion: String?
-    
+
     let name: String
     let version: String
     let displayName: String?
     let description: String?
     let entry: EntryPoint?
-    
+
     // Claude Desktop format
     let server: ServerConfig?
     let icon: String?
@@ -80,12 +80,12 @@ struct MCPBundleManifest: Codable {
         if let entry = entry {
             return (entry.command, entry.args, entry.env)
         }
-        
+
         // Try Claude Desktop format
         if let server = server, let config = server.mcpConfig {
             return (config.command, config.args, config.env)
         }
-        
+
         // Default fallback
         return ("", [], nil)
     }
