@@ -5,6 +5,14 @@
 //  Consumes MLX generation events and emits typed ModelRuntimeEvent with
 //  token slicing, stop-sequence handling, and tool-call signaling.
 //
+//  Tool-call parsing is fully delegated to the upstream ToolCallProcessor
+//  (mlx-swift-lm / MLXLMCommon).  The ToolCallFormat is auto-detected by
+//  mlx-swift-lm's model-loading pipeline from config.json's `model_type`
+//  field and plumbed here via StreamAccumulator.accumulate(…toolCallFormat:).
+//  This means new model families (Gemma, LFM2, Mistral, GLM4, Kimi K2, …)
+//  are supported automatically as mlx-swift-lm adds parsers for them,
+//  without any changes required in osaurus.
+//
 
 import Foundation
 import MLXLMCommon
@@ -24,6 +32,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
     private let tokenizer: any Tokenizer
     private let stopSequences: [String]
     private let tools: [Tool]?
+    private let toolCallFormat: ToolCallFormat
+    private let toolsSpec: [[String: any Sendable]]?
     private let generationTask: Task<Void, Never>?
     private let onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
 
@@ -35,7 +45,14 @@ struct StreamAccumulator: AsyncSequence, Sendable {
     ///   - events: Raw `TokenGeneration` stream from `generateTokenTask`.
     ///   - tokenizer: Used to decode token IDs to text chunks.
     ///   - stopSequences: Hard-stop strings (e.g. EOS surrogates).
-    ///   - tools: Tool definitions for inline tool-call detection.
+    ///   - tools: Tool definitions for tool-call detection (used to decide
+    ///     whether to activate the processor at all).
+    ///   - toolCallFormat: The format the model uses to encode tool calls.
+    ///     Defaults to `.json` (Qwen2/3 `<tool_call>{json}</tool_call>` style).
+    ///     Should be sourced from `ModelConfiguration.toolCallFormat` as
+    ///     auto-detected by mlx-swift-lm's model-loading pipeline.
+    ///   - toolsSpec: Raw tool-spec dictionaries forwarded to `ToolCallProcessor`
+    ///     for type-aware argument coercion (e.g. string→int for LFM2/XML formats).
     ///   - generationTask: Backing generation task; cancelled on early exit.
     ///   - onGeneratedTokenIds: Called once when the stream finishes normally,
     ///     with the list of all generated token IDs.
@@ -44,6 +61,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         tokenizer: any Tokenizer,
         stopSequences: [String],
         tools: [Tool]?,
+        toolCallFormat: ToolCallFormat = .json,
+        toolsSpec: [[String: any Sendable]]? = nil,
         generationTask: Task<Void, Never>? = nil,
         onGeneratedTokenIds: (@Sendable ([Int]) -> Void)? = nil
     ) -> StreamAccumulator {
@@ -52,6 +71,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             tokenizer: tokenizer,
             stopSequences: stopSequences,
             tools: tools,
+            toolCallFormat: toolCallFormat,
+            toolsSpec: toolsSpec,
             generationTask: generationTask,
             onGeneratedTokenIds: onGeneratedTokenIds
         )
@@ -78,6 +99,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             tokenizer: tokenizer,
             stopSequences: stopSequences,
             tools: tools,
+            toolCallFormat: toolCallFormat,
+            toolsSpec: toolsSpec,
             generationTask: generationTask,
             onGeneratedTokenIds: onGeneratedTokenIds
         )
@@ -95,6 +118,9 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private let generationTask: Task<Void, Never>?
         private let onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
 
+        // Upstream tool-call processor — nil when no tools are present.
+        private let processor: ToolCallProcessor?
+
         // State
         private var rollingBuffer = ""
         private var bufferStartOffset = 0
@@ -102,20 +128,23 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private var generatedTokenIds: [Int] = []
         private var firstToken = true
         private var decodedSoFar = ""
-        private var braceDepth = 0
-        private var seenOpenBrace = false
         private var finished = false
         private var pendingEvents: [ModelRuntimeEvent] = []
 
         private var maxStopLen: Int
         private var shouldCheckStop: Bool
         private var hasTools: Bool
+        // Tracks how many tool calls the processor has emitted so far so we
+        // can detect when processChunk() produces a new one.
+        private var knownToolCallCount = 0
 
         init(
             eventIterator: AsyncStream<TokenGeneration>.AsyncIterator,
             tokenizer: any Tokenizer,
             stopSequences: [String],
             tools: [Tool]?,
+            toolCallFormat: ToolCallFormat,
+            toolsSpec: [[String: any Sendable]]?,
             generationTask: Task<Void, Never>?,
             onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
         ) {
@@ -128,6 +157,13 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             self.maxStopLen = stopSequences.map { $0.count }.max() ?? 0
             self.shouldCheckStop = !stopSequences.isEmpty
             self.hasTools = tools != nil && !(tools?.isEmpty ?? true)
+
+            // Only create the processor when tools are actually present.
+            if hasTools {
+                self.processor = ToolCallProcessor(format: toolCallFormat, tools: toolsSpec)
+            } else {
+                self.processor = nil
+            }
         }
 
         mutating func next() async -> ModelRuntimeEvent? {
@@ -196,29 +232,46 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                     bufferStartOffset += removeCount
                 }
 
-                // Tool detection.
-                if hasTools {
-                    for ch in token {
-                        if ch == "{" {
-                            braceDepth += 1; seenOpenBrace = true
-                        } else if ch == "}" {
-                            braceDepth = Swift.max(0, braceDepth - 1)
-                        }
+                // Tool-call detection: delegate entirely to ToolCallProcessor.
+                // processChunk() returns:
+                //   - The token text (or leading non-tool text) to emit normally, OR
+                //   - nil  when the processor is buffering a potential tool call
+                //          and nothing should be shown in the UI yet.
+                // When toolCalls.count grows, a complete tool call was parsed.
+                if let proc = processor {
+                    let displayText = proc.processChunk(token)
+                    let newCount = proc.toolCalls.count
+
+                    if newCount > knownToolCallCount {
+                        // A complete tool call was just parsed.
+                        let toolCall = proc.toolCalls[knownToolCallCount]
+                        knownToolCallCount = newCount
+                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                        generationTask?.cancel()
+                        finished = true
+                        let argsJSON = serializeArguments(toolCall.function.arguments)
+                        return .toolInvocation(name: toolCall.function.name, argsJSON: argsJSON)
                     }
-                    if seenOpenBrace && braceDepth == 0 {
-                        if let tools,
-                            let (name, argsJSON) = ToolDetection.detectInlineToolCall(in: rollingBuffer, tools: tools)
-                        {
-                            InferenceProgressManager.shared.prefillDidFinishAsync()
-                            generationTask?.cancel()
-                            finished = true
-                            return .toolInvocation(name: name, argsJSON: argsJSON)
+
+                    // If processChunk returned nil, the token is being buffered
+                    // as part of a potential tool call — don't emit it to the UI.
+                    guard let visible = displayText, !visible.isEmpty else { continue }
+
+                    // There's visible text to forward through the stop-sequence pipeline.
+                    let visibleToken = visible
+
+                    // Stop-sequence check on the visible portion.
+                    if shouldCheckStop {
+                        if let result = processWithStopCheck(token: visibleToken) {
+                            return result
                         }
-                        seenOpenBrace = false
+                        continue
                     }
+                    emittedCount += visibleToken.count
+                    return .tokens(visibleToken)
                 }
 
-                // Stop-sequence check.
+                // Stop-sequence check (no tools path).
                 if shouldCheckStop {
                     if let result = processWithStopCheck(token: token) {
                         return result
@@ -256,6 +309,28 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 generationTask?.cancel()
                 finished = true
 
+                // When a stop sequence marks the end of a tool-call block, call
+                // processEOS so ToolCallProcessor can extract any buffered call.
+                if let proc = processor {
+                    let stopEndIndex = stopRange.upperBound
+                    // Feed everything up to and including the stop tag into the processor.
+                    let tail = String(rollingBuffer[rollingBuffer.startIndex ..< stopEndIndex])
+                    // We already fed all prior tokens; only the remaining suffix needs feeding.
+                    // Since processor has already received all tokens up to (but not including)
+                    // the current `token`, and processWithStopCheck is called after processChunk
+                    // has returned the displayText, the stop tag arrived inside `token` itself.
+                    // Call processEOS to flush any buffered content.
+                    proc.processEOS()
+                    let newCount = proc.toolCalls.count
+                    if newCount > knownToolCallCount {
+                        let toolCall = proc.toolCalls[knownToolCallCount]
+                        knownToolCallCount = newCount
+                        let argsJSON = serializeArguments(toolCall.function.arguments)
+                        return .toolInvocation(name: toolCall.function.name, argsJSON: argsJSON)
+                    }
+                    _ = tail  // suppress unused-variable warning
+                }
+
                 if stopGlobalIndex > emittedCount {
                     let yieldGlobalStart = Swift.max(emittedCount, bufferStartOffset)
                     let yieldGlobalEnd = stopGlobalIndex
@@ -273,8 +348,10 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 return nil
             }
 
-            // Safe prefix emission: emit everything except the last (maxStopLen - 1) chars.
-            let safeEnd = rollingBuffer.count - (maxStopLen - 1)
+            // Safe prefix emission: emit everything except the last maxStopLen chars.
+            // Holding back exactly maxStopLen chars guarantees no complete stop sequence
+            // can appear in the emitted portion (since stop sequences are at most maxStopLen long).
+            let safeEnd = rollingBuffer.count - maxStopLen
             let safeGlobalEnd = bufferStartOffset + safeEnd
             if safeGlobalEnd > emittedCount && safeEnd > 0 {
                 let yieldStart = Swift.max(emittedCount, bufferStartOffset)
@@ -307,6 +384,25 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 return
             }
 
+            // On natural EOS, flush any buffered tool-call content.
+            // This handles formats like Mistral where the end tag is the EOS
+            // token itself (intercepted at the token-ID level, never delivered
+            // as text), so processChunk never saw the closing delimiter.
+            if let proc = processor {
+                proc.processEOS()
+                let newCount = proc.toolCalls.count
+                if newCount > knownToolCallCount {
+                    let toolCall = proc.toolCalls[knownToolCallCount]
+                    knownToolCallCount = newCount
+                    let argsJSON = serializeArguments(toolCall.function.arguments)
+                    pendingEvents.append(.toolInvocation(name: toolCall.function.name, argsJSON: argsJSON))
+                    // Don't flush stop-sequence buffer — tool call replaces it.
+                    InferenceProgressManager.shared.prefillDidFinishAsync()
+                    onGeneratedTokenIds?(generatedTokenIds)
+                    return
+                }
+            }
+
             // Flush buffered stop-sequence lookahead on natural finish.
             if shouldCheckStop && emittedCount < bufferStartOffset + rollingBuffer.count {
                 let yieldStart = Swift.max(emittedCount, bufferStartOffset)
@@ -329,6 +425,18 @@ struct StreamAccumulator: AsyncSequence, Sendable {
             InferenceProgressManager.shared.prefillDidFinishAsync()
             onGeneratedTokenIds?(generatedTokenIds)
         }
+
+        // MARK: - Argument serialisation
+
+        /// Converts `[String: JSONValue]` (upstream ToolCall argument type) to a
+        /// compact JSON string suitable for `ModelRuntimeEvent.toolInvocation(argsJSON:)`.
+        private func serializeArguments(_ arguments: [String: MLXLMCommon.JSONValue]) -> String {
+            let anyDict = arguments.mapValues { $0.anyValue }
+            guard let data = try? JSONSerialization.data(withJSONObject: anyDict),
+                  let json = String(data: data, encoding: .utf8)
+            else { return "{}" }
+            return json
+        }
     }
 
     // MARK: - Private init
@@ -338,6 +446,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         tokenizer: any Tokenizer,
         stopSequences: [String],
         tools: [Tool]?,
+        toolCallFormat: ToolCallFormat,
+        toolsSpec: [[String: any Sendable]]?,
         generationTask: Task<Void, Never>?,
         onGeneratedTokenIds: (@Sendable ([Int]) -> Void)?
     ) {
@@ -345,6 +455,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         self.tokenizer = tokenizer
         self.stopSequences = stopSequences
         self.tools = tools
+        self.toolCallFormat = toolCallFormat
+        self.toolsSpec = toolsSpec
         self.generationTask = generationTask
         self.onGeneratedTokenIds = onGeneratedTokenIds
     }

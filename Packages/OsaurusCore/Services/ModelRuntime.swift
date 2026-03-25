@@ -371,7 +371,7 @@ actor ModelRuntime {
         let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
         do {
-            let (stream, _, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+            let (stream, _, cache, newTokens, genTask, _) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: { messages },
                 buildToolsSpec: { tokenizerTools },
@@ -423,6 +423,8 @@ actor ModelRuntime {
         debugLog("[ModelRuntime] generateEventStream: start model=\(modelName)")
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         print("[ModelRuntime] generateEventStream: start model=\(modelName)")
+
+        let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
         debugLog("[ModelRuntime] generateEventStream: got config, loading container...")
         let holder = try await loadContainer(id: modelId, name: modelName)
@@ -485,6 +487,7 @@ actor ModelRuntime {
         var cache: [any KVCache]
         var newTokens: [Int]
         var genTask: Task<Void, Never>
+        var toolCallFormat: ToolCallFormat
 
         debugLog(
             "[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0) sessionId=\(sessionId?.prefix(8) ?? "nil")"
@@ -501,7 +504,7 @@ actor ModelRuntime {
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
         do {
-            (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: buildChat,
                 buildToolsSpec: buildTools,
@@ -523,7 +526,7 @@ actor ModelRuntime {
             // Re-signal for the retry prefill (still unknown count).
             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
             do {
-                (rawStream, tokenizer, cache, newTokens, genTask) = try await MLXGenerationEngine.prepareAndGenerate(
+                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = try await MLXGenerationEngine.prepareAndGenerate(
                     container: holder.container,
                     buildChat: buildChat,
                     buildToolsSpec: buildTools,
@@ -550,11 +553,14 @@ actor ModelRuntime {
         // can store promptTokens + generatedTokenIds as the complete cached token sequence.
         let capturedPromptTokens = newTokens
         nonisolated(unsafe) var generatedTokenIds: [Int] = []
+        let capturedToolsSpec = buildTools()
         let eventStream = StreamAccumulator.accumulate(
             events: rawStream,
             tokenizer: tokenizer,
-            stopSequences: stopSequences,
+            stopSequences: effectiveStopSequences,
             tools: tools,
+            toolCallFormat: toolCallFormat,
+            toolsSpec: capturedToolsSpec,
             generationTask: genTask,
             onGeneratedTokenIds: { ids in generatedTokenIds = ids }
         ).asAsyncThrowingStream()

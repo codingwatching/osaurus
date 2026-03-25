@@ -784,26 +784,26 @@ public actor RemoteProviderService: ToolCapableService {
                                 }
 
                                 // Fallback: detect inline tool calls in text content
-                                if !accumulatedContent.isEmpty, !tools.isEmpty,
-                                    let (name, args) = ToolDetection.detectInlineToolCall(
-                                        in: accumulatedContent,
-                                        tools: tools
-                                    )
-                                {
-                                    print("[Osaurus] Fallback: Detected inline tool call '\(name)' in text")
-                                    continuation.finish(
-                                        throwing: ServiceToolInvocation(
-                                            toolName: name,
-                                            jsonArguments: args,
-                                            toolCallId: nil
-                                        )
-                                    )
-                                    return
-                                }
+                if !accumulatedContent.isEmpty, !tools.isEmpty,
+                    let (name, args) = RemoteToolDetection.detectInlineToolCall(
+                        in: accumulatedContent,
+                        tools: tools
+                    )
+                {
+                    print("[Osaurus] Fallback: Detected inline tool call '\(name)' in text")
+                    continuation.finish(
+                        throwing: ServiceToolInvocation(
+                            toolName: name,
+                            jsonArguments: args,
+                            toolCallId: nil
+                        )
+                    )
+                    return
+                }
 
-                                continuation.finish()
-                                return
-                            }
+                continuation.finish()
+                return
+            }
 
                             if let jsonData = dataContent.data(using: .utf8) {
                                 do {
@@ -1139,7 +1139,7 @@ public actor RemoteProviderService: ToolCapableService {
 
                 // Fallback: detect inline tool calls in text content (e.g., Llama)
                 if !accumulatedContent.isEmpty, !tools.isEmpty,
-                    let (name, args) = ToolDetection.detectInlineToolCall(
+                    let (name, args) = RemoteToolDetection.detectInlineToolCall(
                         in: accumulatedContent,
                         tools: tools
                     )
@@ -2465,3 +2465,4 @@ extension RemoteProviderService {
         return "HTTP \(statusCode): Unknown error"
     }
 }
+
