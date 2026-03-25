@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Osaurus 0.15.1 Release Notes</title>
+<!doctype html><html><head><meta charset="utf-8"><title>Osaurus 0.15.2 Release Notes</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { color-scheme: light dark; }
@@ -31,15 +31,23 @@
     .footer a:hover { color: #79c0ff; }
   }
 </style></head><body>
-<h1>Osaurus <span class="version">0.15.1</span></h1>
+<h1>Osaurus <span class="version">0.15.2</span></h1>
 <h2>What's Changed</h2>
 <ul>
-<li>feat: Add MCPB bundle loading CLI command (#706) by @drernie</li>
-<li>Add InferenceProgressManager for tracking MLX prefill/generation progress (#709) by @vernonstinebaker</li>
-<li>Fix isValidCache to accept hybrid (Mamba+KVCacheSimple) model caches (#708) by @vernonstinebaker</li>
-<li>fix: plugins didn't load secrets for agents properly (#713) by @ritave</li>
+<li>Fix ChatEngine remote services isolation, bookmark fallback, and config trimming (#712) by @vernonstinebaker</li>
+<li>Rewrite StreamAccumulator as pull-based AsyncSequence for reliable local inference (#711) by @vernonstinebaker</li>
+<li>Add prefill progress bar and auto-expand thinking block during streaming (#710) by @vernonstinebaker</li>
+<li>added manual transcription stop mode (#701) by @RaajeevChandran</li>
 </ul>
-<p><strong>Full Changelog</strong>: https://github.com/osaurus-ai/osaurus/compare/0.15.0...0.15.1</p>
+<h2>🐛 Bug Fixes</h2>
+<ul>
+<li>fixed 400 issue with xAI API with missing tool params (#718) by @tpae</li>
+</ul>
+<h2>🧰 Maintenance</h2>
+<ul>
+<li>Orb Improvements (run from shader, check your CPU) (#719) by @tpae</li>
+</ul>
+<p><strong>Full Changelog</strong>: https://github.com/osaurus-ai/osaurus/compare/0.15.1...0.15.2</p>
 <div class="footer">
   <a href="https://github.com/osaurus-ai/osaurus/releases" target="_blank">View all releases on GitHub &#8594;</a>
 </div>
