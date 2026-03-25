@@ -360,7 +360,8 @@ actor ModelRuntime {
         toolChoice: ToolChoiceOption?,
         modelName: String,
         hash: String,
-        runtimeConfig: RuntimeConfig
+        runtimeConfig: RuntimeConfig,
+        background: Bool = false
     ) async {
         let tokenizerTools = Self.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         let messages: [MLXLMCommon.Chat.Message] = [
@@ -379,7 +380,12 @@ actor ModelRuntime {
                 existingCache: nil,
                 cachedTokens: nil
             )
-            activeGenerationTask = genTask
+            // Only track this as the active generation task when called from a foreground
+            // (non-background) context. When called from a fire-and-forget background Task,
+            // assigning activeGenerationTask here would overwrite the real user-visible
+            // generation task that was (or will be) set by generateEventStream, breaking
+            // model unloading and cancel-on-new-message.
+            if !background { activeGenerationTask = genTask }
 
             for await _ in stream {}
             await genTask.value
@@ -430,22 +436,26 @@ actor ModelRuntime {
             parameters.cacheHint
             ?? Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
 
-        // Lazy prefix cache: build and persist on the first query when no
-        // disk-cached prefix exists yet.  Subsequent queries (and future app
-        // launches) load the persisted cache from disk.
         if sessionId == nil,
             !holder.isVLM,
             !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
         {
-            await buildPrefixCache(
-                holder: holder,
-                systemContent: systemContent,
-                tools: tools,
-                toolChoice: toolChoice,
-                modelName: modelName,
-                hash: prefixHash,
-                runtimeConfig: cfg
-            )
+            // Execute the heavily blocking 1-token prefix-cache generation out-of-band via an 
+            // actor-isolated Task. This natively prevents the entire generation engine 
+            // from synchronously sitting dead waiting for Apple's MLX framework to execute and 
+            // serialize the system-prompt's initial AST block when booting up completely new chats.
+            Task {
+                await buildPrefixCache(
+                    holder: holder,
+                    systemContent: systemContent,
+                    tools: tools,
+                    toolChoice: toolChoice,
+                    modelName: modelName,
+                    hash: prefixHash,
+                    runtimeConfig: cfg,
+                    background: true
+                )
+            }
         }
 
         // Look up existing KV cache for this session, or fall back to a
