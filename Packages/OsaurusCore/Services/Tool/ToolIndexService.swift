@@ -23,8 +23,7 @@ public actor ToolIndexService {
             let sandbox = Set(all.filter { ToolRegistry.shared.isSandboxTool($0.name) }.map(\.name))
             let mcp = Set(all.filter { ToolRegistry.shared.isMCPTool($0.name) }.map(\.name))
             let excluded = ToolRegistry.shared.builtInToolNames
-                .union(ToolRegistry.workToolNames)
-                .union(ToolRegistry.folderToolNames)
+                .union(ToolRegistry.shared.runtimeManagedToolNames)
             return (all, sandbox, mcp, excluded)
         }
 

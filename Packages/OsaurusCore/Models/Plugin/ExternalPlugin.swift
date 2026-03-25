@@ -403,9 +403,9 @@ final class ExternalPlugin: @unchecked Sendable {
     /// since the function pointer is invalid once the dylib is unloaded.
     /// Uses a barrier to drain all in-flight concurrent work before destroying.
     func shutdown() {
-        guard !isShutDown else { return }
-        isShutDown = true
         invokeQueue.sync(flags: .barrier) {
+            guard !self.isShutDown else { return }
+            self.isShutDown = true
             self.api.destroy?(self.ctx)
         }
     }

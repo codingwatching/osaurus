@@ -75,6 +75,27 @@ public enum SystemPromptBuilder {
         }
     }
 
+    /// Append additional content to the end of the existing system message
+    /// (e.g. preflight context snippets).
+    static func appendSystemContent(
+        _ content: String,
+        into messages: inout [ChatMessage]
+    ) {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        if let idx = messages.firstIndex(where: { $0.role == "system" }),
+            let existing = messages[idx].content, !existing.isEmpty
+        {
+            messages[idx] = ChatMessage(
+                role: "system",
+                content: existing + "\n\n" + trimmed
+            )
+        } else {
+            messages.insert(ChatMessage(role: "system", content: trimmed), at: 0)
+        }
+    }
+
     // MARK: - Base Prompt with Default Identity
 
     /// Returns the effective base prompt, falling back to a minimal default

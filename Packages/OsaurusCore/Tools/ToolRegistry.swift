@@ -344,14 +344,14 @@ final class ToolRegistry: ObservableObject {
             builtInSandboxToolNames.insert(tool.name)
         } else {
             builtInSandboxToolNames.remove(tool.name)
-        }
-        Task {
-            await ToolIndexService.shared.onToolRegistered(
-                name: tool.name,
-                description: tool.description,
-                runtime: .sandbox,
-                tokenCount: Self.estimateTokenCount(tool)
-            )
+            Task {
+                await ToolIndexService.shared.onToolRegistered(
+                    name: tool.name,
+                    description: tool.description,
+                    runtime: .sandbox,
+                    tokenCount: Self.estimateTokenCount(tool)
+                )
+            }
         }
     }
 
@@ -489,7 +489,7 @@ final class ToolRegistry: ObservableObject {
     }
 
     /// Runtime-managed tools are execution infrastructure, always loaded when registered.
-    private var runtimeManagedToolNames: Set<String> {
+    var runtimeManagedToolNames: Set<String> {
         Self.workToolNames
             .union(Self.folderToolNames)
             .union(builtInSandboxToolNames)
