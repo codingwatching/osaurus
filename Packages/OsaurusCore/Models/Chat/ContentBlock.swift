@@ -238,7 +238,8 @@ extension ContentBlock {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        previousTurn: ChatTurn? = nil
+        previousTurn: ChatTurn? = nil,
+        thinkingEnabled: Bool = false
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
@@ -321,6 +322,21 @@ extension ContentBlock {
             if isStreaming && turn.contentIsEmpty && !turn.hasThinking
                 && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
             {
+                // During prefill (no content/thinking/tools yet), always show the typing
+                // indicator so the interface doesn't appear frozen.
+                // Only add the thinking placeholder when thinking is actually enabled for
+                // this model — non-thinking models don't need it.
+                if thinkingEnabled {
+                    turnBlocks.append(
+                        .thinking(
+                            turnId: turn.id,
+                            index: 0,
+                            text: "",
+                            isStreaming: true,
+                            position: .middle
+                        )
+                    )
+                }
                 turnBlocks.append(.typingIndicator(turnId: turn.id, position: .middle))
             }
 

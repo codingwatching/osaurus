@@ -281,10 +281,12 @@ extension MessageTableRepresentable {
             expandedStoreSubscription?.cancel()
             expandedStoreSubscription = store.objectWillChange
                 .sink { [weak self] _ in
-                    DispatchQueue.main.async { [weak self] in
+                    // Defer past the current run-loop tick so SwiftUI has processed
+                    // the state change and the hosting view has run its layout pass.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                         self?.noteVisibleRowHeightsChanged()
                     }
-                    // Re-measure after SwiftUI spring animation settles
+                    // Re-measure again after the spring animation settles.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
                         self?.noteVisibleRowHeightsChanged()
                     }
@@ -595,6 +597,12 @@ extension MessageTableRepresentable {
             streamingHeightWorkItem?.cancel()
             let work = DispatchWorkItem { [weak self] in
                 guard let self, let tv = self.tableView, row < tv.numberOfRows else { return }
+                // Force the hosting view to flush its SwiftUI layout cycle so the
+                // new intrinsic content size (driven by streamingContentHeight) is
+                // committed before we ask the table to re-measure the row.
+                if let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) {
+                    cell.layoutSubtreeIfNeeded()
+                }
                 self.noteRowHeightsChanged(IndexSet(integer: row))
 
                 if self.scrollAnchor.isPinnedToBottom {

@@ -32,7 +32,8 @@ final class BlockMemoizer {
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
         agentName: String,
-        version: Int = 0
+        version: Int = 0,
+        thinkingEnabled: Bool = false
     ) -> [ContentBlock] {
         let count = turns.count
         let lastId = turns.last?.id
@@ -71,7 +72,8 @@ final class BlockMemoizer {
                 at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                thinkingEnabled: thinkingEnabled
             )
         } else if canAppend {
             // Regenerate from the previous last turn onwards — it may have been
@@ -80,14 +82,16 @@ final class BlockMemoizer {
                 at: lastCount - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                thinkingEnabled: thinkingEnabled
             )
         } else {
             // Full rebuild (first load, reset, or structural change)
             blocks = ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                thinkingEnabled: thinkingEnabled
             )
         }
 
@@ -115,7 +119,8 @@ final class BlockMemoizer {
         at turnIndex: Int,
         in turns: [ChatTurn],
         streamingTurnId: UUID?,
-        agentName: String
+        agentName: String,
+        thinkingEnabled: Bool = false
     ) -> [ContentBlock] {
         let turnId = turns[turnIndex].id
 
@@ -125,7 +130,8 @@ final class BlockMemoizer {
             return ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                agentName: agentName,
+                thinkingEnabled: thinkingEnabled
             )
         }
 
@@ -141,7 +147,8 @@ final class BlockMemoizer {
             from: turnsToGenerate,
             streamingTurnId: streamingTurnId,
             agentName: agentName,
-            previousTurn: previousTurn
+            previousTurn: previousTurn,
+            thinkingEnabled: thinkingEnabled
         )
 
         return stablePrefix + freshBlocks
