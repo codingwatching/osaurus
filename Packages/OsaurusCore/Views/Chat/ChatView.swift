@@ -909,7 +909,9 @@ final class ChatSession: ObservableObject {
                         session_id: sessionId?.uuidString
                     )
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
-                    debugLog("send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")")
+                    debugLog(
+                        "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
+                    )
                     do {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0

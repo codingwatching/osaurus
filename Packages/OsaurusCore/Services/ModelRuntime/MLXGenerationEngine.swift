@@ -77,7 +77,8 @@ struct MLXGenerationEngine {
         runtime: RuntimeConfig,
         existingCache: [any KVCache]?,
         cachedTokens: [Int]?
-    ) async throws -> (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, [any KVCache], [Int], Task<Void, Never>) {
+    ) async throws -> (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, [any KVCache], [Int], Task<Void, Never>)
+    {
         let result: (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, CacheBox, [Int], Task<Void, Never>) =
             try await container.perform { (context: MLXLMCommon.ModelContext) in
                 let chat = preprocessImages(in: buildChat())
@@ -122,8 +123,12 @@ struct MLXGenerationEngine {
                 contextWithEOS.configuration.extraEOSTokens = existing.union(extra)
 
                 let newPromptTokens = fullLMInput.text.tokens.asArray(Int.self)
-                engineLog.info("prepareAndGenerate: promptTokens=\(newPromptTokens.count, privacy: .public) hasImage=\(fullLMInput.image != nil, privacy: .public)")
-                print("[MLXGenerationEngine] promptTokens=\(newPromptTokens.count) hasImage=\(fullLMInput.image != nil)")
+                engineLog.info(
+                    "prepareAndGenerate: promptTokens=\(newPromptTokens.count, privacy: .public) hasImage=\(fullLMInput.image != nil, privacy: .public)"
+                )
+                print(
+                    "[MLXGenerationEngine] promptTokens=\(newPromptTokens.count) hasImage=\(fullLMInput.image != nil)"
+                )
                 guard !newPromptTokens.isEmpty else {
                     throw NSError(
                         domain: "MLXGenerationEngine",
@@ -153,11 +158,15 @@ struct MLXGenerationEngine {
                     let loStart = max(0, divergeIdx - 2)
                     let loEnd = min(min(newPromptTokens.count, cachedTokens.count), divergeIdx + 4)
                     if loEnd > loStart {
-                        let newSlice = Array(newPromptTokens[loStart..<loEnd])
-                        let cachedSlice = Array(cachedTokens[loStart..<loEnd])
-                        debugLog("[MLXGenerationEngine] diverge@\(divergeIdx): new[\(loStart)..<\(loEnd)]=\(newSlice) cached[\(loStart)..<\(loEnd)]=\(cachedSlice)")
+                        let newSlice = Array(newPromptTokens[loStart ..< loEnd])
+                        let cachedSlice = Array(cachedTokens[loStart ..< loEnd])
+                        debugLog(
+                            "[MLXGenerationEngine] diverge@\(divergeIdx): new[\(loStart)..<\(loEnd)]=\(newSlice) cached[\(loStart)..<\(loEnd)]=\(cachedSlice)"
+                        )
                     }
-                    debugLog("[MLXGenerationEngine] cache reuse: newTokens=\(newPromptTokens.count) cachedTokens=\(cachedTokens.count) commonPrefix=\(commonPrefixLength) cacheOffset=\(cacheOffset) canTrim=\(canTrimPromptCache(existingCache))")
+                    debugLog(
+                        "[MLXGenerationEngine] cache reuse: newTokens=\(newPromptTokens.count) cachedTokens=\(cachedTokens.count) commonPrefix=\(commonPrefixLength) cacheOffset=\(cacheOffset) canTrim=\(canTrimPromptCache(existingCache))"
+                    )
                     if commonPrefixLength > cacheOffset {
                         commonPrefixLength = cacheOffset
                     }
@@ -198,12 +207,18 @@ struct MLXGenerationEngine {
                 } else {
                     // Cannot reuse cache (e.g. VLM with images, or no cached tokens)
                     cache = makePromptCache(model: context.model, parameters: parameters)
-                    debugLog("[MLXGenerationEngine] no existing cache, full prefill. existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? -1)")
+                    debugLog(
+                        "[MLXGenerationEngine] no existing cache, full prefill. existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? -1)"
+                    )
                 }
 
                 // withError converts MLX C++ errors (e.g. shape mismatches from stale caches) to catchable Swift errors
-                engineLog.info("prepareAndGenerate: constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0), privacy: .public)")
-                print("[MLXGenerationEngine] constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0))")
+                engineLog.info(
+                    "prepareAndGenerate: constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0), privacy: .public)"
+                )
+                print(
+                    "[MLXGenerationEngine] constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0))"
+                )
                 let iterator = try withError {
                     try TokenIterator(
                         input: effectiveInput,
@@ -213,7 +228,9 @@ struct MLXGenerationEngine {
                     )
                 }
                 let postPrefillOffset = effectiveCacheOffset(cache)
-                debugLog("[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset) cacheCount=\(cache.count) cacheTypes=\(cache.prefix(4).map { type(of: $0) })")
+                debugLog(
+                    "[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset) cacheCount=\(cache.count) cacheTypes=\(cache.prefix(4).map { type(of: $0) })"
+                )
                 print("[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset)")
                 let (stream, genTask) = MLXLMCommon.generateTokenTask(
                     promptTokenCount: newPromptTokens.count,

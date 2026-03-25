@@ -335,7 +335,8 @@ final class PluginHostContext: @unchecked Sendable {
         let options = InferenceOptions(from: rawJSON)
         let agentCtx = await resolveAgentContext(json: rawJSON)
         let enriched = enrichRequest(request, context: agentCtx, options: options)
-        let engine = ChatEngine(source: .plugin)
+        let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
+        let engine = ChatEngine(remoteServices: remoteServices, source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
         return PreparedInference(enriched: enriched, options: options, engine: engine, budgetManager: budgetMgr)
     }

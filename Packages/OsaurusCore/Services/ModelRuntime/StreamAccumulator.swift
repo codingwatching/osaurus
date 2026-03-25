@@ -180,7 +180,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
 
                 // Incremental decode.
                 let newDecoded = tokenizer.decode(tokens: generatedTokenIds)
-                let token = newDecoded.count > decodedSoFar.count
+                let token =
+                    newDecoded.count > decodedSoFar.count
                     ? String(newDecoded.dropFirst(decodedSoFar.count))
                     : ""
                 decodedSoFar = newDecoded
@@ -198,8 +199,11 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 // Tool detection.
                 if hasTools {
                     for ch in token {
-                        if ch == "{" { braceDepth += 1; seenOpenBrace = true }
-                        else if ch == "}" { braceDepth = Swift.max(0, braceDepth - 1) }
+                        if ch == "{" {
+                            braceDepth += 1; seenOpenBrace = true
+                        } else if ch == "}" {
+                            braceDepth = Swift.max(0, braceDepth - 1)
+                        }
                     }
                     if seenOpenBrace && braceDepth == 0 {
                         if let tools,
@@ -233,11 +237,12 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         /// Sets `finished = true` and populates `pendingEvents` for stop matches.
         private mutating func processWithStopCheck(token: String) -> ModelRuntimeEvent? {
             let checkLen = maxStopLen + token.count + 1
-            let searchStart = rollingBuffer.index(
-                rollingBuffer.endIndex,
-                offsetBy: -checkLen,
-                limitedBy: rollingBuffer.startIndex
-            ) ?? rollingBuffer.startIndex
+            let searchStart =
+                rollingBuffer.index(
+                    rollingBuffer.endIndex,
+                    offsetBy: -checkLen,
+                    limitedBy: rollingBuffer.startIndex
+                ) ?? rollingBuffer.startIndex
             let searchRange = searchStart ..< rollingBuffer.endIndex
 
             if let match = stopSequences.compactMap({ s -> (String, Range<String.Index>)? in
