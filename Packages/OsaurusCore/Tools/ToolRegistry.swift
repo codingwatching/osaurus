@@ -23,6 +23,8 @@ final class ToolRegistry: ObservableObject {
     private var builtInSandboxToolNames: Set<String> = []
     /// Tool names registered from remote MCP providers.
     private var mcpToolNames: Set<String> = []
+    /// Tool names registered from native dylib plugins.
+    private var pluginToolNames: Set<String> = []
 
     struct ToolPolicyInfo {
         let isPermissioned: Bool
@@ -102,13 +104,6 @@ final class ToolRegistry: ObservableObject {
 
     func register(_ tool: OsaurusTool) {
         toolsByName[tool.name] = tool
-        Task {
-            await ToolIndexService.shared.onToolRegistered(
-                name: tool.name,
-                description: tool.description,
-                tokenCount: Self.estimateTokenCount(tool)
-            )
-        }
     }
 
     private static func estimateTokenCount(_ tool: OsaurusTool) -> Int {
@@ -428,6 +423,27 @@ final class ToolRegistry: ObservableObject {
         mcpToolNames.contains(name)
     }
 
+    // MARK: - Plugin Tool Registration
+
+    /// Register a tool from a native dylib plugin.
+    func registerPluginTool(_ tool: OsaurusTool) {
+        toolsByName[tool.name] = tool
+        pluginToolNames.insert(tool.name)
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .native,
+                tokenCount: Self.estimateTokenCount(tool)
+            )
+        }
+    }
+
+    /// Whether a tool was registered from a native dylib plugin.
+    func isPluginTool(_ name: String) -> Bool {
+        pluginToolNames.contains(name)
+    }
+
     // MARK: - Unregister
     func unregister(names: [String]) {
         for n in names {
@@ -435,6 +451,7 @@ final class ToolRegistry: ObservableObject {
             sandboxToolNames.remove(n)
             builtInSandboxToolNames.remove(n)
             mcpToolNames.remove(n)
+            pluginToolNames.remove(n)
             Task { await ToolIndexService.shared.onToolUnregistered(name: n) }
         }
     }
