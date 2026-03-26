@@ -779,7 +779,7 @@ extension AppDelegate {
 
     @objc private func handleToolsReloadCommand(_ note: Notification) {
         Task { @MainActor in
-            await PluginManager.shared.loadAll()
+            await PluginManager.shared.loadAll(forceReload: true)
         }
     }
 }

@@ -45,6 +45,20 @@ public struct ToolsCreate {
         name.split(separator: "-").map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
     }
 
+    private static func createPluginConfig(dir: URL, pluginId: String, version: String) {
+        let config = """
+            {
+              "plugin_id": "\(pluginId)",
+              "version": "\(version)"
+            }
+            """
+        try? config.write(
+            to: dir.appendingPathComponent("osaurus-plugin.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
     private static func createWebPlaceholder(dir: URL, displayName: String) {
         let webDir = dir.appendingPathComponent("web", isDirectory: true)
         try? FileManager.default.createDirectory(at: webDir, withIntermediateDirectories: true)
@@ -375,6 +389,7 @@ public struct ToolsCreate {
             """
         try? pluginSwift.write(to: pluginDir.appendingPathComponent("Plugin.swift"), atomically: true, encoding: .utf8)
 
+        createPluginConfig(dir: dir, pluginId: "dev.example.\(name)", version: "0.1.0")
         createWebPlaceholder(dir: dir, displayName: displayName)
         createReleaseWorkflow(dir: dir)
 
@@ -385,36 +400,23 @@ public struct ToolsCreate {
 
             ## Development
 
-            1. Build:
-               ```bash
-               swift build -c release
-               cp .build/release/lib\(name).dylib ./lib\(name).dylib
-               ```
+            Start dev mode from the project root. This builds the plugin, installs it
+            into Osaurus, and watches for source changes with automatic rebuild + reload:
 
-            2. Extract manifest (to verify):
-               ```bash
-               osaurus manifest extract .build/release/lib\(name).dylib
-               ```
-               
-            3. Package (for distribution):
-               ```bash
-               osaurus tools package dev.example.\(name) 0.1.0
-               ```
-               This creates `dev.example.\(name)-0.1.0.zip` including the dylib,
-               `web/` directory, `README.md`, and any other companion files.
-               
-            4. Install locally:
-               ```bash
-               osaurus tools install ./dev.example.\(name)-0.1.0.zip
-               ```
+            ```bash
+            osaurus tools dev
+            ```
 
-            5. Dev mode (hot reload):
-               ```bash
-               osaurus tools dev dev.example.\(name)
-               # With web proxy for frontend HMR:
-               osaurus tools dev dev.example.\(name) --web-proxy http://localhost:5173
-               ```
-               
+            With frontend hot module replacement (HMR):
+
+            ```bash
+            # Terminal 1: start your frontend dev server
+            cd web && npm run dev
+
+            # Terminal 2: start plugin dev mode with web proxy
+            osaurus tools dev --web-proxy http://localhost:5173
+            ```
+
             ## Publishing
 
             This project includes a GitHub Actions workflow (`.github/workflows/release.yml`) that
@@ -426,17 +428,13 @@ public struct ToolsCreate {
             git push origin v0.1.0
             ```
 
-            For manual publishing:
+            For manual packaging and distribution:
 
-            1. Package it with the correct naming convention:
-               ```bash
-               osaurus tools package <plugin_id> <version>
-               ```
-               The zip file MUST be named `<plugin_id>-<version>.zip`.
-               
-            2. Host the zip file (e.g. GitHub Releases).
-
-            3. Create a registry entry JSON file for the central repository.
+            ```bash
+            swift build -c release
+            osaurus tools package dev.example.\(name) 0.1.0
+            osaurus tools install ./dev.example.\(name)-0.1.0.zip
+            ```
 
             ## Plugin Structure
 
@@ -452,12 +450,9 @@ public struct ToolsCreate {
             - **HTTP Client** - Outbound HTTP requests via `host.http_request`
             - **Task Events** - Lifecycle callbacks via `on_task_event`
 
-            ## Important Notes
-
-            - Plugin metadata is defined in `get_manifest()` in Plugin.swift
-            - The zip filename determines the plugin_id and version during installation
-            - Ensure the version in `get_manifest()` matches your zip filename
-            - CI extracts the manifest from the built dylib automatically
+            Plugin metadata is defined in `get_manifest()` in Plugin.swift.
+            The `osaurus-plugin.json` file at the project root stores the plugin_id
+            and version used by `osaurus tools dev`.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
@@ -745,6 +740,7 @@ public struct ToolsCreate {
             """
         try? libRs.write(to: srcDir.appendingPathComponent("lib.rs"), atomically: true, encoding: .utf8)
 
+        createPluginConfig(dir: dir, pluginId: "dev.example.\(name)", version: "0.1.0")
         createWebPlaceholder(dir: dir, displayName: displayName)
         createReleaseWorkflow(dir: dir)
 
@@ -755,33 +751,18 @@ public struct ToolsCreate {
 
             ## Development
 
-            1. Build:
-               ```bash
-               cargo build --release
-               cp target/release/lib\(moduleName).dylib ./lib\(moduleName).dylib
-               ```
+            Start dev mode from the project root. This builds the plugin, installs it
+            into Osaurus, and watches for source changes with automatic rebuild + reload:
 
-            2. Extract manifest (to verify):
-               ```bash
-               osaurus manifest extract target/release/lib\(moduleName).dylib
-               ```
+            ```bash
+            osaurus tools dev
+            ```
 
-            3. Package (for distribution):
-               ```bash
-               osaurus tools package dev.example.\(name) 0.1.0
-               ```
-               This creates `dev.example.\(name)-0.1.0.zip` including the dylib,
-               `web/` directory, `README.md`, and any other companion files.
+            With frontend hot module replacement (HMR):
 
-            4. Install locally:
-               ```bash
-               osaurus tools install ./dev.example.\(name)-0.1.0.zip
-               ```
-
-            5. Dev mode (hot reload):
-               ```bash
-               osaurus tools dev dev.example.\(name)
-               ```
+            ```bash
+            osaurus tools dev --web-proxy http://localhost:5173
+            ```
 
             ## Publishing
 
@@ -792,6 +773,14 @@ public struct ToolsCreate {
             ```bash
             git tag v0.1.0
             git push origin v0.1.0
+            ```
+
+            For manual packaging and distribution:
+
+            ```bash
+            cargo build --release
+            osaurus tools package dev.example.\(name) 0.1.0
+            osaurus tools install ./dev.example.\(name)-0.1.0.zip
             ```
 
             ## Plugin Structure
@@ -807,6 +796,10 @@ public struct ToolsCreate {
             - **Inference** - LLM completions and embeddings via `host.complete/embed`
             - **HTTP Client** - Outbound HTTP requests via `host.http_request`
             - **Task Events** - Lifecycle callbacks via `on_task_event`
+
+            Plugin metadata is defined in `plugin_get_manifest()` in `src/lib.rs`.
+            The `osaurus-plugin.json` file at the project root stores the plugin_id
+            and version used by `osaurus tools dev`.
             """
         try? readme.write(to: dir.appendingPathComponent("README.md"), atomically: true, encoding: .utf8)
 
@@ -1692,60 +1685,27 @@ public struct ToolsCreate {
 
             ## Testing Workflow
 
-            ### 1. Build the Plugin
+            ### 1. Start Dev Mode
 
-            \(isSwift ? """
-            ```bash
-            swift build -c release
-            ```
-            """ : """
-            ```bash
-            cargo build --release
-            ```
-            """)
-
-            ### 2. Verify Manifest
-
-            Extract and validate the manifest JSON:
+            From the project root, run:
 
             ```bash
-            osaurus manifest extract .build/release/lib\(name).dylib
+            osaurus tools dev
             ```
 
-            Check for:
-            - Valid JSON structure
-            - All tools have unique `id` values
-            - Parameters use valid JSON Schema
-            - Version follows semver (e.g., "0.1.0")
+            This builds the plugin, installs it into Osaurus, and watches for source changes.
+            Any edits to source files trigger an automatic rebuild and hot-reload.
 
-            ### 3. Test Locally
-
-            Package and install for local testing:
-
-            ```bash
-            # Package the plugin
-            osaurus tools package dev.example.\(name) 0.1.0
-
-            # Install locally
-            osaurus tools install ./dev.example.\(name)-0.1.0.zip
-
-            # Verify installation
-            osaurus tools verify
-            ```
-
-            ### 4. Test in Osaurus
+            ### 2. Test in Osaurus
 
             1. Open Osaurus app
             2. Go to Tools settings (Cmd+Shift+M → Tools)
             3. Verify your plugin appears
             4. Test each tool by asking the AI to use it
 
-            ### 5. Iterate
+            ### 3. Iterate
 
-            After making changes:
-            ```bash
-            swift build -c release && osaurus tools package dev.example.\(name) 0.1.0 && osaurus tools install ./dev.example.\(name)-0.1.0.zip
-            ```
+            Edit source files and save. `osaurus tools dev` automatically rebuilds and reloads.
 
             ## Best Practices
 
