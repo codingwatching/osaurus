@@ -1014,7 +1014,7 @@ final class ChatSession: ObservableObject {
                                     executionMode: executionMode
                                 )
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
-                                    await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                                    PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
                             }
 
