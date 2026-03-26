@@ -52,7 +52,7 @@ public actor ToolIndexService {
 
             do {
                 try ToolDatabase.shared.upsertEntry(entry)
-                await ToolSearchService.shared.indexEntry(entry)
+                await ToolSearchService.shared.indexEntry(entry, parameters: tool.parameters)
             } catch {
                 ToolIndexLogger.service.error("Failed to sync tool '\(tool.name)' to index: \(error)")
             }
@@ -85,7 +85,8 @@ public actor ToolIndexService {
         name: String,
         description: String,
         runtime: ToolRuntime = .builtin,
-        tokenCount: Int = 0
+        tokenCount: Int = 0,
+        parameters: JSONValue? = nil
     ) async {
         let entry = ToolIndexEntry(
             id: name,
@@ -98,7 +99,7 @@ public actor ToolIndexService {
         )
         do {
             try ToolDatabase.shared.upsertEntry(entry)
-            await ToolSearchService.shared.indexEntry(entry)
+            await ToolSearchService.shared.indexEntry(entry, parameters: parameters)
         } catch {
             ToolIndexLogger.service.error("Failed to index registered tool '\(name)': \(error)")
         }
@@ -115,7 +116,7 @@ public actor ToolIndexService {
     }
 
     /// Search the tool index.
-    public func search(query: String, topK: Int = 10) async -> [ToolIndexEntry] {
+    public func search(query: String, topK: Int = 10) async -> [ToolSearchResult] {
         await ToolSearchService.shared.search(query: query, topK: topK)
     }
 

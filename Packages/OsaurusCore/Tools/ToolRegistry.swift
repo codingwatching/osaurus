@@ -349,7 +349,8 @@ final class ToolRegistry: ObservableObject {
                     name: tool.name,
                     description: tool.description,
                     runtime: .sandbox,
-                    tokenCount: Self.estimateTokenCount(tool)
+                    tokenCount: Self.estimateTokenCount(tool),
+                    parameters: tool.parameters
                 )
             }
         }
@@ -413,7 +414,8 @@ final class ToolRegistry: ObservableObject {
                 name: tool.name,
                 description: tool.description,
                 runtime: .mcp,
-                tokenCount: Self.estimateTokenCount(tool)
+                tokenCount: Self.estimateTokenCount(tool),
+                parameters: tool.parameters
             )
         }
     }
@@ -442,7 +444,8 @@ final class ToolRegistry: ObservableObject {
                 name: tool.name,
                 description: tool.description,
                 runtime: .native,
-                tokenCount: Self.estimateTokenCount(tool)
+                tokenCount: Self.estimateTokenCount(tool),
+                parameters: tool.parameters
             )
         }
     }

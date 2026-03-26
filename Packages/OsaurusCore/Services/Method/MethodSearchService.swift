@@ -58,8 +58,9 @@ public actor MethodSearchService {
     public func indexMethod(_ method: Method) async {
         guard let db = vectorDB else { return }
         do {
+            let toolDescs = Self.loadToolDescriptions()
             let id = deterministicUUID(for: method.id)
-            let text = buildIndexText(for: method)
+            let text = buildIndexText(for: method, toolDescriptions: toolDescs)
             _ = try await db.addDocument(text: text, id: id)
         } catch {
             MethodLogger.search.error("Failed to index method \(method.id): \(error)")
@@ -93,15 +94,12 @@ public actor MethodSearchService {
                 threshold: threshold ?? Self.defaultSearchThreshold
             )
 
-            let idStrings = results.map { $0.id.uuidString }
             let scoreMap = Dictionary(
                 results.map { ($0.id.uuidString, Float($0.score)) },
                 uniquingKeysWith: { first, _ in first }
             )
 
-            let methodIds = idStrings.compactMap { uuidString -> String? in
-                reverseIdMap[uuidString]
-            }
+            let methodIds = results.compactMap { reverseIdMap[$0.id.uuidString] }
 
             let methods = try MethodDatabase.shared.loadMethodsByIds(methodIds)
             let scores = try methodIds.compactMap { try MethodDatabase.shared.loadScore(methodId: $0) }
@@ -130,10 +128,13 @@ public actor MethodSearchService {
         do {
             try await db.reset()
             reverseIdMap.removeAll()
+
+            let toolDescs = Self.loadToolDescriptions()
+
             let methods = try MethodDatabase.shared.loadAllMethods()
             for method in methods {
                 let id = deterministicUUID(for: method.id)
-                let text = buildIndexText(for: method)
+                let text = buildIndexText(for: method, toolDescriptions: toolDescs)
                 _ = try await db.addDocument(text: text, id: id)
                 reverseIdMap[id.uuidString] = method.id
             }
@@ -147,12 +148,27 @@ public actor MethodSearchService {
 
     private var reverseIdMap: [String: String] = [:]
 
-    private func buildIndexText(for method: Method) -> String {
+    private func buildIndexText(for method: Method, toolDescriptions: [String: String] = [:]) -> String {
         var text = method.description
         if let trigger = method.triggerText, !trigger.isEmpty {
             text += " " + trigger
         }
+        for toolName in method.toolsUsed {
+            text += " \(toolName)"
+            if let desc = toolDescriptions[toolName] {
+                text += " \(desc)"
+            }
+        }
         return text
+    }
+
+    private static func loadToolDescriptions() -> [String: String] {
+        do {
+            return try ToolDatabase.shared.loadAllEntries()
+                .reduce(into: [String: String]()) { $0[$1.name] = $1.description }
+        } catch {
+            return [:]
+        }
     }
 
     private func deterministicUUID(for methodId: String) -> UUID {
