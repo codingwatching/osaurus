@@ -49,6 +49,10 @@ final class PluginManager {
 
     private var tunnelObserver: AnyCancellable?
 
+    /// Serializes reload operations to prevent concurrent `performPluginScan`
+    /// calls from overwriting and deallocating each other's host contexts.
+    private var activeReloadTask: Task<Void, Never>?
+
     private init() {}
 
     /// Returns the load error for a specific plugin, if any
@@ -75,6 +79,29 @@ final class PluginManager {
     /// When `forceReload` is true, all existing plugins are unloaded first so every
     /// dylib is re-opened from disk (used by the `toolsReload` notification for hot-reload).
     func loadAll(forceReload: Bool = false) async {
+        if let task = activeReloadTask {
+            await task.value
+            if !forceReload { return }
+            // If another task was queued by a concurrent caller while we waited,
+            // just wait for that one to finish instead of starting a third.
+            if let newTask = activeReloadTask {
+                await newTask.value
+                return
+            }
+        }
+
+        let task = Task {
+            await _loadAll(forceReload: forceReload)
+        }
+        activeReloadTask = task
+        await task.value
+
+        if activeReloadTask == task {
+            activeReloadTask = nil
+        }
+    }
+
+    private func _loadAll(forceReload: Bool = false) async {
         Self.ensureToolsDirectoryExists()
 
         // Clear previous failures before scanning
@@ -86,9 +113,11 @@ final class PluginManager {
                 if !loaded.skills.isEmpty {
                     SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
+                await loaded.plugin.shutdown()
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
-                loaded.plugin.shutdown()
-                dlclose(loaded.handle)
+                // Do not dlclose here. The plugin is already unloaded from the
+                // registry, but dlclose on macOS ARM64 causes stale PAC
+                // signatures if the same path is ever reloaded.
             }
             plugins.removeAll()
             loadedPluginPaths.removeAll()
@@ -118,22 +147,15 @@ final class PluginManager {
             if currentPaths.contains(loaded.plugin.bundlePath) {
                 remaining.append(loaded)
             } else {
-                // Unregister tools
-                let names = loaded.tools.map { $0.name }
-                ToolRegistry.shared.unregister(names: names)
-
-                // Unregister plugin skills
+                ToolRegistry.shared.unregister(names: loaded.tools.map { $0.name })
                 if !loaded.skills.isEmpty {
                     SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
                 }
-
-                // Tear down v2 host context (closes DB, removes from registry)
+                await loaded.plugin.shutdown()
                 PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
-
-                // Destroy plugin context before unloading dylib
-                loaded.plugin.shutdown()
-
-                dlclose(loaded.handle)
+                // Do not dlclose here. The plugin is already unloaded from the
+                // registry, but dlclose on macOS ARM64 causes stale PAC
+                // signatures if the same path is ever reloaded.
                 loadedPluginPaths.remove(loaded.plugin.bundlePath)
                 removedSomething = true
             }

@@ -109,7 +109,7 @@ struct IndeterminateShimmerProgress: View {
         LinearGradient(
             colors: [.clear, color.opacity(0.6), color, color.opacity(0.6), .clear],
             startPoint: UnitPoint(x: phase - 0.4, y: 0.5),
-            endPoint:   UnitPoint(x: phase + 0.4, y: 0.5)
+            endPoint: UnitPoint(x: phase + 0.4, y: 0.5)
         )
     }
 
@@ -121,14 +121,14 @@ struct IndeterminateShimmerProgress: View {
                 RoundedRectangle(cornerRadius: height / 2)
                     .fill(gradient)
             )
-        .onAppear {
-            withAnimation(
-                .easeInOut(duration: 1.2)
-                    .repeatForever(autoreverses: true)
-            ) {
-                phase = 1
+            .onAppear {
+                withAnimation(
+                    .easeInOut(duration: 1.2)
+                        .repeatForever(autoreverses: true)
+                ) {
+                    phase = 1
+                }
             }
-        }
     }
 }
 

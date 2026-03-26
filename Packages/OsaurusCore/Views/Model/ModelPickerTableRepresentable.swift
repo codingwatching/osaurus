@@ -209,7 +209,7 @@ private final class PickerBadgeView: NSView {
     private var isCapsule = false
     private var bgNSColor: NSColor = .clear
     private var borderNSColor: NSColor = .clear
-    
+
     // cache to avoid redundant configuration
     private var cachedText: String?
     private var cachedFont: NSFont?
@@ -238,7 +238,7 @@ private final class PickerBadgeView: NSView {
     ) {
         // check if we need to update
         let needsUpdate = cachedText != text || cachedFont != font || cachedIsCapsule != isCapsule
-        
+
         if needsUpdate {
             label.stringValue = text
             label.font = font
@@ -246,7 +246,7 @@ private final class PickerBadgeView: NSView {
             cachedFont = font
             cachedIsCapsule = isCapsule
         }
-        
+
         label.textColor = textColor
 
         if let iconImage {
@@ -304,7 +304,7 @@ private final class GroupHeaderCellView: NSTableCellView {
 
     var rowId: String?
     private var onToggle: (() -> Void)?
-    
+
     // cache to avoid unnecessary updates
     private var cachedDisplayName: String?
     private var cachedCount: Int?
@@ -341,9 +341,10 @@ private final class GroupHeaderCellView: NSTableCellView {
         let isNewRow = rowId != id
         rowId = id
         self.onToggle = onToggle
-        
-        let contentChanged = isNewRow || cachedDisplayName != displayName || cachedCount != count || cachedIsExpanded != isExpanded
-        
+
+        let contentChanged =
+            isNewRow || cachedDisplayName != displayName || cachedCount != count || cachedIsExpanded != isExpanded
+
         if contentChanged {
             chevronView.image = chevronImage
             chevronView.contentTintColor = colors.tertiaryText
@@ -363,7 +364,7 @@ private final class GroupHeaderCellView: NSTableCellView {
                 borderColor: colors.borderAlpha01,
                 isCapsule: true
             )
-            
+
             cachedDisplayName = displayName
             cachedCount = count
             cachedIsExpanded = isExpanded
@@ -415,7 +416,7 @@ private final class ModelRowCellView: NSTableCellView {
     private var hasBadges = false
     private var hasVLM = false
     private var needsFullLayout = true
-    
+
     // cache previous values to avoid unnecessary updates
     private var cachedDisplayName: String?
     private var cachedIsSelected = false
@@ -474,13 +475,15 @@ private final class ModelRowCellView: NSTableCellView {
         let isNewRow = rowId != id
         rowId = id
         self.onSelect = onSelect
-        
+
         let newHasDesc = description?.isEmpty == false
         let newHasBadges = parameterCount != nil || quantization != nil
         let newHasVLM = isVLM
-        
+
         // only trigger full layout if structural content changed
-        let structureChanged = isNewRow || hasDesc != newHasDesc || hasBadges != newHasBadges || hasVLM != newHasVLM || cachedDisplayName != displayName
+        let structureChanged =
+            isNewRow || hasDesc != newHasDesc || hasBadges != newHasBadges || hasVLM != newHasVLM
+            || cachedDisplayName != displayName
         hasDesc = newHasDesc
         hasBadges = newHasBadges
         hasVLM = newHasVLM
@@ -566,7 +569,7 @@ private final class ModelRowCellView: NSTableCellView {
                 : nil
             CATransaction.commit()
         }
-        
+
         cachedIsSelected = isSelected
         cachedIsHovered = isHovered
         cachedIsHighlighted = isHighlighted
@@ -682,9 +685,9 @@ extension ModelPickerTableRepresentable {
 
         private var colors = ThemeColorCache(theme: LightTheme())
         private var lastThemeTypeId: ObjectIdentifier?
-        
+
         // MARK: Cached Fonts
-        
+
         private lazy var regularFont = NSFont.systemFont(ofSize: 12, weight: .medium)
         private lazy var semiboldFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
         private lazy var descFont = NSFont.systemFont(ofSize: 10)
@@ -859,17 +862,17 @@ extension ModelPickerTableRepresentable {
 
             let newIds = rows.map(\.id)
             let newLookup = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-            
+
             // use hash for quick comparison instead of full array equality
             let newHash = newIds.reduce(0) { $0 &+ $1.hashValue }
-            
+
             if newHash == lastRowIdsHash && newIds.count == rowIds.count {
                 // only update lookup and reconfigure visible cells
                 rowLookup = newLookup
                 reconfigureVisibleCells()
                 return
             }
-            
+
             lastRowIdsHash = newHash
             rowLookup = newLookup
             var seen = Set<String>()

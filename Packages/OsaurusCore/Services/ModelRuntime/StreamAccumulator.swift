@@ -433,7 +433,7 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private func serializeArguments(_ arguments: [String: MLXLMCommon.JSONValue]) -> String {
             let anyDict = arguments.mapValues { $0.anyValue }
             guard let data = try? JSONSerialization.data(withJSONObject: anyDict),
-                  let json = String(data: data, encoding: .utf8)
+                let json = String(data: data, encoding: .utf8)
             else { return "{}" }
             return json
         }

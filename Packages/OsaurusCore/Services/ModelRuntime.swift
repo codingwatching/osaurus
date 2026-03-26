@@ -442,9 +442,9 @@ actor ModelRuntime {
             !holder.isVLM,
             !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
         {
-            // Execute the heavily blocking 1-token prefix-cache generation out-of-band via an 
-            // actor-isolated Task. This natively prevents the entire generation engine 
-            // from synchronously sitting dead waiting for Apple's MLX framework to execute and 
+            // Execute the heavily blocking 1-token prefix-cache generation out-of-band via an
+            // actor-isolated Task. This natively prevents the entire generation engine
+            // from synchronously sitting dead waiting for Apple's MLX framework to execute and
             // serialize the system-prompt's initial AST block when booting up completely new chats.
             Task {
                 await buildPrefixCache(
@@ -504,15 +504,16 @@ actor ModelRuntime {
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
         do {
-            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = try await MLXGenerationEngine.prepareAndGenerate(
-                container: holder.container,
-                buildChat: buildChat,
-                buildToolsSpec: buildTools,
-                generation: parameters,
-                runtime: cfg,
-                existingCache: existingCache,
-                cachedTokens: cachedTokens
-            )
+            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) =
+                try await MLXGenerationEngine.prepareAndGenerate(
+                    container: holder.container,
+                    buildChat: buildChat,
+                    buildToolsSpec: buildTools,
+                    generation: parameters,
+                    runtime: cfg,
+                    existingCache: existingCache,
+                    cachedTokens: cachedTokens
+                )
         } catch {
             genLog.error(
                 "generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)"
@@ -526,15 +527,16 @@ actor ModelRuntime {
             // Re-signal for the retry prefill (still unknown count).
             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
             do {
-                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = try await MLXGenerationEngine.prepareAndGenerate(
-                    container: holder.container,
-                    buildChat: buildChat,
-                    buildToolsSpec: buildTools,
-                    generation: parameters,
-                    runtime: cfg,
-                    existingCache: nil,
-                    cachedTokens: nil
-                )
+                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) =
+                    try await MLXGenerationEngine.prepareAndGenerate(
+                        container: holder.container,
+                        buildChat: buildChat,
+                        buildToolsSpec: buildTools,
+                        generation: parameters,
+                        runtime: cfg,
+                        existingCache: nil,
+                        cachedTokens: nil
+                    )
             } catch {
                 InferenceProgressManager.shared.prefillDidFinishAsync()
                 throw error
