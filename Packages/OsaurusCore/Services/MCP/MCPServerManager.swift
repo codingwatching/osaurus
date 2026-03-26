@@ -102,7 +102,7 @@ final class MCPServerManager {
                 }
 
                 let result = try await ToolRegistry.shared.execute(name: params.name, argumentsJSON: argsJSON)
-                return .init(content: [.gitext(result)], isError: false)
+                return .init(content: [.text(result)], isError: false)
             } catch {
                 return .init(content: [.text(error.localizedDescription)], isError: true)
             }
