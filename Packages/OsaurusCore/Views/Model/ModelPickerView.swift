@@ -18,7 +18,23 @@ struct ModelPickerView: View {
     @State private var collapsedGroups: Set<String> = []
     @State private var cachedGroupedOptions: [(source: ModelPickerItem.Source, models: [ModelPickerItem])] = []
     @State private var cachedFlattenedRows: [ModelPickerRow] = []
+    @State private var cachedGroupRows: [String: [ModelPickerRow]] = [:]
     @Environment(\.theme) private var theme
+    
+    // MARK: - Test Mode
+    
+    #if DEBUG
+    // set USE_MOCK_MODELS=1 in Xcode scheme to automatically use mock data
+    private var useMockData: Bool {
+        ProcessInfo.processInfo.environment["USE_MOCK_MODELS"] == "1"
+    }
+    
+    private var displayOptions: [ModelPickerItem] {
+        useMockData ? ModelPickerItem.generateMockModels(count: 500) : options
+    }
+    #else
+    private var displayOptions: [ModelPickerItem] { options }
+    #endif
 
     // MARK: - Data
 
@@ -44,9 +60,13 @@ struct ModelPickerView: View {
         }
 
         var rows: [ModelPickerRow] = []
+        // preallocate to reduce allocations
+        rows.reserveCapacity(groups.count * 20)
+        
         for group in groups {
-            let expanded = !query.isEmpty || !collapsedGroups.contains(group.source.uniqueKey)
             let sourceKey = group.source.uniqueKey
+            let expanded = !query.isEmpty || !collapsedGroups.contains(sourceKey)
+            
             rows.append(
                 .groupHeader(
                     sourceKey: sourceKey,
@@ -56,10 +76,18 @@ struct ModelPickerView: View {
                     isExpanded: expanded
                 )
             )
+            
             if expanded {
-                for model in group.models {
-                    rows.append(
-                        .model(
+                // check if we have cached model rows for this group
+                let cacheKey = sourceKey + "_\(group.models.count)"
+                if let cachedModelRows = cachedGroupRows[cacheKey], query.isEmpty {
+                    rows.append(contentsOf: cachedModelRows)
+                } else {
+                    var modelRows: [ModelPickerRow] = []
+                    modelRows.reserveCapacity(group.models.count)
+                    
+                    for model in group.models {
+                        let row = ModelPickerRow.model(
                             id: model.id,
                             sourceKey: sourceKey,
                             displayName: model.displayName,
@@ -68,7 +96,14 @@ struct ModelPickerView: View {
                             quantization: model.quantization,
                             isVLM: model.isVLM
                         )
-                    )
+                        modelRows.append(row)
+                    }
+                    
+                    // cache model rows when not searching
+                    if query.isEmpty {
+                        cachedGroupRows[cacheKey] = modelRows
+                    }
+                    rows.append(contentsOf: modelRows)
                 }
             }
         }
@@ -82,6 +117,7 @@ struct ModelPickerView: View {
         } else {
             collapsedGroups.insert(key)
         }
+        // onChange(of: collapsedGroups) will trigger recomputeRows()
     }
 
     // MARK: - Body
@@ -99,19 +135,19 @@ struct ModelPickerView: View {
                 modelList
             }
         }
-        .frame(width: 380, height: min(CGFloat(options.count * 48 + 160), 480))
+        .frame(width: 380, height: min(CGFloat(displayOptions.count * 48 + 160), 480))
         .background(popoverBackground)
         .overlay(popoverBorder)
         .shadow(color: theme.shadowColor.opacity(0.15), radius: 12, x: 0, y: 6)
         .onAppear {
-            cachedGroupedOptions = options.groupedBySource()
+            cachedGroupedOptions = displayOptions.groupedBySource()
             recomputeRows()
         }
         .onDisappear {
             searchDebounceTask?.cancel()
         }
-        .onChange(of: options) { _, newOptions in
-            cachedGroupedOptions = newOptions.groupedBySource()
+        .onChange(of: displayOptions.count) { _, _ in
+            cachedGroupedOptions = displayOptions.groupedBySource()
             recomputeRows()
         }
         .onChange(of: searchText) { _, newValue in
@@ -127,7 +163,13 @@ struct ModelPickerView: View {
             }
         }
         .onChange(of: collapsedGroups) { _, _ in
-            recomputeRows()
+            // debounce to avoid multiple rapid toggles
+            searchDebounceTask?.cancel()
+            searchDebounceTask = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(50))
+                guard !Task.isCancelled else { return }
+                recomputeRows()
+            }
         }
     }
 
@@ -158,7 +200,7 @@ struct ModelPickerView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(theme.primaryText)
 
-            Text("\(options.count)")
+            Text("\(displayOptions.count)")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.secondaryText)
                 .padding(.horizontal, 8)
@@ -263,45 +305,66 @@ struct ModelPickerView: View {
     struct ModelPickerView_Previews: PreviewProvider {
         struct PreviewWrapper: View {
             @State private var selected: String? = "foundation"
+            @State private var useMockData = true
 
             var body: some View {
-                ModelPickerView(
-                    options: [
-                        .foundation(),
-                        ModelPickerItem(
-                            id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
-                            displayName: "Llama 3.2 3B Instruct 4bit",
-                            source: .local,
-                            parameterCount: "3B",
-                            quantization: "4-bit",
-                            isVLM: false
-                        ),
-                        ModelPickerItem(
-                            id: "mlx-community/Qwen2-VL-7B-Instruct-4bit",
-                            displayName: "Qwen2 VL 7B Instruct 4bit",
-                            source: .local,
-                            parameterCount: "7B",
-                            quantization: "4-bit",
-                            isVLM: true
-                        ),
-                        ModelPickerItem(
-                            id: "openai/gpt-4o",
-                            displayName: "gpt-4o",
-                            source: .remote(providerName: "OpenAI", providerId: UUID())
-                        ),
-                        ModelPickerItem(
-                            id: "openai/gpt-3.5-turbo",
-                            displayName: "gpt-3.5-turbo",
-                            source: .remote(providerName: "OpenAI", providerId: UUID())
-                        ),
-                    ],
-                    selectedModel: $selected,
-                    agentId: nil,
-                    onDismiss: {}
-                )
-                .padding()
+                VStack(spacing: 0) {
+                    // toggle for mock data
+                    HStack {
+                        Toggle("Use Mock Data (\(mockModels.count) models)", isOn: $useMockData)
+                            .padding()
+                        Spacer()
+                    }
+                    .background(Color.gray.opacity(0.1))
+                    
+                    ModelPickerView(
+                        options: useMockData ? mockModels : smallSampleModels,
+                        selectedModel: $selected,
+                        agentId: nil,
+                        onDismiss: {}
+                    )
+                    .padding()
+                }
                 .frame(width: 450, height: 550)
                 .background(Color.gray.opacity(0.2))
+            }
+            
+            // large mock dataset for performance testing
+            private var mockModels: [ModelPickerItem] {
+                ModelPickerItem.generateMockModels(count: 500)
+            }
+            
+            // small sample for quick testing
+            private var smallSampleModels: [ModelPickerItem] {
+                [
+                    .foundation(),
+                    ModelPickerItem(
+                        id: "mlx-community/Llama-3.2-3B-Instruct-4bit",
+                        displayName: "Llama 3.2 3B Instruct 4bit",
+                        source: .local,
+                        parameterCount: "3B",
+                        quantization: "4-bit",
+                        isVLM: false
+                    ),
+                    ModelPickerItem(
+                        id: "mlx-community/Qwen2-VL-7B-Instruct-4bit",
+                        displayName: "Qwen2 VL 7B Instruct 4bit",
+                        source: .local,
+                        parameterCount: "7B",
+                        quantization: "4-bit",
+                        isVLM: true
+                    ),
+                    ModelPickerItem(
+                        id: "openai/gpt-4o",
+                        displayName: "gpt-4o",
+                        source: .remote(providerName: "OpenAI", providerId: UUID())
+                    ),
+                    ModelPickerItem(
+                        id: "openai/gpt-3.5-turbo",
+                        displayName: "gpt-3.5-turbo",
+                        source: .remote(providerName: "OpenAI", providerId: UUID())
+                    ),
+                ]
             }
         }
 
