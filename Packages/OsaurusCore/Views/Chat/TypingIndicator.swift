@@ -53,7 +53,7 @@ struct TypingIndicator: View {
 
         return HStack(spacing: 8) {
             // Indeterminate shimmer bar
-            PrefillShimmerBar()
+            IndeterminateShimmerProgress(color: theme.accentColor, height: 4)
                 .frame(width: 80, height: 4)
 
             Text(label)
@@ -144,38 +144,6 @@ struct TypingIndicator: View {
     private func stopElapsedTimer() {
         elapsedTimer?.cancel()
         elapsedTimer = nil
-    }
-}
-
-// MARK: - Indeterminate shimmer bar for prefill
-
-private struct PrefillShimmerBar: View {
-    @State private var phase: CGFloat = 0
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(theme.tertiaryText.opacity(0.15))
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(
-                        LinearGradient(
-                            colors: [.clear, theme.accentColor.opacity(0.6), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: geo.size.width * 0.4)
-                    .offset(x: phase * (geo.size.width + geo.size.width * 0.4) - geo.size.width * 0.4)
-            }
-        }
-        .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
-                phase = 1
-            }
-        }
     }
 }
 
