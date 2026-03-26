@@ -209,6 +209,11 @@ private final class PickerBadgeView: NSView {
     private var isCapsule = false
     private var bgNSColor: NSColor = .clear
     private var borderNSColor: NSColor = .clear
+    
+    // cache to avoid redundant configuration
+    private var cachedText: String?
+    private var cachedFont: NSFont?
+    private var cachedIsCapsule: Bool?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -231,8 +236,17 @@ private final class PickerBadgeView: NSView {
         borderColor: NSColor = .clear,
         isCapsule: Bool = false
     ) {
-        label.stringValue = text
-        label.font = font
+        // check if we need to update
+        let needsUpdate = cachedText != text || cachedFont != font || cachedIsCapsule != isCapsule
+        
+        if needsUpdate {
+            label.stringValue = text
+            label.font = font
+            cachedText = text
+            cachedFont = font
+            cachedIsCapsule = isCapsule
+        }
+        
         label.textColor = textColor
 
         if let iconImage {
@@ -249,7 +263,9 @@ private final class PickerBadgeView: NSView {
         hPad = isCapsule ? 8 : 5
         vPad = isCapsule ? 3 : 2
 
-        sizeToFitContent()
+        if needsUpdate {
+            sizeToFitContent()
+        }
 
         layer?.backgroundColor = bgNSColor.cgColor
         layer?.cornerRadius = isCapsule ? frame.height / 2 : 4
@@ -288,6 +304,11 @@ private final class GroupHeaderCellView: NSTableCellView {
 
     var rowId: String?
     private var onToggle: (() -> Void)?
+    
+    // cache to avoid unnecessary updates
+    private var cachedDisplayName: String?
+    private var cachedCount: Int?
+    private var cachedIsExpanded: Bool?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -313,31 +334,42 @@ private final class GroupHeaderCellView: NSTableCellView {
         colors: ThemeColorCache,
         chevronImage: NSImage?,
         sourceIcon: NSImage?,
+        headerFont: NSFont,
+        countFont: NSFont,
         onToggle: @escaping () -> Void
     ) {
+        let isNewRow = rowId != id
         rowId = id
         self.onToggle = onToggle
+        
+        let contentChanged = isNewRow || cachedDisplayName != displayName || cachedCount != count || cachedIsExpanded != isExpanded
+        
+        if contentChanged {
+            chevronView.image = chevronImage
+            chevronView.contentTintColor = colors.tertiaryText
 
-        chevronView.image = chevronImage
-        chevronView.contentTintColor = colors.tertiaryText
+            sourceIconView.image = sourceIcon
+            sourceIconView.contentTintColor = colors.secondaryText
 
-        sourceIconView.image = sourceIcon
-        sourceIconView.contentTintColor = colors.secondaryText
+            nameLabel.stringValue = displayName
+            nameLabel.font = headerFont
+            nameLabel.textColor = colors.primaryText
 
-        nameLabel.stringValue = displayName
-        nameLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        nameLabel.textColor = colors.primaryText
+            countBadge.configure(
+                text: "\(count)",
+                font: countFont,
+                textColor: colors.tertiaryText,
+                bgColor: colors.secondaryBackground,
+                borderColor: colors.borderAlpha01,
+                isCapsule: true
+            )
+            
+            cachedDisplayName = displayName
+            cachedCount = count
+            cachedIsExpanded = isExpanded
 
-        countBadge.configure(
-            text: "\(count)",
-            font: .systemFont(ofSize: 10, weight: .medium),
-            textColor: colors.tertiaryText,
-            bgColor: colors.secondaryBackground,
-            borderColor: colors.borderAlpha01,
-            isCapsule: true
-        )
-
-        needsLayout = true
+            needsLayout = true
+        }
     }
 
     override func layout() {
@@ -360,6 +392,9 @@ private final class GroupHeaderCellView: NSTableCellView {
         super.prepareForReuse()
         rowId = nil
         onToggle = nil
+        cachedDisplayName = nil
+        cachedCount = nil
+        cachedIsExpanded = nil
     }
 }
 
@@ -379,6 +414,13 @@ private final class ModelRowCellView: NSTableCellView {
     private var hasDesc = false
     private var hasBadges = false
     private var hasVLM = false
+    private var needsFullLayout = true
+    
+    // cache previous values to avoid unnecessary updates
+    private var cachedDisplayName: String?
+    private var cachedIsSelected = false
+    private var cachedIsHovered = false
+    private var cachedIsHighlighted = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -422,81 +464,117 @@ private final class ModelRowCellView: NSTableCellView {
         colors: ThemeColorCache,
         checkmarkImage: NSImage?,
         eyeImage: NSImage?,
+        regularFont: NSFont,
+        semiboldFont: NSFont,
+        descFont: NSFont,
+        badgeFont: NSFont,
+        badgeFontSmall: NSFont,
         onSelect: @escaping () -> Void
     ) {
+        let isNewRow = rowId != id
         rowId = id
         self.onSelect = onSelect
-        hasDesc = description?.isEmpty == false
-        hasBadges = parameterCount != nil || quantization != nil
-        hasVLM = isVLM
+        
+        let newHasDesc = description?.isEmpty == false
+        let newHasBadges = parameterCount != nil || quantization != nil
+        let newHasVLM = isVLM
+        
+        // only trigger full layout if structural content changed
+        let structureChanged = isNewRow || hasDesc != newHasDesc || hasBadges != newHasBadges || hasVLM != newHasVLM || cachedDisplayName != displayName
+        hasDesc = newHasDesc
+        hasBadges = newHasBadges
+        hasVLM = newHasVLM
+        cachedDisplayName = displayName
 
-        nameLabel.stringValue = displayName
-        nameLabel.font = .systemFont(ofSize: 12, weight: isSelected ? .semibold : .medium)
-        nameLabel.textColor = isSelected ? colors.primaryText : colors.secondaryText
+        if structureChanged || cachedIsSelected != isSelected {
+            nameLabel.stringValue = displayName
+            nameLabel.font = isSelected ? semiboldFont : regularFont
+            nameLabel.textColor = isSelected ? colors.primaryText : colors.secondaryText
+        }
 
         if isVLM {
-            vlmBadge.configure(
-                text: "Vision",
-                iconImage: eyeImage,
-                font: .systemFont(ofSize: 8, weight: .medium),
-                textColor: colors.accentColor,
-                bgColor: colors.accentAlpha012,
-                borderColor: colors.accentAlpha015,
-                isCapsule: true
-            )
+            if structureChanged {
+                vlmBadge.configure(
+                    text: "Vision",
+                    iconImage: eyeImage,
+                    font: badgeFontSmall,
+                    textColor: colors.accentColor,
+                    bgColor: colors.accentAlpha012,
+                    borderColor: colors.accentAlpha015,
+                    isCapsule: true
+                )
+            }
             vlmBadge.isHidden = false
         } else {
             vlmBadge.isHidden = true
         }
 
         if let desc = description, !desc.isEmpty {
-            descLabel.stringValue = desc
-            descLabel.font = .systemFont(ofSize: 10)
-            descLabel.textColor = colors.tertiaryText
+            if structureChanged {
+                descLabel.stringValue = desc
+                descLabel.font = descFont
+                descLabel.textColor = colors.tertiaryText
+            }
             descLabel.isHidden = false
         } else {
             descLabel.isHidden = true
         }
 
         if let params = parameterCount {
-            paramBadge.configure(
-                text: params,
-                textColor: colors.accentAlpha09,
-                bgColor: colors.accentAlpha012
-            )
+            if structureChanged {
+                paramBadge.configure(
+                    text: params,
+                    textColor: colors.accentAlpha09,
+                    bgColor: colors.accentAlpha012
+                )
+            }
             paramBadge.isHidden = false
         } else {
             paramBadge.isHidden = true
         }
 
         if let quant = quantization {
-            quantBadge.configure(
-                text: quant,
-                textColor: colors.secondaryTextAlpha09,
-                bgColor: colors.secondaryTextAlpha012
-            )
+            if structureChanged {
+                quantBadge.configure(
+                    text: quant,
+                    textColor: colors.secondaryTextAlpha09,
+                    bgColor: colors.secondaryTextAlpha012
+                )
+            }
             quantBadge.isHidden = false
         } else {
             quantBadge.isHidden = true
         }
 
         if isSelected {
-            checkmarkView.image = checkmarkImage
-            checkmarkView.contentTintColor = colors.accentColor
+            if cachedIsSelected != isSelected {
+                checkmarkView.image = checkmarkImage
+                checkmarkView.contentTintColor = colors.accentColor
+            }
             checkmarkView.isHidden = false
         } else {
             checkmarkView.isHidden = true
         }
 
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        bgLayer.backgroundColor =
-            (isHovered || isHighlighted || isSelected)
-            ? colors.hoverBg.cgColor
-            : nil
-        CATransaction.commit()
+        // only update background if hover/selection state changed
+        if cachedIsHovered != isHovered || cachedIsHighlighted != isHighlighted || cachedIsSelected != isSelected {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            bgLayer.backgroundColor =
+                (isHovered || isHighlighted || isSelected)
+                ? colors.hoverBg.cgColor
+                : nil
+            CATransaction.commit()
+        }
+        
+        cachedIsSelected = isSelected
+        cachedIsHovered = isHovered
+        cachedIsHighlighted = isHighlighted
 
-        needsLayout = true
+        // only trigger layout if structure changed
+        if structureChanged {
+            needsLayout = true
+        }
     }
 
     override func layout() {
@@ -563,6 +641,11 @@ private final class ModelRowCellView: NSTableCellView {
         paramBadge.isHidden = true
         quantBadge.isHidden = true
         checkmarkView.isHidden = true
+        cachedDisplayName = nil
+        cachedIsSelected = false
+        cachedIsHovered = false
+        cachedIsHighlighted = false
+        needsFullLayout = true
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         bgLayer.backgroundColor = nil
@@ -599,6 +682,16 @@ extension ModelPickerTableRepresentable {
 
         private var colors = ThemeColorCache(theme: LightTheme())
         private var lastThemeTypeId: ObjectIdentifier?
+        
+        // MARK: Cached Fonts
+        
+        private lazy var regularFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+        private lazy var semiboldFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        private lazy var descFont = NSFont.systemFont(ofSize: 10)
+        private lazy var badgeFont = NSFont.systemFont(ofSize: 9, weight: .medium)
+        private lazy var badgeFontSmall = NSFont.systemFont(ofSize: 8, weight: .medium)
+        private lazy var headerFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        private lazy var countFont = NSFont.systemFont(ofSize: 10, weight: .medium)
 
         private lazy var chevronDown: NSImage? = NSImage(
             systemSymbolName: "chevron.down",
@@ -753,6 +846,7 @@ extension ModelPickerTableRepresentable {
         private var lastRowCount = 0
         private var lastFirstRowId: String?
         private var lastLastRowId: String?
+        private var lastRowIdsHash = 0
 
         func applyRows(_ rows: [ModelPickerRow]) {
             let count = rows.count
@@ -765,13 +859,18 @@ extension ModelPickerTableRepresentable {
 
             let newIds = rows.map(\.id)
             let newLookup = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-
-            if newIds == rowIds {
+            
+            // use hash for quick comparison instead of full array equality
+            let newHash = newIds.reduce(0) { $0 &+ $1.hashValue }
+            
+            if newHash == lastRowIdsHash && newIds.count == rowIds.count {
+                // only update lookup and reconfigure visible cells
                 rowLookup = newLookup
                 reconfigureVisibleCells()
                 return
             }
-
+            
+            lastRowIdsHash = newHash
             rowLookup = newLookup
             var seen = Set<String>()
             rowIds = newIds.filter { seen.insert($0).inserted }
@@ -862,6 +961,8 @@ extension ModelPickerTableRepresentable {
                 colors: colors,
                 chevronImage: isExpanded ? chevronDown : chevronRight,
                 sourceIcon: sourceIcon(for: sourceType),
+                headerFont: headerFont,
+                countFont: countFont,
                 onToggle: { [weak self] in self?.onToggleGroup?(sourceKey) }
             )
         }
@@ -887,6 +988,11 @@ extension ModelPickerTableRepresentable {
                 colors: colors,
                 checkmarkImage: checkmarkImage,
                 eyeImage: eyeImage,
+                regularFont: regularFont,
+                semiboldFont: semiboldFont,
+                descFont: descFont,
+                badgeFont: badgeFont,
+                badgeFontSmall: badgeFontSmall,
                 onSelect: { [weak self] in self?.onSelectModel?(id) }
             )
         }
