@@ -2,41 +2,32 @@
 
 This document describes how to build external plugins for Osaurus using the Generic C ABI. Plugins are distributed as a `.dylib` in a zip file with a specific naming convention.
 
-## TL;DR (Swift)
+## TL;DR
 
-1. Scaffold a Swift plugin:
+1. Scaffold a new plugin:
 
 ```bash
-osaurus tools create MyPlugin --language swift
+osaurus tools create MyPlugin              # Swift (default)
+osaurus tools create MyPlugin --language rust   # Rust
 ```
 
-2. Build and package:
+2. Build, install, and start developing:
 
 ```bash
 cd MyPlugin
-swift build -c release
-cp .build/release/libMyPlugin.dylib ./libMyPlugin.dylib
-
-# Sign the dylib (required for distribution)
-codesign --force --options runtime --timestamp \
-  --sign "Developer ID Application: Your Name (TEAMID)" ./libMyPlugin.dylib
-
-# Sign the zip with minisign (required for distribution)
-minisign -S -s minisign.key -m dev.example.MyPlugin-0.1.0.zip
-
-# Package with the naming convention: <plugin_id>-<version>.zip
-osaurus tools package dev.example.MyPlugin 0.1.0
+osaurus tools dev
 ```
 
-3. Install:
+That's it. `osaurus tools dev` will:
 
-```bash
-# Install from the packaged zip (filename determines plugin_id and version)
-osaurus tools install ./dev.example.MyPlugin-0.1.0.zip
-```
+- Detect the project language (Swift or Rust) from the build files
+- Build the plugin in release mode
+- Install the dylib, `SKILL.md`, `README.md`, and `web/` assets into `~/.osaurus/Tools/`
+- Launch Osaurus if it isn't already running
+- Send a reload signal so the plugin appears immediately
+- Watch for source file changes and automatically rebuild + hot-reload
 
-The plugin will be unpacked into:
-`~/.osaurus/Tools/<plugin_id>/<version>/`
+> **Publishing:** Code signing and minisign signatures are only required when distributing plugins through the central registry. See [Code Signing](#code-signing) and [Artifact Signing](#artifact-signing-minisign--required) below for details.
 
 ## Packaging Convention
 
@@ -1820,18 +1811,35 @@ The plugin detail view shows tabbed content:
 
 ## Developer Workflow
 
-### Hot Reload
+### Project-Root Dev Mode (Recommended)
 
-The `osaurus tools dev` command watches for `.dylib` changes and sends a reload signal to the Osaurus app:
+Run `osaurus tools dev` from your plugin's project root. This is the primary development workflow:
 
 ```bash
-osaurus tools dev com.acme.slack
+cd MyPlugin
+osaurus tools dev
 ```
 
-Recompile your plugin and it reloads without restarting the server:
+The command reads `osaurus-plugin.json` (created by `osaurus tools create`) to determine the plugin ID and version, then:
 
-```bash
-swift build -c release && cp .build/release/libSlack.dylib ~/.osaurus/Tools/com.acme.slack/1.0.0/
+1. **Detects the language** — looks for `Package.swift` (Swift) or `Cargo.toml` (Rust)
+2. **Builds** — runs `swift build -c release` or `cargo build --release`
+3. **Installs** — copies the dylib, `SKILL.md`, `README.md`, `CHANGELOG.md`, and `web/` directory into `~/.osaurus/Tools/<plugin_id>/<version>/`
+4. **Launches Osaurus** — starts the app if it isn't already running
+5. **Sends a reload signal** — the plugin appears in Osaurus immediately
+6. **Watches for changes** — monitors `Sources/` (Swift) or `src/` (Rust) and asset files; on change, rebuilds and hot-reloads automatically
+
+No signing keys, no manual packaging, no manual installation steps.
+
+#### The `osaurus-plugin.json` file
+
+Scaffolded projects include this file at the project root:
+
+```json
+{
+  "plugin_id": "dev.example.MyPlugin",
+  "version": "0.1.0"
+}
 ```
 
 ### Frontend Dev Proxy
@@ -1840,21 +1848,32 @@ For plugins with a `web/` frontend, use `--web-proxy` to proxy static file reque
 
 ```bash
 # Terminal 1: Frontend dev server
-cd my-plugin/frontend
+cd my-plugin/web
 npm run dev   # → http://localhost:5173
 
 # Terminal 2: Plugin dev mode with proxy
-osaurus tools dev com.acme.dashboard --web-proxy http://localhost:5173
+cd my-plugin
+osaurus tools dev --web-proxy http://localhost:5173
 ```
 
 When the proxy is active:
 
-- Requests to `/plugins/com.acme.dashboard/app/*` are proxied to `http://localhost:5173/*`
-- Requests to `/plugins/com.acme.dashboard/api/*` still hit the dylib
+- Requests to `/plugins/<plugin_id>/app/*` are proxied to your local dev server
+- Requests to `/plugins/<plugin_id>/api/*` still hit the dylib
 - Osaurus injects `window.__osaurus` context into the proxied HTML
 - CORS headers are handled automatically
 
-This gives you hot module replacement (HMR) and instant feedback during frontend development. The proxy configuration is stored in a `dev-proxy.json` file in the plugin directory.
+This gives you hot module replacement (HMR) and instant feedback during frontend development.
+
+### Legacy Watch Mode
+
+For advanced use, you can watch an already-installed plugin by passing its ID directly:
+
+```bash
+osaurus tools dev com.acme.slack
+```
+
+This watches the installed dylib at `~/.osaurus/Tools/com.acme.slack/` for changes and sends reload signals when it is modified. You are responsible for building and copying the dylib yourself.
 
 ### Manual Install (Development Only)
 

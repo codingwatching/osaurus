@@ -426,9 +426,17 @@ final class ToolRegistry: ObservableObject {
     // MARK: - Plugin Tool Registration
 
     /// Register a tool from a native dylib plugin.
+    /// Auto-enables the tool on first registration so it is immediately usable;
+    /// subsequent registrations (e.g. hot-reload) preserve the user's choice.
     func registerPluginTool(_ tool: OsaurusTool) {
+        let firstTime =
+            toolsByName[tool.name] == nil
+            && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
         pluginToolNames.insert(tool.name)
+        if firstTime {
+            setEnabled(true, for: tool.name)
+        }
         Task {
             await ToolIndexService.shared.onToolRegistered(
                 name: tool.name,

@@ -72,11 +72,27 @@ final class PluginManager {
 
     /// Scans the tools directory and loads all plugins found.
     /// Heavy work (filesystem scanning, SHA256 verification, dlopen) runs on a background thread.
-    func loadAll() async {
+    /// When `forceReload` is true, all existing plugins are unloaded first so every
+    /// dylib is re-opened from disk (used by the `toolsReload` notification for hot-reload).
+    func loadAll(forceReload: Bool = false) async {
         Self.ensureToolsDirectoryExists()
 
         // Clear previous failures before scanning
         failedPlugins.removeAll()
+
+        if forceReload {
+            for loaded in plugins {
+                ToolRegistry.shared.unregister(names: loaded.tools.map { $0.name })
+                if !loaded.skills.isEmpty {
+                    SkillManager.shared.unregisterPluginSkills(pluginId: loaded.plugin.id)
+                }
+                PluginHostContext.getContext(for: loaded.plugin.id)?.teardown()
+                loaded.plugin.shutdown()
+                dlclose(loaded.handle)
+            }
+            plugins.removeAll()
+            loadedPluginPaths.removeAll()
+        }
 
         // Capture current state needed for background work
         let alreadyLoadedPaths = self.loadedPluginPaths
@@ -713,43 +729,42 @@ final class PluginManager {
     }
 
     /// Verifies a dylib's integrity, code signature (release only), and user consent
-    /// before allowing it to load. DEBUG builds skip receipt requirement for dev plugins.
+    /// before allowing it to load. DEBUG builds skip all verification for dev convenience.
     nonisolated private static func verifyDylibBeforeLoadWithError(_ dylibURL: URL) -> Result<Void, PluginLoadError> {
-        let fm = FileManager.default
-        let versionDir = dylibURL.deletingLastPathComponent()
-        let receiptURL = versionDir.appendingPathComponent("receipt.json", isDirectory: false)
-
         #if DEBUG
-            guard fm.fileExists(atPath: receiptURL.path) else { return .success(()) }
+            return .success(())
         #else
+            let fm = FileManager.default
+            let versionDir = dylibURL.deletingLastPathComponent()
+            let receiptURL = versionDir.appendingPathComponent("receipt.json", isDirectory: false)
+
             guard fm.fileExists(atPath: receiptURL.path) else {
                 return .failure(PluginLoadError(message: "Missing receipt.json - plugin cannot be verified"))
             }
-        #endif
 
-        guard let data = try? Data(contentsOf: receiptURL) else {
-            return .failure(PluginLoadError(message: "Failed to read receipt.json"))
-        }
+            guard let data = try? Data(contentsOf: receiptURL) else {
+                return .failure(PluginLoadError(message: "Failed to read receipt.json"))
+            }
 
-        guard let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: data) else {
-            return .failure(PluginLoadError(message: "Failed to parse receipt.json"))
-        }
+            guard let receipt = try? JSONDecoder().decode(PluginReceipt.self, from: data) else {
+                return .failure(PluginLoadError(message: "Failed to parse receipt.json"))
+            }
 
-        guard let dylibData = try? Data(contentsOf: dylibURL) else {
-            return .failure(PluginLoadError(message: "Failed to read plugin library file"))
-        }
+            guard let dylibData = try? Data(contentsOf: dylibURL) else {
+                return .failure(PluginLoadError(message: "Failed to read plugin library file"))
+            }
 
-        let digest = CryptoKit.SHA256.hash(data: dylibData)
-        let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
+            let digest = CryptoKit.SHA256.hash(data: dylibData)
+            let sha = Data(digest).map { String(format: "%02x", $0) }.joined()
 
-        if sha.lowercased() != receipt.dylib_sha256.lowercased() {
-            return .failure(
-                PluginLoadError(message: "Checksum verification failed - plugin file may be corrupted or tampered with")
-            )
-        }
+            if sha.lowercased() != receipt.dylib_sha256.lowercased() {
+                return .failure(
+                    PluginLoadError(
+                        message: "Checksum verification failed - plugin file may be corrupted or tampered with"
+                    )
+                )
+            }
 
-        #if !DEBUG
-            // Verify Apple code signature to detect on-disk tampering
             if let codesignError = verifyCodeSignature(of: dylibURL) {
                 return .failure(codesignError)
             }
@@ -762,9 +777,9 @@ final class PluginManager {
                     )
                 )
             }
-        #endif
 
-        return .success(())
+            return .success(())
+        #endif
     }
 
     /// Checks the Apple code signature of a dylib using the Security framework.
