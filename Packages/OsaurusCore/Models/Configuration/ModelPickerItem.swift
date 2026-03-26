@@ -261,133 +261,140 @@ extension Array where Element == ModelPickerItem {
 // MARK: - Mock Data (For Testing Performance)
 
 #if DEBUG
-extension ModelPickerItem {
-    /// Generate a large list of mock models for testing scroll performance
-    static func generateMockModels(count: Int = 500) -> [ModelPickerItem] {
-        var models: [ModelPickerItem] = []
-        
-        // foundation model
-        models.append(.foundation())
-        
-        // local models (MLX)
-        let localModels = [
-            ("Llama", ["3.2", "3.1", "3", "2"]),
-            ("Qwen", ["2.5", "2", "1.5"]),
-            ("Mistral", ["7B", "Nemo", "Small"]),
-            ("Gemma", ["2", "1.1"]),
-            ("DeepSeek", ["V2.5", "V2", "Coder"]),
-            ("Phi", ["4", "3.5", "3"]),
-        ]
-        
-        let quantizations = ["4-bit", "8-bit", "FP16"]
-        let sizes = ["1B", "3B", "7B", "8B", "14B", "27B", "70B"]
-        
-        for (baseName, versions) in localModels {
-            for version in versions {
-                for quant in quantizations {
-                    for size in sizes {
-                        let isVLM = Bool.random() && Double.random(in: 0...1) > 0.8
-                        let displayName = "\(baseName) \(version) \(size) \(quant)\(isVLM ? " Vision" : "")"
-                        let id = "mlx-community/\(baseName)-\(version)-\(size)-\(quant)"
-                        let description = "A powerful language model optimized for local inference\(isVLM ? " with vision capabilities" : "")"
-                        
-                        models.append(ModelPickerItem(
-                            id: id,
-                            displayName: displayName,
-                            source: .local,
-                            parameterCount: size,
-                            quantization: quant,
-                            isVLM: isVLM,
-                            description: description
-                        ))
-                        
+    extension ModelPickerItem {
+        /// Generate a large list of mock models for testing scroll performance
+        static func generateMockModels(count: Int = 500) -> [ModelPickerItem] {
+            var models: [ModelPickerItem] = []
+
+            // foundation model
+            models.append(.foundation())
+
+            // local models (MLX)
+            let localModels = [
+                ("Llama", ["3.2", "3.1", "3", "2"]),
+                ("Qwen", ["2.5", "2", "1.5"]),
+                ("Mistral", ["7B", "Nemo", "Small"]),
+                ("Gemma", ["2", "1.1"]),
+                ("DeepSeek", ["V2.5", "V2", "Coder"]),
+                ("Phi", ["4", "3.5", "3"]),
+            ]
+
+            let quantizations = ["4-bit", "8-bit", "FP16"]
+            let sizes = ["1B", "3B", "7B", "8B", "14B", "27B", "70B"]
+
+            for (baseName, versions) in localModels {
+                for version in versions {
+                    for quant in quantizations {
+                        for size in sizes {
+                            let isVLM = Bool.random() && Double.random(in: 0 ... 1) > 0.8
+                            let displayName = "\(baseName) \(version) \(size) \(quant)\(isVLM ? " Vision" : "")"
+                            let id = "mlx-community/\(baseName)-\(version)-\(size)-\(quant)"
+                            let description =
+                                "A powerful language model optimized for local inference\(isVLM ? " with vision capabilities" : "")"
+
+                            models.append(
+                                ModelPickerItem(
+                                    id: id,
+                                    displayName: displayName,
+                                    source: .local,
+                                    parameterCount: size,
+                                    quantization: quant,
+                                    isVLM: isVLM,
+                                    description: description
+                                )
+                            )
+
+                            if models.count >= count { break }
+                        }
                         if models.count >= count { break }
                     }
                     if models.count >= count { break }
                 }
                 if models.count >= count { break }
             }
-            if models.count >= count { break }
-        }
-        
-        // remote models (OpenAI-like provider)
-        let openAIProviderId = UUID()
-        let openAIModels = [
-            ("gpt-4o", "Most advanced GPT-4 model with vision capabilities", true),
-            ("gpt-4-turbo", "High performance GPT-4 variant", false),
-            ("gpt-4", "Original GPT-4 model", false),
-            ("gpt-3.5-turbo", "Fast and efficient for most tasks", false),
-        ]
-        
-        for (modelId, desc, isVLM) in openAIModels {
-            models.append(ModelPickerItem(
-                id: "openai/\(modelId)",
-                displayName: modelId,
-                source: .remote(providerName: "OpenAI", providerId: openAIProviderId),
-                isVLM: isVLM,
-                description: desc
-            ))
-        }
-        
-        // remote models (Anthropic-like provider)
-        let anthropicProviderId = UUID()
-        let anthropicModels = [
-            ("claude-opus-4", "Most capable Claude model", false),
-            ("claude-sonnet-3.5", "Balanced performance and speed", false),
-            ("claude-haiku-3.5", "Fast and efficient", false),
-        ]
-        
-        for (modelId, desc, isVLM) in anthropicModels {
-            models.append(ModelPickerItem(
-                id: "anthropic/\(modelId)",
-                displayName: modelId,
-                source: .remote(providerName: "Anthropic", providerId: anthropicProviderId),
-                isVLM: isVLM,
-                description: desc
-            ))
-        }
-        
-        // remote models (OpenRouter - large catalog)
-        let openRouterProviderId = UUID()
-        let baseRemoteModels = [
-            "meta-llama/llama-3.2-90b-vision-instruct",
-            "meta-llama/llama-3.1-405b-instruct",
-            "meta-llama/llama-3.1-70b-instruct",
-            "google/gemini-pro-1.5",
-            "google/gemini-flash-1.5",
-            "mistralai/mistral-large-2",
-            "mistralai/pixtral-12b",
-            "cohere/command-r-plus",
-            "perplexity/llama-3.1-sonar-large",
-            "x-ai/grok-beta",
-        ]
-        
-        // generate many variants
-        while models.count < count {
-            for baseModel in baseRemoteModels {
-                let variants = ["", "-free", "-preview", "-turbo", "-extended"]
-                for variant in variants {
-                    let modelId = baseModel + variant
-                    let name = modelId.split(separator: "/").last.map(String.init) ?? modelId
-                    let isVLM = modelId.contains("vision") || modelId.contains("pixtral")
-                    
-                    models.append(ModelPickerItem(
-                        id: modelId,
-                        displayName: name,
-                        source: .remote(providerName: "OpenRouter", providerId: openRouterProviderId),
+
+            // remote models (OpenAI-like provider)
+            let openAIProviderId = UUID()
+            let openAIModels = [
+                ("gpt-4o", "Most advanced GPT-4 model with vision capabilities", true),
+                ("gpt-4-turbo", "High performance GPT-4 variant", false),
+                ("gpt-4", "Original GPT-4 model", false),
+                ("gpt-3.5-turbo", "Fast and efficient for most tasks", false),
+            ]
+
+            for (modelId, desc, isVLM) in openAIModels {
+                models.append(
+                    ModelPickerItem(
+                        id: "openai/\(modelId)",
+                        displayName: modelId,
+                        source: .remote(providerName: "OpenAI", providerId: openAIProviderId),
                         isVLM: isVLM,
-                        description: "Available via OpenRouter"
-                    ))
-                    
+                        description: desc
+                    )
+                )
+            }
+
+            // remote models (Anthropic-like provider)
+            let anthropicProviderId = UUID()
+            let anthropicModels = [
+                ("claude-opus-4", "Most capable Claude model", false),
+                ("claude-sonnet-3.5", "Balanced performance and speed", false),
+                ("claude-haiku-3.5", "Fast and efficient", false),
+            ]
+
+            for (modelId, desc, isVLM) in anthropicModels {
+                models.append(
+                    ModelPickerItem(
+                        id: "anthropic/\(modelId)",
+                        displayName: modelId,
+                        source: .remote(providerName: "Anthropic", providerId: anthropicProviderId),
+                        isVLM: isVLM,
+                        description: desc
+                    )
+                )
+            }
+
+            // remote models (OpenRouter - large catalog)
+            let openRouterProviderId = UUID()
+            let baseRemoteModels = [
+                "meta-llama/llama-3.2-90b-vision-instruct",
+                "meta-llama/llama-3.1-405b-instruct",
+                "meta-llama/llama-3.1-70b-instruct",
+                "google/gemini-pro-1.5",
+                "google/gemini-flash-1.5",
+                "mistralai/mistral-large-2",
+                "mistralai/pixtral-12b",
+                "cohere/command-r-plus",
+                "perplexity/llama-3.1-sonar-large",
+                "x-ai/grok-beta",
+            ]
+
+            // generate many variants
+            while models.count < count {
+                for baseModel in baseRemoteModels {
+                    let variants = ["", "-free", "-preview", "-turbo", "-extended"]
+                    for variant in variants {
+                        let modelId = baseModel + variant
+                        let name = modelId.split(separator: "/").last.map(String.init) ?? modelId
+                        let isVLM = modelId.contains("vision") || modelId.contains("pixtral")
+
+                        models.append(
+                            ModelPickerItem(
+                                id: modelId,
+                                displayName: name,
+                                source: .remote(providerName: "OpenRouter", providerId: openRouterProviderId),
+                                isVLM: isVLM,
+                                description: "Available via OpenRouter"
+                            )
+                        )
+
+                        if models.count >= count { break }
+                    }
                     if models.count >= count { break }
                 }
-                if models.count >= count { break }
             }
+
+            return Array(models.prefix(count))
         }
-        
-        return Array(models.prefix(count))
     }
-}
 #endif
-
-

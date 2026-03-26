@@ -20,20 +20,20 @@ struct ModelPickerView: View {
     @State private var cachedFlattenedRows: [ModelPickerRow] = []
     @State private var cachedGroupRows: [String: [ModelPickerRow]] = [:]
     @Environment(\.theme) private var theme
-    
+
     // MARK: - Test Mode
-    
+
     #if DEBUG
-    // set USE_MOCK_MODELS=1 in Xcode scheme to automatically use mock data
-    private var useMockData: Bool {
-        ProcessInfo.processInfo.environment["USE_MOCK_MODELS"] == "1"
-    }
-    
-    private var displayOptions: [ModelPickerItem] {
-        useMockData ? ModelPickerItem.generateMockModels(count: 500) : options
-    }
+        // set USE_MOCK_MODELS=1 in Xcode scheme to automatically use mock data
+        private var useMockData: Bool {
+            ProcessInfo.processInfo.environment["USE_MOCK_MODELS"] == "1"
+        }
+
+        private var displayOptions: [ModelPickerItem] {
+            useMockData ? ModelPickerItem.generateMockModels(count: 500) : options
+        }
     #else
-    private var displayOptions: [ModelPickerItem] { options }
+        private var displayOptions: [ModelPickerItem] { options }
     #endif
 
     // MARK: - Data
@@ -62,11 +62,11 @@ struct ModelPickerView: View {
         var rows: [ModelPickerRow] = []
         // preallocate to reduce allocations
         rows.reserveCapacity(groups.count * 20)
-        
+
         for group in groups {
             let sourceKey = group.source.uniqueKey
             let expanded = !query.isEmpty || !collapsedGroups.contains(sourceKey)
-            
+
             rows.append(
                 .groupHeader(
                     sourceKey: sourceKey,
@@ -76,7 +76,7 @@ struct ModelPickerView: View {
                     isExpanded: expanded
                 )
             )
-            
+
             if expanded {
                 // check if we have cached model rows for this group
                 let cacheKey = sourceKey + "_\(group.models.count)"
@@ -85,7 +85,7 @@ struct ModelPickerView: View {
                 } else {
                     var modelRows: [ModelPickerRow] = []
                     modelRows.reserveCapacity(group.models.count)
-                    
+
                     for model in group.models {
                         let row = ModelPickerRow.model(
                             id: model.id,
@@ -98,7 +98,7 @@ struct ModelPickerView: View {
                         )
                         modelRows.append(row)
                     }
-                    
+
                     // cache model rows when not searching
                     if query.isEmpty {
                         cachedGroupRows[cacheKey] = modelRows
@@ -316,7 +316,7 @@ struct ModelPickerView: View {
                         Spacer()
                     }
                     .background(Color.gray.opacity(0.1))
-                    
+
                     ModelPickerView(
                         options: useMockData ? mockModels : smallSampleModels,
                         selectedModel: $selected,
@@ -328,12 +328,12 @@ struct ModelPickerView: View {
                 .frame(width: 450, height: 550)
                 .background(Color.gray.opacity(0.2))
             }
-            
+
             // large mock dataset for performance testing
             private var mockModels: [ModelPickerItem] {
                 ModelPickerItem.generateMockModels(count: 500)
             }
-            
+
             // small sample for quick testing
             private var smallSampleModels: [ModelPickerItem] {
                 [

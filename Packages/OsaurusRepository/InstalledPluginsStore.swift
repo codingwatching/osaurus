@@ -77,9 +77,16 @@ public final class InstalledPluginsStore: @unchecked Sendable {
             // Must have a valid version name
             guard let version = SemanticVersion.parse(entry.lastPathComponent) else { continue }
 
-            // Must contain a receipt.json
+            // Must contain a receipt.json OR a .dylib file (for dev mode)
             let receiptURL = entry.appendingPathComponent("receipt.json", isDirectory: false)
-            guard fm.fileExists(atPath: receiptURL.path) else { continue }
+            if !fm.fileExists(atPath: receiptURL.path) {
+                // Check for any .dylib file
+                guard let files = try? fm.contentsOfDirectory(atPath: entry.path),
+                    files.contains(where: { $0.hasSuffix(".dylib") })
+                else {
+                    continue
+                }
+            }
 
             versions.append(version)
         }
@@ -127,9 +134,12 @@ public final class InstalledPluginsStore: @unchecked Sendable {
             let versionDir = pluginDir.appendingPathComponent(dest, isDirectory: true)
             let receiptURL = versionDir.appendingPathComponent("receipt.json", isDirectory: false)
 
-            if fm.fileExists(atPath: receiptURL.path),
-                let version = SemanticVersion.parse(dest)
-            {
+            var isValid = fm.fileExists(atPath: receiptURL.path)
+            if !isValid, let files = try? fm.contentsOfDirectory(atPath: versionDir.path) {
+                isValid = files.contains(where: { $0.hasSuffix(".dylib") })
+            }
+
+            if isValid, let version = SemanticVersion.parse(dest) {
                 return version
             }
         }

@@ -406,14 +406,21 @@ final class ExternalPlugin: @unchecked Sendable {
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
-    /// Tears down the plugin context. Must be called before `dlclose`
-    /// since the function pointer is invalid once the dylib is unloaded.
-    /// Uses a barrier to drain all in-flight concurrent work before destroying.
-    func shutdown() {
-        invokeQueue.sync(flags: .barrier) {
-            guard !self.isShutDown else { return }
-            self.isShutDown = true
-            self.api.destroy?(self.ctx)
+    /// Tears down the plugin context by draining all in-flight concurrent work
+    /// (barrier) and then calling `destroy`. Uses async dispatch so the
+    /// destroy callback (which may call host API trampolines like httpRequest)
+    /// never runs on the main thread, avoiding deadlocks with `blockingAsync`.
+    func shutdown() async {
+        await withCheckedContinuation { continuation in
+            invokeQueue.async(flags: .barrier) { [self] in
+                guard !self.isShutDown else {
+                    continuation.resume()
+                    return
+                }
+                self.isShutDown = true
+                self.api.destroy?(self.ctx)
+                continuation.resume()
+            }
         }
     }
 

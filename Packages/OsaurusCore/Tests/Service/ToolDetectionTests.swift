@@ -60,7 +60,11 @@ private func detectToolCall(
     stopSequences: [String] = []
 ) async throws -> (name: String, argsJSON: String)? {
     let events = try await collectEvents(
-        text: text, tool: tool, format: format, stopSequences: stopSequences)
+        text: text,
+        tool: tool,
+        format: format,
+        stopSequences: stopSequences
+    )
     for event in events {
         if case .toolInvocation(let name, let args) = event { return (name, args) }
     }
@@ -93,10 +97,10 @@ struct ToolDetectionJSONFormatTests {
 
     @Test func detectsJsonToolCallWithWhitespace() async throws {
         let text = """
-        <tool_call>
-        {"name": "search", "arguments": {"query": "swift concurrency"}}
-        </tool_call>
-        """
+            <tool_call>
+            {"name": "search", "arguments": {"query": "swift concurrency"}}
+            </tool_call>
+            """
         let result = try await detectToolCall(text: text, tool: makeTool("search"), format: .json)
         #expect(result?.name == "search")
         #expect(result?.argsJSON.contains("swift concurrency") == true)
@@ -104,11 +108,14 @@ struct ToolDetectionJSONFormatTests {
 
     @Test func detectsJsonToolCallWithPreamble() async throws {
         let text = """
-        I'll check the weather for you.
-        <tool_call>{"name":"get_weather","arguments":{"city":"Tokyo"}}</tool_call>
-        """
+            I'll check the weather for you.
+            <tool_call>{"name":"get_weather","arguments":{"city":"Tokyo"}}</tool_call>
+            """
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .json)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .json
+        )
         #expect(result?.name == "get_weather")
         #expect(result?.argsJSON.contains("Tokyo") == true)
     }
@@ -134,9 +141,13 @@ struct ToolDetectionJSONFormatTests {
     }
 
     @Test func detectsNestedArguments() async throws {
-        let text = #"<tool_call>{"name":"create_task","arguments":{"task":{"title":"Buy milk","priority":1}}}</tool_call>"#
+        let text =
+            #"<tool_call>{"name":"create_task","arguments":{"task":{"title":"Buy milk","priority":1}}}</tool_call>"#
         let result = try await detectToolCall(
-            text: text, tool: makeTool("create_task"), format: .json)
+            text: text,
+            tool: makeTool("create_task"),
+            format: .json
+        )
         #expect(result?.name == "create_task")
         #expect(result?.argsJSON.contains("Buy milk") == true)
     }
@@ -209,29 +220,35 @@ struct ToolDetectionXMLFunctionFormatTests {
 
     @Test func detectsBasicXmlFunctionCall() async throws {
         let text = """
-        <tool_call>
-        <function=get_weather>
-        <parameter=city>Paris</parameter>
-        </function>
-        </tool_call>
-        """
+            <tool_call>
+            <function=get_weather>
+            <parameter=city>Paris</parameter>
+            </function>
+            </tool_call>
+            """
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .xmlFunction
+        )
         #expect(result?.name == "get_weather")
         #expect(result?.argsJSON.contains("Paris") == true)
     }
 
     @Test func detectsXmlFunctionWithMultipleParams() async throws {
         let text = """
-        <tool_call>
-        <function=get_weather>
-        <parameter=city>Tokyo</parameter>
-        <parameter=unit>celsius</parameter>
-        </function>
-        </tool_call>
-        """
+            <tool_call>
+            <function=get_weather>
+            <parameter=city>Tokyo</parameter>
+            <parameter=unit>celsius</parameter>
+            </function>
+            </tool_call>
+            """
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .xmlFunction
+        )
         #expect(result?.name == "get_weather")
         #expect(result?.argsJSON.contains("Tokyo") == true)
         #expect(result?.argsJSON.contains("celsius") == true)
@@ -240,7 +257,10 @@ struct ToolDetectionXMLFunctionFormatTests {
     @Test func detectsXmlFunctionNoArguments() async throws {
         let text = "<tool_call>\n<function=get_current_datetime>\n</function>\n</tool_call>"
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_current_datetime"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("get_current_datetime"),
+            format: .xmlFunction
+        )
         #expect(result?.name == "get_current_datetime")
         // argsJSON should be an empty object
         #expect(result?.argsJSON == "{}" || result?.argsJSON == "{ }")
@@ -248,15 +268,18 @@ struct ToolDetectionXMLFunctionFormatTests {
 
     @Test func detectsXmlFunctionWithPreamble() async throws {
         let text = """
-        I'll check the weather for you.
-        <tool_call>
-        <function=get_weather>
-        <parameter=city>Sydney</parameter>
-        </function>
-        </tool_call>
-        """
+            I'll check the weather for you.
+            <tool_call>
+            <function=get_weather>
+            <parameter=city>Sydney</parameter>
+            </function>
+            </tool_call>
+            """
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .xmlFunction
+        )
         #expect(result?.name == "get_weather")
         #expect(result?.argsJSON.contains("Sydney") == true)
     }
@@ -264,7 +287,10 @@ struct ToolDetectionXMLFunctionFormatTests {
     @Test func detectsXmlFunctionInlineOnOneLine() async throws {
         let text = "<tool_call><function=search><parameter=query>swift</parameter></function></tool_call>"
         let result = try await detectToolCall(
-            text: text, tool: makeTool("search"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("search"),
+            format: .xmlFunction
+        )
         #expect(result?.name == "search")
         #expect(result?.argsJSON.contains("swift") == true)
     }
@@ -273,7 +299,10 @@ struct ToolDetectionXMLFunctionFormatTests {
         // Character-by-character streaming — verifies the processor buffers correctly.
         let text = "<tool_call>\n<function=get_weather>\n<parameter=city>London</parameter>\n</function>\n</tool_call>"
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .xmlFunction
+        )
         #expect(result?.name == "get_weather")
         #expect(result?.argsJSON.contains("London") == true)
     }
@@ -283,7 +312,10 @@ struct ToolDetectionXMLFunctionFormatTests {
         // it should NOT be detected (wrong format — format mismatch means no tool call).
         let text = #"<tool_call>{"name":"get_weather","arguments":{"city":"Paris"}}</tool_call>"#
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .xmlFunction)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .xmlFunction
+        )
         // XMLFunctionParser expects <function=name> inside; plain JSON won't match.
         #expect(result == nil)
     }
@@ -347,7 +379,10 @@ struct ToolDetectionEOSTests {
         // the EOS token terminates it. processEOS() must extract the call.
         let text = #"[TOOL_CALLS]get_weather [ARGS]{"city": "Berlin"}"#
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .mistral)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .mistral
+        )
         #expect(result?.name == "get_weather")
         #expect(result?.argsJSON.contains("Berlin") == true)
     }
@@ -355,7 +390,10 @@ struct ToolDetectionEOSTests {
     @Test func mistralNoToolCallForPlainText() async throws {
         let text = "Just a normal response."
         let result = try await detectToolCall(
-            text: text, tool: makeTool("get_weather"), format: .mistral)
+            text: text,
+            tool: makeTool("get_weather"),
+            format: .mistral
+        )
         #expect(result == nil)
     }
 }

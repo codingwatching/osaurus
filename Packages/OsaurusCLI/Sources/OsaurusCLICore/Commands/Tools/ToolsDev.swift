@@ -15,6 +15,7 @@ import Foundation
 import OsaurusRepository
 
 private nonisolated(unsafe) var devProxyConfigFile: URL?
+private nonisolated(unsafe) var signalSource: DispatchSourceSignal?
 
 public struct ToolsDev {
 
@@ -287,9 +288,16 @@ public struct ToolsDev {
 
         try? fm.createDirectory(at: versionDir, withIntermediateDirectories: true)
 
-        // Copy dylib
-        let destDylib = versionDir.appendingPathComponent(dylibURL.lastPathComponent)
-        try? fm.removeItem(at: destDylib)
+        // Use a unique filename per rebuild so dlopen treats each as a fresh
+        // library with valid PAC signatures (ARM64 reuses stale PAC otherwise).
+        if let existing = try? fm.contentsOfDirectory(at: versionDir, includingPropertiesForKeys: nil) {
+            for file in existing where file.pathExtension == "dylib" {
+                try? fm.removeItem(at: file)
+            }
+        }
+        let stem = dylibURL.deletingPathExtension().lastPathComponent
+        let uniqueName = "\(stem)_\(Int(Date().timeIntervalSince1970 * 1000)).dylib"
+        let destDylib = versionDir.appendingPathComponent(uniqueName)
         try? fm.copyItem(at: dylibURL, to: destDylib)
 
         // Remove stale receipt.json so it doesn't block DEBUG loading
@@ -414,9 +422,10 @@ public struct ToolsDev {
 
     private static func setupSignalHandler() {
         signal(SIGINT, SIG_IGN)
-        let sigSrc = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigSrc.setEventHandler { cleanupAndExit() }
-        sigSrc.resume()
+        let src = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        src.setEventHandler { cleanupAndExit() }
+        src.resume()
+        signalSource = src
     }
 
     private static func cleanupAndExit() {

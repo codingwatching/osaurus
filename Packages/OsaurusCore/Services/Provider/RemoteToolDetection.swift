@@ -33,8 +33,8 @@ enum RemoteToolDetection {
 
         // Fast path: Qwen-style <tool_call>...</tool_call> XML wrapper.
         if let openRange = window.range(of: "<tool_call>", options: .backwards),
-           let closeRange = window.range(of: "</tool_call>", range: openRange.upperBound ..< window.endIndex),
-           openRange.upperBound <= closeRange.lowerBound
+            let closeRange = window.range(of: "</tool_call>", range: openRange.upperBound ..< window.endIndex),
+            openRange.upperBound <= closeRange.lowerBound
         {
             let inner = String(window[openRange.upperBound ..< closeRange.lowerBound])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -51,7 +51,7 @@ enum RemoteToolDetection {
                 if let jsonRange = findEnclosingJSONObject(around: range.lowerBound, in: window) {
                     let candidate = String(window[jsonRange])
                     if let (detectedName, argsJSON) = extractToolCall(fromJSON: candidate),
-                       toolNames.contains(detectedName)
+                        toolNames.contains(detectedName)
                     {
                         return (detectedName, argsJSON)
                     }
@@ -88,13 +88,19 @@ enum RemoteToolDetection {
         while i < text.endIndex {
             let ch = text[i]
             if inString {
-                if isEscaped { isEscaped = false }
-                else if ch == "\\" { isEscaped = true }
-                else if ch == "\"" { inString = false }
+                if isEscaped {
+                    isEscaped = false
+                } else if ch == "\\" {
+                    isEscaped = true
+                } else if ch == "\"" {
+                    inString = false
+                }
             } else {
-                if ch == "\"" { inString = true }
-                else if ch == "{" { depth += 1 }
-                else if ch == "}" {
+                if ch == "\"" {
+                    inString = true
+                } else if ch == "{" {
+                    depth += 1
+                } else if ch == "}" {
                     depth -= 1
                     if depth == 0 { return text.index(after: i) }
                 }
@@ -106,29 +112,35 @@ enum RemoteToolDetection {
 
     private static func extractToolCall(fromJSON jsonText: String) -> (String, String)? {
         guard let data = jsonText.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
 
         if let function = obj["function"] as? [String: Any], let name = function["name"] as? String {
             if let argsString = function["arguments"] as? String { return (name, argsString) }
             if let argsObj = function["arguments"],
-               let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
-               let argsJSON = String(data: argsData, encoding: .utf8)
-            { return (name, argsJSON) }
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
+                let argsJSON = String(data: argsData, encoding: .utf8)
+            {
+                return (name, argsJSON)
+            }
         }
         if let name = obj["tool_name"] as? String {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
-               let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
-               let argsJSON = String(data: argsData, encoding: .utf8)
-            { return (name, argsJSON) }
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
+                let argsJSON = String(data: argsData, encoding: .utf8)
+            {
+                return (name, argsJSON)
+            }
         }
         if let name = obj["name"] as? String {
             if let argsString = obj["arguments"] as? String { return (name, argsString) }
             if let argsObj = obj["arguments"],
-               let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
-               let argsJSON = String(data: argsData, encoding: .utf8)
-            { return (name, argsJSON) }
+                let argsData = try? JSONSerialization.data(withJSONObject: argsObj),
+                let argsJSON = String(data: argsData, encoding: .utf8)
+            {
+                return (name, argsJSON)
+            }
         }
         return nil
     }
