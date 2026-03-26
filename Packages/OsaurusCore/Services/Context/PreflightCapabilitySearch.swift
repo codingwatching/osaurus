@@ -21,9 +21,9 @@ public enum PreflightSearchMode: String, Codable, CaseIterable, Sendable {
     var topKValues: (methods: Int, tools: Int, skills: Int) {
         switch self {
         case .off: return (0, 0, 0)
-        case .narrow: return (1, 2, 1)
-        case .balanced: return (3, 5, 2)
-        case .wide: return (5, 8, 4)
+        case .narrow: return (1, 2, 0)
+        case .balanced: return (3, 5, 1)
+        case .wide: return (5, 8, 2)
         }
     }
 
@@ -91,10 +91,10 @@ enum PreflightCapabilitySearch {
         var toolSpecsToAdd: [Tool] = []
         var toolNamesAdded: Set<String> = []
 
-        // Tools matched directly by search (already filtered by ToolSearchService)
-        for entry in tools {
+        // Tools matched directly by search
+        for result in tools {
             let specs = await MainActor.run {
-                ToolRegistry.shared.specs(forTools: [entry.name])
+                ToolRegistry.shared.specs(forTools: [result.entry.name])
             }
             for spec in specs where !toolNamesAdded.contains(spec.function.name) {
                 toolSpecsToAdd.append(spec)
@@ -134,19 +134,11 @@ enum PreflightCapabilitySearch {
         }
 
         if !skills.isEmpty {
-            sections.append("## Pre-loaded Skills\n")
-            for skill in skills {
-                let instructions = await MainActor.run {
-                    SkillManager.shared.loadInstructions(for: [skill.name])
-                }
-                sections.append("### \(skill.name)\n")
-                if !skill.description.isEmpty {
-                    sections.append("*\(skill.description)*\n")
-                }
-                if let content = instructions[skill.name] {
-                    sections.append("\(content)\n")
-                }
-                sections.append("---\n")
+            sections.append("## Available Skills\n")
+            sections.append("Use `capabilities_load` with a skill ID to load its full instructions.\n")
+            for result in skills {
+                let skill = result.skill
+                sections.append("- skill/\(skill.name): \(skill.description)\n")
             }
         }
 
@@ -154,8 +146,8 @@ enum PreflightCapabilitySearch {
 
         let items: [PreflightCapabilityItem] =
             methods.map { .init(type: .method, name: $0.method.name, description: $0.method.description) }
-            + tools.map { .init(type: .tool, name: $0.name, description: $0.description) }
-            + skills.map { .init(type: .skill, name: $0.name, description: $0.description) }
+            + tools.map { .init(type: .tool, name: $0.entry.name, description: $0.entry.description) }
+            + skills.map { .init(type: .skill, name: $0.skill.name, description: $0.skill.description) }
 
         if !toolSpecsToAdd.isEmpty || !snippet.isEmpty {
             let tc = toolSpecsToAdd.count

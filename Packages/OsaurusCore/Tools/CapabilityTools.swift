@@ -92,25 +92,25 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        for entry in tools {
+        for r in tools {
             results.append(
                 ScoredResult(
-                    id: "tool/\(entry.id)",
+                    id: "tool/\(r.entry.id)",
                     type: "tool",
-                    description: "\(entry.name): \(entry.description)",
-                    score: 0.5,
-                    extra: "runtime: \(entry.runtime.rawValue)"
+                    description: "\(r.entry.name): \(r.entry.description)",
+                    score: Double(r.searchScore),
+                    extra: "runtime: \(r.entry.runtime.rawValue)"
                 )
             )
         }
 
-        for skill in skills {
+        for r in skills {
             results.append(
                 ScoredResult(
-                    id: "skill/\(skill.name)",
+                    id: "skill/\(r.skill.name)",
                     type: "skill",
-                    description: "\(skill.name): \(skill.description)",
-                    score: 0.4,
+                    description: "\(r.skill.name): \(r.skill.description)",
+                    score: Double(r.searchScore),
                     extra: nil
                 )
             )

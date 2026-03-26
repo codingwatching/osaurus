@@ -16,6 +16,16 @@ public enum ToolIndexLogger {
     static let service = Logger(subsystem: "ai.osaurus", category: "toolindex.service")
 }
 
+public struct ToolSearchResult: Sendable {
+    public let entry: ToolIndexEntry
+    public let searchScore: Float
+
+    public init(entry: ToolIndexEntry, searchScore: Float) {
+        self.entry = entry
+        self.searchScore = searchScore
+    }
+}
+
 public actor ToolSearchService {
     public static let shared = ToolSearchService()
 
@@ -61,11 +71,11 @@ public actor ToolSearchService {
 
     // MARK: - Indexing
 
-    public func indexEntry(_ entry: ToolIndexEntry) async {
+    public func indexEntry(_ entry: ToolIndexEntry, parameters: JSONValue? = nil) async {
         guard let db = vectorDB else { return }
         do {
             let id = deterministicUUID(for: entry.id)
-            let text = "\(entry.name) \(entry.description)"
+            let text = buildIndexText(name: entry.name, description: entry.description, parameters: parameters)
             _ = try await db.addDocument(text: text, id: id)
         } catch {
             ToolIndexLogger.search.error("Failed to index tool \(entry.id): \(error)")
@@ -89,7 +99,7 @@ public actor ToolSearchService {
         query: String,
         topK: Int = 10,
         threshold: Float? = nil
-    ) async -> [ToolIndexEntry] {
+    ) async -> [ToolSearchResult] {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
@@ -99,6 +109,11 @@ public actor ToolSearchService {
                 threshold: threshold ?? Self.defaultSearchThreshold
             )
 
+            let scoreMap = Dictionary(
+                results.map { ($0.id.uuidString, Float($0.score)) },
+                uniquingKeysWith: { first, _ in first }
+            )
+
             let toolIds = results.compactMap { reverseIdMap[$0.id.uuidString] }
             guard !toolIds.isEmpty else { return [] }
 
@@ -106,10 +121,20 @@ public actor ToolSearchService {
                 Set(ToolRegistry.shared.listTools().filter { $0.enabled }.map { $0.name })
             }
 
+            let toolIdSet = Set(toolIds)
+            let entries = try ToolDatabase.shared.loadAllEntries()
+                .filter { toolIdSet.contains($0.id) && enabledNames.contains($0.name) }
+            let entryById = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
             return Array(
-                try ToolDatabase.shared.loadAllEntries()
-                    .filter { toolIds.contains($0.id) && enabledNames.contains($0.name) }
-                    .prefix(topK)
+                toolIds.compactMap { toolId -> ToolSearchResult? in
+                    guard let entry = entryById[toolId] else { return nil }
+                    let uuid = deterministicUUID(for: toolId)
+                    guard let score = scoreMap[uuid.uuidString] else { return nil }
+                    return ToolSearchResult(entry: entry, searchScore: score)
+                }
+                .sorted { $0.searchScore > $1.searchScore }
+                .prefix(topK)
             )
         } catch {
             ToolIndexLogger.search.error("Tool search failed: \(error)")
@@ -124,10 +149,23 @@ public actor ToolSearchService {
         do {
             try await db.reset()
             reverseIdMap.removeAll()
+
+            let toolParams: [String: JSONValue] = await MainActor.run {
+                var result = [String: JSONValue]()
+                for tool in ToolRegistry.shared.listTools() {
+                    if let params = tool.parameters { result[tool.name] = params }
+                }
+                return result
+            }
+
             let entries = try ToolDatabase.shared.loadAllEntries()
             for entry in entries {
                 let id = deterministicUUID(for: entry.id)
-                let text = "\(entry.name) \(entry.description)"
+                let text = buildIndexText(
+                    name: entry.name,
+                    description: entry.description,
+                    parameters: toolParams[entry.name]
+                )
                 _ = try await db.addDocument(text: text, id: id)
             }
             ToolIndexLogger.search.info("Tool index rebuilt with \(entries.count) entries")
@@ -137,6 +175,30 @@ public actor ToolSearchService {
     }
 
     // MARK: - Helpers
+
+    private func buildIndexText(name: String, description: String, parameters: JSONValue?) -> String {
+        let paramText = extractParameterText(from: parameters)
+        if paramText.isEmpty {
+            return "\(name) \(description)"
+        }
+        return "\(name) \(description) \(paramText)"
+    }
+
+    private func extractParameterText(from params: JSONValue?) -> String {
+        guard case .object(let schema) = params,
+            case .object(let properties) = schema["properties"]
+        else { return "" }
+        var parts: [String] = []
+        for (key, value) in properties {
+            parts.append(key)
+            if case .object(let propSchema) = value,
+                case .string(let desc) = propSchema["description"]
+            {
+                parts.append(desc)
+            }
+        }
+        return parts.joined(separator: " ")
+    }
 
     private func deterministicUUID(for toolId: String) -> UUID {
         let hash = SHA256.hash(data: Data("tool:\(toolId)".utf8))

@@ -15,10 +15,20 @@ public enum SkillSearchLogger {
     static let search = Logger(subsystem: "ai.osaurus", category: "skill.search")
 }
 
+public struct SkillSearchResult: Sendable {
+    public let skill: Skill
+    public let searchScore: Float
+
+    public init(skill: Skill, searchScore: Float) {
+        self.skill = skill
+        self.searchScore = searchScore
+    }
+}
+
 public actor SkillSearchService {
     public static let shared = SkillSearchService()
 
-    private static let defaultSearchThreshold: Float = 0.10
+    private static let defaultSearchThreshold: Float = 0.30
 
     private var vectorDB: VecturaKit?
     private var isInitialized = false
@@ -41,7 +51,7 @@ public actor SkillSearchService {
                 searchOptions: VecturaConfig.SearchOptions(
                     defaultNumResults: 10,
                     minThreshold: 0.3,
-                    hybridWeight: 0.5,
+                    hybridWeight: 0.7,
                     k1: 1.2,
                     b: 0.75
                 ),
@@ -64,7 +74,7 @@ public actor SkillSearchService {
         guard let db = vectorDB else { return }
         do {
             let id = deterministicUUID(for: skill.id)
-            let text = "\(skill.name) \(skill.description)"
+            let text = buildIndexText(for: skill)
             _ = try await db.addDocument(text: text, id: id)
         } catch {
             SkillSearchLogger.search.error("Failed to index skill \(skill.name): \(error)")
@@ -88,7 +98,7 @@ public actor SkillSearchService {
         query: String,
         topK: Int = 10,
         threshold: Float? = nil
-    ) async -> [Skill] {
+    ) async -> [SkillSearchResult] {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
@@ -98,12 +108,27 @@ public actor SkillSearchService {
                 threshold: threshold ?? Self.defaultSearchThreshold
             )
 
+            let scoreMap = Dictionary(
+                results.map { ($0.id.uuidString, Float($0.score)) },
+                uniquingKeysWith: { first, _ in first }
+            )
+
             let matchedSkillIds = results.compactMap { reverseIdMap[$0.id.uuidString] }
             guard !matchedSkillIds.isEmpty else { return [] }
 
             let allSkills = await MainActor.run { SkillManager.shared.skills }
-            let idSet = Set(matchedSkillIds)
-            return Array(allSkills.filter { idSet.contains($0.id) && $0.enabled }.prefix(topK))
+            let skillById = Dictionary(allSkills.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+            return Array(
+                matchedSkillIds.compactMap { skillId -> SkillSearchResult? in
+                    guard let skill = skillById[skillId], skill.enabled else { return nil }
+                    let uuid = deterministicUUID(for: skillId)
+                    guard let score = scoreMap[uuid.uuidString] else { return nil }
+                    return SkillSearchResult(skill: skill, searchScore: score)
+                }
+                .sorted { $0.searchScore > $1.searchScore }
+                .prefix(topK)
+            )
         } catch {
             SkillSearchLogger.search.error("Skill search failed: \(error)")
             return []
@@ -121,7 +146,7 @@ public actor SkillSearchService {
             let allSkills = await MainActor.run { SkillManager.shared.skills }
             for skill in allSkills {
                 let id = deterministicUUID(for: skill.id)
-                let text = "\(skill.name) \(skill.description)"
+                let text = buildIndexText(for: skill)
                 _ = try await db.addDocument(text: text, id: id)
             }
             SkillSearchLogger.search.info("Skill index rebuilt with \(allSkills.count) skills")
@@ -131,6 +156,13 @@ public actor SkillSearchService {
     }
 
     // MARK: - Helpers
+
+    private func buildIndexText(for skill: Skill) -> String {
+        if !skill.keywords.isEmpty {
+            return "\(skill.name) \(skill.keywords.joined(separator: " "))"
+        }
+        return "\(skill.name) \(skill.description)"
+    }
 
     private func deterministicUUID(for skillId: UUID) -> UUID {
         let hash = SHA256.hash(data: Data("skill:\(skillId.uuidString)".utf8))

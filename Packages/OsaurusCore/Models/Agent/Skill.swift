@@ -32,6 +32,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
     public var version: String
     public var author: String?
     public var category: String?
+    public var keywords: [String]
     public var enabled: Bool
     public var instructions: String
     public let isBuiltIn: Bool
@@ -62,6 +63,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         version: String = "1.0.0",
         author: String? = nil,
         category: String? = nil,
+        keywords: [String] = [],
         enabled: Bool = true,
         instructions: String = "",
         isBuiltIn: Bool = false,
@@ -78,6 +80,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
         self.version = version
         self.author = author
         self.category = category
+        self.keywords = keywords
         self.enabled = enabled
         self.instructions = instructions
         self.isBuiltIn = isBuiltIn
@@ -112,6 +115,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "research",
+                keywords: ["research", "fact-check", "sources", "analysis", "citations", "evidence"],
                 enabled: false,
                 instructions: """
                     When conducting research and analysis:
@@ -156,6 +160,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "creative",
+                keywords: ["brainstorm", "ideation", "creative", "ideas", "innovation", "imagination"],
                 enabled: false,
                 instructions: """
                     When helping with creative thinking and ideation:
@@ -201,6 +206,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "learning",
+                keywords: ["tutor", "teach", "learn", "study", "explain", "practice", "education"],
                 enabled: false,
                 instructions: """
                     When helping someone learn:
@@ -246,6 +252,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "productivity",
+                keywords: ["productivity", "tasks", "prioritize", "goals", "time-management", "planning"],
                 enabled: false,
                 instructions: """
                     When helping with productivity and task management:
@@ -291,6 +298,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "productivity",
+                keywords: ["summarize", "summary", "tldr", "key-points", "digest", "condense"],
                 enabled: false,
                 instructions: """
                     When summarizing content:
@@ -335,6 +343,7 @@ public struct Skill: Codable, Identifiable, Sendable, Equatable {
                 version: "1.0.0",
                 author: "Osaurus",
                 category: "development",
+                keywords: ["debug", "bug", "error", "crash", "fix", "troubleshoot", "diagnose"],
                 enabled: false,
                 instructions: """
                     When helping debug issues:
@@ -419,6 +428,13 @@ extension Skill {
             updatedAt = Date()
         }
 
+        let keywords: [String]
+        if let raw = frontmatter["keywords"] as? String, !raw.isEmpty {
+            keywords = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        } else {
+            keywords = []
+        }
+
         return Skill(
             id: id,
             name: name,
@@ -426,6 +442,7 @@ extension Skill {
             version: frontmatter["version"] as? String ?? "1.0.0",
             author: frontmatter["author"] as? String,
             category: frontmatter["category"] as? String,
+            keywords: keywords,
             enabled: frontmatter["enabled"] as? Bool ?? true,
             instructions: body.trimmingCharacters(in: .whitespacesAndNewlines),
             isBuiltIn: false,
@@ -450,6 +467,9 @@ extension Skill {
         }
         if let category = category {
             yaml += "category: \"\(escapeYamlString(category))\"\n"
+        }
+        if !keywords.isEmpty {
+            yaml += "keywords: \"\(keywords.joined(separator: ", "))\"\n"
         }
         yaml += "enabled: \(enabled)\n"
         if let pluginId = pluginId {
@@ -614,6 +634,7 @@ extension Skill {
                 version: skill.version,
                 author: skill.author,
                 category: skill.category,
+                keywords: skill.keywords,
                 enabled: skill.enabled,
                 instructions: skill.instructions,
                 isBuiltIn: false,
@@ -691,6 +712,9 @@ extension Skill {
         if let category = category {
             yaml += "  category: \(escapeAgentSkillsYaml(category))\n"
         }
+        if !keywords.isEmpty {
+            yaml += "  keywords: \"\(keywords.joined(separator: ", "))\"\n"
+        }
 
         yaml += "---\n\n"
         yaml += instructions
@@ -715,6 +739,7 @@ extension Skill {
         var author: String?
         var version = "1.0.0"
         var category: String?
+        var keywords: [String] = []
         var osaurusId: UUID?
         var enabled = true
         var pluginId: String?
@@ -723,6 +748,9 @@ extension Skill {
             author = metadata["author"] as? String
             version = metadata["version"] as? String ?? "1.0.0"
             category = metadata["category"] as? String
+            if let raw = metadata["keywords"] as? String, !raw.isEmpty {
+                keywords = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            }
 
             // Osaurus-specific metadata
             if let idString = metadata["osaurus-id"] as? String {
@@ -748,6 +776,7 @@ extension Skill {
             version: version,
             author: author,
             category: category,
+            keywords: keywords,
             enabled: enabled,
             instructions: body.trimmingCharacters(in: .whitespacesAndNewlines),
             isBuiltIn: false,
