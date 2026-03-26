@@ -77,9 +77,9 @@ struct MLXGenerationEngine {
         runtime: RuntimeConfig,
         existingCache: [any KVCache]?,
         cachedTokens: [Int]?
-    ) async throws -> (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, [any KVCache], [Int], Task<Void, Never>)
+    ) async throws -> (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, [any KVCache], [Int], Task<Void, Never>, ToolCallFormat)
     {
-        let result: (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, CacheBox, [Int], Task<Void, Never>) =
+        let result: (AsyncStream<MLXLMCommon.TokenGeneration>, any Tokenizer, CacheBox, [Int], Task<Void, Never>, ToolCallFormat) =
             try await container.perform { (context: MLXLMCommon.ModelContext) in
                 let chat = preprocessImages(in: buildChat())
                 let toolsSpec = buildToolsSpec()
@@ -241,8 +241,9 @@ struct MLXGenerationEngine {
                 engineLog.info("prepareAndGenerate: generateTokenTask created, returning stream")
                 print("[MLXGenerationEngine] generateTokenTask created, returning stream")
 
-                return (stream, contextWithEOS.tokenizer, CacheBox(cache), newPromptTokens, genTask)
+                let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
+                return (stream, contextWithEOS.tokenizer, CacheBox(cache), newPromptTokens, genTask, toolCallFormat)
             }
-        return (result.0, result.1, result.2.cache, result.3, result.4)
+        return (result.0, result.1, result.2.cache, result.3, result.4, result.5)
     }
 }

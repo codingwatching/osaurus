@@ -375,10 +375,12 @@ struct StreamAccumulatorTests {
                 parameters: .object(["city": .string("")])
             )
         )
-        // Build a stream that emits the full inline tool-call JSON one token at a time.
+        // Build a stream that emits the full inline tool-call in the flat JSON format
+        // that JSONToolCallParser expects: <tool_call>{"name":...,"arguments":...}</tool_call>
         // We encode each character as its Unicode scalar value (which StubTokenizer decodes).
-        let json = "{\"function\":{\"name\":\"get_weather\",\"arguments\":{\"city\":\"SF\"}}}"
-        let tokens: [TokenGeneration] = json.unicodeScalars.map { .token(Int($0.value)) }
+        let text = "<tool_call>{\"name\":\"get_weather\",\"arguments\":{\"city\":\"SF\"}}</tool_call>"
+        let tokens: [TokenGeneration] = text.unicodeScalars.map { .token(Int($0.value)) }
+        let toolsSpec = [tool.toTokenizerToolSpec()]
 
         let stream = makeTokenStream(tokens)
         let events = try await drainEvents(
@@ -386,7 +388,9 @@ struct StreamAccumulatorTests {
                 events: stream,
                 tokenizer: stubTokenizer,
                 stopSequences: [],
-                tools: [tool]
+                tools: [tool],
+                toolCallFormat: .json,
+                toolsSpec: toolsSpec
             )
         )
 
