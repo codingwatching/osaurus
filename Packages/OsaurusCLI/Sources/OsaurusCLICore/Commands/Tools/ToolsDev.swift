@@ -261,6 +261,7 @@ public struct ToolsDev {
     private static func findBuiltDylib(language: Language, cwd: URL) -> URL? {
         let releaseDir = language == .swift ? ".build/release" : "target/release"
         let buildDir = cwd.appendingPathComponent(releaseDir, isDirectory: true)
+            .resolvingSymlinksInPath()
 
         return
             (try? FileManager.default.contentsOfDirectory(
