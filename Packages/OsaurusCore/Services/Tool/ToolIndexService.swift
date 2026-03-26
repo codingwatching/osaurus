@@ -16,17 +16,17 @@ public actor ToolIndexService {
     /// Populate tool_index from ToolRegistry. Called once at startup after
     /// ToolDatabase and ToolSearchService are both initialized.
     public func syncFromRegistry() async {
-        let (tools, sandboxNames, mcpNames, excludedNames): (
-            [ToolRegistry.ToolEntry], Set<String>, Set<String>, Set<String>
-        ) = await MainActor.run {
-            let all = ToolRegistry.shared.listTools()
-            let sandbox = Set(all.filter { ToolRegistry.shared.isSandboxTool($0.name) }.map(\.name))
-            let mcp = Set(all.filter { ToolRegistry.shared.isMCPTool($0.name) }.map(\.name))
-            let excluded = ToolRegistry.shared.builtInToolNames
-                .union(ToolRegistry.workToolNames)
-                .union(ToolRegistry.folderToolNames)
-            return (all, sandbox, mcp, excluded)
-        }
+        let (tools, sandboxNames, mcpNames, excludedNames):
+            (
+                [ToolRegistry.ToolEntry], Set<String>, Set<String>, Set<String>
+            ) = await MainActor.run {
+                let all = ToolRegistry.shared.listTools()
+                let sandbox = Set(all.filter { ToolRegistry.shared.isSandboxTool($0.name) }.map(\.name))
+                let mcp = Set(all.filter { ToolRegistry.shared.isMCPTool($0.name) }.map(\.name))
+                let excluded = ToolRegistry.shared.builtInToolNames
+                    .union(ToolRegistry.shared.runtimeManagedToolNames)
+                return (all, sandbox, mcp, excluded)
+            }
 
         let indexableTools = tools.filter { !excludedNames.contains($0.name) }
         let indexedNames = Set(indexableTools.map(\.name))

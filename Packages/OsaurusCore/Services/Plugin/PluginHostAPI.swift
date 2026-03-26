@@ -288,11 +288,13 @@ final class PluginHostContext: @unchecked Sendable {
     private struct InferenceOptions {
         let maxIterations: Int
         let wantsAgentTools: Bool
+        let wantsPreflight: Bool
 
         init(from json: [String: Any]) {
             let raw = json["max_iterations"] as? Int ?? defaultMaxIterations
             self.maxIterations = max(1, min(raw, maxIterationsCap))
             self.wantsAgentTools = json["tools"] as? Bool == true
+            self.wantsPreflight = json["preflight"] as? Bool == true
         }
     }
 
@@ -320,6 +322,7 @@ final class PluginHostContext: @unchecked Sendable {
         var clean = json
         clean.removeValue(forKey: "agent_address")
         clean.removeValue(forKey: "max_iterations")
+        clean.removeValue(forKey: "preflight")
         if json["tools"] is Bool { clean.removeValue(forKey: "tools") }
 
         guard let cleanData = try? JSONSerialization.data(withJSONObject: clean) else { return nil }
@@ -334,7 +337,10 @@ final class PluginHostContext: @unchecked Sendable {
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
         let agentCtx = await resolveAgentContext(json: rawJSON)
-        let enriched = enrichRequest(request, context: agentCtx, options: options)
+        var enriched = enrichRequest(request, context: agentCtx, options: options)
+        if options.wantsPreflight {
+            enriched = await applyPreflightSearch(to: enriched)
+        }
         let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
         let engine = ChatEngine(remoteServices: remoteServices, source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
@@ -449,6 +455,55 @@ final class PluginHostContext: @unchecked Sendable {
             tool_choice: base.tool_choice,
             session_id: base.session_id
         )
+    }
+
+    // MARK: Preflight Capability Search
+
+    private static func extractPreflightQuery(from messages: [ChatMessage]) -> String {
+        messages.last(where: { $0.role == "user" })?.content ?? ""
+    }
+
+    private static func applyPreflightSearch(to inference: EnrichedInference) async -> EnrichedInference {
+        let query = extractPreflightQuery(from: inference.request.messages)
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return inference }
+
+        let (preflightMode, builtInTools) = await MainActor.run {
+            let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
+            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            return (mode, tools)
+        }
+
+        let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode)
+
+        var seen = Set((inference.tools ?? []).map { $0.function.name })
+        var tools = inference.tools ?? []
+        for spec in builtInTools + preflight.toolSpecs where !seen.contains(spec.function.name) {
+            tools.append(spec)
+            seen.insert(spec.function.name)
+        }
+
+        var messages = inference.request.messages
+        if !preflight.contextSnippet.isEmpty {
+            SystemPromptBuilder.appendSystemContent(preflight.contextSnippet, into: &messages)
+        }
+
+        let effectiveTools = tools.isEmpty ? nil : tools
+        let request = ChatCompletionRequest(
+            model: inference.request.model,
+            messages: messages,
+            temperature: inference.request.temperature,
+            max_tokens: inference.request.max_tokens,
+            stream: inference.request.stream,
+            top_p: inference.request.top_p,
+            frequency_penalty: inference.request.frequency_penalty,
+            presence_penalty: inference.request.presence_penalty,
+            stop: inference.request.stop,
+            n: inference.request.n,
+            tools: effectiveTools,
+            tool_choice: inference.request.tool_choice,
+            session_id: inference.request.session_id
+        )
+        return EnrichedInference(request: request, tools: effectiveTools)
     }
 
     // MARK: Context Budget
@@ -956,6 +1011,48 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
+    // MARK: - File Read Callback
+
+    private static let fileReadMaxBytes = 50_000_000
+
+    func fileRead(requestJSON: String) -> String {
+        let data = Data(requestJSON.utf8)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let path = json["path"] as? String
+        else {
+            return Self.jsonString(["error": "invalid_request", "message": "Missing required field: path"])
+        }
+
+        let fileURL = URL(fileURLWithPath: path).standardizedFileURL
+        let allowedPrefix = OsaurusPaths.artifactsDir().standardizedFileURL.path + "/"
+
+        guard fileURL.path.hasPrefix(allowedPrefix) else {
+            return Self.jsonString(["error": "access_denied", "message": "File read restricted to artifact paths"])
+        }
+
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
+            let size = attrs[.size] as? Int
+        else {
+            return Self.jsonString(["error": "not_found", "message": "File does not exist"])
+        }
+
+        guard size <= Self.fileReadMaxBytes else {
+            return Self.jsonString(["error": "file_too_large", "message": "File exceeds 50MB limit"])
+        }
+
+        guard let fileData = try? Data(contentsOf: fileURL) else {
+            return Self.jsonString(["error": "read_error", "message": "Failed to read file"])
+        }
+
+        let mimeType = SharedArtifact.mimeType(from: fileURL.lastPathComponent)
+        return Self.jsonString([
+            "data": fileData.base64EncodedString(),
+            "size": size,
+            "mime_type": mimeType,
+        ])
+    }
+
     // MARK: - Build osr_host_api Struct
 
     /// Builds a heap-allocated C-compatible host API struct with trampoline
@@ -980,7 +1077,8 @@ final class PluginHostContext: @unchecked Sendable {
                 complete_stream: PluginHostContext.trampolineCompleteStream,
                 embed: PluginHostContext.trampolineEmbed,
                 list_models: PluginHostContext.trampolineListModels,
-                http_request: PluginHostContext.trampolineHttpRequest
+                http_request: PluginHostContext.trampolineHttpRequest,
+                file_read: PluginHostContext.trampolineFileRead
             )
         )
         hostAPIPtr = ptr
@@ -1575,6 +1673,26 @@ extension PluginHostContext {
             durationMs: ms,
             requestBody: json,
             responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    // MARK: File Read Trampoline
+
+    static let trampolineFileRead: osr_file_read_t = { requestPtr in
+        guard let requestPtr, let ctx = activeContext() else { return nil }
+        let json = String(cString: requestPtr)
+        var result = ""
+        let ms = measureMs { result = ctx.fileRead(requestJSON: json) }
+        let path = extractJSONStringValue(from: json, key: "path") ?? "?"
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "GET",
+            path: "/host-api/file_read \u{2192} \(path)",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: nil
         )
         return makeCString(result)
     }

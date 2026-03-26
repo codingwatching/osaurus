@@ -881,6 +881,7 @@ public actor WorkExecutionEngine {
                 if let artifact = sharedArtifact {
                     await onArtifact(artifact)
                     await onStatusUpdate("Shared artifact: \(artifact.filename)")
+                    await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                 }
 
             default:

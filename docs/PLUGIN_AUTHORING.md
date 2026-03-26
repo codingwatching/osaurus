@@ -93,7 +93,7 @@ Osaurus supports two ABI versions. Existing v1 plugins continue to work without 
 
 v2 extends v1 with seven capability groups covering the full surface area available to plugins. Osaurus tries the v2 entry point first and falls back to v1 if the symbol is not found.
 
-- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides 15 callbacks across seven groups.
+- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides 16 callbacks across eight groups.
 - **New fields on `osr_plugin_api`** (appended after v1 fields for binary compatibility):
   - `version`: Set to `2` (`OSR_ABI_VERSION_2`).
   - `handle_route(ctx, request_json)`: Called when an HTTP request hits a plugin route. Returns JSON. May be `NULL` if the plugin has no routes.
@@ -107,12 +107,13 @@ v2 extends v1 with seven capability groups covering the full surface area availa
   - **Inference**: `complete` / `complete_stream` / `embed` — Chat completion and embeddings through any configured provider.
   - **Models**: `list_models` — Enumerate available models (local MLX, Apple Foundation, remote).
   - **HTTP Client**: `http_request` — Outbound HTTP with SSRF protection.
+  - **File I/O**: `file_read` — Read shared artifact files (restricted to `~/.osaurus/artifacts/`).
 
 ```c
 // v2 entry point — receives host callbacks
 const osr_plugin_api* osaurus_plugin_entry_v2(const osr_host_api* host);
 
-// Host API struct (15 callbacks across 7 capability groups)
+// Host API struct (16 callbacks across 8 capability groups)
 typedef struct {
     uint32_t           version;           // OSR_ABI_VERSION_2
 
@@ -138,6 +139,9 @@ typedef struct {
 
     // HTTP Client
     osr_http_request_fn     http_request;
+
+    // File I/O
+    osr_file_read_fn        file_read;
 } osr_host_api;
 
 // Task lifecycle event types (for on_task_event callback)
@@ -175,7 +179,8 @@ Upgrading is additive. Change your entry point from `osaurus_plugin_entry` to `o
 
 New in v2:
 - **`on_task_event`**: Set this on `osr_plugin_api` to receive lifecycle events for dispatched tasks. Set to `NULL` to opt out.
-- **Host API callbacks**: The `osr_host_api` now provides 15 callbacks across 7 capability groups — config, data store, logging, agent dispatch, inference, models, and HTTP client. All are available from the moment `osaurus_plugin_entry_v2` returns.
+- **Host API callbacks**: The `osr_host_api` now provides 16 callbacks across 8 capability groups — config, data store, logging, agent dispatch, inference, models, HTTP client, and file I/O. All are available from the moment `osaurus_plugin_entry_v2` returns.
+- **Artifact handling**: Plugins can declare `"artifact_handler": true` in their manifest capabilities to intercept shared artifacts. See [Artifact Handling](#artifact-handling).
 
 ### Manifest Format
 
@@ -202,7 +207,7 @@ The manifest JSON returned by `get_manifest` describes the plugin's capabilities
 }
 ```
 
-**Full v2 manifest (tools + routes + config + web + docs):**
+**Full v2 manifest (tools + routes + config + web + artifact handler + docs):**
 
 ```json
 {
@@ -211,6 +216,7 @@ The manifest JSON returned by `get_manifest` describes the plugin's capabilities
   "description": "Slack integration",
   "capabilities": {
     "tools": [ ... ],
+    "artifact_handler": true,
     "routes": [
       {
         "id": "oauth_callback",
@@ -253,7 +259,7 @@ The manifest JSON returned by `get_manifest` describes the plugin's capabilities
 }
 ```
 
-All v2 capabilities (`routes`, `config`, `web`, `docs`) are optional. A v2 plugin can declare any combination of them.
+All v2 capabilities (`routes`, `config`, `web`, `artifact_handler`, `docs`) are optional. A v2 plugin can declare any combination of them.
 
 #### Tool Requirements
 
@@ -1062,6 +1068,9 @@ const char* response = host->complete(request);
 | `tools`          | array or bool | No       | Tool definitions (OpenAI format), or `true` to use the agent's configured tools |
 | `tool_choice`    | string/object | No       | Tool selection strategy (`"auto"`, `"none"`, or `{"type":"function","function":{"name":"..."}}`) |
 | `max_iterations` | int           | No       | Maximum agentic loop iterations (default: `1`). Set higher to enable automatic tool execution |
+| `preflight`      | bool          | No       | When `true`, runs a preflight capability search before inference to auto-discover relevant tools and context |
+
+**Preflight capability search:** When `preflight` is `true` and `tools` is also enabled, Osaurus analyzes the user's message and performs a capability search to find relevant tools and context that might not be explicitly provided. Discovered tools are merged with any tools already in the request (deduplicating by name), and relevant context snippets are appended to the system prompt. The search intensity is controlled by the user's global preflight mode setting (minimal, balanced, or thorough). This is useful for plugins that want the model to dynamically discover and use the best tools for a task without knowing them in advance.
 
 **Agent context resolution:** When `agent_address` is present, the following are resolved from the agent's configuration and applied to the request (unless the request provides explicit values):
 
@@ -1347,6 +1356,157 @@ const char* fetch_notion_page(const osr_host_api* host, const char* page_id,
     return host->http_request(request);
 }
 ```
+
+---
+
+## File I/O
+
+v2 plugins can read shared artifact files through the host API. This is primarily used by [artifact handlers](#artifact-handling) to retrieve file contents for uploading to external services.
+
+### Reading a File
+
+```c
+const char* request = "{\"path\": \"/Users/me/.osaurus/artifacts/ctx-123/image.png\"}";
+const char* response = host->file_read(request);
+```
+
+**Request fields:**
+
+| Field  | Type   | Required | Description                        |
+| ------ | ------ | -------- | ---------------------------------- |
+| `path` | string | Yes      | Absolute path to the file to read  |
+
+**Response fields:**
+
+| Field       | Type   | Description                          |
+| ----------- | ------ | ------------------------------------ |
+| `data`      | string | Base64-encoded file contents         |
+| `size`      | int    | File size in bytes                   |
+| `mime_type` | string | Detected MIME type (from extension)  |
+
+**Error response:**
+
+```json
+{"error": "access_denied", "message": "Path outside allowed directory"}
+```
+
+### Security Restrictions
+
+- `file_read` is restricted to `~/.osaurus/artifacts/`. Attempts to read files outside this directory return `"error": "access_denied"`.
+- Path traversal (e.g., `../../etc/passwd`) is blocked — paths are resolved and validated against the allowed prefix.
+- Maximum file size is 50 MB. Files exceeding this limit return `"error": "file_too_large"`.
+
+### Error Types
+
+| Error              | Description                                      |
+| ------------------ | ------------------------------------------------ |
+| `invalid_request`  | Missing or malformed `path` field                |
+| `access_denied`    | Path is outside `~/.osaurus/artifacts/`          |
+| `not_found`        | File does not exist at the given path            |
+| `file_too_large`   | File exceeds the 50 MB limit                     |
+| `read_failed`      | I/O error while reading the file                 |
+
+---
+
+## Artifact Handling
+
+Plugins can intercept shared artifacts — files produced by the agent (images, documents, code, etc.) during a conversation. This enables workflows like uploading artifacts to external services (Telegram, Slack, cloud storage, etc.).
+
+### Declaring the Capability
+
+Set `"artifact_handler": true` in the manifest:
+
+```json
+{
+  "plugin_id": "com.acme.uploader",
+  "version": "1.0.0",
+  "description": "Auto-uploads artifacts to cloud storage",
+  "capabilities": {
+    "artifact_handler": true,
+    "tools": [ ... ]
+  }
+}
+```
+
+### How It Works
+
+1. The agent creates an artifact and calls `share_artifact`.
+2. Osaurus saves the artifact locally to `~/.osaurus/artifacts/{contextId}/`.
+3. Osaurus checks all loaded plugins for `artifact_handler: true` (requires ABI v2).
+4. Each matching plugin receives an `invoke` call with artifact metadata.
+5. The plugin can then use `host->file_read` to read the file contents and `host->http_request` to upload it to an external service.
+
+### Invocation Format
+
+Artifact notifications are delivered via the standard `invoke` function:
+
+- `type`: `"artifact"`
+- `id`: `"share"`
+- `payload`: JSON with artifact metadata
+
+**Payload fields:**
+
+| Field      | Type   | Description                                                    |
+| ---------- | ------ | -------------------------------------------------------------- |
+| `filename` | string | Original filename (e.g., `"diagram.png"`)                      |
+| `path`     | string | Absolute path to the saved artifact file                       |
+| `mimeType` | string | Detected MIME type (e.g., `"image/png"`)                       |
+| `size`     | int    | File size in bytes                                             |
+
+**Example payload:**
+
+```json
+{
+  "filename": "architecture-diagram.png",
+  "path": "/Users/me/.osaurus/artifacts/ctx-abc123/architecture-diagram.png",
+  "mimeType": "image/png",
+  "size": 245760
+}
+```
+
+### Example: Uploading to a Cloud Service
+
+```c
+const char* invoke(osr_plugin_ctx_t ctx, const char* type,
+                   const char* id, const char* payload) {
+    MyPlugin* plugin = (MyPlugin*)ctx;
+
+    if (strcmp(type, "artifact") == 0 && strcmp(id, "share") == 0) {
+        // 1. Read the artifact file
+        char read_req[1024];
+        snprintf(read_req, sizeof(read_req),
+            "{\"path\": \"%s\"}", extracted_path);
+        const char* file_resp = plugin->host->file_read(read_req);
+
+        // 2. Parse the base64 data from file_resp
+        // ... extract "data", "mime_type" ...
+
+        // 3. Upload via HTTP
+        char upload_req[4096];
+        snprintf(upload_req, sizeof(upload_req),
+            "{\"method\": \"POST\","
+            " \"url\": \"https://api.example.com/upload\","
+            " \"headers\": {\"Content-Type\": \"application/json\","
+            "               \"Authorization\": \"Bearer %s\"},"
+            " \"body\": \"{\\\"filename\\\": \\\"%s\\\","
+            "             \\\"data\\\": \\\"%s\\\"}\"}",
+            api_key, filename, base64_data);
+        const char* upload_resp = plugin->host->http_request(upload_req);
+
+        plugin->host->log(1, "Artifact uploaded successfully");
+        return strdup("{\"uploaded\": true}");
+    }
+
+    return strdup("{\"error\": \"unknown invocation\"}");
+}
+```
+
+### Behavior Notes
+
+- Artifact notifications are dispatched **asynchronously**. A slow or failing plugin does not block the main application.
+- Multiple plugins can register as artifact handlers. Each receives the notification independently.
+- The plugin's `invoke` return value is not used by the host for artifact notifications — it is fire-and-forget.
+- Only plugins with ABI version 2 or higher are eligible for artifact handling.
 
 ---
 
@@ -1820,4 +1980,4 @@ Once a plugin is first installed with a minisign public key, Osaurus records tha
 
 ## Rust Authors
 
-Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route`, `on_config_changed`, and `on_task_event`. Store the `osr_host_api` pointer passed to the v2 entry point for access to all 15 host callbacks — config, data store, logging, agent dispatch (`dispatch`, `task_status`, `dispatch_cancel`, `dispatch_clarify`), inference (`complete`, `complete_stream`, `embed`), model enumeration (`list_models`), and outbound HTTP (`http_request`). All callbacks use C strings (null-terminated UTF-8) with JSON payloads; wrap them in safe Rust abstractions using `CStr`/`CString`.
+Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route`, `on_config_changed`, and `on_task_event`. Store the `osr_host_api` pointer passed to the v2 entry point for access to all 16 host callbacks — config, data store, logging, agent dispatch (`dispatch`, `task_status`, `dispatch_cancel`, `dispatch_clarify`), inference (`complete`, `complete_stream`, `embed`), model enumeration (`list_models`), outbound HTTP (`http_request`), and file I/O (`file_read`). All callbacks use C strings (null-terminated UTF-8) with JSON payloads; wrap them in safe Rust abstractions using `CStr`/`CString`.

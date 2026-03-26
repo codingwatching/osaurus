@@ -1013,6 +1013,9 @@ final class ChatSession: ObservableObject {
                                     toolResult: resultText,
                                     executionMode: executionMode
                                 )
+                                if let artifact = SharedArtifact.fromEnrichedToolResult(resultText) {
+                                    await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                                }
                             }
 
                             // Log tool success (truncated result)
