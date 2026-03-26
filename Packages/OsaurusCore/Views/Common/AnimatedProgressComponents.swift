@@ -97,46 +97,36 @@ struct ShimmerProgressBar: View {
 
 /// Animated indeterminate progress indicator with flowing gradient
 struct IndeterminateShimmerProgress: View {
-    @Environment(\.theme) private var theme
-
     let color: Color
     var height: CGFloat = 4
 
-    @State private var animationOffset: CGFloat = -0.3
+    // Animate the gradient's start/end points from off-left (-0.7…-0.3)
+    // to off-right (1.0…1.4), keeping the sweep block at 40% of the bar width
+    // without needing a GeometryReader or pixel math.
+    @State private var phase: CGFloat = 0
+
+    private var gradient: LinearGradient {
+        LinearGradient(
+            colors: [.clear, color.opacity(0.6), color, color.opacity(0.6), .clear],
+            startPoint: UnitPoint(x: phase - 0.4, y: 0.5),
+            endPoint:   UnitPoint(x: phase + 0.4, y: 0.5)
+        )
+    }
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Background track
+        RoundedRectangle(cornerRadius: height / 2)
+            .fill(color.opacity(0.15))
+            .frame(height: height)
+            .overlay(
                 RoundedRectangle(cornerRadius: height / 2)
-                    .fill(color.opacity(0.15))
-                    .frame(height: height)
-
-                // Animated flowing bar
-                RoundedRectangle(cornerRadius: height / 2)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                color.opacity(0),
-                                color,
-                                color,
-                                color.opacity(0),
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: geometry.size.width * 0.4, height: height)
-                    .offset(x: animationOffset * geometry.size.width)
-            }
-        }
-        .frame(height: height)
+                    .fill(gradient)
+            )
         .onAppear {
             withAnimation(
                 .easeInOut(duration: 1.2)
                     .repeatForever(autoreverses: true)
             ) {
-                animationOffset = 0.9
+                phase = 1
             }
         }
     }
