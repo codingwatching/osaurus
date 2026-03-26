@@ -952,7 +952,7 @@ public actor WorkEngine {
 
 /// Delegate for receiving work execution events
 @MainActor
-public protocol WorkEngineDelegate: AnyObject {
+public protocol WorkEngineDelegate: AnyObject, Sendable {
     // Issue lifecycle
     func workEngine(_ engine: WorkEngine, didStartIssue issue: Issue)
     func workEngine(_ engine: WorkEngine, didCompleteIssue issue: Issue, success: Bool)

@@ -523,7 +523,7 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             }
         }
 
-        Task { @MainActor in
+        Task { @MainActor [plugin] in
             try? await SandboxPluginManager.shared.install(plugin: plugin, for: agentId)
         }
         return .ok("{\"status\":\"installing\",\"plugin_id\":\(jsonEscape(plugin.id))}")

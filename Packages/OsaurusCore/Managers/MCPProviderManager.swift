@@ -286,7 +286,7 @@ public final class MCPProviderManager: ObservableObject {
         // Check for error
         if let isError = isError, isError {
             let errorText = content.compactMap { item -> String? in
-                if case .text(let text) = item { return text }
+                if case .text(let text, _, _) = item { return text }
                 return nil
             }.joined(separator: "\n")
             throw MCPProviderError.toolExecutionFailed(errorText.isEmpty ? "Tool returned error" : errorText)

@@ -177,34 +177,34 @@ extension MCPProviderTool {
 
         for item in content {
             switch item {
-            case .text(let text):
+            case .text(let text, _, _):
                 results.append(["type": "text", "content": text])
-            case .image(let data, let mimeType, let metadata):
-                var result: [String: Any] = [
+            case .image(let data, let mimeType, _, _):
+                results.append([
                     "type": "image",
                     "data": data,
                     "mimeType": mimeType,
-                ]
-                if let metadata = metadata {
-                    result["metadata"] = metadata
-                }
-                results.append(result)
-            case .audio(let data, let mimeType):
+                ])
+            case .audio(let data, let mimeType, _, _):
                 results.append([
                     "type": "audio",
                     "data": data,
                     "mimeType": mimeType,
                 ])
-            case .resource(let uri, let mimeType, let text):
+            case .resource(let resource, _, _):
                 var result: [String: Any] = [
                     "type": "resource",
-                    "uri": uri,
-                    "mimeType": mimeType,
+                    "uri": resource.uri,
                 ]
-                if let text = text {
+                if let mimeType = resource.mimeType {
+                    result["mimeType"] = mimeType
+                }
+                if let text = resource.text {
                     result["text"] = text
                 }
                 results.append(result)
+            default:
+                break
             }
         }
 
