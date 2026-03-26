@@ -78,6 +78,13 @@ typedef const char* (*osr_list_models_fn)(void);
 // Returns JSON with "status", "headers", "body", "body_encoding", "elapsed_ms".
 typedef const char* (*osr_http_request_fn)(const char* request_json);
 
+// File I/O — read files from allowed paths (e.g. shared artifacts).
+// request_json has "path" (absolute file path).
+// Returns JSON with "data" (base64-encoded), "size", "mime_type",
+// or "error" + "message" on failure.
+// Restricted to artifact paths for security.
+typedef const char* (*osr_file_read_fn)(const char* request_json);
+
 typedef struct {
     uint32_t           version;       // OSR_ABI_VERSION_2
 
@@ -103,6 +110,9 @@ typedef struct {
 
     // HTTP Client
     osr_http_request_fn     http_request;
+
+    // File I/O
+    osr_file_read_fn        file_read;
 } osr_host_api;
 
 // ── Task lifecycle event types ──

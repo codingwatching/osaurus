@@ -90,6 +90,9 @@ typealias osr_list_models_t = @convention(c) () -> UnsafePointer<CChar>?
 // HTTP client
 typealias osr_http_request_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+// File I/O
+typealias osr_file_read_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
 struct osr_host_api {
     var version: UInt32
 
@@ -115,6 +118,9 @@ struct osr_host_api {
 
     // HTTP Client
     var http_request: osr_http_request_t?
+
+    // File I/O
+    var file_read: osr_file_read_t?
 }
 
 struct osr_plugin_api {
@@ -155,6 +161,7 @@ public struct PluginManifest: Decodable, Sendable {
         public let routes: [RouteSpec]?
         public let config: ConfigSpec?
         public let web: WebSpec?
+        public let artifact_handler: Bool?
     }
 
     public struct ToolSpec: Decodable, Sendable {

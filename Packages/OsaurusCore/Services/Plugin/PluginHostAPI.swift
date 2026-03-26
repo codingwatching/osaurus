@@ -1011,6 +1011,48 @@ final class PluginHostContext: @unchecked Sendable {
         }
     }
 
+    // MARK: - File Read Callback
+
+    private static let fileReadMaxBytes = 50_000_000
+
+    func fileRead(requestJSON: String) -> String {
+        let data = Data(requestJSON.utf8)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let path = json["path"] as? String
+        else {
+            return Self.jsonString(["error": "invalid_request", "message": "Missing required field: path"])
+        }
+
+        let fileURL = URL(fileURLWithPath: path).standardizedFileURL
+        let allowedPrefix = OsaurusPaths.artifactsDir().standardizedFileURL.path + "/"
+
+        guard fileURL.path.hasPrefix(allowedPrefix) else {
+            return Self.jsonString(["error": "access_denied", "message": "File read restricted to artifact paths"])
+        }
+
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: fileURL.path),
+            let size = attrs[.size] as? Int
+        else {
+            return Self.jsonString(["error": "not_found", "message": "File does not exist"])
+        }
+
+        guard size <= Self.fileReadMaxBytes else {
+            return Self.jsonString(["error": "file_too_large", "message": "File exceeds 50MB limit"])
+        }
+
+        guard let fileData = try? Data(contentsOf: fileURL) else {
+            return Self.jsonString(["error": "read_error", "message": "Failed to read file"])
+        }
+
+        let mimeType = SharedArtifact.mimeType(from: fileURL.lastPathComponent)
+        return Self.jsonString([
+            "data": fileData.base64EncodedString(),
+            "size": size,
+            "mime_type": mimeType,
+        ])
+    }
+
     // MARK: - Build osr_host_api Struct
 
     /// Builds a heap-allocated C-compatible host API struct with trampoline
@@ -1035,7 +1077,8 @@ final class PluginHostContext: @unchecked Sendable {
                 complete_stream: PluginHostContext.trampolineCompleteStream,
                 embed: PluginHostContext.trampolineEmbed,
                 list_models: PluginHostContext.trampolineListModels,
-                http_request: PluginHostContext.trampolineHttpRequest
+                http_request: PluginHostContext.trampolineHttpRequest,
+                file_read: PluginHostContext.trampolineFileRead
             )
         )
         hostAPIPtr = ptr
@@ -1630,6 +1673,26 @@ extension PluginHostContext {
             durationMs: ms,
             requestBody: json,
             responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    // MARK: File Read Trampoline
+
+    static let trampolineFileRead: osr_file_read_t = { requestPtr in
+        guard let requestPtr, let ctx = activeContext() else { return nil }
+        let json = String(cString: requestPtr)
+        var result = ""
+        let ms = measureMs { result = ctx.fileRead(requestJSON: json) }
+        let path = extractJSONStringValue(from: json, key: "path") ?? "?"
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "GET",
+            path: "/host-api/file_read \u{2192} \(path)",
+            statusCode: responseContainsError(result) ? 500 : 200,
+            durationMs: ms,
+            requestBody: json,
+            responseBody: nil
         )
         return makeCString(result)
     }

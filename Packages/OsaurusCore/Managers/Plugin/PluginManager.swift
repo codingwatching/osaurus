@@ -287,6 +287,25 @@ final class PluginManager {
         }
     }
 
+    // MARK: - Artifact Handler Notifications
+
+    /// Notifies all plugins that declared `artifact_handler: true` about a shared artifact.
+    /// Each plugin is invoked asynchronously so no single handler blocks the caller or others.
+    func notifyArtifactHandlers(artifact: SharedArtifact) {
+        let payload = PluginHostContext.serializeArtifactEvent(artifact: artifact)
+        for loaded in plugins {
+            guard loaded.plugin.manifest.capabilities.artifact_handler == true else { continue }
+            guard loaded.plugin.abiVersion >= 2 else { continue }
+            Task {
+                _ = try? await loaded.plugin.invoke(
+                    type: "artifact",
+                    id: "share",
+                    payload: payload
+                )
+            }
+        }
+    }
+
     // MARK: - Background Scanning & Loading (nonisolated)
 
     /// Performs the heavy plugin scanning work on a background thread.
