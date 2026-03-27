@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Animated Orb
@@ -44,6 +45,7 @@ struct AnimatedOrb: View {
     @State private var floatOffset: CGFloat = 0
     @State private var glowPulse: CGFloat = 1.0
     @State private var isHovered = false
+    @State private var isAppActive = true
 
     // MARK: - Seed Hashing
 
@@ -77,6 +79,23 @@ struct AnimatedOrb: View {
             }
         }
         .onAppear(perform: startAnimations)
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)
+        ) { _ in
+            isAppActive = false
+            var t = Transaction()
+            t.animation = nil
+            withTransaction(t) {
+                floatOffset = 0
+                glowPulse = 1.0
+            }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            isAppActive = true
+            startAnimations()
+        }
     }
 
     // MARK: - Computed Properties
@@ -131,10 +150,20 @@ private struct OrbShaderContent: View {
     let seedHash: Float
 
     @State private var startTime = Date.now
+    /// time value frozen at the moment the app resigned active
+    @State private var frozenTime: Float = 0
+    @State private var isAppActive = true
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0 / 30.0)) { timeline in
-            let time = Float(timeline.date.timeIntervalSince(startTime))
+        // .animation(minimumInterval:, paused:) is display-link driven and actually stops
+        // the display link when paused — .periodic fires at the given interval regardless
+        // of app state, still submitting CA draw calls that keep the compositor busy.
+        // paused: !isAppActive ensures zero CA updates when the app is not in the foreground.
+        TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !isAppActive)) { timeline in
+            let elapsed = Float(timeline.date.timeIntervalSince(startTime))
+            // when paused, timeline.date stops advancing, but on resume it jumps to wall-clock
+            // time; use frozenTime to preserve the shader's animation phase across pause/resume.
+            let time = isAppActive ? elapsed : frozenTime
 
             ZStack {
                 Rectangle()
@@ -149,6 +178,19 @@ private struct OrbShaderContent: View {
 
                 particleCanvas(time: time)
             }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.willResignActiveNotification)
+        ) { _ in
+            frozenTime = Float(Date.now.timeIntervalSince(startTime))
+            isAppActive = false
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in
+            // shift startTime forward so the shader resumes from exactly the frozen phase
+            startTime = Date.now - TimeInterval(frozenTime)
+            isAppActive = true
         }
     }
 

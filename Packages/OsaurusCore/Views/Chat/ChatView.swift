@@ -1318,7 +1318,7 @@ struct ChatView: View {
                             )
                         }
                     }
-                    .animation(theme.springAnimation(), value: session.turns.isEmpty)
+                    .animation(theme.springAnimation(responseMultiplier: 0.9), value: session.turns.isEmpty)
                 }
             }
         }
@@ -1332,8 +1332,6 @@ struct ChatView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .ignoresSafeArea()
-        .animation(theme.animationMedium(), value: session.turns.isEmpty)
-        .animation(theme.springAnimation(responseMultiplier: 0.9), value: windowState.showSidebar)
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
             focusTrigger &+= 1

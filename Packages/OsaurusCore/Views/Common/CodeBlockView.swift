@@ -122,14 +122,22 @@ struct CodeContentView: NSViewRepresentable {
     func updateNSView(_ textView: CodeNSTextView, context: Context) {
         let coord = context.coordinator
         let themeId = "\(theme.monoFontName)|\(theme.bodySize)"
-        textView.textContainer?.containerSize = NSSize(width: baseWidth, height: .greatestFiniteMagnitude)
-        textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
-        textView.lineNumberColor = NSColor(theme.tertiaryText.opacity(0.4))
 
         let codeChanged = coord.lastCode != code
         let langChanged = coord.lastLanguage != language
         let widthChanged = abs(coord.lastWidth - baseWidth) > 0.1
         let themeChanged = coord.lastThemeId != themeId
+
+        // guard containerSize — setting it always invalidates NSLayoutManager even when unchanged
+        if widthChanged {
+            textView.textContainer?.containerSize = NSSize(width: baseWidth, height: .greatestFiniteMagnitude)
+        }
+
+        // selectedTextAttributes triggers needsDisplay; only push on theme changes
+        if themeChanged {
+            textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
+            textView.lineNumberColor = NSColor(theme.tertiaryText.opacity(0.4))
+        }
 
         if codeChanged || langChanged || widthChanged || themeChanged {
             let attrStr = buildAttributedString()

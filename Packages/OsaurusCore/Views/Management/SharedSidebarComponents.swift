@@ -487,9 +487,15 @@ struct SidebarRowBackground: View {
 
 // MARK: - Utilities
 
+// shared instance — initialised once; only localizedString(for:relativeTo:) is called on it,
+// which does not mutate the formatter. nonisolated(unsafe) silences the Sendable warning.
+nonisolated(unsafe) private let _sharedRelativeDateFormatter: RelativeDateTimeFormatter = {
+    let f = RelativeDateTimeFormatter()
+    f.unitsStyle = .abbreviated
+    return f
+}()
+
 /// Formats a date as a relative time string (e.g., "2h ago", "yesterday").
 func formatRelativeDate(_ date: Date) -> String {
-    let formatter = RelativeDateTimeFormatter()
-    formatter.unitsStyle = .abbreviated
-    return formatter.localizedString(for: date, relativeTo: Date())
+    _sharedRelativeDateFormatter.localizedString(for: date, relativeTo: Date())
 }

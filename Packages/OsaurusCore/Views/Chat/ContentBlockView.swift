@@ -53,14 +53,8 @@ struct ContentBlockView: View, Equatable {
     @ViewBuilder
     private var messageBubbleBackground: some View {
         if isUserMessage {
-            ZStack {
-                if theme.glassEnabled {
-                    RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-                RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
-                    .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
-            }
+            RoundedRectangle(cornerRadius: bubbleCornerRadius, style: .continuous)
+                .fill(userBubbleBackgroundColor.opacity(theme.userBubbleOpacity))
         } else {
             Color.clear
         }
