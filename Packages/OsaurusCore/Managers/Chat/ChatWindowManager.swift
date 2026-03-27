@@ -574,6 +574,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         Task {
             if let sid = closedSessionId {
                 await ModelRuntime.shared.invalidateSession(sid.uuidString)
+                PluginHostContext.invalidatePreflightCache(sessionId: sid.uuidString)
             }
             let active = self.activeLocalModelNames()
             await ModelRuntime.shared.unloadModelsNotIn(active)

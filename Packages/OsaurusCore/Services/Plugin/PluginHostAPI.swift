@@ -459,11 +459,33 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Preflight Capability Search
 
+    /// Session-scoped preflight cache. Once a preflight result is computed for a session,
+    /// it is reused for all subsequent turns in that session. This keeps the tool list and
+    /// system-prompt snippet stable across turns, which is required for KV-cache reuse:
+    /// any change to the tool list causes prompt divergence before token ~1000 and forces
+    /// a full re-prefill even when the conversation content is otherwise identical.
+    private nonisolated(unsafe) static var preflightCache: [String: PreflightResult] = [:]
+    private static let preflightCacheLock = NSLock()
+
+    /// Call when a session ends (e.g. chat window closes) to release the memoized result.
+    static func invalidatePreflightCache(sessionId: String) {
+        preflightCacheLock.withLock { preflightCache.removeValue(forKey: sessionId) }
+    }
+
     private static func extractPreflightQuery(from messages: [ChatMessage]) -> String {
         messages.last(where: { $0.role == "user" })?.content ?? ""
     }
 
     private static func applyPreflightSearch(to inference: EnrichedInference) async -> EnrichedInference {
+        // If this session already has a preflight result, reuse it without re-running the search.
+        if let sid = inference.request.session_id {
+            let cached = preflightCacheLock.withLock { preflightCache[sid] }
+            if let cached {
+                let builtInTools = await MainActor.run { ToolRegistry.shared.alwaysLoadedSpecs(mode: .none) }
+                return applyPreflightResult(cached, to: inference, builtInTools: builtInTools)
+            }
+        }
+
         let query = extractPreflightQuery(from: inference.request.messages)
         guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return inference }
 
@@ -475,6 +497,20 @@ final class PluginHostContext: @unchecked Sendable {
 
         let preflight = await PreflightCapabilitySearch.search(query: query, mode: preflightMode)
 
+        // Store result for this session so all subsequent turns reuse the same tool set.
+        if let sid = inference.request.session_id {
+            preflightCacheLock.withLock { preflightCache[sid] = preflight }
+        }
+
+        return applyPreflightResult(preflight, to: inference, builtInTools: builtInTools)
+    }
+
+    /// Merges a cached `PreflightResult` into an inference request without re-running the search.
+    private static func applyPreflightResult(
+        _ preflight: PreflightResult,
+        to inference: EnrichedInference,
+        builtInTools: [Tool]
+    ) -> EnrichedInference {
         var seen = Set((inference.tools ?? []).map { $0.function.name })
         var tools = inference.tools ?? []
         for spec in builtInTools + preflight.toolSpecs where !seen.contains(spec.function.name) {
