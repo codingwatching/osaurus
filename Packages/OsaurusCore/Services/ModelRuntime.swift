@@ -228,6 +228,23 @@ actor ModelRuntime {
     }
 
     private func storeSessionCache(sessionId: String, cache: [any KVCache], promptTokens: [Int], modelName: String) {
+        // Materialize all lazy MLXArrays before storing.
+        //
+        // During generation, TokenIterator uses asyncEval() to keep the GPU pipeline full.
+        // Each in-place key/value write (`keys[..., prev..<offset, ...] = newKeys`) adds a
+        // graph node.  After generateLoopTask completes and Stream().synchronize() returns,
+        // the GPU is finished — but the MLXArray objects in the cache may still hold
+        // unevaluated computation-graph references rather than concrete GPU buffers.  On the
+        // next turn, MLX walks those graphs from scratch, triggering a full re-prefill even
+        // though offset and token counts are correct.
+        //
+        // eval() forces the arrays to concrete buffers right now, so subsequent reads are
+        // O(1) buffer accesses instead of O(n) graph replays.
+        let arraysToEval = cache.flatMap { $0.state }
+        if !arraysToEval.isEmpty {
+            eval(arraysToEval)
+        }
+
         kvCacheStore.putCache(sessionId: sessionId, cache: cache, tokens: promptTokens, modelName: modelName)
         let budget = currentKVBudget()
         kvCacheStore.ensureBudget(budget)
@@ -235,6 +252,7 @@ actor ModelRuntime {
         debugLog(
             "[ModelRuntime] stored session cache sessionId=\(sessionId.prefix(8)) promptTokens=\(promptTokens.count) effectiveCacheOffset=\(offset) budget=\(budget / 1024 / 1024)MB"
         )
+        print("[ModelRuntime] storeSessionCache: evaled \(arraysToEval.count) arrays, offset=\(offset)")
     }
 
     // MARK: - Internals
@@ -371,7 +389,7 @@ actor ModelRuntime {
         let params = GenerationParameters(temperature: 0.0, maxTokens: 1)
 
         do {
-            let (stream, _, cache, newTokens, genTask, _) = try await MLXGenerationEngine.prepareAndGenerate(
+            let prefixResult = try await MLXGenerationEngine.prepareAndGenerate(
                 container: holder.container,
                 buildChat: { messages },
                 buildToolsSpec: { tokenizerTools },
@@ -379,6 +397,9 @@ actor ModelRuntime {
                 runtime: runtimeConfig,
                 existingCache: nil,
                 cachedTokens: nil
+            )
+            let (stream, cache, newTokens, genTask) = (
+                prefixResult.stream, prefixResult.cache, prefixResult.promptTokens, prefixResult.genTask
             )
             // Only track this as the active generation task when called from a foreground
             // (non-background) context. When called from a fire-and-forget background Task,
@@ -395,6 +416,10 @@ actor ModelRuntime {
                 print("[ModelRuntime] Prefix cache incomplete, skipping persistence")
                 return
             }
+
+            // Materialize cache arrays before storing (same reason as storeSessionCache).
+            let prefixArrays = cache.flatMap { $0.state }
+            if !prefixArrays.isEmpty { eval(prefixArrays) }
 
             kvCacheStore.putPrefixCache(cache, tokens: newTokens, modelName: modelName, hash: hash)
             print("[ModelRuntime] Prefix cached for \(modelName) (hash: \(hash.prefix(8)))")
@@ -488,6 +513,8 @@ actor ModelRuntime {
         var newTokens: [Int]
         var genTask: Task<Void, Never>
         var toolCallFormat: ToolCallFormat
+        // Two-phase prefill sets this to the stable-boundary snapshot instead of the full-prompt snapshot.
+        nonisolated(unsafe) var snapshotCacheOverride: ([any KVCache], [Int])? = nil
 
         debugLog(
             "[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0) sessionId=\(sessionId?.prefix(8) ?? "nil")"
@@ -504,8 +531,7 @@ actor ModelRuntime {
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
 
         do {
-            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) =
-                try await MLXGenerationEngine.prepareAndGenerate(
+            let genResult = try await MLXGenerationEngine.prepareAndGenerate(
                     container: holder.container,
                     buildChat: buildChat,
                     buildToolsSpec: buildTools,
@@ -514,6 +540,14 @@ actor ModelRuntime {
                     existingCache: existingCache,
                     cachedTokens: cachedTokens
                 )
+            (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
+                genResult.stream, genResult.tokenizer, genResult.cache,
+                genResult.promptTokens, genResult.genTask, genResult.toolCallFormat
+            )
+            // For two-phase prefill, override snapshot with the stable-boundary snapshot.
+            if let snapCache = genResult.snapshotCache, let snapTokens = genResult.snapshotTokens {
+                snapshotCacheOverride = (snapCache, snapTokens)
+            }
         } catch {
             genLog.error(
                 "generateEventStream: prepareAndGenerate failed (cache retry): \(error.localizedDescription, privacy: .public)"
@@ -527,8 +561,7 @@ actor ModelRuntime {
             // Re-signal for the retry prefill (still unknown count).
             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
             do {
-                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) =
-                    try await MLXGenerationEngine.prepareAndGenerate(
+                let retryResult = try await MLXGenerationEngine.prepareAndGenerate(
                         container: holder.container,
                         buildChat: buildChat,
                         buildToolsSpec: buildTools,
@@ -537,6 +570,13 @@ actor ModelRuntime {
                         existingCache: nil,
                         cachedTokens: nil
                     )
+                (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
+                    retryResult.stream, retryResult.tokenizer, retryResult.cache,
+                    retryResult.promptTokens, retryResult.genTask, retryResult.toolCallFormat
+                )
+                if let snapCache = retryResult.snapshotCache, let snapTokens = retryResult.snapshotTokens {
+                    snapshotCacheOverride = (snapCache, snapTokens)
+                }
             } catch {
                 InferenceProgressManager.shared.prefillDidFinishAsync()
                 throw error
@@ -550,11 +590,40 @@ actor ModelRuntime {
 
         activeGenerationTask = genTask
 
+        // Store a pre-generation snapshot of the cache immediately after prefill.
+        //
+        // Standard (single-phase) path: snapshot the full-prompt cache keyed by `newTokens`.
+        // Two-phase path: use the stable-boundary snapshot from prepareAndGenerate (keyed by
+        // stableTokens, before gen-prefix). This ensures the next turn's common-prefix check
+        // hits exactly at cacheOffset, with toTrim == 0, even for MambaCache models.
+        if let sid = sessionId {
+            let (snapCacheToStore, snapTokensToStore): ([any KVCache], [Int])
+            if let override = snapshotCacheOverride {
+                // Two-phase: store the stable-boundary snapshot already deep-copied inside engine.
+                snapCacheToStore = override.0
+                snapTokensToStore = override.1
+                debugLog(
+                    "[ModelRuntime] twoPhase snapshot override: stableTokens=\(snapTokensToStore.count)"
+                )
+                print("[ModelRuntime] twoPhase snapshot: using stable-boundary snapshot tokens=\(snapTokensToStore.count)")
+            } else {
+                // Single-phase: snapshot full-prompt cache now.
+                snapCacheToStore = KVCacheStore.deepCopyCache(cache)
+                snapTokensToStore = newTokens
+            }
+            let arraysToEval = snapCacheToStore.flatMap { $0.state }
+            if !arraysToEval.isEmpty { eval(arraysToEval) }
+            kvCacheStore.putCache(sessionId: sid, cache: snapCacheToStore, tokens: snapTokensToStore, modelName: modelName)
+            let budget = currentKVBudget()
+            kvCacheStore.ensureBudget(budget)
+            let snapshotOffset = effectiveCacheOffset(snapCacheToStore)
+            debugLog(
+                "[ModelRuntime] pre-gen snapshot stored sessionId=\(sid.prefix(8)) tokens=\(snapTokensToStore.count) offset=\(snapshotOffset)"
+            )
+            print("[ModelRuntime] pre-gen snapshot: evaled \(arraysToEval.count) arrays, offset=\(snapshotOffset)")
+        }
+
         // Thread the tokenizer into StreamAccumulator so it can decode token IDs to text.
-        // The onGeneratedTokenIds callback captures the generated IDs so wrapWithCacheStore
-        // can store promptTokens + generatedTokenIds as the complete cached token sequence.
-        let capturedPromptTokens = newTokens
-        nonisolated(unsafe) var generatedTokenIds: [Int] = []
         let capturedToolsSpec = buildTools()
         let eventStream = StreamAccumulator.accumulate(
             events: rawStream,
@@ -564,22 +633,15 @@ actor ModelRuntime {
             toolCallFormat: toolCallFormat,
             toolsSpec: capturedToolsSpec,
             generationTask: genTask,
-            onGeneratedTokenIds: { ids in generatedTokenIds = ids }
+            onGeneratedTokenIds: { _ in }
         ).asAsyncThrowingStream()
 
-        // Compose wrappers: cache-store on success (innermost), then cache-invalidation on error.
-        // Cache must be stored after the stream drains so `cache.offset` reflects all processed tokens.
+        // Compose wrappers: cache-invalidation on error.
+        // The pre-generation snapshot is already stored above; no post-generation re-store
+        // is needed (and would be harmful: it would overwrite the snapshot with a cache at
+        // offset = promptTokens + generatedIds, which diverges from the next-turn prompt by
+        // exactly the number of generated tokens, requiring trim that MambaCache cannot do).
         var wrappedStream = eventStream
-        if let sid = sessionId {
-            wrappedStream = wrapWithCacheStore(
-                wrappedStream,
-                sessionId: sid,
-                cache: cache,
-                promptTokens: capturedPromptTokens,
-                generatedTokenIdsBox: { generatedTokenIds },
-                modelName: modelName
-            )
-        }
         guard existingCache != nil else { return wrappedStream }
         return wrapWithCacheInvalidation(
             wrappedStream,

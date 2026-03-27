@@ -17,6 +17,10 @@
 import Foundation
 import MLXLMCommon
 import Tokenizers
+import os.log
+
+private let accumSignposter = OSSignposter(subsystem: "ai.osaurus", category: "Generation")
+private let accumLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 
 /// An AsyncSequence that transforms a raw `TokenGeneration` stream into
 /// typed `ModelRuntimeEvent` values.  All processing happens synchronously
@@ -130,6 +134,10 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private var decodedSoFar = ""
         private var finished = false
         private var pendingEvents: [ModelRuntimeEvent] = []
+        // Signpost state for the generation interval (first-token → stream-end)
+        private var generationSpState: OSSignpostIntervalState? = nil
+        private var generationSpStarted = false
+        private var generationT0: CFAbsoluteTime = 0
 
         private var maxStopLen: Int
         private var shouldCheckStop: Bool
@@ -137,6 +145,13 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         // Tracks how many tool calls the processor has emitted so far so we
         // can detect when processChunk() produces a new one.
         private var knownToolCallCount = 0
+
+        /// Sliding context window used for incremental O(1) token decode.
+        /// BPE and byte-level tokenizers may need a few preceding tokens to
+        /// correctly decode the newest token (e.g. multi-byte UTF-8 splits
+        /// across token boundaries).  8 tokens is enough for any known tokeniser.
+        private static let decodeContextSize = 8
+        private var decodeContextIds: [Int] = []
 
         init(
             eventIterator: AsyncStream<TokenGeneration>.AsyncIterator,
@@ -201,26 +216,55 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                             info.generateTime
                         )
                     )
+                    // Emit GPU-accurate stats as a signpost event so they appear in
+                    // Instruments and can be captured by `log stream --type signpost`.
+                    accumSignposter.emitEvent(
+                        "mlxStats",
+                        id: .exclusive,
+                        "prompt: \(info.promptTokenCount, privacy: .public) tok \(info.promptTokensPerSecond, privacy: .public) tok/s \(info.promptTime, privacy: .public)s | gen: \(info.generationTokenCount, privacy: .public) tok \(info.tokensPerSecond, privacy: .public) tok/s \(info.generateTime, privacy: .public)s"
+                    )
+                    // Also emit as a Logger.info so it appears in `log stream`.
+                    accumLog.info(
+                        "[perf] mlxStats promptTokens=\(info.promptTokenCount, privacy: .public) promptTps=\(info.promptTokensPerSecond, privacy: .public) promptMs=\(Int(info.promptTime * 1000), privacy: .public) genTokens=\(info.generationTokenCount, privacy: .public) genTps=\(info.tokensPerSecond, privacy: .public) genMs=\(Int(info.generateTime * 1000), privacy: .public)"
+                    )
                     continue
                 }
 
                 guard let tokenId = event.token else { continue }
 
-                // Signal prefill complete on first token.
+                // Signal prefill complete on first token; start generation interval.
                 if firstToken {
                     firstToken = false
+                    generationT0 = CFAbsoluteTimeGetCurrent()
+                    generationSpState = accumSignposter.beginInterval("generation", id: accumSignposter.makeSignpostID())
+                    generationSpStarted = true
                     InferenceProgressManager.shared.prefillDidFinishAsync()
                 }
 
                 generatedTokenIds.append(tokenId)
 
-                // Incremental decode.
-                let newDecoded = tokenizer.decode(tokens: generatedTokenIds)
-                let token =
-                    newDecoded.count > decodedSoFar.count
-                    ? String(newDecoded.dropFirst(decodedSoFar.count))
-                    : ""
-                decodedSoFar = newDecoded
+                // Incremental decode — O(1) per token regardless of sequence length.
+                // Decode [context ++ newToken] minus [context] to isolate the new text.
+                // The context window handles BPE / byte-level tokenisers that need a
+                // few preceding tokens to correctly decode the newest one.
+                let contextWithNew = decodeContextIds + [tokenId]
+                let withNewDecoded  = tokenizer.decode(tokens: contextWithNew)
+                let contextDecoded  = decodeContextIds.isEmpty
+                    ? ""
+                    : tokenizer.decode(tokens: decodeContextIds)
+                let token: String
+                if withNewDecoded.count > contextDecoded.count {
+                    token = String(withNewDecoded.dropFirst(contextDecoded.count))
+                } else {
+                    token = ""
+                }
+                decodedSoFar += token
+
+                // Advance the sliding context window.
+                decodeContextIds.append(tokenId)
+                if decodeContextIds.count > Self.decodeContextSize {
+                    decodeContextIds.removeFirst()
+                }
 
                 guard !token.isEmpty else { continue }
 
@@ -377,6 +421,19 @@ struct StreamAccumulator: AsyncSequence, Sendable {
         private mutating func finish(cancelled: Bool) async {
             guard !finished else { return }
             finished = true
+
+            if generationSpStarted, let spState = generationSpState {
+                let tokenCount = generatedTokenIds.count
+                let durationMs = Int((CFAbsoluteTimeGetCurrent() - generationT0) * 1000)
+                let suffix = cancelled ? " (cancelled)" : ""
+                accumSignposter.endInterval(
+                    "generation", spState,
+                    "\(tokenCount, privacy: .public) tokens\(suffix, privacy: .public)"
+                )
+                accumLog.info(
+                    "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(tokenCount, privacy: .public) cancelled=\(cancelled, privacy: .public)"
+                )
+            }
 
             if cancelled {
                 InferenceProgressManager.shared.prefillDidFinishAsync()
