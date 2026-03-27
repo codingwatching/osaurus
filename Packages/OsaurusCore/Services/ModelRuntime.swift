@@ -532,14 +532,14 @@ actor ModelRuntime {
 
         do {
             let genResult = try await MLXGenerationEngine.prepareAndGenerate(
-                    container: holder.container,
-                    buildChat: buildChat,
-                    buildToolsSpec: buildTools,
-                    generation: parameters,
-                    runtime: cfg,
-                    existingCache: existingCache,
-                    cachedTokens: cachedTokens
-                )
+                container: holder.container,
+                buildChat: buildChat,
+                buildToolsSpec: buildTools,
+                generation: parameters,
+                runtime: cfg,
+                existingCache: existingCache,
+                cachedTokens: cachedTokens
+            )
             (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
                 genResult.stream, genResult.tokenizer, genResult.cache,
                 genResult.promptTokens, genResult.genTask, genResult.toolCallFormat
@@ -562,14 +562,14 @@ actor ModelRuntime {
             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
             do {
                 let retryResult = try await MLXGenerationEngine.prepareAndGenerate(
-                        container: holder.container,
-                        buildChat: buildChat,
-                        buildToolsSpec: buildTools,
-                        generation: parameters,
-                        runtime: cfg,
-                        existingCache: nil,
-                        cachedTokens: nil
-                    )
+                    container: holder.container,
+                    buildChat: buildChat,
+                    buildToolsSpec: buildTools,
+                    generation: parameters,
+                    runtime: cfg,
+                    existingCache: nil,
+                    cachedTokens: nil
+                )
                 (rawStream, tokenizer, cache, newTokens, genTask, toolCallFormat) = (
                     retryResult.stream, retryResult.tokenizer, retryResult.cache,
                     retryResult.promptTokens, retryResult.genTask, retryResult.toolCallFormat
@@ -605,7 +605,9 @@ actor ModelRuntime {
                 debugLog(
                     "[ModelRuntime] twoPhase snapshot override: stableTokens=\(snapTokensToStore.count)"
                 )
-                print("[ModelRuntime] twoPhase snapshot: using stable-boundary snapshot tokens=\(snapTokensToStore.count)")
+                print(
+                    "[ModelRuntime] twoPhase snapshot: using stable-boundary snapshot tokens=\(snapTokensToStore.count)"
+                )
             } else {
                 // Single-phase: snapshot full-prompt cache now.
                 snapCacheToStore = KVCacheStore.deepCopyCache(cache)
@@ -613,7 +615,12 @@ actor ModelRuntime {
             }
             let arraysToEval = snapCacheToStore.flatMap { $0.state }
             if !arraysToEval.isEmpty { eval(arraysToEval) }
-            kvCacheStore.putCache(sessionId: sid, cache: snapCacheToStore, tokens: snapTokensToStore, modelName: modelName)
+            kvCacheStore.putCache(
+                sessionId: sid,
+                cache: snapCacheToStore,
+                tokens: snapTokensToStore,
+                modelName: modelName
+            )
             let budget = currentKVBudget()
             kvCacheStore.ensureBudget(budget)
             let snapshotOffset = effectiveCacheOffset(snapCacheToStore)
@@ -641,7 +648,7 @@ actor ModelRuntime {
         // is needed (and would be harmful: it would overwrite the snapshot with a cache at
         // offset = promptTokens + generatedIds, which diverges from the next-turn prompt by
         // exactly the number of generated tokens, requiring trim that MambaCache cannot do).
-        var wrappedStream = eventStream
+        let wrappedStream = eventStream
         guard existingCache != nil else { return wrappedStream }
         return wrapWithCacheInvalidation(
             wrappedStream,

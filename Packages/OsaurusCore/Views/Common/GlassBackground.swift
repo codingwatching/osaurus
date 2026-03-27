@@ -63,12 +63,13 @@ final class GlassContainerView: NSView {
             let bt = bottomTrailingRadius
 
             // skip if nothing has changed since last pass
-            guard !_lastHasCustomCorners
-                || bounds != _lastMaskBounds
-                || tl != _lastTopLeading
-                || bl != _lastBottomLeading
-                || tt != _lastTopTrailing
-                || bt != _lastBottomTrailing
+            guard
+                !_lastHasCustomCorners
+                    || bounds != _lastMaskBounds
+                    || tl != _lastTopLeading
+                    || bl != _lastBottomLeading
+                    || tt != _lastTopTrailing
+                    || bt != _lastBottomTrailing
             else { return }
 
             _lastHasCustomCorners = true

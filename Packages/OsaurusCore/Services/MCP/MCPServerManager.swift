@@ -97,14 +97,17 @@ final class MCPServerManager {
                     let result = SchemaValidator.validate(arguments: argumentsAny, against: schema)
                     if result.isValid == false {
                         let message = result.errorMessage ?? "Invalid arguments"
-                        return .init(content: [.text(message)], isError: true)
+                        return .init(content: [.text(text: message, annotations: nil, _meta: nil)], isError: true)
                     }
                 }
 
                 let result = try await ToolRegistry.shared.execute(name: params.name, argumentsJSON: argsJSON)
-                return .init(content: [.text(result)], isError: false)
+                return .init(content: [.text(text: result, annotations: nil, _meta: nil)], isError: false)
             } catch {
-                return .init(content: [.text(error.localizedDescription)], isError: true)
+                return .init(
+                    content: [.text(text: error.localizedDescription, annotations: nil, _meta: nil)],
+                    isError: true
+                )
             }
         }
     }

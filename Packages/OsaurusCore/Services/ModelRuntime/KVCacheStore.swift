@@ -130,7 +130,9 @@ struct KVCacheStore {
                 entry.lastAccess = Date()
                 touchLRU(sessionId)
                 let loadMs = Int((CFAbsoluteTimeGetCurrent() - t0ssd) * 1000)
-                kvLog.info("[perf] ssdLoad kind=session durationMs=\(loadMs, privacy: .public) kb=\(bytes / 1024, privacy: .public)")
+                kvLog.info(
+                    "[perf] ssdLoad kind=session durationMs=\(loadMs, privacy: .public) kb=\(bytes / 1024, privacy: .public)"
+                )
                 print("[KVCacheStore] Restored session \(sessionId.prefix(8)) from SSD (\(bytes / 1024)KB)")
                 return (cache, entry.tokens)
             } catch {
@@ -219,14 +221,18 @@ struct KVCacheStore {
                 try savePromptCache(url: url, cache: box.cache, metadata: metadata)
                 let durationMs = Date().timeIntervalSince(start) * 1000
                 kvSignposter.endInterval("ssdSave", spState, "\(Int(durationMs), privacy: .public)ms ok")
-                kvLog.info("[perf] ssdSave durationMs=\(Int(durationMs), privacy: .public) kb=\(bytes / 1024, privacy: .public) ok=true")
+                kvLog.info(
+                    "[perf] ssdSave durationMs=\(Int(durationMs), privacy: .public) kb=\(bytes / 1024, privacy: .public) ok=true"
+                )
                 print(
                     "[KVCacheStore] [BENCHMARK] Saved session \(sessionId.prefix(8)) to SSD (\(bytes / 1024)KB) asynchronously in \(String(format: "%.1f", durationMs))ms"
                 )
             } catch {
                 let durationMs = Date().timeIntervalSince(start) * 1000
                 kvSignposter.endInterval("ssdSave", spState, "\(Int(durationMs), privacy: .public)ms error")
-                kvLog.error("[perf] ssdSave failed session=\(sessionId.prefix(8), privacy: .public) durationMs=\(Int(durationMs), privacy: .public) error=\(error, privacy: .public)")
+                kvLog.error(
+                    "[perf] ssdSave failed session=\(sessionId.prefix(8), privacy: .public) durationMs=\(Int(durationMs), privacy: .public) error=\(error, privacy: .public)"
+                )
                 print(
                     "[KVCacheStore] [BENCHMARK] SSD save failed for \(sessionId.prefix(8)) after \(String(format: "%.1f", durationMs))ms: \(error)"
                 )
@@ -426,7 +432,9 @@ struct KVCacheStore {
             default:
                 // Unknown concrete type: fall back to state/metaState round-trip.
                 // This will fatalError only if the unknown type has incompatible state.
-                assertionFailure("[KVCacheStore] deepCopyCache: unhandled KVCache subtype \(type(of: layer)) — add an explicit case")
+                assertionFailure(
+                    "[KVCacheStore] deepCopyCache: unhandled KVCache subtype \(type(of: layer)) — add an explicit case"
+                )
                 let dst = KVCacheSimple()
                 dst.state = layer.state
                 copy = dst

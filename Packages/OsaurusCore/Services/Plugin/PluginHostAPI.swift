@@ -469,7 +469,7 @@ final class PluginHostContext: @unchecked Sendable {
 
     /// Call when a session ends (e.g. chat window closes) to release the memoized result.
     static func invalidatePreflightCache(sessionId: String) {
-        preflightCacheLock.withLock { preflightCache.removeValue(forKey: sessionId) }
+        _ = preflightCacheLock.withLock { preflightCache.removeValue(forKey: sessionId) }
     }
 
     private static func extractPreflightQuery(from messages: [ChatMessage]) -> String {
