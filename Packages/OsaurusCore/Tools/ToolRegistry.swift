@@ -547,6 +547,7 @@ final class ToolRegistry: ObservableObject {
                 builtInNames.contains(tool.name) || runtimeNames.contains(tool.name)
             }
             .filter { !excluded.contains($0.name) }
+            .sorted { $0.name < $1.name }
             .map { $0.asOpenAITool() }
     }
 }
