@@ -31,6 +31,8 @@ public final class CentralRepositoryManager: @unchecked Sendable {
 
     /// Refreshes the local clone of the central plugin repository.
     /// Returns `true` if git operations succeeded, `false` if they failed (e.g. network unreachable).
+    /// When a fast-forward pull fails (e.g. after a force-push), the broken clone is
+    /// deleted and re-cloned so the cache never stays permanently stale.
     @discardableResult
     public func refresh() -> Bool {
         let fm = FileManager.default
@@ -45,15 +47,24 @@ public final class CentralRepositoryManager: @unchecked Sendable {
             if let branch = central.branch {
                 _ = runGit(in: cloneDir, args: ["checkout", branch])
             }
-            return fetchStatus == 0 && pullStatus == 0
-        } else {
-            var args = ["clone", "--depth", "1", central.url, cloneDir.path]
-            if let branch = central.branch {
-                args = ["clone", "--depth", "1", "--branch", branch, central.url, cloneDir.path]
+            if fetchStatus == 0 && pullStatus == 0 {
+                return true
             }
-            let (cloneStatus, _) = runGit(in: root, args: args)
-            return cloneStatus == 0
+            NSLog("[Osaurus] Registry pull failed (fetch=%d, pull=%d), re-cloning", fetchStatus, pullStatus)
+            try? fm.removeItem(at: cloneDir)
+            return cloneFresh(root: root, cloneDir: cloneDir)
+        } else {
+            return cloneFresh(root: root, cloneDir: cloneDir)
         }
+    }
+
+    private func cloneFresh(root: URL, cloneDir: URL) -> Bool {
+        var args = ["clone", "--depth", "1", central.url, cloneDir.path]
+        if let branch = central.branch {
+            args = ["clone", "--depth", "1", "--branch", branch, central.url, cloneDir.path]
+        }
+        let (status, _) = runGit(in: root, args: args)
+        return status == 0
     }
 
     private func runGit(in directory: URL, args: [String]) -> (Int32, String) {

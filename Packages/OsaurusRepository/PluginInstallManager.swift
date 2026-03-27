@@ -8,7 +8,7 @@
 import Foundation
 import CryptoKit
 
-public enum PluginInstallError: Error, CustomStringConvertible {
+public enum PluginInstallError: Error, CustomStringConvertible, LocalizedError {
     case specNotFound(String)
     case resolutionFailed(String)
     case downloadFailed(String)
@@ -27,11 +27,15 @@ public enum PluginInstallError: Error, CustomStringConvertible {
         case .checksumMismatch: return "Checksum mismatch"
         case .signatureRequired: return "Plugin requires a minisign signature for installation"
         case .signatureInvalid: return "Signature verification failed"
-        case .authorKeyMismatch: return "Plugin author key has changed - possible supply chain attack"
+        case .authorKeyMismatch:
+            return
+                "The signing key for this plugin has changed. Uninstall the plugin and reinstall it to accept the new key."
         case .unzipFailed(let msg): return "Unzip failed: \(msg)"
         case .layoutInvalid(let msg): return "Invalid artifact layout: \(msg)"
         }
     }
+
+    public var errorDescription: String? { description }
 }
 
 public final class PluginInstallManager: @unchecked Sendable {
@@ -48,8 +52,11 @@ public final class PluginInstallManager: @unchecked Sendable {
 
     @discardableResult
     public func install(pluginId: String, preferredVersion: SemanticVersion? = nil) async throws -> InstallResult {
-        CentralRepositoryManager.shared.refresh()
+        let refreshed = CentralRepositoryManager.shared.refresh()
         guard let spec = CentralRepositoryManager.shared.spec(for: pluginId) else {
+            if !refreshed {
+                throw PluginInstallError.specNotFound("\(pluginId) (registry unavailable)")
+            }
             throw PluginInstallError.specNotFound(pluginId)
         }
 
