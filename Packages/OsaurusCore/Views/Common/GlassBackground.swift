@@ -27,6 +27,15 @@ final class GlassContainerView: NSView {
             || bottomTrailingRadius != nil
     }
 
+    // cached values used to skip redundant CAShapeLayer creation
+    private var _lastHasCustomCorners = false
+    private var _lastCornerRadius: CGFloat = -1
+    private var _lastMaskBounds: CGRect = .zero
+    private var _lastTopLeading: CGFloat? = nil
+    private var _lastBottomLeading: CGFloat? = nil
+    private var _lastTopTrailing: CGFloat? = nil
+    private var _lastBottomTrailing: CGFloat? = nil
+
     init(baseGlassView: NSVisualEffectView, edgeLightingView: NSView, tintOverlayView: NSView) {
         self.baseGlassView = baseGlassView
         self.edgeLightingView = edgeLightingView
@@ -44,33 +53,59 @@ final class GlassContainerView: NSView {
     }
 
     func updateMaskIfNeeded() {
-        guard hasCustomCorners else {
-            // Use native cornerRadius
+        if hasCustomCorners {
+            // custom-corner path: use CAShapeLayer masks
+            guard bounds.width > 0 && bounds.height > 0 else { return }
+
+            let tl = topLeadingRadius
+            let bl = bottomLeadingRadius
+            let tt = topTrailingRadius
+            let bt = bottomTrailingRadius
+
+            // skip if nothing has changed since last pass
+            guard !_lastHasCustomCorners
+                || bounds != _lastMaskBounds
+                || tl != _lastTopLeading
+                || bl != _lastBottomLeading
+                || tt != _lastTopTrailing
+                || bt != _lastBottomTrailing
+            else { return }
+
+            _lastHasCustomCorners = true
+            _lastMaskBounds = bounds
+            _lastTopLeading = tl
+            _lastBottomLeading = bl
+            _lastTopTrailing = tt
+            _lastBottomTrailing = bt
+
+            baseGlassView.layer?.cornerRadius = 0
+            baseGlassView.layer?.masksToBounds = false
+            edgeLightingView.layer?.cornerRadius = 0
+            edgeLightingView.layer?.masksToBounds = false
+            tintOverlayView.layer?.cornerRadius = 0
+            tintOverlayView.layer?.masksToBounds = false
+
+            baseGlassView.layer?.mask = createMaskLayer(for: bounds)
+            edgeLightingView.layer?.mask = createMaskLayer(for: bounds)
+            tintOverlayView.layer?.mask = createMaskLayer(for: bounds)
+        } else {
+            // uniform corner-radius path: use native CA cornerRadius
+            let r = cornerRadius
+            guard r != _lastCornerRadius || _lastHasCustomCorners else { return }
+
+            _lastCornerRadius = r
+            _lastHasCustomCorners = false
+
             baseGlassView.layer?.mask = nil
             edgeLightingView.layer?.mask = nil
             tintOverlayView.layer?.mask = nil
-            baseGlassView.layer?.cornerRadius = cornerRadius
+            baseGlassView.layer?.cornerRadius = r
             baseGlassView.layer?.masksToBounds = true
-            edgeLightingView.layer?.cornerRadius = cornerRadius
+            edgeLightingView.layer?.cornerRadius = r
             edgeLightingView.layer?.masksToBounds = true
-            tintOverlayView.layer?.cornerRadius = cornerRadius
+            tintOverlayView.layer?.cornerRadius = r
             tintOverlayView.layer?.masksToBounds = true
-            return
         }
-
-        // Use mask for custom corners
-        baseGlassView.layer?.cornerRadius = 0
-        baseGlassView.layer?.masksToBounds = false
-        edgeLightingView.layer?.cornerRadius = 0
-        edgeLightingView.layer?.masksToBounds = false
-        tintOverlayView.layer?.cornerRadius = 0
-        tintOverlayView.layer?.masksToBounds = false
-
-        guard bounds.width > 0 && bounds.height > 0 else { return }
-
-        baseGlassView.layer?.mask = createMaskLayer(for: bounds)
-        edgeLightingView.layer?.mask = createMaskLayer(for: bounds)
-        tintOverlayView.layer?.mask = createMaskLayer(for: bounds)
     }
 
     private func effectiveRadius(for corner: CGFloat?) -> CGFloat {
@@ -148,7 +183,9 @@ struct GlassBackground: NSViewRepresentable {
         let baseGlassView = NSVisualEffectView()
         baseGlassView.material = material
         baseGlassView.blendingMode = .behindWindow
-        baseGlassView.state = .active
+        // .followsWindowActiveState deactivates the behind-window desktop capture when the window
+        // is not key, eliminating compositor sampling cost while the app is backgrounded.
+        baseGlassView.state = .followsWindowActiveState
         baseGlassView.wantsLayer = true
 
         // Edge lighting layer (disabled - using single clean edge)

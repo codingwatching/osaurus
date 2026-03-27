@@ -67,19 +67,37 @@ struct EditableTextView: NSViewRepresentable {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? CustomNSTextView else { return }
 
-        textView.maxHeight = maxHeight
-
-        // Only update text if it's different to avoid cursor jumping
-        if textView.string != text {
-            textView.string = text
+        // only update max height when it changes — avoids triggering NSTextView layout
+        if textView.maxHeight != maxHeight {
+            textView.maxHeight = maxHeight
+            textView.invalidateIntrinsicContentSize()
+            scrollView.invalidateIntrinsicContentSize()
         }
 
-        // Update styling
-        textView.font = .systemFont(ofSize: fontSize)
-        textView.textColor = NSColor(textColor)
-        textView.insertionPointColor = NSColor(cursorColor)
+        // only update text if it differs — avoids cursor-position reset on every parent re-render
+        if textView.string != text {
+            textView.string = text
+            textView.invalidateIntrinsicContentSize()
+            scrollView.invalidateIntrinsicContentSize()
+        }
 
-        // Handle focus
+        // guard styling assignments — each one invalidates the NSTextView layout and calls
+        // needsDisplay even when the value hasn't changed
+        let coord = context.coordinator
+        if coord.lastFontSize != fontSize {
+            textView.font = .systemFont(ofSize: fontSize)
+            coord.lastFontSize = fontSize
+        }
+        if coord.lastTextColor != textColor {
+            textView.textColor = NSColor(textColor)
+            coord.lastTextColor = textColor
+        }
+        if coord.lastCursorColor != cursorColor {
+            textView.insertionPointColor = NSColor(cursorColor)
+            coord.lastCursorColor = cursorColor
+        }
+
+        // handle focus
         DispatchQueue.main.async {
             let isFirstResponder = textView.window?.firstResponder == textView
             if isFocused && !isFirstResponder {
@@ -89,20 +107,27 @@ struct EditableTextView: NSViewRepresentable {
             }
         }
 
-        // Dynamically toggle scroller visibility without changing hasVerticalScroller
-        let needsScroller = textView.contentHeight > maxHeight
-        scrollView.verticalScroller?.isHidden = !needsScroller
-
-        // Ensure scroll view tiles its subviews correctly
-        scrollView.tile()
-
-        // Force layout update for height calculation
-        textView.invalidateIntrinsicContentSize()
-        scrollView.invalidateIntrinsicContentSize()
+        // only check scroller visibility and tile when max height changes or text changes —
+        // contentHeight runs ensureLayout which is expensive; scroller state cannot change
+        // without text or maxHeight changing
+        if coord.lastScrollerMaxHeight != maxHeight || coord.lastScrollerText != text {
+            let needsScroller = textView.contentHeight > maxHeight
+            scrollView.verticalScroller?.isHidden = !needsScroller
+            scrollView.tile()
+            coord.lastScrollerMaxHeight = maxHeight
+            coord.lastScrollerText = text
+        }
     }
 
     class Coordinator: NSObject, NSTextViewDelegate {
         var parent: EditableTextView
+
+        // cached appearance values — guards against needsDisplay on every parent re-render
+        var lastFontSize: CGFloat = 0
+        var lastTextColor: Color = .clear
+        var lastCursorColor: Color = .clear
+        var lastScrollerMaxHeight: CGFloat = -1
+        var lastScrollerText: String = ""
 
         init(_ parent: EditableTextView) {
             self.parent = parent
@@ -121,17 +146,8 @@ struct EditableTextView: NSViewRepresentable {
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
-            DispatchQueue.main.async {
-                guard let textView = notification.object as? NSTextView else { return }
-                self.parent.text = textView.string
-                // Invalidate intrinsic size to trigger resize
-                if let customTextView = textView as? CustomNSTextView {
-                    customTextView.invalidateIntrinsicContentSize()
-                }
-                if let scrollView = textView.enclosingScrollView {
-                    scrollView.invalidateIntrinsicContentSize()
-                }
-            }
+            // selection changes (cursor moves) do not affect text content or view size —
+            // no-op here; text sync and size invalidation are both handled in textDidChange.
         }
 
         func textDidBeginEditing(_ notification: Notification) {

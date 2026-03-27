@@ -350,6 +350,13 @@ struct FloatingInputCard: View {
                 }
             }
             .onChange(of: isStreaming) { wasStreaming, nowStreaming in
+                // re-focus the input when streaming ends so the user can type immediately.
+                // focus is cleared on send to stop the NSTextView cursor-blink display link
+                // during streaming; restore it once the response is complete.
+                if wasStreaming && !nowStreaming {
+                    isFocused = true
+                }
+
                 // When AI finishes responding and we're in continuous voice mode, restart voice input
                 if wasStreaming && !nowStreaming && isContinuousVoiceMode {
                     print("[FloatingInputCard] AI response finished in continuous mode - restarting voice")
@@ -860,6 +867,9 @@ extension FloatingInputCard {
         let message = localText
         localText = ""
         text = ""
+        // resign first responder so the NSTextView cursor-blink display link stops driving
+        // the window compositor at 60fps through the streaming response
+        isFocused = false
         onSend(message)
     }
 
@@ -1778,17 +1788,10 @@ extension FloatingInputCard {
 
     private var cardBackground: some View {
         ZStack {
-            // Layer 1: Glass material
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            // Layer 2: Semi-transparent background
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.7 : 0.88))
+                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.82 : 0.94))
 
-            // Layer 3: Subtle accent gradient at top (enhanced when focused)
+            // subtle accent gradient at top (enhanced when focused)
             LinearGradient(
                 colors: [
                     theme.accentColor.opacity(isFocused ? 0.08 : (theme.isDark ? 0.04 : 0.025)),

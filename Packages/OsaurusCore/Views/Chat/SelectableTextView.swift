@@ -210,25 +210,29 @@ struct SelectableTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ textView: SelectableNSTextView, context: Context) {
-        // Update container width
-        textView.textContainer?.containerSize = NSSize(width: baseWidth, height: CGFloat.greatestFiniteMagnitude)
-
-        // Update selection color for theme changes
-        textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
-        ]
-
-        // Update theme colors for custom drawing
-        textView.accentColor = NSColor(theme.accentColor)
-        textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
-        textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
-
-        // Fast path: Direct comparison instead of expensive O(n) hashing every update
-        // Swift's Equatable for arrays uses optimized comparison that short-circuits early
+        // compute change flags first so every guard below can reference them cheaply
         let themeFingerprint = makeThemeFingerprint()
         let widthChanged = abs(context.coordinator.lastWidth - baseWidth) > 0.1
         let themeChanged = context.coordinator.lastThemeFingerprint != themeFingerprint
         let blocksChanged = context.coordinator.lastBlocks != blocks
+
+        // setting containerSize calls textContainerChangedGeometry, which invalidates the
+        // entire NSLayoutManager even when the value hasn't changed — guard it so we only
+        // pay the layout cost when the width actually differs.
+        if widthChanged {
+            textView.textContainer?.containerSize = NSSize(width: baseWidth, height: CGFloat.greatestFiniteMagnitude)
+        }
+
+        // selectedTextAttributes triggers needsDisplay; accent colors are only used during
+        // custom drawing — only push these when the theme actually changes.
+        if themeChanged {
+            textView.selectedTextAttributes = [
+                .backgroundColor: NSColor(theme.selectionColor)
+            ]
+            textView.accentColor = NSColor(theme.accentColor)
+            textView.blockquoteBarColor = NSColor(theme.accentColor).withAlphaComponent(0.6)
+            textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+        }
 
         if blocksChanged || widthChanged || themeChanged {
             if !widthChanged && !themeChanged && !context.coordinator.lastBlocks.isEmpty {
