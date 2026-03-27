@@ -390,7 +390,11 @@ struct MLXGenerationEngine {
                 // ── Phase 2: feed gen-prefix tokens, sample y0 ────────────────────────
                 let genPrefixTokens = Array(newPromptTokens[stableTokenCount...])
                 let genPrefixText = LMInput.Text(tokens: MLXArray(genPrefixTokens)[.newAxis])
-                let genPrefixOutput = contextWithEOS.model(genPrefixText, cache: cache.isEmpty ? nil : cache, state: nil)
+                let genPrefixOutput = contextWithEOS.model(
+                    genPrefixText,
+                    cache: cache.isEmpty ? nil : cache,
+                    state: nil
+                )
                 eval(cache)
 
                 // Sample y0 from the logits of the last gen-prefix token.
@@ -426,9 +430,8 @@ struct MLXGenerationEngine {
                 // We drive the model via callAsFunction which goes through the fast decode path.
                 let maxTokens = parameters.maxTokens
                 let capturedTokenizer = contextWithEOS.tokenizer
-                let capturedConfig = contextWithEOS.configuration
                 let capturedStopTokenIDs = stopTokenIDs
-                var capturedProcessor = processor
+                let capturedProcessor = processor
                 let capturedSampler = sampler
                 let capturedPromptTokens = newPromptTokens
 
@@ -443,10 +446,14 @@ struct MLXGenerationEngine {
                     let promptTokenCount: Int
                     let maxTokens: Int?
                     init(
-                        model: any LanguageModel, cache: [any KVCache],
-                        tokenizer: any Tokenizer, stopTokenIDs: Set<Int>,
-                        processor: (any LogitProcessor)?, sampler: any LogitSampler,
-                        promptTokenCount: Int, maxTokens: Int?
+                        model: any LanguageModel,
+                        cache: [any KVCache],
+                        tokenizer: any Tokenizer,
+                        stopTokenIDs: Set<Int>,
+                        processor: (any LogitProcessor)?,
+                        sampler: any LogitSampler,
+                        promptTokenCount: Int,
+                        maxTokens: Int?
                     ) {
                         self.model = model; self.cache = cache
                         self.tokenizer = tokenizer; self.stopTokenIDs = stopTokenIDs
@@ -455,10 +462,14 @@ struct MLXGenerationEngine {
                     }
                 }
                 let genCtx = GenContext(
-                    model: contextWithEOS.model, cache: cache,
-                    tokenizer: capturedTokenizer, stopTokenIDs: capturedStopTokenIDs,
-                    processor: capturedProcessor, sampler: capturedSampler,
-                    promptTokenCount: capturedPromptTokens.count, maxTokens: maxTokens
+                    model: contextWithEOS.model,
+                    cache: cache,
+                    tokenizer: capturedTokenizer,
+                    stopTokenIDs: capturedStopTokenIDs,
+                    processor: capturedProcessor,
+                    sampler: capturedSampler,
+                    promptTokenCount: capturedPromptTokens.count,
+                    maxTokens: maxTokens
                 )
 
                 let (genStream, genContinuation) = AsyncStream<MLXLMCommon.TokenGeneration>.makeStream()
@@ -469,7 +480,8 @@ struct MLXGenerationEngine {
                     var stopReason: MLXLMCommon.GenerateStopReason = .stop
 
                     // Emit y0 (the first token sampled from gen-prefix logits).
-                    let isY0Stop = currentToken == genCtx.tokenizer.unknownTokenId
+                    let isY0Stop =
+                        currentToken == genCtx.tokenizer.unknownTokenId
                         || genCtx.stopTokenIDs.contains(currentToken)
                     if !isY0Stop {
                         genContinuation.yield(.token(currentToken))
@@ -500,7 +512,8 @@ struct MLXGenerationEngine {
                             genCtx.processor?.didSample(token: nextArr)
                             let nextToken = nextArr.item(Int.self)
 
-                            let isStop = nextToken == genCtx.tokenizer.unknownTokenId
+                            let isStop =
+                                nextToken == genCtx.tokenizer.unknownTokenId
                                 || genCtx.stopTokenIDs.contains(nextToken)
                             if isStop {
                                 stopReason = .stop
@@ -531,8 +544,14 @@ struct MLXGenerationEngine {
 
                 let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
                 return ResultBox(
-                    genStream, contextWithEOS.tokenizer, CacheBox(cache), newPromptTokens, genTask,
-                    toolCallFormat, CacheBox(snapCache), snapTokens
+                    genStream,
+                    contextWithEOS.tokenizer,
+                    CacheBox(cache),
+                    newPromptTokens,
+                    genTask,
+                    toolCallFormat,
+                    CacheBox(snapCache),
+                    snapTokens
                 )
             }
 
@@ -573,8 +592,14 @@ struct MLXGenerationEngine {
 
             let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
             return ResultBox(
-                stream, contextWithEOS.tokenizer, CacheBox(cache), newPromptTokens, genTask,
-                toolCallFormat, nil, nil
+                stream,
+                contextWithEOS.tokenizer,
+                CacheBox(cache),
+                newPromptTokens,
+                genTask,
+                toolCallFormat,
+                nil,
+                nil
             )
         }
         let durationMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000

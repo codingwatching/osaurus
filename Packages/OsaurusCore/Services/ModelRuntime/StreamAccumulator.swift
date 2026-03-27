@@ -236,7 +236,10 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 if firstToken {
                     firstToken = false
                     generationT0 = CFAbsoluteTimeGetCurrent()
-                    generationSpState = accumSignposter.beginInterval("generation", id: accumSignposter.makeSignpostID())
+                    generationSpState = accumSignposter.beginInterval(
+                        "generation",
+                        id: accumSignposter.makeSignpostID()
+                    )
                     generationSpStarted = true
                     InferenceProgressManager.shared.prefillDidFinishAsync()
                 }
@@ -248,8 +251,9 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 // The context window handles BPE / byte-level tokenisers that need a
                 // few preceding tokens to correctly decode the newest one.
                 let contextWithNew = decodeContextIds + [tokenId]
-                let withNewDecoded  = tokenizer.decode(tokens: contextWithNew)
-                let contextDecoded  = decodeContextIds.isEmpty
+                let withNewDecoded = tokenizer.decode(tokens: contextWithNew)
+                let contextDecoded =
+                    decodeContextIds.isEmpty
                     ? ""
                     : tokenizer.decode(tokens: decodeContextIds)
                 let token: String
@@ -427,7 +431,8 @@ struct StreamAccumulator: AsyncSequence, Sendable {
                 let durationMs = Int((CFAbsoluteTimeGetCurrent() - generationT0) * 1000)
                 let suffix = cancelled ? " (cancelled)" : ""
                 accumSignposter.endInterval(
-                    "generation", spState,
+                    "generation",
+                    spState,
                     "\(tokenCount, privacy: .public) tokens\(suffix, privacy: .public)"
                 )
                 accumLog.info(
