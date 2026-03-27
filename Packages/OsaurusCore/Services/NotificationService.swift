@@ -2,7 +2,7 @@
 //  NotificationService.swift
 //  osaurus
 //
-//  Local notifications for model download completion
+//  Local notifications for model downloads and plugin updates
 //
 
 import AppKit
@@ -98,24 +98,37 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         defer { completionHandler() }
 
         let info = response.notification.request.content.userInfo
+
+        guard
+            response.actionIdentifier == actionOpenId
+                || response.actionIdentifier == UNNotificationDefaultActionIdentifier
+        else {
+            return
+        }
+
+        let isPluginNotification = info["pluginCount"] != nil
         let modelId = info["modelId"] as? String
 
-        if response.actionIdentifier == actionOpenId
-            || response.actionIdentifier == UNNotificationDefaultActionIdentifier
-        {
-            Task { @MainActor in
-                AppDelegate.shared?.showManagementWindow(
-                    initialTab: .models,
-                    deeplinkModelId: modelId,
-                    deeplinkFile: nil
-                )
-            }
+        Task { @MainActor in
+            AppDelegate.shared?.showManagementWindow(
+                initialTab: isPluginNotification ? .plugins : .models,
+                deeplinkModelId: modelId,
+                deeplinkFile: nil
+            )
         }
     }
 }

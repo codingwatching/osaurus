@@ -481,6 +481,7 @@ private struct PluginCard: View {
     @State private var isHovered = false
     @State private var errorMessage: String?
     @State private var showError = false
+    @State private var showKeyMismatch = false
     @State private var hasMissingSecrets = false
     @State private var cachedSecrets: [PluginManifest.SecretSpec] = []
     @State private var showSecretsSheet = false
@@ -492,6 +493,15 @@ private struct PluginCard: View {
             : hasMissingPermissions || hasMissingSecrets
                 ? .orange
                 : theme.accentColor
+    }
+
+    private func handleInstallError(_ error: Error) {
+        if let installError = error as? PluginInstallError, case .authorKeyMismatch = installError {
+            showKeyMismatch = true
+        } else {
+            errorMessage = error.localizedDescription
+            showError = true
+        }
     }
 
     var body: some View {
@@ -624,6 +634,25 @@ private struct PluginCard: View {
             message: errorMessage ?? "Unknown error",
             primaryButton: .primary("OK") {}
         )
+        .themedAlert(
+            "Signing Key Changed",
+            isPresented: $showKeyMismatch,
+            message:
+                "The signing key for \"\(plugin.displayName)\" has changed. Uninstall the plugin and reinstall it to accept the new key.",
+            primaryButton: .destructive("Uninstall") {
+                guard let onUninstall else { return }
+                Task {
+                    do {
+                        try await onUninstall()
+                        onChange?()
+                    } catch {
+                        errorMessage = error.localizedDescription
+                        showError = true
+                    }
+                }
+            },
+            secondaryButton: .cancel("Cancel")
+        )
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
                 pluginId: plugin.pluginId,
@@ -672,10 +701,7 @@ private struct PluginCard: View {
                 if plugin.hasUpdate, let onUpgrade {
                     Button {
                         Task {
-                            do { try await onUpgrade() } catch {
-                                errorMessage = error.localizedDescription
-                                showError = true
-                            }
+                            do { try await onUpgrade() } catch { handleInstallError(error) }
                         }
                     } label: {
                         Label("Update", systemImage: "arrow.up.circle.fill")
@@ -694,10 +720,7 @@ private struct PluginCard: View {
                 if !plugin.isInstalled, let onInstall {
                     Button {
                         Task {
-                            do { try await onInstall() } catch {
-                                errorMessage = error.localizedDescription
-                                showError = true
-                            }
+                            do { try await onInstall() } catch { handleInstallError(error) }
                         }
                     } label: {
                         Label("Install", systemImage: "arrow.down.circle.fill")
@@ -820,6 +843,7 @@ private struct PluginDetailView: View {
     @State private var hasAppeared = false
     @State private var errorMessage: String?
     @State private var showError = false
+    @State private var showKeyMismatch = false
     @State private var showSecretsSheet = false
     @State private var showDeleteConfirm = false
     @State private var readmeContent: String?
@@ -837,6 +861,15 @@ private struct PluginDetailView: View {
 
     private var pluginColor: Color {
         plugin.hasLoadError ? .red : theme.accentColor
+    }
+
+    private func handleInstallError(_ error: Error) {
+        if let installError = error as? PluginInstallError, case .authorKeyMismatch = installError {
+            showKeyMismatch = true
+        } else {
+            errorMessage = error.localizedDescription
+            showError = true
+        }
     }
 
     var body: some View {
@@ -896,6 +929,24 @@ private struct PluginDetailView: View {
             isPresented: $showError,
             message: errorMessage ?? "Unknown error",
             primaryButton: .primary("OK") {}
+        )
+        .themedAlert(
+            "Signing Key Changed",
+            isPresented: $showKeyMismatch,
+            message:
+                "The signing key for \"\(plugin.displayName)\" has changed. Uninstall the plugin and reinstall it to accept the new key.",
+            primaryButton: .destructive("Uninstall") {
+                Task {
+                    do {
+                        try await onUninstall()
+                        onChange()
+                    } catch {
+                        errorMessage = error.localizedDescription
+                        showError = true
+                    }
+                }
+            },
+            secondaryButton: .cancel("Cancel")
         )
         .themedAlert(
             "Uninstall Plugin",
@@ -1074,10 +1125,7 @@ private struct PluginDetailView: View {
                 } else if plugin.hasUpdate {
                     Button {
                         Task {
-                            do { try await onUpgrade() } catch {
-                                errorMessage = error.localizedDescription
-                                showError = true
-                            }
+                            do { try await onUpgrade() } catch { handleInstallError(error) }
                         }
                     } label: {
                         HStack(spacing: 5) {
@@ -1093,10 +1141,7 @@ private struct PluginDetailView: View {
                 } else if !plugin.isInstalled {
                     Button {
                         Task {
-                            do { try await onInstall() } catch {
-                                errorMessage = error.localizedDescription
-                                showError = true
-                            }
+                            do { try await onInstall() } catch { handleInstallError(error) }
                         }
                     } label: {
                         HStack(spacing: 5) {
