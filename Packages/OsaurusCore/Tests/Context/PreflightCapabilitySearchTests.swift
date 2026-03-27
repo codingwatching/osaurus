@@ -68,8 +68,8 @@ struct PreflightCapabilitySearchTests {
 
     @Test func topKValuesAreCorrect() {
         #expect(PreflightSearchMode.off.topKValues == (0, 0, 0))
-        #expect(PreflightSearchMode.narrow.topKValues == (1, 2, 1))
-        #expect(PreflightSearchMode.balanced.topKValues == (3, 5, 2))
-        #expect(PreflightSearchMode.wide.topKValues == (5, 8, 4))
+        #expect(PreflightSearchMode.narrow.topKValues == (1, 2, 0))
+        #expect(PreflightSearchMode.balanced.topKValues == (3, 5, 1))
+        #expect(PreflightSearchMode.wide.topKValues == (5, 8, 2))
     }
 }
