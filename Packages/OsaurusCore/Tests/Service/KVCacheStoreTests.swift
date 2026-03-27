@@ -176,14 +176,14 @@ struct KVCacheStoreTests {
         #expect(store.hasPrefixCache(modelName: "llama", hash: "hash1"))
     }
 
-    @Test func getPrefixCacheReturnsNilWithoutSSD() {
+    @Test func getPrefixCacheReturnsHotCacheWhenResident() {
         var store = KVCacheStore()
         seedPrefixCache(&store, modelName: "llama", hash: "hash1")
 
-        // getPrefixCache always loads from SSD to avoid shared-reference mutation;
-        // seeded entries have no ssdPath so it returns nil.
+        // Hot-tier path: entry.cache != nil → deepCopyCache returns an independent copy,
+        // no SSD path required.
         let retrieved = store.getPrefixCache(modelName: "llama", hash: "hash1")
-        #expect(retrieved.0 == nil)
+        #expect(retrieved.0 != nil)
     }
 
     @Test func hasPrefixCacheReturnsFalseOnMiss() {
@@ -494,5 +494,77 @@ struct KVCacheStoreTests {
         let hybrid: [any KVCache] = [mamba, attn]
         // attn.state is empty, so allSatisfy { !state.isEmpty } fails → invalid.
         #expect(!KVCacheStore._testIsValidCache(hybrid))
+    }
+
+    // MARK: - deepCopyCache branch coverage
+
+    /// KVCacheSimple: deep copy produces an independent instance with same offset.
+    @Test func deepCopyCache_kvCacheSimple() {
+        let src = KVCacheSimple()
+        let fakeKeys = MLX.zeros([1, 1, 4, 1])
+        let fakeValues = MLX.zeros([1, 1, 4, 1])
+        src.state = [fakeKeys, fakeValues]
+
+        let copies = KVCacheStore.deepCopyCache([src])
+        #expect(copies.count == 1)
+        guard let copy = copies[0] as? KVCacheSimple else {
+            Issue.record("Expected KVCacheSimple copy")
+            return
+        }
+        // Independent instance (not the same object)
+        #expect(copy !== src)
+        // Same offset preserved
+        #expect(copy.offset == src.offset)
+    }
+
+    /// RotatingKVCache: deep copy preserves state without crashing.
+    @Test func deepCopyCache_rotatingKVCache() {
+        let src = RotatingKVCache(maxSize: 4)
+        let copies = KVCacheStore.deepCopyCache([src])
+        #expect(copies.count == 1)
+        guard let copy = copies[0] as? RotatingKVCache else {
+            Issue.record("Expected RotatingKVCache copy")
+            return
+        }
+        #expect(copy !== src)
+    }
+
+    /// MambaCache (ArraysCache subtype): deep copy produces MambaCache (not KVCacheSimple).
+    @Test func deepCopyCache_mambaCache() {
+        let src = MambaCache()
+        src.state = [MLX.zeros([2, 4]), MLX.zeros([2, 4])]
+
+        let copies = KVCacheStore.deepCopyCache([src])
+        #expect(copies.count == 1)
+        guard let copy = copies[0] as? MambaCache else {
+            Issue.record("Expected MambaCache copy, got \(type(of: copies[0]))")
+            return
+        }
+        #expect(copy !== src)
+    }
+
+    /// Mixed cache: all branches exercised in a single call.
+    @Test func deepCopyCache_mixedTypes() {
+        let simple = KVCacheSimple()
+        let mamba = MambaCache()
+        mamba.state = [MLX.zeros([1]), MLX.zeros([1])]
+
+        let copies = KVCacheStore.deepCopyCache([simple, mamba])
+        #expect(copies.count == 2)
+        #expect(copies[0] is KVCacheSimple)
+        #expect(copies[1] is MambaCache)
+    }
+
+    // MARK: - saveToDisk: no crash for missing session
+
+    /// Calling saveToDisk for a session that was never put silently no-ops.
+    @Test func saveToDisk_noopForMissingSession() async {
+        var store = KVCacheStore()
+        // Session "ghost" was never put — no entry exists.
+        store.saveToDisk(sessionId: "ghost", cache: makeCache(), tokens: nil, modelName: "m")
+        // No crash, and a background task was still dispatched (for the disk write).
+        if let task = store.lastSaveTask {
+            await task.value  // drain to avoid test leaks
+        }
     }
 }

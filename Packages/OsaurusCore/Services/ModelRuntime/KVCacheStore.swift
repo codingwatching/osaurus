@@ -10,6 +10,10 @@
 import Foundation
 import MLX
 @preconcurrency import MLXLMCommon
+import os.log
+
+private let kvSignposter = OSSignposter(subsystem: "ai.osaurus", category: "KVCache")
+private let kvLog = Logger(subsystem: "ai.osaurus", category: "KVCache")
 
 /// Manages per-session KV caches across a hot RAM tier and cold SSD tier.
 /// Must be used from within the `ModelRuntime` actor (not independently thread-safe).
@@ -103,6 +107,10 @@ struct KVCacheStore {
 
         // Cold hit: restore from SSD
         if entry.ssdPath != nil {
+            let spID = kvSignposter.makeSignpostID()
+            let spState = kvSignposter.beginInterval("ssdLoad", id: spID, "session restore")
+            let t0ssd = CFAbsoluteTimeGetCurrent()
+            defer { kvSignposter.endInterval("ssdLoad", spState) }
             do {
                 let (cache, metadata) = try loadPromptCache(url: entry.ssdPath!)
                 guard Self.isValidCache(cache) else {
@@ -121,6 +129,8 @@ struct KVCacheStore {
                 totalHotBytes += bytes
                 entry.lastAccess = Date()
                 touchLRU(sessionId)
+                let loadMs = Int((CFAbsoluteTimeGetCurrent() - t0ssd) * 1000)
+                kvLog.info("[perf] ssdLoad kind=session durationMs=\(loadMs, privacy: .public) kb=\(bytes / 1024, privacy: .public)")
                 print("[KVCacheStore] Restored session \(sessionId.prefix(8)) from SSD (\(bytes / 1024)KB)")
                 return (cache, entry.tokens)
             } catch {
@@ -191,10 +201,14 @@ struct KVCacheStore {
 
         let box = CacheBox(cache)
 
-        // Optimistically set the SSD path so we don't try to save it again
+        // Optimistically set the SSD path so we don't try to save it again.
+        // If the write fails, we log the error; the entry retains a stale ssdPath
+        // until it is re-put or evicted, at which point a fresh write will be attempted.
         self.entries[sessionId]?.ssdPath = url
 
         let task = Task.detached(priority: .background) {
+            let spID = kvSignposter.makeSignpostID()
+            let spState = kvSignposter.beginInterval("ssdSave", id: spID, "\(bytes / 1024, privacy: .public) KB")
             do {
                 var metadata = ["model": modelName]
                 if let tokens = tokens, let data = try? JSONEncoder().encode(tokens),
@@ -204,11 +218,15 @@ struct KVCacheStore {
                 }
                 try savePromptCache(url: url, cache: box.cache, metadata: metadata)
                 let durationMs = Date().timeIntervalSince(start) * 1000
+                kvSignposter.endInterval("ssdSave", spState, "\(Int(durationMs), privacy: .public)ms ok")
+                kvLog.info("[perf] ssdSave durationMs=\(Int(durationMs), privacy: .public) kb=\(bytes / 1024, privacy: .public) ok=true")
                 print(
                     "[KVCacheStore] [BENCHMARK] Saved session \(sessionId.prefix(8)) to SSD (\(bytes / 1024)KB) asynchronously in \(String(format: "%.1f", durationMs))ms"
                 )
             } catch {
                 let durationMs = Date().timeIntervalSince(start) * 1000
+                kvSignposter.endInterval("ssdSave", spState, "\(Int(durationMs), privacy: .public)ms error")
+                kvLog.error("[perf] ssdSave failed session=\(sessionId.prefix(8), privacy: .public) durationMs=\(Int(durationMs), privacy: .public) error=\(error, privacy: .public)")
                 print(
                     "[KVCacheStore] [BENCHMARK] SSD save failed for \(sessionId.prefix(8)) after \(String(format: "%.1f", durationMs))ms: \(error)"
                 )
@@ -293,12 +311,36 @@ struct KVCacheStore {
     }
 
     /// Returns a **fresh copy** of the prefix cache for this model + content hash.
-    /// Always loads from SSD so each caller gets independent KVCache objects
-    /// that won't corrupt the stored prefix when mutated during generation.
+    ///
+    /// Hot-tier path: if the prefix cache is resident in RAM (entry.cache != nil), deep-copy
+    /// all KVCache objects in-memory and return immediately — no SSD I/O.  Each caller gets
+    /// independent objects whose MLXArrays are shared via copy-on-write until generation
+    /// mutates them, keeping the stored hot-tier copy pristine.
+    ///
+    /// Cold-tier fallback: if only an SSD path is recorded, load from disk as before.
     mutating func getPrefixCache(modelName: String, hash: String) -> ([any KVCache]?, [Int]?) {
         let key = Self.prefixKey(modelName: modelName, hash: hash)
         guard let entry = entries[key], entry.modelName == modelName else { return (nil, nil) }
+
+        // ── Hot-tier path (RAM hit) ──────────────────────────────────────────
+        if let hotCache = entry.cache {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            let copied = Self.deepCopyCache(hotCache)
+            touchLRU(key)
+            entry.lastAccess = Date()
+            let copyMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            let kb = Self.cacheBytes(copied) / 1024
+            kvLog.info("[perf] ramCopy kind=prefix durationMs=\(copyMs, privacy: .public) kb=\(kb, privacy: .public)")
+            print("[KVCacheStore] Prefix cache RAM hit for \(key.prefix(24)) (\(kb)KB, copy \(copyMs)ms)")
+            return (copied, entry.tokens)
+        }
+
+        // ── Cold-tier path (SSD fallback) ────────────────────────────────────
         guard let ssdPath = entry.ssdPath else { return (nil, nil) }
+        let spID = kvSignposter.makeSignpostID()
+        let spState = kvSignposter.beginInterval("ssdLoad", id: spID, "prefix cache load")
+        let t0prefix = CFAbsoluteTimeGetCurrent()
+        defer { kvSignposter.endInterval("ssdLoad", spState) }
         do {
             let (cache, metadata) = try loadPromptCache(url: ssdPath)
             guard Self.isValidCache(cache) else {
@@ -309,11 +351,88 @@ struct KVCacheStore {
             if entry.tokens == nil, let tokensStr = metadata["tokens"], let data = tokensStr.data(using: .utf8) {
                 entry.tokens = try? JSONDecoder().decode([Int].self, from: data)
             }
-            return (cache, entry.tokens)
+            // Promote the loaded cache to the hot tier so subsequent calls avoid SSD I/O.
+            let bytes = Self.cacheBytes(cache)
+            entry.cache = cache
+            entry.sizeBytes = bytes
+            totalHotBytes += bytes
+            touchLRU(key)
+            let loadMs = Int((CFAbsoluteTimeGetCurrent() - t0prefix) * 1000)
+            let kb = bytes / 1024
+            kvLog.info("[perf] ssdLoad kind=prefix durationMs=\(loadMs, privacy: .public) kb=\(kb, privacy: .public)")
+            print("[KVCacheStore] Prefix cache SSD load (promoted to RAM) \(key.prefix(24)) (\(kb)KB, \(loadMs)ms)")
+            // Return a deep copy so the hot-tier entry stays pristine.
+            return (Self.deepCopyCache(cache), entry.tokens)
         } catch {
             print("[KVCacheStore] Failed to load prefix cache from SSD: \(error)")
             evictEntry(sessionId: key, saveSSD: false)
             return (nil, nil)
+        }
+    }
+
+    /// Returns an independent copy of `source` where every KVCache layer is a new
+    /// object of the same concrete type.  The underlying MLXArrays are shared via
+    /// copy-on-write until generation mutates the new copy, so this is very cheap.
+    static func deepCopyCache(_ source: [any KVCache]) -> [any KVCache] {
+        source.map { layer -> any KVCache in
+            let copy: any KVCache
+
+            switch layer {
+            case let src as ChunkedKVCache:
+                // ChunkedKVCache must precede KVCacheSimple (subclass relationship).
+                // metaState restores chunkSize + startPosition; state restores keys/values/offset.
+                let dst = ChunkedKVCache()
+                dst.state = src.state
+                dst.metaState = src.metaState
+                copy = dst
+
+            case let src as KVCacheSimple:
+                let dst = KVCacheSimple()
+                let st = src.state
+                if !st.isEmpty { dst.state = st }
+                copy = dst
+
+            case let src as RotatingKVCache:
+                // RotatingKVCache requires maxSize at construction; read it from metaState[1].
+                // Guard against empty state (fresh cache that hasn't processed any tokens yet).
+                let meta = src.metaState
+                let maxSize = meta.count >= 2 ? (Int(meta[1]) ?? 4096) : 4096
+                let dst = RotatingKVCache(maxSize: maxSize)
+                let st = src.state
+                if !st.isEmpty { dst.state = st }
+                dst.metaState = meta
+                copy = dst
+
+            case let src as QuantizedKVCache:
+                // groupSize/bits are restored via metaState setter; offset is restored too.
+                let dst = QuantizedKVCache()
+                dst.state = src.state
+                dst.metaState = src.metaState
+                copy = dst
+
+            case let src as MambaCache:
+                // MambaCache is ArraysCache(size:2); state setter replaces the array list.
+                let dst = MambaCache()
+                dst.state = src.state
+                copy = dst
+
+            case let src as ArraysCache:
+                // Generic ArraysCache: state count tells us the real size.
+                let st = src.state
+                let dst = ArraysCache(size: st.count)
+                dst.state = st
+                copy = dst
+
+            default:
+                // Unknown concrete type: fall back to state/metaState round-trip.
+                // This will fatalError only if the unknown type has incompatible state.
+                assertionFailure("[KVCacheStore] deepCopyCache: unhandled KVCache subtype \(type(of: layer)) — add an explicit case")
+                let dst = KVCacheSimple()
+                dst.state = layer.state
+                copy = dst
+            }
+
+            return copy
         }
     }
 
