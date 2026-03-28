@@ -39,6 +39,9 @@ final class NativeToolCallGroupView: NSView {
     private let rowStack = NSStackView()
     private var rowViews: [NativeToolCallRowView] = []
 
+    /// pins group height — intrinsic alone is not always honored when only top is pinned to the cell.
+    private var groupHeightConstraint: NSLayoutConstraint?
+
     // MARK: State
 
     private var lastCallCount = 0
@@ -107,6 +110,17 @@ final class NativeToolCallGroupView: NSView {
                 self?.onHeightChanged?()
             }
         }
+
+        let totalH = measuredHeight()
+        if let c = groupHeightConstraint {
+            c.constant = max(totalH, 1)
+        } else {
+            let c = heightAnchor.constraint(equalToConstant: max(totalH, 1))
+            c.priority = .required
+            c.isActive = true
+            groupHeightConstraint = c
+        }
+        invalidateIntrinsicContentSize()
     }
 
     // MARK: Measured height (used by cell coordinator)
@@ -334,18 +348,24 @@ final class NativeToolCallRowView: NSView {
         nameLabel.lineBreakMode = .byTruncatingTail; nameLabel.maximumNumberOfLines = 1
         nameLabel.alignment = .left
         nameLabel.usesSingleLineMode = true
+        // keep tool name visible — arg preview + chevron must shrink first
+        nameLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        nameLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         addSubview(nameLabel)
 
         argPreviewLabel.translatesAutoresizingMaskIntoConstraints = false
         argPreviewLabel.isEditable = false; argPreviewLabel.isBordered = false
         argPreviewLabel.drawsBackground = false
         argPreviewLabel.lineBreakMode = .byTruncatingTail; argPreviewLabel.maximumNumberOfLines = 1
+        argPreviewLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        argPreviewLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         addSubview(argPreviewLabel)
 
         chevron.translatesAutoresizingMaskIntoConstraints = false
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         chevron.contentTintColor = .tertiaryLabelColor
         chevron.imageScaling = .scaleProportionallyUpOrDown
+        chevron.setContentCompressionResistancePriority(.required, for: .horizontal)
         addSubview(chevron)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
@@ -394,14 +414,14 @@ final class NativeToolCallRowView: NSView {
             categoryIcon.heightAnchor.constraint(equalToConstant: 14),
 
             nameLabel.leadingAnchor.constraint(equalTo: categoryBg.trailingAnchor, constant: 8),
-            nameLabel.centerYAnchor.constraint(equalTo: statusIcon.centerYAnchor),
+            nameLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
 
             argPreviewLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
-            argPreviewLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
+            argPreviewLabel.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             argPreviewLabel.trailingAnchor.constraint(lessThanOrEqualTo: chevron.leadingAnchor, constant: -8),
 
             chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            chevron.centerYAnchor.constraint(equalTo: statusIcon.centerYAnchor),
+            chevron.centerYAnchor.constraint(equalTo: categoryBg.centerYAnchor),
             chevron.widthAnchor.constraint(equalToConstant: 10),
             chevron.heightAnchor.constraint(equalToConstant: 10),
 

@@ -101,9 +101,11 @@ enum ToolCategory {
             return .terminal
         }
 
-        // Network operations
+        // Network operations (includes mail/thread APIs)
         if name.contains("http") || name.contains("api") || name.contains("fetch")
             || name.contains("request") || name.contains("url") || name.contains("web")
+            || name.contains("thread") || name.contains("mailbox") || name.contains("mail")
+            || name.contains("messages")
         {
             return .network
         }

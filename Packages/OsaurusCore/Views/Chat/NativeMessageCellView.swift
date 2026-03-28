@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import QuartzCore
 
 // MARK: - Cell Rendering Context
 
@@ -223,6 +224,12 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeArtifactView: NativeArtifactCardView?
     private var nativePreflightView: NativePreflightCapabilitiesView?
 
+    /// inset stroke so rounded corners are not clipped by ancestor views
+    private var userBubbleBorderLayer: CAShapeLayer?
+    private var userBubbleBorderWidth: CGFloat = 0
+    private var userBubbleBorderColor: NSColor = .clear
+    private var userBubbleCornerRadius: CGFloat = 0
+
     // MARK: State
 
     private var currentKindTag: ContentBlockKindTag?
@@ -232,8 +239,18 @@ final class NativeMessageCellView: NSTableCellView {
 
     static let reuseId = NSUserInterfaceItemIdentifier("NativeMessageCell")
 
-    override init(frame: NSRect) { super.init(frame: frame) }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        clipsToBounds = false
+        wantsLayer = true
+        layer?.masksToBounds = false
+    }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        updateUserBubbleBorderStroke()
+    }
 
     // MARK: Configure
 
@@ -519,21 +536,36 @@ final class NativeMessageCellView: NSTableCellView {
             }
         }
 
-        // apply bubble background + border on every configure pass (theme may change)
+        // apply bubble background + inset stroke (layer border is centered on the edge and clips at corners)
         if let container = userMessageContainer {
             let radius = CGFloat(theme.bubbleCornerRadius)
             let bubbleColor: NSColor = {
                 if let c = theme.userBubbleColor { return NSColor(c).withAlphaComponent(theme.userBubbleOpacity) }
                 return NSColor(theme.accentColor).withAlphaComponent(theme.userBubbleOpacity)
             }()
-            container.layer?.cornerRadius = radius
-            container.layer?.backgroundColor = bubbleColor.cgColor
-            container.layer?.masksToBounds = false // don't clip border
+            let borderW = CGFloat(theme.messageBorderWidth)
             let borderColor: NSColor = theme.showEdgeLight
                 ? NSColor(theme.glassEdgeLight)
                 : NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity)
-            container.layer?.borderWidth = CGFloat(theme.messageBorderWidth)
-            container.layer?.borderColor = borderColor.cgColor
+
+            container.layer?.cornerRadius = radius
+            container.layer?.backgroundColor = bubbleColor.cgColor
+            container.layer?.masksToBounds = true
+            container.layer?.borderWidth = 0
+            container.layer?.borderColor = nil
+
+            userBubbleCornerRadius = radius
+            userBubbleBorderWidth = borderW
+            userBubbleBorderColor = borderColor
+
+            if userBubbleBorderLayer == nil {
+                let stroke = CAShapeLayer()
+                stroke.fillColor = nil
+                stroke.zPosition = 10
+                container.layer?.addSublayer(stroke)
+                userBubbleBorderLayer = stroke
+            }
+            updateUserBubbleBorderStroke()
         }
 
         // update "You" header
@@ -700,6 +732,26 @@ final class NativeMessageCellView: NSTableCellView {
 
     // MARK: - Helpers
 
+    private func updateUserBubbleBorderStroke() {
+        guard let container = userMessageContainer,
+            let stroke = userBubbleBorderLayer,
+            userBubbleBorderWidth > 0
+        else { return }
+        let bounds = container.bounds
+        guard bounds.width > 1, bounds.height > 1 else { return }
+        let w = userBubbleBorderWidth
+        let inset = w / 2
+        stroke.frame = bounds
+        let r = max(userBubbleCornerRadius - inset, 0)
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        let path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r)
+        stroke.path = path.cgPath
+        stroke.lineWidth = w
+        stroke.strokeColor = userBubbleBorderColor.cgColor
+        stroke.fillColor = nil
+        stroke.lineJoin = .round
+    }
+
     private func removeAllContentViews() {
         spacerView?.removeFromSuperview(); spacerView = nil
         nativeHeaderView?.removeFromSuperview(); nativeHeaderView = nil
@@ -712,6 +764,8 @@ final class NativeMessageCellView: NSTableCellView {
         nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
         userTextView = nil; userImageStack = nil
+        userBubbleBorderLayer = nil
+        userBubbleBorderWidth = 0
     }
 }
 
