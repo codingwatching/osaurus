@@ -57,6 +57,12 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     /// Controls how aggressively pre-flight capability search loads context (nil defaults to .balanced)
     public var preflightSearchMode: PreflightSearchMode?
 
+    // MARK: - Tool Settings
+    /// When true, no tools or preflight context are passed to the model. The raw message is sent
+    /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
+    /// when osaurus is acting as a plain LLM backend for an external agent (e.g. Claude via API).
+    public var disableTools: Bool
+
     public init(
         hotkey: Hotkey?,
         systemPrompt: String,
@@ -71,7 +77,8 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         workTopPOverride: Float? = nil,
         workMaxIterations: Int? = nil,
         defaultAutonomousExec: AutonomousExecConfig? = nil,
-        preflightSearchMode: PreflightSearchMode? = nil
+        preflightSearchMode: PreflightSearchMode? = nil,
+        disableTools: Bool = false
     ) {
         self.hotkey = hotkey
         self.systemPrompt = systemPrompt
@@ -87,6 +94,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
         self.workMaxIterations = workMaxIterations
         self.defaultAutonomousExec = defaultAutonomousExec
         self.preflightSearchMode = preflightSearchMode
+        self.disableTools = disableTools
     }
 
     public init(from decoder: Decoder) throws {
@@ -111,6 +119,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
             PreflightSearchMode.self,
             forKey: .preflightSearchMode
         )
+        disableTools = try container.decodeIfPresent(Bool.self, forKey: .disableTools) ?? false
     }
 
     public static var `default`: ChatConfiguration {

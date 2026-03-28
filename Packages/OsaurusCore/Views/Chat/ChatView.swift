@@ -787,9 +787,16 @@ final class ChatSession: ObservableObject {
                 guard isRunActive(runId) else { return }
                 updateMemoryTokens(fromContext: memoryContext)
 
-                // Pre-flight RAG: search capabilities based on user's message
-                let preflightMode = chatCfg.preflightSearchMode ?? .balanced
-                let preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
+                // Pre-flight RAG: search capabilities based on user's message.
+                // Skipped when disableTools is set — raw message goes directly to the model.
+                let toolsDisabled = chatCfg.disableTools
+                let preflight: PreflightResult
+                if !toolsDisabled {
+                    let preflightMode = chatCfg.preflightSearchMode ?? .balanced
+                    preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
+                } else {
+                    preflight = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
+                }
                 guard isRunActive(runId) else { return }
 
                 if !preflight.items.isEmpty {
@@ -809,11 +816,13 @@ final class ChatSession: ObservableObject {
                 }
 
                 sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
-                var toolSpecs = buildToolSpecs(executionMode: executionMode)
+                var toolSpecs = toolsDisabled ? [] : buildToolSpecs(executionMode: executionMode)
 
-                for spec in preflight.toolSpecs
-                where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                    toolSpecs.append(spec)
+                if !toolsDisabled {
+                    for spec in preflight.toolSpecs
+                    where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
+                        toolSpecs.append(spec)
+                    }
                 }
 
                 budgetTracker.snapshot(
