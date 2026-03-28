@@ -157,12 +157,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     var toolCallId: String? = nil
     /// Convenience map for UI to show tool results grouped under the assistant turn
     @Published var toolResults: [String: String] = [:]
-    /// Tool name detected during streaming before the full invocation is ready
-    @Published var pendingToolName: String? = nil
+    /// Tool name detected during streaming before the full invocation is ready.
+    var pendingToolName: String? = nil
     /// Accumulated preview of tool arguments during streaming (tail-truncated)
-    @Published var pendingToolArgPreview: String? = nil
+    var pendingToolArgPreview: String? = nil
     /// Total bytes of tool arguments received during streaming
-    @Published var pendingToolArgSize: Int = 0
+    var pendingToolArgSize: Int = 0
     /// Pending clarification request for work mode (displayed as ClarificationCardView)
     var pendingClarification: ClarificationRequest? = nil
     /// Capabilities selected by preflight search (ephemeral, not persisted)

@@ -195,30 +195,35 @@ final class ChatSession: ObservableObject {
         return pickerItems.first { $0.id == model }
     }
 
-    /// Flattened content blocks for efficient LazyVStack rendering
-    /// Each block is a paragraph, header, tool call, etc. that can be independently recycled
-    ///
-    /// PERFORMANCE: Uses BlockMemoizer for incremental updates during streaming.
-    /// Only regenerates blocks for the last turn instead of all blocks (O(1) vs O(n)).
-    var visibleBlocks: [ContentBlock] {
-        // Get agent name for assistant messages
+    /// Flattened content blocks for NSTableView rendering.
+    /// Stored and updated explicitly (not recomputed on every body pass).
+    /// Call `rebuildVisibleBlocks()` after any turn mutation to refresh.
+    @Published private(set) var visibleBlocks: [ContentBlock] = []
+
+    /// Precomputed group header map. Updated alongside `visibleBlocks`.
+    @Published private(set) var visibleBlocksGroupHeaderMap: [UUID: UUID] = [:]
+
+    /// Rebuild `visibleBlocks` and `visibleBlocksGroupHeaderMap` from current turns.
+    /// Cheap to call repeatedly — BlockMemoizer fast-paths when nothing changed.
+    func rebuildVisibleBlocks() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
         let displayName = agent?.isBuiltIn == true ? "Assistant" : (agent?.name ?? "Assistant")
-
-        // Determine streaming turn ID
         let streamingTurnId = isStreaming ? turns.last?.id : nil
 
-        return blockMemoizer.blocks(
+        let newBlocks = blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
             agentName: displayName,
             thinkingEnabled: activeModelOptions["disableThinking"]?.boolValue == false
         )
-    }
-
-    /// Precomputed group header map from BlockMemoizer.
-    var visibleBlocksGroupHeaderMap: [UUID: UUID] {
-        blockMemoizer.groupHeaderMap
+        let newHeaderMap = blockMemoizer.groupHeaderMap
+        
+        // use withAnimation(.none) to suppress the warning about publishing during view updates
+        // this wraps the changes in a proper SwiftUI transaction
+        withAnimation(.none) {
+            visibleBlocks = newBlocks
+            visibleBlocksGroupHeaderMap = newHeaderMap
+        }
     }
 
     /// Estimated token count for current session context (~4 chars per token).
@@ -351,6 +356,8 @@ final class ChatSession: ObservableObject {
         // Clear caches
         blockMemoizer.clear()
         _tokenCacheValid = false
+        visibleBlocks = []
+        visibleBlocksGroupHeaderMap = [:]
 
         // Apply model from agent or global config (don't auto-persist, it's already saved)
         isLoadingModel = true
@@ -462,6 +469,7 @@ final class ChatSession: ObservableObject {
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
         _tokenCacheValid = false
+        rebuildVisibleBlocks()
 
         Task { [weak self] in await self?.refreshMemoryTokens() }
     }
@@ -497,6 +505,7 @@ final class ChatSession: ObservableObject {
 
         // Mark as dirty and save
         isDirty = true
+        rebuildVisibleBlocks()
         save()
         send("")  // Empty send to trigger regeneration with existing history
     }
@@ -506,6 +515,7 @@ final class ChatSession: ObservableObject {
         guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
         turns = Array(turns.prefix(index))
         isDirty = true
+        rebuildVisibleBlocks()
         save()
     }
 
@@ -517,6 +527,7 @@ final class ChatSession: ObservableObject {
         // Remove this turn and all subsequent turns
         turns = Array(turns.prefix(index))
         isDirty = true
+        rebuildVisibleBlocks()
 
         // Regenerate
         send("")
@@ -592,6 +603,7 @@ final class ChatSession: ObservableObject {
         ServerController.signalGenerationEnd()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
+        rebuildVisibleBlocks()
         save()
     }
 
@@ -720,6 +732,7 @@ final class ChatSession: ObservableObject {
         if hasContent {
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
             isDirty = true
+            rebuildVisibleBlocks()
 
             // Immediately save new session so it appears in sidebar
             if sessionId == nil {
@@ -930,7 +943,9 @@ final class ChatSession: ObservableObject {
                             modelId: selectedModel ?? "default",
                             modelOptions: activeModelOptions
                         ) { [weak self] in
-                            self?.objectWillChange.send()
+                            // rebuildVisibleBlocks mutates @Published properties which already
+                            // emit objectWillChange — the extra send() below is redundant.
+                            self?.rebuildVisibleBlocks()
                         }
 
                         let stream = try await engine.streamChat(request: req)
@@ -947,7 +962,11 @@ final class ChatSession: ObservableObject {
                             }
                             if let argFragment = StreamingToolHint.decodeArgs(delta) {
                                 assistantTurn.appendToolArgFragment(argFragment)
-                                self.objectWillChange.send()
+                                // throttle: only signal every 5 fragments to avoid flooding the
+                                // table with row reconfigurations during arg streaming.
+                                if assistantTurn.pendingToolArgSize % 5 == 0 {
+                                    self.objectWillChange.send()
+                                }
                                 continue
                             }
                             if !delta.isEmpty {
@@ -1054,6 +1073,7 @@ final class ChatSession: ObservableObject {
                         // the number of @Published change signals and SwiftUI layout passes.
                         turns.append(contentsOf: [toolTurn, newAssistantTurn])
                         assistantTurn = newAssistantTurn
+                        rebuildVisibleBlocks()
 
                         // Continue loop with new history
                         continue
@@ -1522,6 +1542,7 @@ struct ChatView: View {
 
     /// Isolated message thread view to prevent cascading re-renders
     private func messageThread(_ width: CGFloat) -> some View {
+        // read stored @Published values — no blockMemoizer call on every body pass
         let blocks = session.visibleBlocks
         let groupHeaderMap = session.visibleBlocksGroupHeaderMap
         let displayName = windowState.cachedAgentDisplayName

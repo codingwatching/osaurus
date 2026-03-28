@@ -307,11 +307,14 @@ extension ContentBlock {
             }
 
             if !turn.contentIsEmpty {
+                // during streaming, skip the regex-based metadata strip (O(n) on every sync).
+                // visibleContent is used for the final render once streaming ends.
+                let text = isStreaming ? turn.content : turn.visibleContent
                 turnBlocks.append(
                     .paragraph(
                         turnId: turn.id,
                         index: 0,
-                        text: turn.visibleContent,
+                        text: text,
                         isStreaming: isStreaming && turn.pendingToolName == nil,
                         role: turn.role,
                         position: .middle

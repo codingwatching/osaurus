@@ -22,7 +22,7 @@ private enum ToolCallLayout {
 // MARK: - JSON Formatting Utility
 
 /// Formats JSON on a background thread to avoid blocking UI
-private enum JSONFormatter {
+enum JSONFormatter {
     static func prettyJSON(_ raw: String) -> String {
         guard let data = raw.data(using: .utf8),
             let obj = try? JSONSerialization.jsonObject(with: data)
@@ -129,7 +129,7 @@ enum ToolCategory {
 // MARK: - Preview Generator
 
 /// Generates human-readable previews for JSON and text content
-private enum PreviewGenerator {
+enum PreviewGenerator {
     /// Generate a preview for JSON arguments (object)
     static func jsonPreview(_ jsonString: String, maxLength: Int = 60) -> String? {
         guard let data = jsonString.data(using: .utf8),
@@ -316,13 +316,17 @@ struct InlineToolCallView: View {
     let result: String?
     var showAccentStrip = false
 
+    // direct prop overrides (used by AppKit cells to avoid EnvironmentObject broadcast)
+    var isExpandedOverride: Bool? = nil
+    var onToggleOverride: (() -> Void)? = nil
+
     @State private var isHovered = false
     @State private var formattedArgs: String?
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
 
     private var isExpanded: Bool {
-        expandedStore.isExpanded(call.id)
+        isExpandedOverride ?? expandedStore.isExpanded(call.id)
     }
 
     private var isComplete: Bool {
@@ -346,11 +350,15 @@ struct InlineToolCallView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Compact header row
             Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    expandedStore.toggle(call.id)
+                if let override = onToggleOverride {
+                    override()
+                } else {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        expandedStore.toggle(call.id)
+                    }
                 }
                 // Lazily format arguments on first expand.
-                if expandedStore.isExpanded(call.id), formattedArgs == nil {
+                if isExpanded, formattedArgs == nil {
                     let rawArgs = call.function.arguments
                     Task.detached(priority: .userInitiated) {
                         let formatted = JSONFormatter.prettyJSON(rawArgs)

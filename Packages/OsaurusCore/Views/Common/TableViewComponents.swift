@@ -37,6 +37,13 @@ final class HoverTrackingTableView: NSTableView {
     override func mouseMoved(with event: NSEvent) { onMouseMoved?(event) }
     override func mouseEntered(with event: NSEvent) { onMouseMoved?(event) }
     override func mouseExited(with event: NSEvent) { onMouseExited?() }
+
+    /// Allow NSTextView and other editable/selectable subviews inside cells
+    /// to become first responder without requiring the row to be selected first.
+    override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
+        if responder is NSTextView { return true }
+        return super.validateProposedFirstResponder(responder, for: event)
+    }
 }
 
 // MARK: - Table Hosting Cell View (AnyView - Legacy)

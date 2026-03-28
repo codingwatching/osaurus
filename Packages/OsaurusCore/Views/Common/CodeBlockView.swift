@@ -172,6 +172,20 @@ struct CodeContentView: NSViewRepresentable {
         return CGSize(width: width, height: measured)
     }
 
+    // MARK: - Package-Internal Convenience Builder
+
+    /// Build a syntax-highlighted attributed string without going through
+    /// the NSViewRepresentable lifecycle. Used by NativeCodeBlockView.
+    static func attributedString(
+        code: String,
+        language: String?,
+        baseWidth: CGFloat,
+        theme: any ThemeProtocol
+    ) -> NSMutableAttributedString {
+        let view = CodeContentView(code: code, language: language, baseWidth: baseWidth, theme: theme)
+        return view.buildAttributedString()
+    }
+
     // MARK: - Attributed String
 
     private var scale: CGFloat { Typography.scale(for: baseWidth) }
@@ -187,7 +201,7 @@ struct CodeContentView: NSViewRepresentable {
         return NSFont.monospacedSystemFont(ofSize: size, weight: weight)
     }
 
-    private func buildAttributedString() -> NSMutableAttributedString {
+    func buildAttributedString() -> NSMutableAttributedString {
         let fontSize = codeFontSize
         let font = monoFont(size: fontSize, weight: .regular)
         let codeColor = NSColor(theme.primaryText.opacity(0.95))

@@ -296,7 +296,7 @@ struct SelectableTextView: NSViewRepresentable {
 
     // MARK: - Incremental Updates
 
-    private func updateTextStorageIncrementally(
+    func updateTextStorageIncrementally(
         textView: SelectableNSTextView,
         oldBlocks: [SelectableTextBlock],
         newBlocks: [SelectableTextBlock],
@@ -366,9 +366,24 @@ struct SelectableTextView: NSViewRepresentable {
         coordinator.blockLengths = newLengths
     }
 
+    // MARK: - Package-Internal Convenience Builder
+
+    /// Build an attributed string for the given blocks + theme without going
+    /// through the full NSViewRepresentable lifecycle. Used by NativeMarkdownView
+    /// to configure a SelectableNSTextView directly.
+    static func attributedString(
+        for blocks: [SelectableTextBlock],
+        width: CGFloat,
+        theme: any ThemeProtocol
+    ) -> NSMutableAttributedString {
+        let view = SelectableTextView(blocks: blocks, baseWidth: width, theme: theme)
+        let coord = Coordinator()
+        return view.buildAttributedString(coordinator: coord)
+    }
+
     // MARK: - Attributed String Building
 
-    private func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
+    func buildAttributedString(coordinator: Coordinator) -> NSMutableAttributedString {
         let result = NSMutableAttributedString()
         let scale = Typography.scale(for: baseWidth)
         let bodyFontSize = CGFloat(theme.bodySize) * scale
@@ -398,7 +413,7 @@ struct SelectableTextView: NSViewRepresentable {
         return result
     }
 
-    private func renderBlock(
+    func renderBlock(
         _ block: SelectableTextBlock,
         isFirst: Bool,
         previousBlock: SelectableTextBlock?,

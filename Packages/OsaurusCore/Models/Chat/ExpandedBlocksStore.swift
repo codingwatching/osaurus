@@ -20,7 +20,7 @@ import SwiftUI
 /// tool call ID, thinking block content-block ID, or code section ID).
 /// The store persists across cell reuse because it lives on the session,
 /// not inside a SwiftUI `@State`.
-final class ExpandedBlocksStore: ObservableObject, @unchecked Sendable {
+class ExpandedBlocksStore: ObservableObject, @unchecked Sendable {
 
     /// The set of currently expanded block keys.
     @Published var expandedIds: Set<String> = []

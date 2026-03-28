@@ -27,24 +27,6 @@ enum MessageSection: Hashable {
     case main
 }
 
-/// Bundles all per-render context the coordinator needs to configure cells.
-/// Avoids threading 12+ parameters through every method.
-struct CellRenderingContext {
-    let groupHeaderMap: [UUID: UUID]
-    let width: CGFloat
-    let agentName: String
-    let theme: ThemeProtocol
-    let expandedBlocksStore: ExpandedBlocksStore
-    let onCopy: ((UUID) -> Void)?
-    let onRegenerate: ((UUID) -> Void)?
-    let onEdit: ((UUID) -> Void)?
-    let onDelete: ((UUID) -> Void)?
-    let editingTurnId: UUID?
-    let editText: Binding<String>?
-    let onConfirmEdit: (() -> Void)?
-    let onCancelEdit: (() -> Void)?
-}
-
 // MARK: - MessageTableRepresentable
 
 struct MessageTableRepresentable: NSViewRepresentable {
@@ -96,11 +78,15 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onScrolledAwayFromBottom: onScrolledAwayFromBottom
         )
         coordinator.setupHoverTracking(on: tableView)
-        coordinator.subscribeToExpandedStore(expandedBlocksStore)
+
+        // sync session store into coordinator's expand cache for the initial load
+        coordinator.expandedIds = expandedBlocksStore.expandedIds
+        coordinator.sessionExpandedStore = expandedBlocksStore
 
         coordinator.applyBlocks(
             blocks,
-            context: renderingContext,
+            groupHeaderMap: groupHeaderMap,
+            context: renderingContext(for: coordinator),
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
@@ -112,6 +98,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         let coordinator = context.coordinator
         coordinator.scrollAnchor.onScrolledToBottom = onScrolledToBottom
         coordinator.scrollAnchor.onScrolledAwayFromBottom = onScrolledAwayFromBottom
+        coordinator.sessionExpandedStore = expandedBlocksStore
 
         // Detect scroll-to-bottom button tap.
         if scrollToBottomTrigger != coordinator.lastScrollToBottomTrigger {
@@ -119,9 +106,15 @@ struct MessageTableRepresentable: NSViewRepresentable {
             coordinator.scrollAnchor.scrollToBottom(animated: true)
         }
 
+        // Sync any external expand-state changes (e.g. session load resets the store)
+        if expandedBlocksStore.expandedIds != coordinator.expandedIds {
+            coordinator.expandedIds = expandedBlocksStore.expandedIds
+        }
+
         coordinator.applyBlocks(
             blocks,
-            context: renderingContext,
+            groupHeaderMap: groupHeaderMap,
+            context: renderingContext(for: coordinator),
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled
@@ -130,21 +123,50 @@ struct MessageTableRepresentable: NSViewRepresentable {
 
     // MARK: - View Factory Helpers
 
-    private var renderingContext: CellRenderingContext {
+    private func renderingContext(for coordinator: Coordinator) -> CellRenderingContext {
         CellRenderingContext(
-            groupHeaderMap: groupHeaderMap,
             width: max(100, width),
             agentName: agentName,
+            isStreaming: isStreaming,
+            lastAssistantTurnId: lastAssistantTurnId,
             theme: theme,
-            expandedBlocksStore: expandedBlocksStore,
+            expandedIds: coordinator.expandedIds,
+            onToggleExpand: { [weak coordinator] id in
+                coordinator?.toggleExpand(id: id, sessionStore: expandedBlocksStore)
+            },
+            onHeightMeasured: { [weak coordinator] height, blockId in
+                guard let coordinator else { return }
+                coordinator.reportMeasuredHeight(height, forBlockId: blockId)
+            },
+            editingTurnId: editingTurnId,
+            editText: editText.map { b in ({ b.wrappedValue }, { b.wrappedValue = $0 }) },
+            onConfirmEdit: onConfirmEdit,
+            onCancelEdit: onCancelEdit,
             onCopy: onCopy,
             onRegenerate: onRegenerate,
             onEdit: onEdit,
-            onDelete: onDelete,
+            onDelete: onDelete
+        )
+    }
+
+    // keep a convenience var for compatibility with init path which doesn't have a coordinator ref
+    private var renderingContext: CellRenderingContext {
+        CellRenderingContext(
+            width: max(100, width),
+            agentName: agentName,
+            isStreaming: isStreaming,
+            lastAssistantTurnId: lastAssistantTurnId,
+            theme: theme,
+            expandedIds: expandedBlocksStore.expandedIds,
+            onToggleExpand: { _ in },
             editingTurnId: editingTurnId,
-            editText: editText,
+            editText: editText.map { b in ({ b.wrappedValue }, { b.wrappedValue = $0 }) },
             onConfirmEdit: onConfirmEdit,
-            onCancelEdit: onCancelEdit
+            onCancelEdit: onCancelEdit,
+            onCopy: onCopy,
+            onRegenerate: onRegenerate,
+            onEdit: onEdit,
+            onDelete: onDelete
         )
     }
 
@@ -161,7 +183,10 @@ struct MessageTableRepresentable: NSViewRepresentable {
         tv.allowsMultipleSelection = false
         tv.allowsEmptySelection = true
         tv.gridStyleMask = []
-        tv.usesAutomaticRowHeights = true
+        // Use the height delegate (tableView(_:heightOfRow:)) instead of
+        // usesAutomaticRowHeights to avoid layout cascade on every scroll event.
+        tv.usesAutomaticRowHeights = false
+        tv.rowHeight = 44  // default fallback; overridden per-row by delegate
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("MessageColumn"))
         column.resizingMask = .autoresizingMask
@@ -215,28 +240,46 @@ extension MessageTableRepresentable {
         // MARK: Rendering Context
 
         private var ctx = CellRenderingContext(
-            groupHeaderMap: [:],
             width: 400,
             agentName: "",
+            isStreaming: false,
+            lastAssistantTurnId: nil,
             theme: LightTheme(),
-            expandedBlocksStore: ExpandedBlocksStore(),
-            onCopy: nil,
-            onRegenerate: nil,
-            onEdit: nil,
-            onDelete: nil,
+            expandedIds: [],
+            onToggleExpand: { _ in },
             editingTurnId: nil,
             editText: nil,
             onConfirmEdit: nil,
-            onCancelEdit: nil
+            onCancelEdit: nil,
+            onCopy: nil,
+            onRegenerate: nil,
+            onEdit: nil,
+            onDelete: nil
         )
+
+        // groupHeaderMap is still needed for hover group resolution
+        var groupHeaderMap: [UUID: UUID] = [:]
 
         // MARK: Hover
 
         private var hoveredGroupId: UUID?
 
-        // MARK: Expand/Collapse Observation
+        // MARK: Expand/Collapse State
 
-        private var expandedStoreSubscription: AnyCancellable?
+        /// Coordinator-owned snapshot of expanded IDs.
+        /// Synced from the session store on each updateNSView and updated
+        /// immediately when a cell proxy fires onToggle.
+        var expandedIds: Set<String> = []
+
+        /// Weak reference to the session-level store for forwarding toggles.
+        weak var sessionExpandedStore: ExpandedBlocksStore?
+
+        // (no AnyCancellable subscription needed — expand events flow through the proxy callback)
+
+        // MARK: Row Height Cache
+
+        /// Caches measured row heights to avoid calling fittingSize on every scroll.
+        private var heightCache: [String: CGFloat] = [:]
 
         // MARK: Streaming Height Debounce
 
@@ -275,22 +318,23 @@ extension MessageTableRepresentable {
             }
         }
 
-        /// Subscribe to the expand/collapse store so we can re-measure row
-        /// heights when a block's expanded state changes.
-        func subscribeToExpandedStore(_ store: ExpandedBlocksStore) {
-            expandedStoreSubscription?.cancel()
-            expandedStoreSubscription = store.objectWillChange
-                .sink { [weak self] _ in
-                    // Defer past the current run-loop tick so SwiftUI has processed
-                    // the state change and the hosting view has run its layout pass.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                        self?.noteVisibleRowHeightsChanged()
-                    }
-                    // Re-measure again after the spring animation settles.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                        self?.noteVisibleRowHeightsChanged()
-                    }
+        /// Called by a cell proxy when the user toggles an expand/collapse item.
+        /// Forwards the toggle to the session store and invalidates the row height.
+        func toggleExpand(id: String, sessionStore: ExpandedBlocksStore) {
+            sessionStore.toggle(id)
+            expandedIds = sessionStore.expandedIds
+
+            // find which row contains the toggled block and invalidate its height.
+            if let row = blockIds.firstIndex(where: { blockLookup[$0]?.id == id }) {
+                heightCache.removeValue(forKey: blockIds[row])
+                // let the hosting view settle before re-measuring
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    self?.noteRowHeightsChanged(IndexSet(integer: row))
                 }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                    self?.noteRowHeightsChanged(IndexSet(integer: row))
+                }
+            }
         }
 
         /// Tell the table to re-measure all currently visible rows.
@@ -302,6 +346,9 @@ extension MessageTableRepresentable {
             for row in rows {
                 if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) {
                     cell.layoutSubtreeIfNeeded()
+                }
+                if row < blockIds.count {
+                    heightCache.removeValue(forKey: blockIds[row])
                 }
             }
             noteRowHeightsChanged(rows)
@@ -325,6 +372,7 @@ extension MessageTableRepresentable {
         ///   3. Full snapshot (diffable data source apply + scroll anchoring)
         func applyBlocks(
             _ blocks: [ContentBlock],
+            groupHeaderMap: [UUID: UUID],
             context: CellRenderingContext,
             isStreaming: Bool,
             lastAssistantTurnId: UUID?,
@@ -332,7 +380,12 @@ extension MessageTableRepresentable {
         ) {
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let previousEditingTurnId = ctx.editingTurnId
+
+            // if width changed, invalidate the entire height cache
+            if widthChanged { heightCache.removeAll() }
+
             ctx = context
+            self.groupHeaderMap = groupHeaderMap
 
             // Editing state lives in the context, not in the blocks themselves.
             // Reconfigure affected cells immediately so the UI responds without
@@ -408,9 +461,11 @@ extension MessageTableRepresentable {
             for (index, id) in blockIds.enumerated() {
                 guard newLookup[id] != blockLookup[id],
                     let block = newLookup[id],
-                    let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? MessageCellView
+                    let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? NativeMessageCellView
                 else { continue }
 
+                // invalidate height cache for changed block
+                heightCache.removeValue(forKey: id)
                 configureCell(cell, with: block)
 
                 if id == streamId {
@@ -471,8 +526,9 @@ extension MessageTableRepresentable {
                                 atColumn: 0,
                                 row: row,
                                 makeIfNecessary: false
-                            ) as? MessageCellView
+                            ) as? NativeMessageCellView
                         {
+                            self.heightCache.removeValue(forKey: id)
                             self.configureCell(cell, with: block)
                             reconfiguredRows.insert(row)
                         }
@@ -538,15 +594,15 @@ extension MessageTableRepresentable {
         // MARK: - Cell Factory
 
         private func dequeueAndConfigure(tableView: NSTableView, row: Int, blockId: String) -> NSView {
-            let cell: MessageCellView
+            let cell: NativeMessageCellView
             if let reused = tableView.makeView(
-                withIdentifier: MessageCellView.reuseIdentifier,
+                withIdentifier: NativeMessageCellView.reuseId,
                 owner: nil
-            ) as? MessageCellView {
+            ) as? NativeMessageCellView {
                 cell = reused
             } else {
-                cell = MessageCellView(frame: .zero)
-                cell.identifier = MessageCellView.reuseIdentifier
+                cell = NativeMessageCellView(frame: .zero)
+                cell.identifier = NativeMessageCellView.reuseId
             }
 
             if let block = blockLookup[blockId] {
@@ -555,24 +611,11 @@ extension MessageTableRepresentable {
             return cell
         }
 
-        private func configureCell(_ cell: MessageCellView, with block: ContentBlock) {
-            let groupId = ctx.groupHeaderMap[block.turnId] ?? block.turnId
-            cell.configure(
-                block: block,
-                width: ctx.width,
-                agentName: ctx.agentName,
-                isTurnHovered: hoveredGroupId == groupId,
-                theme: ctx.theme,
-                expandedBlocksStore: ctx.expandedBlocksStore,
-                onCopy: ctx.onCopy,
-                onRegenerate: ctx.onRegenerate,
-                onEdit: ctx.onEdit,
-                onDelete: ctx.onDelete,
-                editingTurnId: ctx.editingTurnId,
-                editText: ctx.editText,
-                onConfirmEdit: ctx.onConfirmEdit,
-                onCancelEdit: ctx.onCancelEdit
-            )
+        private func configureCell(_ cell: NativeMessageCellView, with block: ContentBlock) {
+            let groupId = groupHeaderMap[block.turnId] ?? block.turnId
+            var context = ctx
+            context.isTurnHovered = hoveredGroupId == groupId
+            cell.configure(block: block, context: context)
         }
 
         // MARK: - Context-Driven Reconfiguration
@@ -582,7 +625,8 @@ extension MessageTableRepresentable {
             var affectedRows = IndexSet()
             for (index, blockId) in blockIds.enumerated() {
                 guard let block = blockLookup[blockId], block.turnId == turnId else { continue }
-                if let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? MessageCellView {
+                if let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? NativeMessageCellView {
+                    heightCache.removeValue(forKey: blockId)
                     configureCell(cell, with: block)
                 }
                 affectedRows.insert(index)
@@ -638,10 +682,9 @@ extension MessageTableRepresentable {
             // Reconfigure the cell with final content (isStreaming: false).
             // Path 3's snapshot apply doesn't reconfigure cells whose IDs
             // haven't changed, so the cell may still show stale state.
-            if let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) as? MessageCellView {
+            if let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView {
+                heightCache.removeValue(forKey: streamId)
                 configureCell(cell, with: block)
-                // Force the hosting view to run its full SwiftUI layout
-                // cycle synchronously so intrinsic content size is final.
                 cell.layoutSubtreeIfNeeded()
             }
 
@@ -664,7 +707,7 @@ extension MessageTableRepresentable {
             else {
                 return setHoveredGroup(nil)
             }
-            setHoveredGroup(ctx.groupHeaderMap[block.turnId] ?? block.turnId)
+            setHoveredGroup(groupHeaderMap[block.turnId] ?? block.turnId)
         }
 
         private func setHoveredGroup(_ newGroupId: UUID?) {
@@ -678,9 +721,16 @@ extension MessageTableRepresentable {
                 guard row < blockIds.count,
                     let block = blockLookup[blockIds[row]]
                 else { continue }
-                let groupId = ctx.groupHeaderMap[block.turnId] ?? block.turnId
+                let groupId = groupHeaderMap[block.turnId] ?? block.turnId
                 guard groupId == oldGroupId || groupId == newGroupId else { continue }
-                if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) as? MessageCellView {
+                guard let cell = tableView.view(
+                    atColumn: 0, row: row, makeIfNecessary: false
+                ) as? NativeMessageCellView else { continue }
+
+                // for header rows, use the fast hover path
+                if case .header = block.kind {
+                    cell.setTurnHovered(groupId == newGroupId)
+                } else {
                     configureCell(cell, with: block)
                 }
             }
@@ -689,6 +739,50 @@ extension MessageTableRepresentable {
         // MARK: - NSTableViewDelegate
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
+
+        /// Height delegate — avoids Auto Layout cascade on every scroll event.
+        /// Returns cached heights where available, otherwise uses the estimator.
+        func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+            guard row < blockIds.count,
+                let block = blockLookup[blockIds[row]]
+            else { return 44 }
+
+            // return cached height if we have it
+            if let cached = heightCache[block.id] { return cached }
+
+            // estimate height and cache it
+            let isExpanded = expandedIds.contains(block.id)
+            let h = NativeCellHeightEstimator.estimatedHeight(
+                for: block,
+                width: ctx.width,
+                theme: ctx.theme,
+                isExpanded: isExpanded
+            )
+            heightCache[block.id] = h
+            return h
+        }
+
+        /// Called by a cell after it has been laid out to update the height cache.
+        /// Triggers a height invalidation if the actual height differs from the estimate.
+        func reportMeasuredHeight(_ height: CGFloat, forBlockId blockId: String, row: Int) {
+            guard let tv = tableView, row < tv.numberOfRows else { return }
+            let existing = heightCache[blockId]
+            let delta = abs((existing ?? 0) - height)
+            heightCache[blockId] = height
+            if delta > 2 {
+                NSAnimationContext.beginGrouping()
+                NSAnimationContext.current.duration = 0
+                tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))
+                NSAnimationContext.endGrouping()
+            }
+        }
+
+        /// Overload called from native cells that only know their blockId.
+        /// Looks up the row from the coordinator's blockIds array.
+        func reportMeasuredHeight(_ height: CGFloat, forBlockId blockId: String) {
+            guard let row = blockIds.firstIndex(of: blockId) else { return }
+            reportMeasuredHeight(height, forBlockId: blockId, row: row)
+        }
 
         // MARK: - Helpers
 

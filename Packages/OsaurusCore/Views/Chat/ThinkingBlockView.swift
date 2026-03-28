@@ -18,12 +18,17 @@ struct ThinkingBlockView: View {
     /// Stable block ID used to persist expand/collapse state across cell reuse.
     var blockId: String = ""
 
+    // Direct prop overrides (used by AppKit cells to avoid EnvironmentObject broadcast)
+    // when non-nil these take precedence over the EnvironmentObject store.
+    var isExpandedOverride: Bool? = nil
+    var onToggleOverride: (() -> Void)? = nil
+
     @State private var isHovered: Bool = false
     @Environment(\.theme) private var theme
     @EnvironmentObject private var expandedStore: ExpandedBlocksStore
 
     private var isExpanded: Bool {
-        expandedStore.isExpanded(blockId)
+        isExpandedOverride ?? expandedStore.isExpanded(blockId)
     }
 
     /// Character count - uses cached length if provided, otherwise falls back to string count
@@ -105,8 +110,12 @@ struct ThinkingBlockView: View {
 
     private var header: some View {
         Button(action: {
-            withAnimation(theme.springAnimation()) {
-                expandedStore.toggle(blockId)
+            if let override = onToggleOverride {
+                override()
+            } else {
+                withAnimation(theme.springAnimation()) {
+                    expandedStore.toggle(blockId)
+                }
             }
         }) {
             HStack(spacing: 8) {

@@ -246,7 +246,7 @@ struct ContentSegment: Identifiable {
 /// Groups consecutive text blocks into segments for efficient rendering with NSTextView.
 /// Code blocks, images, and math blocks break the text group into separate segments.
 /// Horizontal rules and tables are kept inline for continuous selection.
-private func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
+func groupBlocksIntoSegments(_ blocks: [MessageBlock]) -> [ContentSegment] {
     var segments: [ContentSegment] = []
     var currentTextBlocks: [SelectableTextBlock] = []
     var segmentIndex = 0
@@ -450,7 +450,7 @@ private struct LineIterator: IteratorProtocol {
     }
 }
 
-private func parseBlocks(_ input: String) -> [MessageBlock] {
+func parseBlocks(_ input: String) -> [MessageBlock] {
     var blocks: [MessageBlock] = []
     var currentParagraphLines: [Substring] = []
     var currentBlockquoteLines: [Substring] = []
