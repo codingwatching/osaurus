@@ -114,6 +114,12 @@ final class NativeToolCallGroupView: NSView {
     func measuredHeight() -> CGFloat {
         rowViews.reduce(0) { $0 + $1.measuredHeight() }
     }
+    
+    // provide intrinsic content size for auto layout
+    override var intrinsicContentSize: NSSize {
+        let height = measuredHeight()
+        return NSSize(width: NSView.noIntrinsicMetric, height: height)
+    }
 
     // MARK: - Private
 
@@ -301,6 +307,7 @@ final class NativeToolCallRowView: NSView {
 
     private func applyHeight() {
         rowHeight?.constant = measuredHeight()
+        invalidateIntrinsicContentSize()
         onHeightChanged?()
     }
 
@@ -325,6 +332,8 @@ final class NativeToolCallRowView: NSView {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.isEditable = false; nameLabel.isBordered = false; nameLabel.drawsBackground = false
         nameLabel.lineBreakMode = .byTruncatingTail; nameLabel.maximumNumberOfLines = 1
+        nameLabel.alignment = .left
+        nameLabel.usesSingleLineMode = true
         addSubview(nameLabel)
 
         argPreviewLabel.translatesAutoresizingMaskIntoConstraints = false

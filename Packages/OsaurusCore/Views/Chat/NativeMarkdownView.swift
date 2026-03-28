@@ -25,6 +25,8 @@ final class NativeMarkdownView: NSView {
     private var textView: SelectableNSTextView?
     /// Per-segment views (code blocks, images, math blocks).
     private var segmentViews: [(view: NSView, key: String)] = []
+    /// only used in mixed segment layout — needed for correct height (spacingBefore between segments).
+    private var lastMixedSegments: [ContentSegment] = []
     private var heightConstraint: NSLayoutConstraint?
 
     // MARK: State
@@ -126,6 +128,9 @@ final class NativeMarkdownView: NSView {
             tv.needsDisplay = true
         }
 
+        // nested NativeMarkdownView (text segment inside mixed content) must update heightConstraint
+        // or the default 100pt sticks and following segments overlap the text.
+        _ = measuredHeight(for: width)
         onHeightChanged?()
     }
 
@@ -142,28 +147,43 @@ final class NativeMarkdownView: NSView {
             return max(h, 8)
         }
         
-        // for multi segment content, calculate height by summing intrinsic sizes
-        // this is more reliable than measuring frames which may not be laid out yet
-        var totalH: CGFloat = 4 // top padding
-        
-        for (segView, _) in segmentViews {
-            let intrinsicHeight = segView.intrinsicContentSize.height
-            if intrinsicHeight > 0 && intrinsicHeight != NSView.noIntrinsicMetric {
-                totalH += intrinsicHeight
-            } else {
-                // fallback to frame height if no intrinsic size
-                totalH += segView.frame.height
-            }
+        // multi segment: match applyMixedSegments — 4pt top, then each segment's spacingBefore + height.
+        layoutSubtreeIfNeeded()
+        var totalH: CGFloat = 4
+        for seg in lastMixedSegments {
+            guard let entry = segmentViews.first(where: { $0.key == seg.id }) else { continue }
+            totalH += seg.spacingBefore
+            totalH += measureMixedSegmentHeight(entry.view, width: width)
         }
-        
-        totalH += 4 // bottom padding
-        
-        // ensure minimum height
-        totalH = max(totalH, 60)
-        
+        totalH += 4
+        totalH = max(totalH, 20)
+
         heightConstraint?.constant = totalH
         invalidateIntrinsicContentSize()
         return totalH
+    }
+
+    private func measureMixedSegmentHeight(_ view: NSView, width: CGFloat) -> CGFloat {
+        if let nmv = view as? NativeMarkdownView {
+            return nmv.measuredHeight(for: width)
+        }
+        if let cb = view as? NativeCodeBlockView {
+            cb.layoutSubtreeIfNeeded()
+            let h = cb.intrinsicContentSize.height
+            if h > 0 && h != NSView.noIntrinsicMetric { return h }
+            return max(cb.bounds.height, 60)
+        }
+        if let iv = view as? NSImageView {
+            return iv.bounds.height > 0 ? iv.bounds.height : 160
+        }
+        if let field = view as? NSTextField {
+            field.layoutSubtreeIfNeeded()
+            let h = field.intrinsicContentSize.height
+            if h > 0 && h != NSView.noIntrinsicMetric { return h }
+            return max(field.bounds.height, 24)
+        }
+        view.layoutSubtreeIfNeeded()
+        return max(view.bounds.height, 0)
     }
 
     // MARK: - Private: Unified Segment Dispatch
@@ -236,6 +256,7 @@ final class NativeMarkdownView: NSView {
         theme: any ThemeProtocol
     ) {
         removeTextView()
+        lastMixedSegments = segments
 
         let requiredKeys = segments.map { $0.id }
         // remove stale segment views
@@ -274,6 +295,9 @@ final class NativeMarkdownView: NSView {
                     mv = NativeMarkdownView()
                     mv.translatesAutoresizingMaskIntoConstraints = false
                     addSubview(mv)
+                }
+                mv.onHeightChanged = { [weak self] in
+                    self?.onHeightChanged?()
                 }
                 mv.configureWithBlocks(blocks, width: width, theme: theme, cacheKey: cacheKey)
                 segView = mv
@@ -414,6 +438,7 @@ final class NativeMarkdownView: NSView {
     private func removeSegmentViews() {
         for entry in segmentViews { entry.view.removeFromSuperview() }
         segmentViews = []
+        lastMixedSegments = []
     }
 
     // MARK: - Theme Fingerprint

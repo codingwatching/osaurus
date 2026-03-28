@@ -433,7 +433,6 @@ final class NativeMessageCellView: NSTableCellView {
                 gv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 gv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 gv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-                gv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             ])
             nativeToolCallGroupView = gv
         }
@@ -468,6 +467,7 @@ final class NativeMessageCellView: NSTableCellView {
             let container = NSView()
             container.translatesAutoresizingMaskIntoConstraints = false
             container.wantsLayer = true
+            container.layer?.masksToBounds = false // prevent border clipping
             addSubview(container)
             NSLayoutConstraint.activate([
                 container.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
@@ -520,7 +520,6 @@ final class NativeMessageCellView: NSTableCellView {
         }
 
         // apply bubble background + border on every configure pass (theme may change)
-        // do not set masksToBounds — that clips content during initial layout
         if let container = userMessageContainer {
             let radius = CGFloat(theme.bubbleCornerRadius)
             let bubbleColor: NSColor = {
@@ -529,6 +528,7 @@ final class NativeMessageCellView: NSTableCellView {
             }()
             container.layer?.cornerRadius = radius
             container.layer?.backgroundColor = bubbleColor.cgColor
+            container.layer?.masksToBounds = false // don't clip border
             let borderColor: NSColor = theme.showEdgeLight
                 ? NSColor(theme.glassEdgeLight)
                 : NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity)
