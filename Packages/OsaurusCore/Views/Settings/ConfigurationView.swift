@@ -25,6 +25,7 @@ struct ConfigurationView: View {
     @State private var tempChatTopP: String = ""
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
+    @State private var tempDisableTools: Bool = false
 
     // Work generation settings state
     @State private var tempAgentTemperature: String = ""
@@ -251,8 +252,23 @@ struct ConfigurationView: View {
                                             }
                                             .pickerStyle(.segmented)
                                             .labelsHidden()
+                                            .disabled(tempDisableTools)
 
                                             Text(tempPreflightSearchMode.helpText)
+                                                .font(.system(size: 11))
+                                                .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
+
+                                    SettingsDivider()
+
+                                    SettingsSubsection(label: "Tools") {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Toggle(isOn: $tempDisableTools) {
+                                                Text("Disable tools")
+                                                    .font(.system(size: 12))
+                                            }
+                                            Text("Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent.")
                                                 .font(.system(size: 11))
                                                 .foregroundColor(theme.tertiaryText)
                                         }
@@ -598,6 +614,7 @@ struct ConfigurationView: View {
         tempChatTopP = chat.topPOverride.map { String($0) } ?? ""
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
+        tempDisableTools = chat.disableTools
 
         // Work generation settings
         tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
@@ -658,8 +675,7 @@ struct ConfigurationView: View {
         tempChatTopP = ""
         tempChatMaxToolAttempts = ""
         tempPreflightSearchMode = .balanced
-
-        // Work generation settings - clear to use defaults
+        tempDisableTools = false
         tempAgentTemperature = ""
         tempAgentMaxTokens = ""
         tempAgentTopP = ""
@@ -781,7 +797,7 @@ struct ConfigurationView: View {
         let parsedMaxToolAttempts: Int? = {
             let s = tempChatMaxToolAttempts.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !s.isEmpty, let v = Int(s) else { return nil }
-            return max(1, min(10, v))
+            return max(1, min(50, v))
         }()
 
         // Parse work generation settings
@@ -824,7 +840,8 @@ struct ConfigurationView: View {
             workMaxTokens: parsedAgentMax,
             workTopPOverride: parsedAgentTopP,
             workMaxIterations: parsedAgentMaxIterations,
-            preflightSearchMode: tempPreflightSearchMode
+            preflightSearchMode: tempPreflightSearchMode,
+            disableTools: tempDisableTools
         )
         ChatConfigurationStore.save(chatCfg)
 
