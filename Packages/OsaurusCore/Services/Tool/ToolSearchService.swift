@@ -59,8 +59,7 @@ public actor ToolSearchService {
                 memoryStrategy: .automatic()
             )
 
-            let embedder = SwiftEmbedder(modelSource: .default)
-            vectorDB = try await VecturaKit(config: config, embedder: embedder)
+            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
             isInitialized = true
             ToolIndexLogger.search.info("VecturaKit initialized successfully for tools")
         } catch {
@@ -159,14 +158,23 @@ public actor ToolSearchService {
             }
 
             let entries = try ToolDatabase.shared.loadAllEntries()
+            var texts: [String] = []
+            var ids: [UUID] = []
+            texts.reserveCapacity(entries.count)
+            ids.reserveCapacity(entries.count)
             for entry in entries {
                 let id = deterministicUUID(for: entry.id)
-                let text = buildIndexText(
-                    name: entry.name,
-                    description: entry.description,
-                    parameters: toolParams[entry.name]
+                texts.append(
+                    buildIndexText(
+                        name: entry.name,
+                        description: entry.description,
+                        parameters: toolParams[entry.name]
+                    )
                 )
-                _ = try await db.addDocument(text: text, id: id)
+                ids.append(id)
+            }
+            if !texts.isEmpty {
+                _ = try await db.addDocuments(texts: texts, ids: ids)
             }
             ToolIndexLogger.search.info("Tool index rebuilt with \(entries.count) entries")
         } catch {

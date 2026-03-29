@@ -43,8 +43,7 @@ public actor MethodSearchService {
                 memoryStrategy: .automatic()
             )
 
-            let embedder = SwiftEmbedder(modelSource: .default)
-            vectorDB = try await VecturaKit(config: config, embedder: embedder)
+            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
             isInitialized = true
             MethodLogger.search.info("VecturaKit initialized successfully for methods")
         } catch {
@@ -132,11 +131,17 @@ public actor MethodSearchService {
             let toolDescs = Self.loadToolDescriptions()
 
             let methods = try MethodDatabase.shared.loadAllMethods()
+            var texts: [String] = []
+            var ids: [UUID] = []
+            texts.reserveCapacity(methods.count)
+            ids.reserveCapacity(methods.count)
             for method in methods {
                 let id = deterministicUUID(for: method.id)
-                let text = buildIndexText(for: method, toolDescriptions: toolDescs)
-                _ = try await db.addDocument(text: text, id: id)
-                reverseIdMap[id.uuidString] = method.id
+                texts.append(buildIndexText(for: method, toolDescriptions: toolDescs))
+                ids.append(id)
+            }
+            if !texts.isEmpty {
+                _ = try await db.addDocuments(texts: texts, ids: ids)
             }
             MethodLogger.search.info("Method index rebuilt with \(methods.count) methods")
         } catch {

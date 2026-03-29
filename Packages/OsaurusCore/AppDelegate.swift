@@ -159,19 +159,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
-        // Initialize context management system (methods, tool index, skill search)
+        // Context indexes: open DBs and construct VecturaKit instances in order so only one
+        // SwiftEmbedder-backed init runs at a time (see EmbeddingService.sharedEmbedder).
+        // Rebuild paths batch documents into a single embed call per index, not N serial adds.
         Task {
-            async let methodsInit: Void = {
-                try? MethodDatabase.shared.open()
-                await MethodSearchService.shared.initialize()
-            }()
-            async let toolsInit: Void = {
-                try? ToolDatabase.shared.open()
-                await ToolSearchService.shared.initialize()
-            }()
-            async let skillsInit: Void = SkillSearchService.shared.initialize()
+            try? MethodDatabase.shared.open()
+            await MethodSearchService.shared.initialize()
 
-            _ = await (methodsInit, toolsInit, skillsInit)
+            try? ToolDatabase.shared.open()
+            await ToolSearchService.shared.initialize()
+
+            await SkillSearchService.shared.initialize()
+
             await ToolIndexService.shared.syncFromRegistry()
             await SkillSearchService.shared.rebuildIndex()
             await MethodSearchService.shared.rebuildIndex()

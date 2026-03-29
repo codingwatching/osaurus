@@ -52,7 +52,6 @@ public actor ToolIndexService {
 
             do {
                 try ToolDatabase.shared.upsertEntry(entry)
-                await ToolSearchService.shared.indexEntry(entry, parameters: tool.parameters)
             } catch {
                 ToolIndexLogger.service.error("Failed to sync tool '\(tool.name)' to index: \(error)")
             }
@@ -66,7 +65,6 @@ public actor ToolIndexService {
             for stale in staleSystemEntries {
                 do {
                     try ToolDatabase.shared.deleteEntry(id: stale.id)
-                    await ToolSearchService.shared.removeEntry(id: stale.id)
                     ToolIndexLogger.service.info("Pruned stale tool index entry: \(stale.id)")
                 } catch {
                     ToolIndexLogger.service.error("Failed to prune stale entry '\(stale.id)': \(error)")
@@ -75,6 +73,8 @@ public actor ToolIndexService {
         } catch {
             ToolIndexLogger.service.error("Failed to load entries for pruning: \(error)")
         }
+
+        await ToolSearchService.shared.rebuildIndex()
 
         let count = (try? ToolDatabase.shared.entryCount()) ?? 0
         ToolIndexLogger.service.info("Tool index synced: \(count) entries from registry")

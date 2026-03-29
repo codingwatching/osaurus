@@ -60,6 +60,8 @@ actor ModelRuntime {
     private var kvCacheStore = KVCacheStore()
     private var cachedConfig: RuntimeConfig?
     private var activeGenerationTask: Task<Void, Never>?
+    // modelName:taskHash -> Task
+    private var prefixCacheTasks: [String: Task<Void, Never>] = [:]
 
     private init() {}
 
@@ -87,11 +89,26 @@ actor ModelRuntime {
         activeGenerationTask?.cancel()
         _ = await activeGenerationTask?.value
         activeGenerationTask = nil
+
+        // also cancel and await all background prefix cache tasks
+        for task in prefixCacheTasks.values {
+            task.cancel()
+            _ = await task.value
+        }
+        prefixCacheTasks.removeAll()
     }
 
     func unload(name: String) async {
         await cancelActiveGeneration()
         kvCacheStore.invalidateModel(name)
+
+        // cancel any specific prefix tasks for this model
+        let modelTasks = prefixCacheTasks.filter { $0.key.hasPrefix("\(name):") }
+        for (key, task) in modelTasks {
+            task.cancel()
+            _ = await task.value
+            prefixCacheTasks.removeValue(forKey: key)
+        }
 
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
@@ -368,6 +385,10 @@ actor ModelRuntime {
         }
     }
 
+    private func removePrefixTask(key: String) async {
+        prefixCacheTasks.removeValue(forKey: key)
+    }
+
     /// Builds and persists a prefix KV cache for the given system content and
     /// tools via a minimal 1-token generation.  Called lazily on the first real
     /// query when no persisted prefix cache is found on disk.
@@ -408,8 +429,14 @@ actor ModelRuntime {
             // model unloading and cancel-on-new-message.
             if !background { activeGenerationTask = genTask }
 
-            for await _ in stream {}
-            await genTask.value
+            for await _ in stream {
+                if Task.isCancelled { break }
+            }
+            if !Task.isCancelled {
+                await genTask.value
+            } else {
+                genTask.cancel()
+            }
 
             guard !Task.isCancelled else { return }
             guard cache.contains(where: { $0.offset > 0 }) else {
@@ -471,17 +498,23 @@ actor ModelRuntime {
             // actor-isolated Task. This natively prevents the entire generation engine
             // from synchronously sitting dead waiting for Apple's MLX framework to execute and
             // serialize the system-prompt's initial AST block when booting up completely new chats.
-            Task {
-                await buildPrefixCache(
-                    holder: holder,
-                    systemContent: systemContent,
-                    tools: tools,
-                    toolChoice: toolChoice,
-                    modelName: modelName,
-                    hash: prefixHash,
-                    runtimeConfig: cfg,
-                    background: true
-                )
+            let taskKey = "\(modelName):\(prefixHash)"
+            if prefixCacheTasks[taskKey] == nil {
+                let task = Task {
+                    await buildPrefixCache(
+                        holder: holder,
+                        systemContent: systemContent,
+                        tools: tools,
+                        toolChoice: toolChoice,
+                        modelName: modelName,
+                        hash: prefixHash,
+                        runtimeConfig: cfg,
+                        background: true
+                    )
+                    // Remove from tracking when done
+                    await removePrefixTask(key: taskKey)
+                }
+                prefixCacheTasks[taskKey] = task
             }
         }
 

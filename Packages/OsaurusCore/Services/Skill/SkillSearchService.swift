@@ -58,8 +58,7 @@ public actor SkillSearchService {
                 memoryStrategy: .automatic()
             )
 
-            let embedder = SwiftEmbedder(modelSource: .default)
-            vectorDB = try await VecturaKit(config: config, embedder: embedder)
+            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
             isInitialized = true
             SkillSearchLogger.search.info("VecturaKit initialized successfully for skills")
         } catch {
@@ -144,10 +143,17 @@ public actor SkillSearchService {
             reverseIdMap.removeAll()
 
             let allSkills = await MainActor.run { SkillManager.shared.skills }
+            var texts: [String] = []
+            var ids: [UUID] = []
+            texts.reserveCapacity(allSkills.count)
+            ids.reserveCapacity(allSkills.count)
             for skill in allSkills {
                 let id = deterministicUUID(for: skill.id)
-                let text = buildIndexText(for: skill)
-                _ = try await db.addDocument(text: text, id: id)
+                texts.append(buildIndexText(for: skill))
+                ids.append(id)
+            }
+            if !texts.isEmpty {
+                _ = try await db.addDocuments(texts: texts, ids: ids)
             }
             SkillSearchLogger.search.info("Skill index rebuilt with \(allSkills.count) skills")
         } catch {

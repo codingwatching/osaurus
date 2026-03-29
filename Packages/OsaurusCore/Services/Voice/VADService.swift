@@ -111,6 +111,10 @@ public final class VADService: ObservableObject {
 
         print("[VADService] Starting with \(configuration.enabledAgentIds.count) enabled agents")
 
+        // brief delay of 2s to avoid GPU contention during app startup/prefix-caching
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        guard !Task.isCancelled else { return }
+
         state = .starting
 
         // Ensure model is loaded

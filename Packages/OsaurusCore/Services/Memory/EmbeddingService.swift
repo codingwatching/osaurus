@@ -14,41 +14,24 @@ public actor EmbeddingService {
     public static let shared = EmbeddingService()
     public static let modelName = "potion-base-4M"
 
+    /// Single shared embedder used by all VecturaKit indexes and the embedding API.
+    /// Using one instance prevents concurrent CoreML model loads that can SIGSEGV
+    /// on Apple Silicon (observed on M3, macOS 26.4).
+    public static let sharedEmbedder = SwiftEmbedder(modelSource: .default)
+
     private static let logger = Logger(subsystem: "ai.osaurus", category: "EmbeddingService")
 
-    private var embedder: SwiftEmbedder?
     private var isInitialized = false
 
     private init() {}
 
-    enum Error: Swift.Error, LocalizedError {
-        case notInitialized
-
-        var errorDescription: String? {
-            switch self {
-            case .notInitialized: "Embedding service failed to initialize"
-            }
-        }
-    }
-
     /// Generate embeddings for one or more texts.
     public func embed(texts: [String]) async throws -> [[Float]] {
-        try await ensureInitialized()
-
-        guard let emb = embedder else {
-            throw Error.notInitialized
+        if !isInitialized {
+            _ = try await Self.sharedEmbedder.dimension
+            isInitialized = true
+            Self.logger.info("EmbeddingService initialized")
         }
-
-        return try await emb.embed(texts: texts)
-    }
-
-    private func ensureInitialized() async throws {
-        guard !isInitialized else { return }
-
-        let emb = SwiftEmbedder(modelSource: .default)
-        _ = try await emb.dimension
-        self.embedder = emb
-        self.isInitialized = true
-        Self.logger.info("EmbeddingService initialized")
+        return try await Self.sharedEmbedder.embed(texts: texts)
     }
 }
