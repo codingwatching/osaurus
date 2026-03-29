@@ -268,9 +268,11 @@ struct ConfigurationView: View {
                                                 Text("Disable tools")
                                                     .font(.system(size: 12))
                                             }
-                                            Text("Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent.")
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.tertiaryText)
+                                            Text(
+                                                "Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent."
+                                            )
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
                                         }
                                     }
 

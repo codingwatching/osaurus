@@ -59,8 +59,7 @@ public actor ToolSearchService {
                 memoryStrategy: .automatic()
             )
 
-            let embedder = SwiftEmbedder(modelSource: .default)
-            vectorDB = try await VecturaKit(config: config, embedder: embedder)
+            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
             isInitialized = true
             ToolIndexLogger.search.info("VecturaKit initialized successfully for tools")
         } catch {

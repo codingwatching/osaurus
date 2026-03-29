@@ -43,8 +43,7 @@ public actor MethodSearchService {
                 memoryStrategy: .automatic()
             )
 
-            let embedder = SwiftEmbedder(modelSource: .default)
-            vectorDB = try await VecturaKit(config: config, embedder: embedder)
+            vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
             isInitialized = true
             MethodLogger.search.info("VecturaKit initialized successfully for methods")
         } catch {
