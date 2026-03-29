@@ -460,6 +460,7 @@ private struct ImageThumbnail: View {
                 .onTapGesture { showFullScreen = true }
                 .sheet(isPresented: $showFullScreen) {
                     ImageFullScreenView(image: nsImage, altText: "")
+                        .imageFullScreenSheetPresentation()
                 }
         }
     }

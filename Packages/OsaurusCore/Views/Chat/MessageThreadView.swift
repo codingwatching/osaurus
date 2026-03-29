@@ -36,6 +36,7 @@ struct MessageThreadView: View {
     var editText: Binding<String>? = nil
     var onConfirmEdit: (() -> Void)? = nil
     var onCancelEdit: (() -> Void)? = nil
+    var onUserImagePreview: ((String) -> Void)? = nil
 
     @Environment(\.theme) private var theme
 
@@ -85,7 +86,8 @@ struct MessageThreadView: View {
             editingTurnId: editingTurnId,
             editText: editText,
             onConfirmEdit: onConfirmEdit,
-            onCancelEdit: onCancelEdit
+            onCancelEdit: onCancelEdit,
+            onUserImagePreview: onUserImagePreview
         )
     }
 }

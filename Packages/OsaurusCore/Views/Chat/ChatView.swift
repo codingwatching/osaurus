@@ -1109,6 +1109,7 @@ struct ChatView: View {
     // Inline editing state
     @State private var editingTurnId: UUID?
     @State private var editText: String = ""
+    @State private var userImagePreview: NSImage?
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -1570,7 +1571,8 @@ struct ChatView: View {
                 editingTurnId: editingTurnId,
                 editText: $editText,
                 onConfirmEdit: confirmEditAndRegenerate,
-                onCancelEdit: cancelEditing
+                onCancelEdit: cancelEditing,
+                onUserImagePreview: openUserAttachmentPreview(attachmentId:)
             )
             .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
                 isPinnedToBottom = true
@@ -1589,6 +1591,30 @@ struct ChatView: View {
                             scrollToBottomTrigger += 1
                         }
                     )
+                }
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { userImagePreview != nil },
+            set: { if !$0 { userImagePreview = nil } }
+        )) {
+            if let img = userImagePreview {
+                ImageFullScreenView(image: img, altText: "")
+                    .imageFullScreenSheetPresentation()
+            }
+        }
+    }
+
+    private func openUserAttachmentPreview(attachmentId: String) {
+        if let img = ChatImageCache.shared.cachedImage(for: attachmentId) {
+            userImagePreview = img
+            return
+        }
+        for turn in session.turns {
+            for att in turn.attachments where att.id.uuidString == attachmentId {
+                if let data = att.imageData, let img = NSImage(data: data) {
+                    userImagePreview = img
+                    return
                 }
             }
         }

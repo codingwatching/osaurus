@@ -58,6 +58,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let editText: Binding<String>?
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
+    var onUserImagePreview: ((String) -> Void)? = nil
 
     // MARK: - NSViewRepresentable Lifecycle
 
@@ -145,7 +146,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onCopy: onCopy,
             onRegenerate: onRegenerate,
             onEdit: onEdit,
-            onDelete: onDelete
+            onDelete: onDelete,
+            onUserImagePreview: onUserImagePreview
         )
     }
 
@@ -166,7 +168,8 @@ struct MessageTableRepresentable: NSViewRepresentable {
             onCopy: onCopy,
             onRegenerate: onRegenerate,
             onEdit: onEdit,
-            onDelete: onDelete
+            onDelete: onDelete,
+            onUserImagePreview: onUserImagePreview
         )
     }
 
@@ -254,7 +257,8 @@ extension MessageTableRepresentable {
             onCopy: nil,
             onRegenerate: nil,
             onEdit: nil,
-            onDelete: nil
+            onDelete: nil,
+            onUserImagePreview: nil
         )
 
         // groupHeaderMap is still needed for hover group resolution

@@ -380,7 +380,11 @@ final class NativeToolCallRowView: NSView {
 
         // header button ON TOP — transparent overlay for click handling
         headerButton.translatesAutoresizingMaskIntoConstraints = false
-        headerButton.title = ""; headerButton.isBordered = false
+        headerButton.title = ""
+        headerButton.isBordered = false
+        headerButton.bezelStyle = .inline
+        headerButton.isTransparent = true
+        headerButton.focusRingType = .none
         headerButton.target = self; headerButton.action = #selector(tapped)
         addSubview(headerButton)  // added last → front of Z-order
 

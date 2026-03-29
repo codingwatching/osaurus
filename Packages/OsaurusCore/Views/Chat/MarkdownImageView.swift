@@ -75,6 +75,7 @@ struct MarkdownImageView: View {
         }
         .sheet(isPresented: $showFullScreen) {
             ImageFullScreenView(image: loadedImage, altText: altText)
+                .imageFullScreenSheetPresentation()
         }
         .onAppear {
             if loadedImage == nil { loadImage() }
@@ -366,17 +367,27 @@ enum ImageLoadError: LocalizedError {
 struct ImageFullScreenView: View {
     let image: NSImage?
     let altText: String
+    /// when set (e.g. overlay presentation), avoids `Environment.dismiss` and prevents sheet-driven window sizing on macOS
+    var onDismiss: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.theme) private var theme
     @State private var scale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
 
+    private func close() {
+        if let onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
+    }
+
     var body: some View {
         ZStack {
             Color.black.opacity(0.9)
                 .ignoresSafeArea()
-                .onTapGesture { dismiss() }
+                .onTapGesture { close() }
 
             if let image {
                 Image(nsImage: image)
@@ -424,7 +435,7 @@ struct ImageFullScreenView: View {
                         .buttonStyle(.plain)
                         .help("Save Image")
                     }
-                    Button(action: { dismiss() }) {
+                    Button(action: { close() }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.system(size: 28))
                             .foregroundColor(.white.opacity(0.8))
@@ -447,7 +458,22 @@ struct ImageFullScreenView: View {
                 }
             }
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+extension View {
+    /// macOS 15: default sheet sizing can resize the parent window when the sheet dismisses; `fitted` plus an explicit frame avoids that (see `PresentationSizing`).
+    func imageFullScreenSheetPresentation() -> some View {
+        frame(
+            minWidth: 320,
+            idealWidth: 960,
+            maxWidth: .infinity,
+            minHeight: 240,
+            idealHeight: 720,
+            maxHeight: .infinity
+        )
+        .presentationSizing(.fitted)
     }
 }
 

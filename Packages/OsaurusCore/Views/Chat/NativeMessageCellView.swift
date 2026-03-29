@@ -34,6 +34,8 @@ struct CellRenderingContext {
     var onRegenerate: ((UUID) -> Void)? = nil
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
+    /// attachment id string:  opens full screen preview from ChatView
+    var onUserImagePreview: ((String) -> Void)? = nil
 }
 
 // MARK: - Cell-Isolated ExpandedBlocksStore Proxy
@@ -920,53 +922,60 @@ final class NativeMessageCellView: NSTableCellView {
                     ev.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
                     ev.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
                     ev.topAnchor.constraint(equalTo: hv.bottomAnchor, constant: 4),
+                    ev.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
                 ])
                 userInlineEditView = ev
                 userMessageInlineEditActive = true
+                userImageStack = nil
+                userTextView = nil
             } else {
                 userMessageInlineEditActive = false
+                userInlineEditView = nil
+
+                var anchorBelowHeader = hv.bottomAnchor
+                let topGapAfterHeader: CGFloat = 6
+
+                if !images.isEmpty {
+                    let stack = NSStackView()
+                    stack.orientation = .horizontal
+                    stack.spacing = 8
+                    stack.translatesAutoresizingMaskIntoConstraints = false
+                    container.addSubview(stack)
+                    NSLayoutConstraint.activate([
+                        stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                        stack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -12),
+                        stack.topAnchor.constraint(equalTo: anchorBelowHeader, constant: topGapAfterHeader),
+                        stack.heightAnchor.constraint(equalToConstant: 96),
+                    ])
+                    stack.alignment = .top
+                    userImageStack = stack
+                    anchorBelowHeader = stack.bottomAnchor
+                } else {
+                    userImageStack = nil
+                }
 
                 if !text.isEmpty {
                     let mv = NativeMarkdownView()
                     mv.translatesAutoresizingMaskIntoConstraints = false
                     container.addSubview(mv)
+                    let gapBeforeText: CGFloat = images.isEmpty ? 4 : 8
                     NSLayoutConstraint.activate([
                         mv.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
                         mv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-                        mv.topAnchor.constraint(equalTo: hv.bottomAnchor, constant: 4),
+                        mv.topAnchor.constraint(equalTo: anchorBelowHeader, constant: gapBeforeText),
                     ])
                     userTextView = mv
+                } else {
+                    userTextView = nil
                 }
-            }
 
-            if !images.isEmpty {
-                let stack = NSStackView()
-                stack.orientation = .horizontal
-                stack.spacing = 8
-                stack.translatesAutoresizingMaskIntoConstraints = false
-                container.addSubview(stack)
-                let anchor: NSLayoutYAxisAnchor = {
-                    if wantsInlineEdit, let ev = userInlineEditView { return ev.bottomAnchor }
-                    if let mv = userTextView { return mv.bottomAnchor }
-                    return hv.bottomAnchor
-                }()
-                NSLayoutConstraint.activate([
-                    stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-                    stack.topAnchor.constraint(equalTo: anchor, constant: 8),
-                    stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-                    stack.heightAnchor.constraint(equalToConstant: 96),
-                ])
-                userImageStack = stack
-            } else {
-                // close container bottom from content — not from the cell (avoids stretching the bubble to row height).
-                // markdown: container.bottom = mv.bottom + 16 — only top + height on mv; no conflict with height constraint.
-                if wantsInlineEdit, let ev = userInlineEditView {
-                    NSLayoutConstraint.activate([
-                        ev.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
-                    ])
-                } else if let mv = userTextView {
+                if let mv = userTextView {
                     NSLayoutConstraint.activate([
                         container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 16),
+                    ])
+                } else if userImageStack != nil, let stack = userImageStack {
+                    NSLayoutConstraint.activate([
+                        container.bottomAnchor.constraint(equalTo: stack.bottomAnchor, constant: 16),
                     ])
                 } else {
                     NSLayoutConstraint.activate([
@@ -1051,11 +1060,7 @@ final class NativeMessageCellView: NSTableCellView {
 
         if let stack = userImageStack {
             while stack.arrangedSubviews.count < images.count {
-                let iv = NSImageView()
-                iv.imageScaling = .scaleProportionallyUpOrDown
-                iv.wantsLayer = true
-                iv.layer?.cornerRadius = 8
-                iv.layer?.masksToBounds = true
+                let iv = UserAttachmentThumbnailView()
                 iv.translatesAutoresizingMaskIntoConstraints = false
                 iv.widthAnchor.constraint(equalToConstant: 96).isActive = true
                 iv.heightAnchor.constraint(equalToConstant: 96).isActive = true
@@ -1068,8 +1073,10 @@ final class NativeMessageCellView: NSTableCellView {
             }
 
             for (index, attachment) in images.enumerated() {
-                guard let iv = stack.arrangedSubviews[index] as? NSImageView else { continue }
+                guard let iv = stack.arrangedSubviews[index] as? UserAttachmentThumbnailView else { continue }
                 let attachId = attachment.id.uuidString
+                iv.attachmentId = attachId
+                iv.onTap = context.onUserImagePreview
                 if let img = ChatImageCache.shared.cachedImage(for: attachId) {
                     iv.image = img
                 } else if let data = attachment.imageData {
@@ -1224,6 +1231,64 @@ final class NativeMessageCellView: NSTableCellView {
         userMessageInlineEditActive = false
         userBubbleBorderLayer = nil
         userBubbleBorderWidth = 0
+    }
+}
+
+/// Thumbnail in user bubble — tap opens full-screen preview (wired via `CellRenderingContext.onUserImagePreview`).
+/// `NSImageView` draws via `NSImageCell`; layer `cornerRadius` can clip unevenly. a shape layer mask clips all four corners reliably.
+private final class UserAttachmentThumbnailView: NSView {
+    private static let cornerRadius: CGFloat = 8
+
+    var attachmentId: String = ""
+    var onTap: ((String) -> Void)?
+
+    private let imageView = NSImageView()
+    private let roundedMask = CAShapeLayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageAlignment = .alignTopLeft
+        imageView.clipsToBounds = true
+        addSubview(imageView)
+        NSLayoutConstraint.activate([
+            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            imageView.topAnchor.constraint(equalTo: topAnchor),
+            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError()
+    }
+
+    override func layout() {
+        super.layout()
+        guard let l = layer else { return }
+        let b = l.bounds
+        guard b.width > 0, b.height > 0 else { return }
+        roundedMask.frame = b
+        roundedMask.path = CGPath(
+            roundedRect: CGRect(origin: .zero, size: b.size),
+            cornerWidth: Self.cornerRadius,
+            cornerHeight: Self.cornerRadius,
+            transform: nil
+        )
+        l.mask = roundedMask
+    }
+
+    var image: NSImage? {
+        get { imageView.image }
+        set { imageView.image = newValue }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onTap?(attachmentId)
     }
 }
 
