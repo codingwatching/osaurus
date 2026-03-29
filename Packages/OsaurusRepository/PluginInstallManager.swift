@@ -60,14 +60,22 @@ public final class PluginInstallManager: @unchecked Sendable {
             throw PluginInstallError.specNotFound(pluginId)
         }
 
-        // TOFU: reject updates that change the author's minisign public key.
+        // TOFU: when the author's signing key changes, remove the old version so
+        // the new artifact is verified against the updated key from the registry.
+        // This allows recovery from accidental bad-key pushes without manual uninstall.
         if let latest = InstalledPluginsStore.shared.latestInstalledVersion(pluginId: spec.plugin_id),
             let existing = InstalledPluginsStore.shared.receipt(pluginId: spec.plugin_id, version: latest),
             let existingKey = existing.public_keys?["minisign"],
             let newKey = spec.public_keys?["minisign"],
             existingKey != newKey
         {
-            throw PluginInstallError.authorKeyMismatch
+            NSLog(
+                "[Osaurus] Signing key changed for %@ — removing old version %@ to accept new key",
+                spec.plugin_id,
+                latest.description
+            )
+            let oldVersionDir = PluginInstallManager.toolsVersionDirectory(pluginId: spec.plugin_id, version: latest)
+            try? FileManager.default.removeItem(at: oldVersionDir)
         }
 
         let targetPlatform: Platform = .macos
