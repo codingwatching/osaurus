@@ -297,7 +297,7 @@ final class NativeToolCallRowView: NSView {
         applyHeight()
 
         // row separator (hidden for last row)
-        if let sep = subviews.last as? NSView, sep.identifier?.rawValue == "rowSep" {
+        if let sep = subviews.last, sep.identifier?.rawValue == "rowSep" {
             sep.isHidden = index >= totalCount - 1
         }
     }

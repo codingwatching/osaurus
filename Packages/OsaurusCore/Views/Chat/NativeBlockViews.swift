@@ -29,6 +29,7 @@ final class NativeTypingIndicatorView: NSView {
     // MARK: Animation
 
     nonisolated(unsafe) private var bounceTimer: Timer?
+    nonisolated(unsafe) private var memoryPollTimer: Timer?
     private var currentDot = 0
     private var cancellables: [Any] = []  // Combine sinks
 
@@ -49,6 +50,7 @@ final class NativeTypingIndicatorView: NSView {
 
     deinit {
         bounceTimer?.invalidate()
+        memoryPollTimer?.invalidate()
     }
 
     func configure(theme: any ThemeProtocol) {
@@ -94,11 +96,15 @@ final class NativeTypingIndicatorView: NSView {
     }
 
     private func observeMemory() {
+        memoryPollTimer?.invalidate()
         let monitor = SystemMonitorService.shared
-        // poll memory every 2 seconds via Timer
-        Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            self?.updateMemoryLabel(monitor: monitor)
-        }.tolerance = 0.5
+        let t = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.updateMemoryLabel(monitor: monitor)
+            }
+        }
+        t.tolerance = 0.5
+        memoryPollTimer = t
 
         updateMemoryLabel(monitor: monitor)
     }
@@ -151,7 +157,9 @@ final class NativeTypingIndicatorView: NSView {
     private func startAnimation() {
         bounceTimer?.invalidate()
         bounceTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            self?.bounceDot()
+            Task { @MainActor [weak self] in
+                self?.bounceDot()
+            }
         }
     }
 
@@ -344,13 +352,18 @@ final class NativePendingToolCallView: NSView {
     private func startPulse() {
         pulseTimer?.invalidate()
         pulseTimer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.isPulseUp.toggle()
-            CATransaction.begin()
-            CATransaction.setAnimationDuration(0.4)
-            self.pulseLayer.opacity = self.isPulseUp ? 1.0 : 0.3
-            CATransaction.commit()
+            Task { @MainActor [weak self] in
+                self?.applyPulseTick()
+            }
         }
+    }
+
+    private func applyPulseTick() {
+        isPulseUp.toggle()
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.4)
+        pulseLayer.opacity = isPulseUp ? 1.0 : 0.3
+        CATransaction.commit()
     }
 }
 

@@ -49,8 +49,8 @@ final class NativeMarkdownView: NSView {
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
         
-        // reasonable initial estimate, will be updated in configure()
-        let hc = heightAnchor.constraint(equalToConstant: 100)
+        // small placeholder until configure() runs measuredHeight (pure text path used to skip that and left 100pt)
+        let hc = heightAnchor.constraint(equalToConstant: 8)
         hc.isActive = true
         heightConstraint = hc
     }
@@ -59,7 +59,7 @@ final class NativeMarkdownView: NSView {
     
     // provide intrinsic content size based on height constraint
     override var intrinsicContentSize: NSSize {
-        let height = heightConstraint?.constant ?? 100
+        let height = heightConstraint?.constant ?? 8
         return NSSize(width: NSView.noIntrinsicMetric, height: height)
     }
 
@@ -244,6 +244,8 @@ final class NativeMarkdownView: NSView {
             tv.needsDisplay = true
         }
 
+        // must update heightConstraint — init leaves 100pt; otherwise user bubbles stay artificially tall
+        _ = measuredHeight(for: width)
         onHeightChanged?()
     }
 
@@ -370,6 +372,7 @@ final class NativeMarkdownView: NSView {
             prevAnchor = segView.bottomAnchor
             prevOffset = 0
         }
+        _ = measuredHeight(for: width)
         onHeightChanged?()
     }
 

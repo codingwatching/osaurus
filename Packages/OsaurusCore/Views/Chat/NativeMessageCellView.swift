@@ -203,6 +203,263 @@ private final class ActionButton: NSButton {
     @objc private func fire() { block() }
 }
 
+// MARK: - UserMessageInlineEditView
+
+/// AppKit counterpart to SwiftUI `InlineEditView` — editable plain text plus Cancel / Save & Regenerate.
+private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
+
+    private let scrollView = AutoSizingScrollView()
+    private let textView: CustomNSTextView
+    private let editBox = NSView()
+    private let buttonStack = NSStackView()
+    private var cancelButton: NSButton!
+    private var confirmButton: NSButton!
+
+    private var getText: () -> String = { "" }
+    private var setText: (String) -> Void = { _ in }
+    private var onConfirm: (() -> Void)?
+    private var onCancel: (() -> Void)?
+    private var onHeightChanged: (() -> Void) = {}
+
+    private var lastTheme: (any ThemeProtocol)?
+    private var didApplyInitialFocus = false
+
+    override init(frame frameRect: NSRect) {
+        let tv = CustomNSTextView()
+        tv.maxHeight = 240
+        tv.focusRingType = .none
+        tv.isRichText = false
+        tv.isEditable = true
+        tv.isSelectable = true
+        tv.allowsUndo = true
+        tv.drawsBackground = false
+        tv.backgroundColor = .clear
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainerInset = NSSize(width: 8, height: 6)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
+        self.textView = tv
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
+
+        textView.delegate = self
+
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.focusRingType = .none
+        scrollView.borderType = .noBorder
+        scrollView.documentView = textView
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        editBox.wantsLayer = true
+        editBox.translatesAutoresizingMaskIntoConstraints = false
+
+        buttonStack.orientation = .horizontal
+        buttonStack.spacing = 8
+        buttonStack.alignment = .centerY
+        buttonStack.distribution = .fill
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        cancelButton = NSButton(title: "", target: self, action: #selector(cancelTapped))
+        cancelButton.bezelStyle = .rounded
+        cancelButton.isBordered = false
+        cancelButton.wantsLayer = true
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.keyEquivalentModifierMask = []
+
+        confirmButton = NSButton(title: "", target: self, action: #selector(confirmTapped))
+        confirmButton.bezelStyle = .rounded
+        confirmButton.isBordered = false
+        confirmButton.wantsLayer = true
+        confirmButton.translatesAutoresizingMaskIntoConstraints = false
+        confirmButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+        confirmButton.imagePosition = .imageLeading
+
+        addSubview(editBox)
+        editBox.addSubview(scrollView)
+        addSubview(buttonStack)
+        buttonStack.addArrangedSubview(spacer)
+        buttonStack.addArrangedSubview(cancelButton)
+        buttonStack.addArrangedSubview(confirmButton)
+
+        NSLayoutConstraint.activate([
+            cancelButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            confirmButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
+            cancelButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 88),
+            confirmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
+        ])
+
+        NSLayoutConstraint.activate([
+            editBox.leadingAnchor.constraint(equalTo: leadingAnchor),
+            editBox.trailingAnchor.constraint(equalTo: trailingAnchor),
+            editBox.topAnchor.constraint(equalTo: topAnchor),
+
+            scrollView.leadingAnchor.constraint(equalTo: editBox.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: editBox.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: editBox.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: editBox.bottomAnchor),
+
+            buttonStack.leadingAnchor.constraint(equalTo: leadingAnchor),
+            buttonStack.trailingAnchor.constraint(equalTo: trailingAnchor),
+            buttonStack.topAnchor.constraint(equalTo: editBox.bottomAnchor, constant: 10),
+            buttonStack.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(
+        theme: any ThemeProtocol,
+        getText: @escaping () -> String,
+        setText: @escaping (String) -> Void,
+        onConfirm: @escaping () -> Void,
+        onCancel: @escaping () -> Void,
+        onHeightChanged: @escaping () -> Void
+    ) {
+        self.getText = getText
+        self.setText = setText
+        self.onConfirm = onConfirm
+        self.onCancel = onCancel
+        self.onHeightChanged = onHeightChanged
+        lastTheme = theme
+
+        let radius = CGFloat(theme.inputCornerRadius)
+        editBox.layer?.cornerRadius = radius
+        editBox.layer?.backgroundColor = NSColor(theme.primaryBackground).cgColor
+        editBox.layer?.borderWidth = CGFloat(theme.defaultBorderWidth)
+        editBox.layer?.borderColor = NSColor(theme.accentColor).withAlphaComponent(theme.borderOpacity + 0.2).cgColor
+
+        let body = CGFloat(theme.bodySize)
+        textView.font = .systemFont(ofSize: body)
+        textView.textColor = NSColor(theme.primaryText)
+        textView.insertionPointColor = NSColor(theme.accentColor)
+
+        if textView.string != getText() {
+            textView.string = getText()
+            textView.invalidateIntrinsicContentSize()
+            scrollView.invalidateIntrinsicContentSize()
+        }
+
+        refreshScrollerVisibility()
+        updateConfirmButtons(theme: theme)
+
+        if !didApplyInitialFocus {
+            didApplyInitialFocus = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.textView.window?.makeFirstResponder(self.textView)
+                self.refreshScrollerVisibility()
+                self.onHeightChanged()
+            }
+        }
+
+        layoutSubtreeIfNeeded()
+        onHeightChanged()
+    }
+
+    private func refreshScrollerVisibility() {
+        layoutSubtreeIfNeeded()
+        if let tc = textView.textContainer {
+            textView.layoutManager?.ensureLayout(for: tc)
+        }
+        let maxH = textView.maxHeight
+        let needsScroller = textView.contentHeight > maxH + 0.5
+        if scrollView.hasVerticalScroller != needsScroller {
+            scrollView.hasVerticalScroller = needsScroller
+            scrollView.invalidateIntrinsicContentSize()
+        }
+        scrollView.tile()
+    }
+
+    /// Matches ContentBlockView.InlineEditView — Cancel secondary chrome; Save accent + white when non-empty.
+    private func updateConfirmButtons(theme: any ThemeProtocol) {
+        let empty = textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        confirmButton.isEnabled = !empty
+        let cap = CGFloat(theme.captionSize)
+
+        cancelButton.layer?.masksToBounds = true
+        confirmButton.layer?.masksToBounds = true
+
+        cancelButton.layer?.cornerRadius = 6
+        cancelButton.layer?.backgroundColor = NSColor(theme.secondaryBackground).cgColor
+        cancelButton.layer?.borderWidth = CGFloat(theme.defaultBorderWidth)
+        cancelButton.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(theme.borderOpacity).cgColor
+        cancelButton.attributedTitle = NSAttributedString(string: "Cancel", attributes: [
+            .foregroundColor: NSColor(theme.secondaryText),
+            .font: NSFont.systemFont(ofSize: cap, weight: .medium),
+        ])
+
+        confirmButton.layer?.cornerRadius = 6
+        if let sym = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil) {
+            let config = NSImage.SymbolConfiguration(pointSize: cap - 1, weight: .semibold)
+            confirmButton.image = sym.withSymbolConfiguration(config) ?? sym
+        }
+        confirmButton.imagePosition = .imageLeading
+
+        if empty {
+            confirmButton.layer?.backgroundColor = NSColor(theme.secondaryBackground).cgColor
+            confirmButton.attributedTitle = NSAttributedString(string: "Save & Regenerate", attributes: [
+                .foregroundColor: NSColor(theme.secondaryText),
+                .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
+            ])
+            confirmButton.contentTintColor = NSColor(theme.secondaryText)
+        } else {
+            confirmButton.layer?.backgroundColor = NSColor(theme.accentColor).cgColor
+            confirmButton.attributedTitle = NSAttributedString(string: "Save & Regenerate", attributes: [
+                .foregroundColor: NSColor.white,
+                .font: NSFont.systemFont(ofSize: cap, weight: .semibold),
+            ])
+            confirmButton.contentTintColor = .white
+        }
+    }
+
+    @objc private func cancelTapped() {
+        onCancel?()
+    }
+
+    @objc private func confirmTapped() {
+        guard !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        onConfirm?()
+    }
+
+    func textDidChange(_ notification: Notification) {
+        guard let tv = notification.object as? NSTextView, tv === textView else { return }
+        setText(tv.string)
+        tv.invalidateIntrinsicContentSize()
+        scrollView.invalidateIntrinsicContentSize()
+        refreshScrollerVisibility()
+        if let theme = lastTheme {
+            updateConfirmButtons(theme: theme)
+        }
+        onHeightChanged()
+    }
+
+    func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
+                return false
+            }
+            confirmTapped()
+            return true
+        }
+        return false
+    }
+}
+
 // MARK: - NativeMessageCellView
 
 final class NativeMessageCellView: NSTableCellView {
@@ -218,6 +475,7 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeToolCallGroupView: NativeToolCallGroupView?
     private var userMessageContainer: NSView?
     private var userTextView: NativeMarkdownView?
+    private var userInlineEditView: UserMessageInlineEditView?
     private var userImageStack: NSStackView?
     private var nativePendingView: NativePendingToolCallView?
     private var nativeTypingView: NativeTypingIndicatorView?
@@ -234,6 +492,12 @@ final class NativeMessageCellView: NSTableCellView {
 
     private var currentKindTag: ContentBlockKindTag?
     private var currentBlockId: String?
+
+    /// tracks inline edit vs read-only markdown so we rebuild when edit mode toggles (same block kind)
+    private var userMessageInlineEditActive: Bool = false
+
+    /// last width from CellRenderingContext — used for systemLayoutSizeFitting when reporting row height
+    private var lastContextWidth: CGFloat = 400
 
     // MARK: Identity
 
@@ -252,9 +516,52 @@ final class NativeMessageCellView: NSTableCellView {
         updateUserBubbleBorderStroke()
     }
 
+    /// Row height from Auto Layout — avoids drift from hand-summed constants vs. actual constraints.
+    /// AppKit `NSView` uses `fittingSize` (UIKit’s `systemLayoutSizeFitting` is not available here).
+    /// Table view still uses `heightOfRow:` + cache (see MessageTableRepresentable); this only feeds accurate measurements.
+    private func measureFittedRowHeight() -> CGFloat {
+        layoutSubtreeIfNeeded()
+        let targetWidth = max(bounds.width > 1 ? bounds.width : lastContextWidth, 100)
+
+        // user message: measure bubble subtree height (container bottom is tied to content, not the cell — see configureAsUserMessage)
+        if let container = userMessageContainer {
+            var widthPin: NSLayoutConstraint?
+            if bounds.width <= 1 {
+                let c = widthAnchor.constraint(equalToConstant: targetWidth)
+                c.priority = NSLayoutConstraint.Priority.required
+                c.isActive = true
+                widthPin = c
+            }
+            defer { widthPin?.isActive = false }
+            layoutSubtreeIfNeeded()
+            var h = container.fittingSize.height
+            if h < 2, let mv = userTextView as? NativeMarkdownView {
+                let inner = max(lastContextWidth - 32, 100)
+                let textW = max(inner - 24, 100)
+                let textH = mv.measuredHeight(for: textW)
+                h = 38 + textH + 16
+            }
+            layoutSubtreeIfNeeded()
+            return ceil(max(h, 1))
+        }
+
+        var widthPin: NSLayoutConstraint?
+        if bounds.width <= 1 {
+            let c = widthAnchor.constraint(equalToConstant: targetWidth)
+            c.priority = NSLayoutConstraint.Priority.required
+            c.isActive = true
+            widthPin = c
+        }
+        defer { widthPin?.isActive = false }
+        layoutSubtreeIfNeeded()
+        let h = fittingSize.height
+        return ceil(max(h, 1))
+    }
+
     // MARK: Configure
 
     func configure(block: ContentBlock, context: CellRenderingContext) {
+        lastContextWidth = context.width
         let tag = block.kind.kindTag
         let sameKind = tag == currentKindTag
         currentKindTag = tag
@@ -477,10 +784,20 @@ final class NativeMessageCellView: NSTableCellView {
         let theme = context.theme
         let innerWidth = max(context.width - 32, 100)
 
-        if !sameKind || userMessageContainer == nil {
+        let wantsInlineEdit =
+            context.editingTurnId == block.turnId
+            && context.editText != nil
+            && context.onConfirmEdit != nil
+            && context.onCancelEdit != nil
+
+        let needsUserMessageRebuild =
+            !sameKind || userMessageContainer == nil || userMessageInlineEditActive != wantsInlineEdit
+
+        if needsUserMessageRebuild {
             removeAllContentViews()
 
-            // container fills the cell — height is owned by the height delegate
+            // bubble height comes from content (pins below). do not pin container.bottom to the cell — that stretches
+            // the bubble to whatever row height the table has (often an over-estimate), leaving empty space below text.
             let container = NSView()
             container.translatesAutoresizingMaskIntoConstraints = false
             container.wantsLayer = true
@@ -490,7 +807,6 @@ final class NativeMessageCellView: NSTableCellView {
                 container.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 container.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 container.topAnchor.constraint(equalTo: topAnchor),
-                container.bottomAnchor.constraint(equalTo: bottomAnchor),
             ])
             userMessageContainer = container
 
@@ -506,17 +822,31 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeHeaderView = hv
 
-            if !text.isEmpty {
-                let mv = NativeMarkdownView()
-                mv.translatesAutoresizingMaskIntoConstraints = false
-                container.addSubview(mv)
-                // NMV inset inside bubble
+            if wantsInlineEdit {
+                let ev = UserMessageInlineEditView()
+                ev.translatesAutoresizingMaskIntoConstraints = false
+                container.addSubview(ev)
                 NSLayoutConstraint.activate([
-                    mv.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-                    mv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-                    mv.topAnchor.constraint(equalTo: hv.bottomAnchor, constant: 4),
+                    ev.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                    ev.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                    ev.topAnchor.constraint(equalTo: hv.bottomAnchor, constant: 4),
                 ])
-                userTextView = mv
+                userInlineEditView = ev
+                userMessageInlineEditActive = true
+            } else {
+                userMessageInlineEditActive = false
+
+                if !text.isEmpty {
+                    let mv = NativeMarkdownView()
+                    mv.translatesAutoresizingMaskIntoConstraints = false
+                    container.addSubview(mv)
+                    NSLayoutConstraint.activate([
+                        mv.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
+                        mv.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
+                        mv.topAnchor.constraint(equalTo: hv.bottomAnchor, constant: 4),
+                    ])
+                    userTextView = mv
+                }
             }
 
             if !images.isEmpty {
@@ -525,7 +855,11 @@ final class NativeMessageCellView: NSTableCellView {
                 stack.spacing = 8
                 stack.translatesAutoresizingMaskIntoConstraints = false
                 container.addSubview(stack)
-                let anchor = userTextView.map { $0.bottomAnchor } ?? hv.bottomAnchor as NSLayoutYAxisAnchor
+                let anchor: NSLayoutYAxisAnchor = {
+                    if wantsInlineEdit, let ev = userInlineEditView { return ev.bottomAnchor }
+                    if let mv = userTextView { return mv.bottomAnchor }
+                    return hv.bottomAnchor
+                }()
                 NSLayoutConstraint.activate([
                     stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
                     stack.topAnchor.constraint(equalTo: anchor, constant: 8),
@@ -533,6 +867,22 @@ final class NativeMessageCellView: NSTableCellView {
                     stack.heightAnchor.constraint(equalToConstant: 96),
                 ])
                 userImageStack = stack
+            } else {
+                // close container bottom from content — not from the cell (avoids stretching the bubble to row height).
+                // markdown: container.bottom = mv.bottom + 16 — only top + height on mv; no conflict with height constraint.
+                if wantsInlineEdit, let ev = userInlineEditView {
+                    NSLayoutConstraint.activate([
+                        ev.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+                    ])
+                } else if let mv = userTextView {
+                    NSLayoutConstraint.activate([
+                        container.bottomAnchor.constraint(equalTo: mv.bottomAnchor, constant: 16),
+                    ])
+                } else {
+                    NSLayoutConstraint.activate([
+                        hv.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+                    ])
+                }
             }
         }
 
@@ -583,12 +933,27 @@ final class NativeMessageCellView: NSTableCellView {
             onCancelEdit: context.onCancelEdit
         )
 
-        if let mv = userTextView, !text.isEmpty {
-            // header = 10 top + 24 label + 4 gap = 38pt; text below; 16pt bottom breathing room
+        if wantsInlineEdit, let editPair = context.editText, let onConfirm = context.onConfirmEdit,
+            let onCancel = context.onCancelEdit, let ev = userInlineEditView
+        {
+            let getT = editPair.0
+            let setT = editPair.1
+            ev.configure(
+                theme: theme,
+                getText: getT,
+                setText: setT,
+                onConfirm: onConfirm,
+                onCancel: onCancel,
+                onHeightChanged: { [weak self] in
+                    guard let self, let id = self.currentBlockId else { return }
+                    let totalH = self.measureFittedRowHeight()
+                    context.onHeightMeasured?(totalH, id)
+                }
+            )
+        } else if let mv = userTextView, !text.isEmpty {
             mv.onHeightChanged = { [weak self] in
                 guard let self, let id = self.currentBlockId else { return }
-                let textH = self.userTextView?.measuredHeight(for: innerWidth - 24) ?? 0
-                let totalH = 38 + textH + 16 + CGFloat(images.count) * 104
+                let totalH = self.measureFittedRowHeight()
                 context.onHeightMeasured?(totalH, id)
             }
             mv.configure(text: text, width: innerWidth - 24, theme: theme, cacheKey: block.id, isStreaming: context.isStreaming)
@@ -763,7 +1128,10 @@ final class NativeMessageCellView: NSTableCellView {
         nativeArtifactView?.removeFromSuperview(); nativeArtifactView = nil
         nativePreflightView?.removeFromSuperview(); nativePreflightView = nil
         userMessageContainer?.removeFromSuperview(); userMessageContainer = nil
-        userTextView = nil; userImageStack = nil
+        userTextView = nil
+        userInlineEditView = nil
+        userImageStack = nil
+        userMessageInlineEditActive = false
         userBubbleBorderLayer = nil
         userBubbleBorderWidth = 0
     }
