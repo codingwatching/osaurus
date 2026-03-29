@@ -112,10 +112,12 @@ struct SidebarBackground: View {
     var body: some View {
         ZStack {
             // Layer 1: Glass material (if enabled)
+            /*
             if theme.glassEnabled {
                 Rectangle()
                     .fill(.ultraThinMaterial)
             }
+            */
 
             // Layer 2: Semi-transparent card background
             theme.cardBackground.opacity(

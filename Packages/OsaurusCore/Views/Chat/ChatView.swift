@@ -1405,6 +1405,7 @@ struct ChatView: View {
                 .clipShape(backgroundShape)
 
             // Layer 2: Glass effect (if enabled)
+            /*
             if theme.glassEnabled {
                 ThemedGlassSurface(
                     cornerRadius: 24,
@@ -1428,6 +1429,7 @@ struct ChatView: View {
                 .clipShape(backgroundShape)
                 .allowsHitTesting(false)
             }
+            */
         }
     }
 

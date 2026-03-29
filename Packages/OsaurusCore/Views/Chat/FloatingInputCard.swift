@@ -1507,12 +1507,14 @@ extension FloatingInputCard {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(effectiveBorderStyle, lineWidth: isDragOver ? 2 : (isFocused ? 1.5 : 0.5))
         )
+        /*
         .shadow(
             color: shadowColor,
             radius: isFocused ? 12 : 6,
             x: 0,
             y: isFocused ? 4 : 2
         )
+        */
         .animation(.easeOut(duration: 0.15), value: isFocused)
         .animation(.easeOut(duration: 0.1), value: isDragOver)
     }
