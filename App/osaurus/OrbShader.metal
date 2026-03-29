@@ -30,7 +30,12 @@ static float orbFbm(float2 p) {
 
 [[ stitchable ]]
 half4 orbEffect(float2 position, half4 currentColor, float time, float seed, float4 bounds) {
+    if (bounds.z <= 0.0 || bounds.w <= 0.0) {
+        return half4(0.0);
+    }
     float2 uv = position / bounds.zw;
+    // Guard against potential NaN/Inf by clamping uv to a reasonable range
+    uv = clamp(uv, -1.0, 2.0);
     float3 base = float3(currentColor.rgb);
 
     float n1 = orbFbm(uv * 3.0 + float2(time * 0.18 + seed * 10.0, time * 0.14));
