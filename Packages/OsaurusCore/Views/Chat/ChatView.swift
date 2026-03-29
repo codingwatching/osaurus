@@ -779,6 +779,9 @@ final class ChatSession: ObservableObject {
 
             var assistantTurn = ChatTurn(role: .assistant, content: "")
             turns.append(assistantTurn)
+            // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
+            // user-only while isStreaming is true and the table early-returns without assistant rows.
+            rebuildVisibleBlocks()
             do {
                 let engine = chatEngineFactory()
                 let chatCfg = ChatConfigurationStore.load()

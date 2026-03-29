@@ -22,6 +22,8 @@ final class BlockMemoizer {
     private var lastPendingToolName: String?
     private var lastPendingToolArgSize = 0
     private var lastVersion = -1
+    /// Must match `streamingTurnId` for the fast path — `generateBlocks` depends on it for typing / prefill UI.
+    private var lastStreamingTurnId: UUID?
     private let streamingMaxBlocks = 80
     private let nonStreamingMaxBlocks = 400
 
@@ -43,12 +45,13 @@ final class BlockMemoizer {
         let pendingToolName = turns.last?.pendingToolName
         let pendingToolArgSize = turns.last?.pendingToolArgSize ?? 0
 
-        // Fast path: nothing changed
+        // Fast path: nothing changed (including which turn is streaming — drives typing indicator / placeholders).
         if count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
             && pendingToolName == lastPendingToolName
             && pendingToolArgSize == lastPendingToolArgSize
             && version == lastVersion && !cached.isEmpty
+            && streamingTurnId == lastStreamingTurnId
         {
             return limited(streaming: streamingTurnId != nil)
         }
@@ -109,6 +112,7 @@ final class BlockMemoizer {
         lastPendingToolName = pendingToolName
         lastPendingToolArgSize = pendingToolArgSize
         lastVersion = version
+        lastStreamingTurnId = streamingTurnId
 
         // incremental path: only rebuild the suffix portion of the map; preserve stable prefix
         if wasIncremental, let prefixEnd = blocks.firstIndex(where: { $0.turnId == turns[count - 1].id }) {
@@ -186,6 +190,7 @@ final class BlockMemoizer {
         lastPendingToolName = nil
         lastPendingToolArgSize = 0
         lastVersion = -1
+        lastStreamingTurnId = nil
     }
 
     // MARK: - Group Header Map

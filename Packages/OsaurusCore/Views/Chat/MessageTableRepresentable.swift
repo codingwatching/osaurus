@@ -380,6 +380,8 @@ extension MessageTableRepresentable {
         ) {
             let widthChanged = abs(ctx.width - context.width) > 1.0
             let previousEditingTurnId = ctx.editingTurnId
+            let previousStreaming = ctx.isStreaming
+            let previousLastAssistantTurnId = ctx.lastAssistantTurnId
 
             // if width changed, invalidate the entire height cache
             if widthChanged { heightCache.removeAll() }
@@ -419,6 +421,12 @@ extension MessageTableRepresentable {
 
             // --- Path 1: No-change early return ---
             if !widthChanged, newIds == blockIds, !hasContentChanges(newLookup: newLookup) {
+                let contextAffectsCells =
+                    previousStreaming != context.isStreaming
+                    || previousLastAssistantTurnId != context.lastAssistantTurnId
+                if contextAffectsCells {
+                    reconfigureAllCellsFromLookup(newLookup)
+                }
                 streamingBlockId = newStreamingBlockId
                 return
             }
@@ -635,6 +643,26 @@ extension MessageTableRepresentable {
             noteRowHeightsChanged(affectedRows)
         }
 
+        /// Reconfigure every visible row when block data is unchanged but `CellRenderingContext` changed
+        /// (e.g. `isStreaming`, `lastAssistantTurnId`).
+        private func reconfigureAllCellsFromLookup(_ newLookup: [String: ContentBlock]) {
+            guard let tableView else { return }
+            var affectedRows = IndexSet()
+            for (index, id) in blockIds.enumerated() {
+                guard let block = newLookup[id],
+                    let cell = tableView.view(atColumn: 0, row: index, makeIfNecessary: false) as? NativeMessageCellView
+                else { continue }
+                heightCache.removeValue(forKey: id)
+                configureCell(cell, with: block)
+                affectedRows.insert(index)
+            }
+            guard !affectedRows.isEmpty else { return }
+            noteRowHeightsChanged(affectedRows)
+            if scrollAnchor.isPinnedToBottom {
+                scrollAnchor.scrollToBottom()
+            }
+        }
+
         // MARK: - Streaming Height Updates
 
         private func scheduleStreamingHeightUpdate(row: Int) {
@@ -791,6 +819,7 @@ extension MessageTableRepresentable {
             return blocks.last(where: {
                 if case .paragraph(_, _, true, _) = $0.kind { return true }
                 if case .thinking(_, _, true) = $0.kind { return true }
+                if case .typingIndicator = $0.kind { return true }
                 return false
             })?.id
         }
