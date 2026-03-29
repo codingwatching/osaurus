@@ -364,7 +364,11 @@ final class PluginManager {
         var loadResults: [(url: URL, result: Result<LoadedPlugin, PluginLoadError>)] = []
         for url in urls {
             if alreadyLoadedPaths.contains(url.path) { continue }
-            loadResults.append((url: url, result: loadPluginWithError(at: url)))
+            let pluginId = extractPluginId(from: url)
+            writeLoadingMarker(pluginId: pluginId)
+            let result = loadPluginWithError(at: url)
+            clearLoadingMarker()
+            loadResults.append((url: url, result: result))
         }
 
         return PluginScanResult(
@@ -686,12 +690,66 @@ final class PluginManager {
         return toolsDirectoryURLsWithFailures().urls
     }
 
+    // MARK: - Plugin Quarantine
+
+    private nonisolated static func currentlyLoadingURL() -> URL {
+        toolsRootDirectory().appendingPathComponent(".currently_loading", isDirectory: false)
+    }
+
+    private nonisolated static func quarantineURL() -> URL {
+        toolsRootDirectory().appendingPathComponent(".quarantine", isDirectory: false)
+    }
+
+    nonisolated static func quarantinedPluginIds() -> Set<String> {
+        guard let data = try? Data(contentsOf: quarantineURL()),
+            let ids = try? JSONDecoder().decode([String].self, from: data)
+        else { return [] }
+        return Set(ids)
+    }
+
+    private nonisolated static func addToQuarantine(_ pluginId: String) {
+        var ids = quarantinedPluginIds()
+        ids.insert(pluginId)
+        if let data = try? JSONEncoder().encode(Array(ids)) {
+            try? data.write(to: quarantineURL())
+        }
+        NSLog("[Osaurus] Quarantined plugin '%@' after crash during load", pluginId)
+    }
+
+    nonisolated static func clearQuarantine() {
+        try? FileManager.default.removeItem(at: quarantineURL())
+        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+    }
+
+    /// If a `.currently_loading` marker was left behind by a crash during
+    /// dlopen/init, quarantine that plugin so it is skipped on future launches.
+    private nonisolated static func promoteStaleLoadingMarker() {
+        let markerURL = currentlyLoadingURL()
+        guard let data = try? Data(contentsOf: markerURL),
+            let pluginId = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !pluginId.isEmpty
+        else { return }
+        addToQuarantine(pluginId)
+        try? FileManager.default.removeItem(at: markerURL)
+    }
+
+    private nonisolated static func writeLoadingMarker(pluginId: String) {
+        try? pluginId.data(using: .utf8)?.write(to: currentlyLoadingURL())
+    }
+
+    private nonisolated static func clearLoadingMarker() {
+        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+    }
+
     /// Returns dylib URLs to load and a dictionary of verification failures (pluginId -> error message)
     nonisolated static func toolsDirectoryURLsWithFailures() -> (urls: [URL], failures: [String: String]) {
+        promoteStaleLoadingMarker()
+
         let fm = FileManager.default
         let root = toolsRootDirectory()
         var dylibURLs: [URL] = []
         var failures: [String: String] = [:]
+        let quarantined = quarantinedPluginIds()
 
         guard
             let pluginDirs = try? fm.contentsOfDirectory(
@@ -705,6 +763,12 @@ final class PluginManager {
 
         for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
             let pluginId = pluginDir.lastPathComponent
+
+            if quarantined.contains(pluginId) {
+                failures[pluginId] = "Plugin quarantined after a crash during load — run `osaurus tools reset` to retry"
+                continue
+            }
+
             let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
             var versionDir: URL?
             if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {

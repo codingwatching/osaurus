@@ -25,6 +25,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // Detect repeated startup crashes and enter safe mode if needed
+        LaunchGuard.checkOnLaunch()
+
         // Configure as regular app (show Dock icon) by default, or accessory if hidden
         let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
         if hideDockIcon {
@@ -116,9 +119,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize directory access early so security-scoped bookmark is active
         let _ = DirectoryPickerService.shared
 
-        // Load external tool plugins at launch (after core is initialized)
-        Task { @MainActor in
-            await PluginManager.shared.loadAll()
+        if LaunchGuard.isSafeMode {
+            NotificationService.shared.postSafeModeActive()
+            LaunchGuard.markStartupComplete()
+        } else {
+            // Load external tool plugins at launch (after core is initialized)
+            Task { @MainActor in
+                await PluginManager.shared.loadAll()
+                LaunchGuard.markStartupComplete()
+            }
+
+            // Start plugin repository background refresh for update checking
+            PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
         // Pre-warm caches immediately for instant first window (no async deps)
@@ -131,9 +143,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await RemoteProviderManager.shared.connectEnabledProviders()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
-
-        // Start plugin repository background refresh for update checking
-        PluginRepositoryService.shared.startBackgroundRefresh()
 
         // Initialize memory system with retry
         Task { @MainActor in
