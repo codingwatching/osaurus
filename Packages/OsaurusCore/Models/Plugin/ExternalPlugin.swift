@@ -451,7 +451,11 @@ final class ExternalPlugin: @unchecked Sendable {
                     return
                 }
                 PluginHostContext.setActivePlugin(pluginId)
-                defer { PluginHostContext.clearActivePlugin() }
+                PluginHostContext.currentContext = PluginHostContext.getContext(for: pluginId)
+                defer {
+                    PluginHostContext.clearActivePlugin()
+                    PluginHostContext.currentContext = nil
+                }
 
                 guard let resPtr = call(ctx) else {
                     continuation.resume(
@@ -519,11 +523,18 @@ final class ExternalPlugin: @unchecked Sendable {
 
         invokeQueue.async { [self] in
             guard !self.isShutDown else { return }
+            guard let hostCtx = PluginHostContext.getContext(for: pluginId) else { return }
+
             PluginHostContext.setActivePlugin(pluginId)
-            if let agentId {
-                PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentId
+            PluginHostContext.currentContext = hostCtx
+            defer {
+                PluginHostContext.clearActivePlugin()
+                PluginHostContext.currentContext = nil
             }
-            defer { PluginHostContext.clearActivePlugin() }
+
+            if let agentId {
+                hostCtx.currentAgentId = agentId
+            }
 
             for (key, value) in changes {
                 key.withCString { keyPtr in
@@ -545,7 +556,11 @@ final class ExternalPlugin: @unchecked Sendable {
         invokeQueue.async { [self] in
             guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
-            defer { PluginHostContext.clearActivePlugin() }
+            PluginHostContext.currentContext = PluginHostContext.getContext(for: pluginId)
+            defer {
+                PluginHostContext.clearActivePlugin()
+                PluginHostContext.currentContext = nil
+            }
 
             taskId.withCString { taskIdPtr in
                 eventJSON.withCString { jsonPtr in
