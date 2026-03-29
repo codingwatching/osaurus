@@ -102,14 +102,6 @@ actor ModelRuntime {
         await cancelActiveGeneration()
         kvCacheStore.invalidateModel(name)
 
-        // cancel any specific prefix tasks for this model
-        let modelTasks = prefixCacheTasks.filter { $0.key.hasPrefix("\(name):") }
-        for (key, task) in modelTasks {
-            task.cancel()
-            _ = await task.value
-            prefixCacheTasks.removeValue(forKey: key)
-        }
-
         autoreleasepool {
             _ = modelCache.removeValue(forKey: name)
         }
@@ -170,6 +162,57 @@ actor ModelRuntime {
         kvCacheStore.invalidatePrefixCache(modelName: modelName, hash: prefixHash)
     }
 
+    /// Wraps a stream so that after it finishes successfully, a prefix KV cache
+    /// is built for the given model+hash.  The build runs sequentially — never
+    /// concurrently with the generation that produced this stream — because it
+    /// only starts after the stream is fully consumed (i.e. the generation's
+    /// `genTask` has completed and no Metal work is in flight).
+    private func wrapWithPrefixCacheBuild(
+        _ stream: AsyncThrowingStream<ModelRuntimeEvent, Error>,
+        holder: SessionHolder,
+        systemContent: String,
+        tools: [Tool]?,
+        toolChoice: ToolChoiceOption?,
+        modelName: String,
+        prefixHash: String,
+        runtimeConfig: RuntimeConfig
+    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
+        let (wrapped, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        let forwardTask = Task {
+            do {
+                for try await event in stream {
+                    if Task.isCancelled { break }
+                    continuation.yield(event)
+                }
+                continuation.finish()
+
+                guard !Task.isCancelled else { return }
+                guard !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash) else { return }
+
+                let taskKey = "\(modelName):\(prefixHash)"
+                guard prefixCacheTasks[taskKey] == nil else { return }
+
+                let prefixTask = Task {
+                    await buildPrefixCache(
+                        holder: holder,
+                        systemContent: systemContent,
+                        tools: tools,
+                        toolChoice: toolChoice,
+                        modelName: modelName,
+                        hash: prefixHash,
+                        runtimeConfig: runtimeConfig
+                    )
+                    await removePrefixTask(key: taskKey)
+                }
+                prefixCacheTasks[taskKey] = prefixTask
+            } catch {
+                continuation.finish(throwing: error)
+            }
+        }
+        continuation.onTermination = { @Sendable _ in forwardTask.cancel() }
+        return wrapped
+    }
+
     /// Forwards events from `stream` and invalidates the relevant caches when
     /// iteration throws, so subsequent requests don't hit the same stale data.
     private func wrapWithCacheInvalidation(
@@ -191,52 +234,6 @@ actor ModelRuntime {
                 print(
                     "[ModelRuntime] Stream failed with cache, invalidated for next attempt: \(error.localizedDescription)"
                 )
-                continuation.finish(throwing: error)
-            }
-        }
-        continuation.onTermination = { @Sendable _ in forwardTask.cancel() }
-        return wrapped
-    }
-
-    /// Wraps a stream so that after it finishes successfully, the KV cache is
-    /// persisted for the session. The cache object is a reference type whose
-    /// `offset` field grows as tokens are generated, so we must store it only
-    /// after the stream is drained (offset == promptTokens + generatedTokens).
-    ///
-    /// The stored token sequence is `promptTokens + generatedTokenIds` — the complete
-    /// token sequence the cache has processed — so subsequent turns can find the
-    /// correct common prefix even when the chat template reformats historical messages.
-    private func wrapWithCacheStore(
-        _ stream: AsyncThrowingStream<ModelRuntimeEvent, Error>,
-        sessionId: String,
-        cache: [any KVCache],
-        promptTokens: [Int],
-        generatedTokenIdsBox: @escaping @Sendable () -> [Int],
-        modelName: String
-    ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        let (wrapped, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
-        nonisolated(unsafe) let capturedCache = cache
-        let forwardTask = Task {
-            do {
-                for try await event in stream {
-                    if Task.isCancelled { break }
-                    continuation.yield(event)
-                }
-                // Stream finished normally — cache is now fully populated.
-                // Combine prompt tokens + generated token IDs for a complete token sequence.
-                let generatedIds = generatedTokenIdsBox()
-                let fullTokens = promptTokens + generatedIds
-                debugLog(
-                    "[ModelRuntime] wrapWithCacheStore: promptTokens=\(promptTokens.count) generatedIds=\(generatedIds.count) fullTokens=\(fullTokens.count)"
-                )
-                storeSessionCache(
-                    sessionId: sessionId,
-                    cache: capturedCache,
-                    promptTokens: fullTokens,
-                    modelName: modelName
-                )
-                continuation.finish()
-            } catch {
                 continuation.finish(throwing: error)
             }
         }
@@ -266,10 +263,9 @@ actor ModelRuntime {
         let budget = currentKVBudget()
         kvCacheStore.ensureBudget(budget)
         let offset = effectiveCacheOffset(cache)
-        debugLog(
-            "[ModelRuntime] stored session cache sessionId=\(sessionId.prefix(8)) promptTokens=\(promptTokens.count) effectiveCacheOffset=\(offset) budget=\(budget / 1024 / 1024)MB"
+        genLog.info(
+            "storeSessionCache: session=\(sessionId.prefix(8), privacy: .public) tokens=\(promptTokens.count, privacy: .public) offset=\(offset, privacy: .public)"
         )
-        print("[ModelRuntime] storeSessionCache: evaled \(arraysToEval.count) arrays, offset=\(offset)")
     }
 
     // MARK: - Internals
@@ -301,36 +297,22 @@ actor ModelRuntime {
     }
 
     private func loadContainer(id: String, name: String) async throws -> SessionHolder {
-        debugLog("[ModelRuntime] loadContainer: start name=\(name)")
-        if let existing = modelCache[name] {
-            debugLog("[ModelRuntime] loadContainer: cache hit")
-            return existing
-        }
-        debugLog("[ModelRuntime] loadContainer: cache miss, fetching policy...")
+        if let existing = modelCache[name] { return existing }
+
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
-        debugLog("[ModelRuntime] loadContainer: policy=\(policy)")
 
         if policy == .strictSingleModel {
-            let otherModels = modelCache.keys.filter { $0 != name }
-            for other in otherModels {
-                print("[ModelRuntime] Enforcing strict policy: Unloading \(other)")
+            for other in modelCache.keys where other != name {
+                genLog.info("loadContainer: strict eviction of \(other, privacy: .public)")
                 await unload(name: other)
             }
-
-            let otherTasks = loadingTasks.keys.filter { $0 != name }
-            for other in otherTasks {
-                print("[ModelRuntime] Cancelling pending load for \(other)")
+            for other in loadingTasks.keys where other != name {
                 loadingTasks[other]?.cancel()
                 loadingTasks.removeValue(forKey: other)
-            }
-        } else {
-            if !modelCache.isEmpty {
-                print("[ModelRuntime] Loading \(name) alongside existing models (Flexible Policy)")
             }
         }
 
         if let existingTask = loadingTasks[name] {
-            debugLog("[ModelRuntime] loadContainer: joining existing load task")
             return try await existingTask.value
         }
 
@@ -343,20 +325,15 @@ actor ModelRuntime {
         }
 
         let task = Task<SessionHolder, Error> {
-            debugLog("[ModelRuntime] loadContainer: load task started isVLM check...")
             let isVLM = ModelManager.isVisionModel(at: localURL)
-            debugLog("[ModelRuntime] loadContainer: isVLM=\(isVLM), loading model weights...")
             let container: ModelContainer
 
             if isVLM {
                 let configuration = ModelConfiguration(directory: localURL)
-                debugLog("[ModelRuntime] loadContainer: calling VLMModelFactory.loadContainer")
                 container = try await VLMModelFactory.shared.loadContainer(configuration: configuration)
             } else {
-                debugLog("[ModelRuntime] loadContainer: calling loadModelContainer (LLM path)")
                 container = try await loadModelContainer(directory: localURL)
             }
-            debugLog("[ModelRuntime] loadContainer: weights loaded, building holder")
             let weightsBytes = Self.computeWeightsSizeBytes(at: localURL)
             return SessionHolder(
                 name: name,
@@ -370,14 +347,11 @@ actor ModelRuntime {
 
         do {
             let holder = try await task.value
-            debugLog("[ModelRuntime] loadContainer: task.value resolved, setting cache")
             modelCache[name] = holder
             loadingTasks[name] = nil
             currentModelName = name
-
             Memory.cacheLimit = mlxCacheLimit()
-
-            debugLog("[ModelRuntime] loadContainer: returning holder")
+            genLog.info("loadContainer: loaded \(name, privacy: .public) isVLM=\(holder.isVLM, privacy: .public)")
             return holder
         } catch {
             loadingTasks[name] = nil
@@ -392,6 +366,10 @@ actor ModelRuntime {
     /// Builds and persists a prefix KV cache for the given system content and
     /// tools via a minimal 1-token generation.  Called lazily on the first real
     /// query when no persisted prefix cache is found on disk.
+    ///
+    /// Always called from a background prefix-cache task (never inline in the
+    /// generation path).  Awaits any active generation before starting its own
+    /// GPU work so Metal command buffers never overlap.
     private func buildPrefixCache(
         holder: SessionHolder,
         systemContent: String,
@@ -399,9 +377,14 @@ actor ModelRuntime {
         toolChoice: ToolChoiceOption?,
         modelName: String,
         hash: String,
-        runtimeConfig: RuntimeConfig,
-        background: Bool = false
+        runtimeConfig: RuntimeConfig
     ) async {
+        // Wait for any in-flight generation to finish before touching the GPU.
+        // Closes the window where wrapWithPrefixCacheBuild's forwardTask creates
+        // this task *after* the next generateEventStream's stale-task cleanup ran.
+        _ = await activeGenerationTask?.value
+        guard !Task.isCancelled else { return }
+
         let tokenizerTools = Self.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         let messages: [MLXLMCommon.Chat.Message] = [
             .init(role: .system, content: systemContent, images: [], videos: []),
@@ -422,12 +405,6 @@ actor ModelRuntime {
             let (stream, cache, newTokens, genTask) = (
                 prefixResult.stream, prefixResult.cache, prefixResult.promptTokens, prefixResult.genTask
             )
-            // Only track this as the active generation task when called from a foreground
-            // (non-background) context. When called from a fire-and-forget background Task,
-            // assigning activeGenerationTask here would overwrite the real user-visible
-            // generation task that was (or will be) set by generateEventStream, breaking
-            // model unloading and cancel-on-new-message.
-            if !background { activeGenerationTask = genTask }
 
             for await _ in stream {
                 if Task.isCancelled { break }
@@ -444,7 +421,6 @@ actor ModelRuntime {
                 return
             }
 
-            // Materialize cache arrays before storing (same reason as storeSessionCache).
             let prefixArrays = cache.flatMap { $0.state }
             if !prefixArrays.isEmpty { eval(prefixArrays) }
 
@@ -472,15 +448,29 @@ actor ModelRuntime {
     ) async throws -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
         _ = await activeGenerationTask?.value
         if Task.isCancelled { throw CancellationError() }
-        debugLog("[ModelRuntime] generateEventStream: start model=\(modelName)")
+
+        // Cancel and await any background prefix-cache tasks for this model so
+        // we never have two concurrent Metal/MLX operations on the same container.
+        let modelPrefix = "\(modelName):"
+        let stalePrefixTasks = prefixCacheTasks.filter { $0.key.hasPrefix(modelPrefix) }
+        for (key, task) in stalePrefixTasks {
+            task.cancel()
+            _ = await task.value
+            prefixCacheTasks.removeValue(forKey: key)
+        }
+        if Task.isCancelled { throw CancellationError() }
+
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
-        print("[ModelRuntime] generateEventStream: start model=\(modelName)")
+
+        // Wait for any startup CoreML embedding work to finish before using the
+        // GPU for MLX inference.  Prevents concurrent Metal command submissions
+        // from CoreML and MLX that can SIGSEGV on Apple Silicon.
+        await EmbeddingService.awaitStartupInit()
+        if Task.isCancelled { throw CancellationError() }
 
         let effectiveStopSequences = stopSequences
         let cfg = await getConfig()
-        debugLog("[ModelRuntime] generateEventStream: got config, loading container...")
         let holder = try await loadContainer(id: modelId, name: modelName)
-        debugLog("[ModelRuntime] generateEventStream: container ready isVLM=\(holder.isVLM)")
 
         let sessionId = parameters.sessionId
         let chatMessages = chatBuilder()
@@ -489,34 +479,6 @@ actor ModelRuntime {
         let prefixHash =
             parameters.cacheHint
             ?? Self.computePrefixHash(systemContent: systemContent, toolNames: toolNames)
-
-        if sessionId == nil,
-            !holder.isVLM,
-            !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
-        {
-            // Execute the heavily blocking 1-token prefix-cache generation out-of-band via an
-            // actor-isolated Task. This natively prevents the entire generation engine
-            // from synchronously sitting dead waiting for Apple's MLX framework to execute and
-            // serialize the system-prompt's initial AST block when booting up completely new chats.
-            let taskKey = "\(modelName):\(prefixHash)"
-            if prefixCacheTasks[taskKey] == nil {
-                let task = Task {
-                    await buildPrefixCache(
-                        holder: holder,
-                        systemContent: systemContent,
-                        tools: tools,
-                        toolChoice: toolChoice,
-                        modelName: modelName,
-                        hash: prefixHash,
-                        runtimeConfig: cfg,
-                        background: true
-                    )
-                    // Remove from tracking when done
-                    await removePrefixTask(key: taskKey)
-                }
-                prefixCacheTasks[taskKey] = task
-            }
-        }
 
         // Look up existing KV cache for this session, or fall back to a
         // hash-keyed prefix cache for a warm start on new conversations.
@@ -549,14 +511,8 @@ actor ModelRuntime {
         // Two-phase prefill sets this to the stable-boundary snapshot instead of the full-prompt snapshot.
         nonisolated(unsafe) var snapshotCacheOverride: ([any KVCache], [Int])? = nil
 
-        debugLog(
-            "[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0) sessionId=\(sessionId?.prefix(8) ?? "nil")"
-        )
         genLog.info(
-            "generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)"
-        )
-        print(
-            "[ModelRuntime] generateEventStream: calling prepareAndGenerate existingCache=\(existingCache != nil) cachedTokens=\(cachedTokens?.count ?? 0)"
+            "generateEventStream: prepareAndGenerate existingCache=\(existingCache != nil, privacy: .public) cachedTokens=\(cachedTokens?.count ?? 0, privacy: .public)"
         )
 
         // Signal that a prefill is starting (count unknown until prepareAndGenerate returns).
@@ -589,7 +545,7 @@ actor ModelRuntime {
                 InferenceProgressManager.shared.prefillDidFinishAsync()
                 throw error
             }
-            print("[ModelRuntime] Cache incompatible, retrying without cache: \(error.localizedDescription)")
+            genLog.warning("Cache incompatible, retrying: \(error.localizedDescription, privacy: .public)")
             invalidateCaches(sessionId: sessionId, modelName: modelName, prefixHash: prefixHash)
             // Re-signal for the retry prefill (still unknown count).
             InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: 0)
@@ -616,7 +572,6 @@ actor ModelRuntime {
             }
         }
         genLog.info("generateEventStream: stream created tokenCount=\(newTokens.count, privacy: .public)")
-        print("[ModelRuntime] generateEventStream: stream created tokenCount=\(newTokens.count)")
         // Prefill is now complete; update the display with the actual token count while
         // generation is warming up (the first token clears the indicator).
         InferenceProgressManager.shared.prefillWillStartAsync(tokenCount: newTokens.count)
@@ -635,12 +590,7 @@ actor ModelRuntime {
                 // Two-phase: store the stable-boundary snapshot already deep-copied inside engine.
                 snapCacheToStore = override.0
                 snapTokensToStore = override.1
-                debugLog(
-                    "[ModelRuntime] twoPhase snapshot override: stableTokens=\(snapTokensToStore.count)"
-                )
-                print(
-                    "[ModelRuntime] twoPhase snapshot: using stable-boundary snapshot tokens=\(snapTokensToStore.count)"
-                )
+                genLog.info("twoPhase snapshot override: stableTokens=\(snapTokensToStore.count, privacy: .public)")
             } else {
                 // Single-phase: snapshot full-prompt cache now.
                 snapCacheToStore = KVCacheStore.deepCopyCache(cache)
@@ -657,10 +607,9 @@ actor ModelRuntime {
             let budget = currentKVBudget()
             kvCacheStore.ensureBudget(budget)
             let snapshotOffset = effectiveCacheOffset(snapCacheToStore)
-            debugLog(
-                "[ModelRuntime] pre-gen snapshot stored sessionId=\(sid.prefix(8)) tokens=\(snapTokensToStore.count) offset=\(snapshotOffset)"
+            genLog.info(
+                "pre-gen snapshot stored session=\(sid.prefix(8), privacy: .public) tokens=\(snapTokensToStore.count, privacy: .public) offset=\(snapshotOffset, privacy: .public)"
             )
-            print("[ModelRuntime] pre-gen snapshot: evaled \(arraysToEval.count) arrays, offset=\(snapshotOffset)")
         }
 
         // Thread the tokenizer into StreamAccumulator so it can decode token IDs to text.
@@ -681,10 +630,32 @@ actor ModelRuntime {
         // is needed (and would be harmful: it would overwrite the snapshot with a cache at
         // offset = promptTokens + generatedIds, which diverges from the next-turn prompt by
         // exactly the number of generated tokens, requiring trim that MambaCache cannot do).
-        let wrappedStream = eventStream
-        guard existingCache != nil else { return wrappedStream }
+
+        // For new conversations without a prefix cache, schedule building after
+        // generation completes.  This runs sequentially (never concurrently with
+        // the generation genTask) so Metal commands don't overlap.
+        let needsPrefixCache =
+            sessionId == nil
+            && !holder.isVLM
+            && !kvCacheStore.hasPrefixCache(modelName: modelName, hash: prefixHash)
+
+        var composedStream = eventStream
+        if needsPrefixCache {
+            composedStream = wrapWithPrefixCacheBuild(
+                composedStream,
+                holder: holder,
+                systemContent: systemContent,
+                tools: tools,
+                toolChoice: toolChoice,
+                modelName: modelName,
+                prefixHash: prefixHash,
+                runtimeConfig: cfg
+            )
+        }
+
+        guard existingCache != nil else { return composedStream }
         return wrapWithCacheInvalidation(
-            wrappedStream,
+            composedStream,
             sessionId: sessionId,
             modelName: modelName,
             prefixHash: prefixHash
