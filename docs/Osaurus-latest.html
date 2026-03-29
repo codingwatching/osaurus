@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset="utf-8"><title>Osaurus 0.15.7 Release Notes</title>
+<!doctype html><html><head><meta charset="utf-8"><title>Osaurus 0.15.8 Release Notes</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
   :root { color-scheme: light dark; }
@@ -31,27 +31,18 @@
     .footer a:hover { color: #79c0ff; }
   }
 </style></head><body>
-<h1>Osaurus <span class="version">0.15.7</span></h1>
+<h1>Osaurus <span class="version">0.15.8</span></h1>
 <h2>What's Changed</h2>
 <ul>
-<li>several optimizations for bringing down GPU usage (#738) by @RaajeevChandran</li>
-<li>perf: two-phase prefill for hybrid SSM/transformer models (Qwen3.5) (#737) by @vernonstinebaker</li>
-<li>perf: tiered KV cache store, O(1) streaming decode, eval fix (#736) by @vernonstinebaker</li>
-<li>perf: memoize preflight capability search results per session (#734) by @vernonstinebaker</li>
-<li>perf: sort alwaysLoadedSpecs() for deterministic tool ordering (#733) by @vernonstinebaker</li>
-<li>chore: bump swift-jinja 2.3.2 → 2.3.3 (#732) by @vernonstinebaker</li>
-<li>fix(tests): update PreflightCapabilitySearch topKValues expectations after #730 (#731) by @vernonstinebaker</li>
+<li>batch embedding for context index rebuilds (#748) by @RaajeevChandran</li>
+<li>feat: add Disable Tools toggle to chat configuration (#735) by @vernonstinebaker</li>
 </ul>
 <h2>🐛 Bug Fixes</h2>
 <ul>
-<li>fixed issue with plugin installation and notification crash (#739) by @tpae</li>
+<li>updated rag index init to be serial to prevent race conditions (#747) by @tpae</li>
+<li>fix race condition (#746) by @RaajeevChandran</li>
 </ul>
-<h2>🧰 Maintenance</h2>
-<ul>
-<li>fix warnings and code format (#740) by @tpae</li>
-<li>improve capability search (#730) by @tpae</li>
-</ul>
-<p><strong>Full Changelog</strong>: https://github.com/osaurus-ai/osaurus/compare/0.15.6...0.15.7</p>
+<p><strong>Full Changelog</strong>: https://github.com/osaurus-ai/osaurus/compare/0.15.7...0.15.8</p>
 <div class="footer">
   <a href="https://github.com/osaurus-ai/osaurus/releases" target="_blank">View all releases on GitHub &#8594;</a>
 </div>
