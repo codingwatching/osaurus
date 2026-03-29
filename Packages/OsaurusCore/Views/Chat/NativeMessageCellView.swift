@@ -203,6 +203,65 @@ private final class ActionButton: NSButton {
     @objc private func fire() { block() }
 }
 
+// MARK: - Padded inline edit buttons
+
+/// Insets image/title layout so borderless buttons don’t hug the layer edge; extra gap after the icon.
+private final class PaddedInlineButtonCell: NSButtonCell {
+    var horizontalPadding: CGFloat = 14
+    var verticalPadding: CGFloat = 2
+    /// additional space between SF Symbol and title (beyond default cell spacing)
+    var imageTitleSpacing: CGFloat = 6
+
+    override init(textCell string: String) {
+        super.init(textCell: string)
+        setButtonType(.momentaryPushIn)
+    }
+
+    required init(coder: NSCoder) {
+        fatalError()
+    }
+
+    private func insetBounds(_ rect: NSRect) -> NSRect {
+        rect.insetBy(dx: horizontalPadding, dy: verticalPadding)
+    }
+
+    override func imageRect(forBounds rect: NSRect) -> NSRect {
+        super.imageRect(forBounds: insetBounds(rect))
+    }
+
+    override func titleRect(forBounds rect: NSRect) -> NSRect {
+        var r = super.titleRect(forBounds: insetBounds(rect))
+        if image != nil {
+            r.origin.x += imageTitleSpacing
+        }
+        return r
+    }
+
+    override func cellSize(forBounds rect: NSRect) -> NSSize {
+        var s = super.cellSize(forBounds: rect)
+        s.width += horizontalPadding * 2
+        s.height += verticalPadding * 2
+        if image != nil {
+            s.width += imageTitleSpacing
+        }
+        return s
+    }
+}
+
+private final class PaddedInlineButton: NSButton {
+    fileprivate var paddedCell: PaddedInlineButtonCell { cell as! PaddedInlineButtonCell }
+
+    override init(frame frameRect: NSRect) {
+        let c = PaddedInlineButtonCell(textCell: "")
+        c.bezelStyle = .rounded
+        c.isBordered = false
+        super.init(frame: frameRect)
+        cell = c
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 // MARK: - UserMessageInlineEditView
 
 /// AppKit counterpart to SwiftUI `InlineEditView` — editable plain text plus Cancel / Save & Regenerate.
@@ -212,8 +271,8 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
     private let textView: CustomNSTextView
     private let editBox = NSView()
     private let buttonStack = NSStackView()
-    private var cancelButton: NSButton!
-    private var confirmButton: NSButton!
+    private var cancelButton: PaddedInlineButton!
+    private var confirmButton: PaddedInlineButton!
 
     private var getText: () -> String = { "" }
     private var setText: (String) -> Void = { _ in }
@@ -265,15 +324,28 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         editBox.translatesAutoresizingMaskIntoConstraints = false
 
         buttonStack.orientation = .horizontal
-        buttonStack.spacing = 8
+        buttonStack.spacing = 0
         buttonStack.alignment = .centerY
         buttonStack.distribution = .fill
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        cancelButton = NSButton(title: "", target: self, action: #selector(cancelTapped))
+        // isolate cancel + confirm from the leading spacer so `.fill` cannot widen only the CTA
+        let buttonPair = NSStackView()
+        buttonPair.orientation = .horizontal
+        buttonPair.spacing = 8
+        buttonPair.alignment = .centerY
+        buttonPair.distribution = .fillProportionally
+        buttonPair.translatesAutoresizingMaskIntoConstraints = false
+        buttonPair.setContentHuggingPriority(.required, for: .horizontal)
+        buttonPair.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        cancelButton = PaddedInlineButton(frame: .zero)
+        cancelButton.target = self
+        cancelButton.action = #selector(cancelTapped)
         cancelButton.bezelStyle = .rounded
         cancelButton.isBordered = false
         cancelButton.wantsLayer = true
@@ -281,7 +353,9 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.keyEquivalentModifierMask = []
 
-        confirmButton = NSButton(title: "", target: self, action: #selector(confirmTapped))
+        confirmButton = PaddedInlineButton(frame: .zero)
+        confirmButton.target = self
+        confirmButton.action = #selector(confirmTapped)
         confirmButton.bezelStyle = .rounded
         confirmButton.isBordered = false
         confirmButton.wantsLayer = true
@@ -289,18 +363,23 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
         confirmButton.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
         confirmButton.imagePosition = .imageLeading
 
+        cancelButton.setContentHuggingPriority(.required, for: .horizontal)
+        confirmButton.setContentHuggingPriority(.required, for: .horizontal)
+        cancelButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        confirmButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         addSubview(editBox)
         editBox.addSubview(scrollView)
         addSubview(buttonStack)
+        buttonPair.addArrangedSubview(cancelButton)
+        buttonPair.addArrangedSubview(confirmButton)
         buttonStack.addArrangedSubview(spacer)
-        buttonStack.addArrangedSubview(cancelButton)
-        buttonStack.addArrangedSubview(confirmButton)
+        buttonStack.addArrangedSubview(buttonPair)
 
         NSLayoutConstraint.activate([
             cancelButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             confirmButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 28),
             cancelButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 88),
-            confirmButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
         ])
 
         NSLayoutConstraint.activate([
@@ -425,6 +504,16 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
             ])
             confirmButton.contentTintColor = .white
         }
+
+        let padH = max(12, cap + 4)
+        let padV: CGFloat = 2
+        let imageGap = max(4, cap * 0.35)
+        for btn in [cancelButton, confirmButton] {
+            btn?.paddedCell.horizontalPadding = padH
+            btn?.paddedCell.verticalPadding = padV
+            btn?.invalidateIntrinsicContentSize()
+        }
+        confirmButton.paddedCell.imageTitleSpacing = imageGap
     }
 
     @objc private func cancelTapped() {
@@ -535,7 +624,7 @@ final class NativeMessageCellView: NSTableCellView {
             defer { widthPin?.isActive = false }
             layoutSubtreeIfNeeded()
             var h = container.fittingSize.height
-            if h < 2, let mv = userTextView as? NativeMarkdownView {
+            if h < 2, let mv = userTextView {
                 let inner = max(lastContextWidth - 32, 100)
                 let textW = max(inner - 24, 100)
                 let textH = mv.measuredHeight(for: textW)
