@@ -283,6 +283,19 @@ final class PluginHostContext: @unchecked Sendable {
         let temperature: Float?
         let maxTokens: Int?
         let tools: [Tool]?
+        let executionMode: WorkExecutionMode
+
+        func prependingSystemContent(_ content: String) -> AgentContext {
+            AgentContext(
+                agentId: agentId,
+                systemPrompt: content + "\n\n" + systemPrompt,
+                model: model,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                tools: tools,
+                executionMode: executionMode
+            )
+        }
     }
 
     private struct InferenceOptions {
@@ -299,7 +312,7 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     private struct EnrichedInference {
-        let request: ChatCompletionRequest
+        var request: ChatCompletionRequest
         let tools: [Tool]?
     }
 
@@ -309,6 +322,9 @@ final class PluginHostContext: @unchecked Sendable {
         let options: InferenceOptions
         let engine: ChatEngine
         let budgetManager: ContextBudgetManager?
+        let agentId: UUID?
+        let executionMode: WorkExecutionMode
+        let contextId: String
     }
 
     // MARK: Request Parsing
@@ -333,18 +349,43 @@ final class PluginHostContext: @unchecked Sendable {
     /// enriches the request, creates the engine and budget manager.
     private static func prepareInference(
         request: ChatCompletionRequest,
-        rawJSON: [String: Any]
+        rawJSON: [String: Any],
+        pluginId: String? = nil
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
         let agentCtx = await resolveAgentContext(json: rawJSON)
+        let execMode = agentCtx?.executionMode ?? .none
         var enriched = enrichRequest(request, context: agentCtx, options: options)
+        if let pid = pluginId {
+            let instructions: String? = await MainActor.run {
+                if let agentId = agentCtx?.agentId,
+                    let agent = AgentManager.shared.agent(for: agentId),
+                    let override = agent.pluginInstructions?[pid],
+                    !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return override
+                }
+                return PluginManager.shared.loadedPlugin(for: pid)?.plugin.manifest.instructions
+            }
+            if let instructions {
+                SystemPromptBuilder.appendSystemContent(instructions, into: &enriched.request.messages)
+            }
+        }
         if options.wantsPreflight {
-            enriched = await applyPreflightSearch(to: enriched)
+            enriched = await applyPreflightSearch(to: enriched, executionMode: execMode)
         }
         let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
         let engine = ChatEngine(remoteServices: remoteServices, source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
-        return PreparedInference(enriched: enriched, options: options, engine: engine, budgetManager: budgetMgr)
+        return PreparedInference(
+            enriched: enriched,
+            options: options,
+            engine: engine,
+            budgetManager: budgetMgr,
+            agentId: agentCtx?.agentId,
+            executionMode: execMode,
+            contextId: enriched.request.session_id ?? UUID().uuidString
+        )
     }
 
     // MARK: Agent Context Resolution
@@ -352,36 +393,50 @@ final class PluginHostContext: @unchecked Sendable {
     private static func resolveAgentContext(json: [String: Any]) async -> AgentContext? {
         guard let address = json["agent_address"] as? String else { return nil }
 
-        let info: AgentContext? = await MainActor.run {
+        let resolved: (id: UUID, autonomousEnabled: Bool)? = await MainActor.run {
             guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil }
+            let enabled = AgentManager.shared.effectiveAutonomousExec(for: agent.id)?.enabled == true
+            return (agent.id, enabled)
+        }
+        guard let resolved else { return nil }
+        let agentId = resolved.id
+
+        if resolved.autonomousEnabled {
+            await SandboxToolRegistrar.shared.registerTools(for: agentId)
+        }
+
+        var ctx: AgentContext = await MainActor.run {
             let mgr = AgentManager.shared
-            let id = agent.id
-            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            let execMode = ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
+            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: execMode)
+
+            var systemPrompt = mgr.effectiveSystemPrompt(for: agentId)
+            if execMode.usesSandboxTools {
+                let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+                let section = WorkExecutionEngine.chatSandboxPromptSection(secretNames: secretNames)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !section.isEmpty {
+                    systemPrompt = systemPrompt.isEmpty ? section : systemPrompt + "\n\n" + section
+                }
+            }
+
             return AgentContext(
-                agentId: id,
-                systemPrompt: mgr.effectiveSystemPrompt(for: id),
-                model: mgr.effectiveModel(for: id),
-                temperature: mgr.effectiveTemperature(for: id),
-                maxTokens: mgr.effectiveMaxTokens(for: id),
-                tools: tools.isEmpty ? nil : tools
+                agentId: agentId,
+                systemPrompt: systemPrompt,
+                model: mgr.effectiveModel(for: agentId),
+                temperature: mgr.effectiveTemperature(for: agentId),
+                maxTokens: mgr.effectiveMaxTokens(for: agentId),
+                tools: tools.isEmpty ? nil : tools,
+                executionMode: execMode
             )
         }
-        guard var ctx = info else { return nil }
 
-        let memoryConfig = MemoryConfigurationStore.load()
         let memoryCtx = await MemoryContextAssembler.assembleContext(
-            agentId: ctx.agentId.uuidString,
-            config: memoryConfig
+            agentId: agentId.uuidString,
+            config: MemoryConfigurationStore.load()
         )
         if !memoryCtx.isEmpty {
-            ctx = AgentContext(
-                agentId: ctx.agentId,
-                systemPrompt: memoryCtx + "\n\n" + ctx.systemPrompt,
-                model: ctx.model,
-                temperature: ctx.temperature,
-                maxTokens: ctx.maxTokens,
-                tools: ctx.tools
-            )
+            ctx = ctx.prependingSystemContent(memoryCtx)
         }
         return ctx
     }
@@ -476,12 +531,15 @@ final class PluginHostContext: @unchecked Sendable {
         messages.last(where: { $0.role == "user" })?.content ?? ""
     }
 
-    private static func applyPreflightSearch(to inference: EnrichedInference) async -> EnrichedInference {
+    private static func applyPreflightSearch(
+        to inference: EnrichedInference,
+        executionMode: WorkExecutionMode = .none
+    ) async -> EnrichedInference {
         // If this session already has a preflight result, reuse it without re-running the search.
         if let sid = inference.request.session_id {
             let cached = preflightCacheLock.withLock { preflightCache[sid] }
             if let cached {
-                let builtInTools = await MainActor.run { ToolRegistry.shared.alwaysLoadedSpecs(mode: .none) }
+                let builtInTools = await MainActor.run { ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode) }
                 return applyPreflightResult(cached, to: inference, builtInTools: builtInTools)
             }
         }
@@ -491,7 +549,7 @@ final class PluginHostContext: @unchecked Sendable {
 
         let (preflightMode, builtInTools) = await MainActor.run {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
             return (mode, tools)
         }
 
@@ -570,17 +628,65 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Tool Execution
 
+    /// Post-processes a tool result after execution, handling special tools
+    /// like `share_artifact` (copy files, notify handlers) and `capabilities_load`
+    /// (hot-load newly discovered tools into the active set).
+    private static func postProcessToolResult(
+        toolName: String,
+        result: String,
+        prep: PreparedInference,
+        toolSpecs: inout [Tool]?
+    ) async -> String {
+        switch toolName {
+        case "share_artifact":
+            let agentName: String? = await MainActor.run {
+                prep.agentId.map { SandboxAgentProvisioner.linuxName(for: $0.uuidString) }
+            }
+            guard
+                let processed = SharedArtifact.processToolResult(
+                    result,
+                    contextId: prep.contextId,
+                    contextType: .chat,
+                    executionMode: prep.executionMode,
+                    sandboxAgentName: agentName
+                )
+            else { return result }
+            await PluginManager.shared.notifyArtifactHandlers(artifact: processed.artifact)
+            return processed.enrichedToolResult
+
+        case "capabilities_load":
+            let newTools = await CapabilityLoadBuffer.shared.drain()
+            let existing = Set((toolSpecs ?? []).map { $0.function.name })
+            let additions = newTools.filter { !existing.contains($0.function.name) }
+            if !additions.isEmpty {
+                toolSpecs = (toolSpecs ?? []) + additions
+            }
+            return result
+
+        default:
+            return result
+        }
+    }
+
     private static func executeToolCall(
         name: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        agentId: UUID? = nil,
+        executionMode: WorkExecutionMode = .none
     ) async -> String {
-        await withTaskGroup(of: String?.self) { group in
+        if executionMode.usesSandboxTools, let agentId {
+            await SandboxToolRegistrar.shared.registerTools(for: agentId)
+        }
+
+        return await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 do {
-                    return try await ToolRegistry.shared.execute(
-                        name: name,
-                        argumentsJSON: argumentsJSON
-                    )
+                    return try await WorkExecutionContext.$currentAgentId.withValue(agentId) {
+                        try await ToolRegistry.shared.execute(
+                            name: name,
+                            argumentsJSON: argumentsJSON
+                        )
+                    }
                 } catch {
                     return "[REJECTED] \(error.localizedDescription)"
                 }
@@ -598,7 +704,8 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: complete (non-streaming)
 
     func complete(requestJSON: String) -> String {
-        Self.blockingAsync {
+        let pid = self.pluginId
+        return Self.blockingAsync {
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -607,16 +714,21 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            let prep = await Self.prepareInference(request: request, rawJSON: rawJSON)
+            let prep = await Self.prepareInference(
+                request: request,
+                rawJSON: rawJSON,
+                pluginId: pid
+            )
             var messages = prep.enriched.request.messages
             var toolCallsExecuted: [[String: String]] = []
+            var toolSpecs = prep.enriched.tools
 
             for iteration in 1 ... prep.options.maxIterations {
                 let effective = prep.budgetManager?.trimMessages(messages) ?? messages
                 let iterReq = Self.iterationRequest(
                     from: prep.enriched.request,
                     messages: effective,
-                    tools: prep.enriched.tools
+                    tools: toolSpecs
                 )
 
                 do {
@@ -631,9 +743,17 @@ final class PluginHostContext: @unchecked Sendable {
                     {
                         messages.append(choice.message)
                         for tc in calls {
-                            let result = await Self.executeToolCall(
+                            var result = await Self.executeToolCall(
                                 name: tc.function.name,
-                                argumentsJSON: tc.function.arguments
+                                argumentsJSON: tc.function.arguments,
+                                agentId: prep.agentId,
+                                executionMode: prep.executionMode
+                            )
+                            result = await Self.postProcessToolResult(
+                                toolName: tc.function.name,
+                                result: result,
+                                prep: prep,
+                                toolSpecs: &toolSpecs
                             )
                             messages.append(
                                 ChatMessage(
@@ -677,6 +797,7 @@ final class PluginHostContext: @unchecked Sendable {
         onChunk: osr_on_chunk_t?,
         userData: UnsafeMutableRawPointer?
     ) -> String {
+        let pid = self.pluginId
         nonisolated(unsafe) let userData = userData
         return Self.blockingAsync {
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
@@ -687,11 +808,16 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            let prep = await Self.prepareInference(request: request, rawJSON: rawJSON)
+            let prep = await Self.prepareInference(
+                request: request,
+                rawJSON: rawJSON,
+                pluginId: pid
+            )
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
             var messages = prep.enriched.request.messages
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
+            var toolSpecs = prep.enriched.tools
 
             let emit: ([String: Any]) -> Void = { payload in
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
@@ -702,7 +828,7 @@ final class PluginHostContext: @unchecked Sendable {
                 let iterReq = Self.iterationRequest(
                     from: prep.enriched.request,
                     messages: effective,
-                    tools: prep.enriched.tools
+                    tools: toolSpecs
                 )
 
                 do {
@@ -744,10 +870,19 @@ final class PluginHostContext: @unchecked Sendable {
                     ]
                     emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
 
-                    let result = await Self.executeToolCall(
+                    var result = await Self.executeToolCall(
                         name: inv.toolName,
-                        argumentsJSON: inv.jsonArguments
+                        argumentsJSON: inv.jsonArguments,
+                        agentId: prep.agentId,
+                        executionMode: prep.executionMode
                     )
+                    result = await Self.postProcessToolResult(
+                        toolName: inv.toolName,
+                        result: result,
+                        prep: prep,
+                        toolSpecs: &toolSpecs
+                    )
+
                     emit(
                         Self.chunkPayload(
                             id: cid,

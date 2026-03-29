@@ -207,6 +207,7 @@ The manifest JSON returned by `get_manifest` describes the plugin's capabilities
   "plugin_id": "com.acme.slack",
   "version": "1.0.0",
   "description": "Slack integration",
+  "instructions": "When using Slack tools, always confirm the target channel with the user before posting. Format messages using Slack mrkdwn syntax (e.g. *bold*, _italic_, `code`). Prefer threaded replies over top-level messages when responding to existing conversations.",
   "capabilities": {
     "tools": [ ... ],
     "artifact_handler": true,
@@ -261,6 +262,7 @@ All v2 capabilities (`routes`, `config`, `web`, `artifact_handler`, `docs`) are 
 | `plugin_id`    | string | Yes      | Unique reverse-domain identifier               |
 | `version`      | string | No       | Semver version string                          |
 | `description`  | string | No       | Short description of the plugin                |
+| `instructions` | string | No       | Default system prompt instructions appended during plugin-initiated inference; users can override per-agent in agent settings |
 | `capabilities` | object | Yes      | Tools, routes, config, web, artifact_handler   |
 | `secrets`      | array  | No       | API key / credential declarations              |
 | `docs`         | object | No       | README, changelog, external links              |
@@ -1124,6 +1126,7 @@ const char* invoke(osr_plugin_ctx_t ctx, const char* type,
 - Multiple plugins can register as artifact handlers. Each receives the notification independently.
 - The plugin's `invoke` return value is not used by the host for artifact notifications — it is fire-and-forget.
 - Only plugins with ABI version 2 or higher are eligible for artifact handling.
+- Artifacts produced during plugin-initiated inference (`complete` / `complete_stream` with `share_artifact` in the agentic loop) are fully processed and trigger artifact handler notifications, just like artifacts from Chat and Work modes.
 
 ---
 
@@ -1475,6 +1478,8 @@ const char* response = host->complete(request);
 - **Temperature** — used when `temperature` is not set
 - **Max tokens** — used when `max_tokens` is not set
 - **Tools** — available when `"tools": true` is set in the request
+- **Sandbox tools** — when the agent has autonomous execution enabled, sandbox tools (`sandbox_exec`, `sandbox_read_file`, `sandbox_write_file`, `sandbox_list_directory`, `sandbox_search_files`, `sandbox_install`, etc.) are automatically included in the tool set. Sandbox environment instructions are also injected into the system prompt.
+- **Plugin instructions** — if the plugin manifest includes an `instructions` field, its content is automatically appended to the system prompt after all host-managed sections (agent prompt, sandbox section, memory) but before any preflight context. This is injected for both `complete` and `complete_stream` calls, even when no `agent_address` is provided. Use this to declare behavioral constraints, output formatting rules, or tool-calling patterns. Users can customize the instructions per-agent in the agent detail view under the Configure tab; the manifest value serves as the default and per-agent overrides take precedence when set.
 
 **Model resolution order:**
 
@@ -1543,6 +1548,12 @@ const char* response = host->complete_stream(request, on_chunk, ctx);
 
 The agentic loop runs for at most `max_iterations` iterations (capped at 30). Each iteration is one LLM call that may or may not produce a tool call. If the model produces a text response without requesting a tool, the loop ends.
 
+**Sandbox execution:** When `"tools": true` is set and the resolved agent has autonomous execution enabled, the agentic loop includes full sandbox capabilities. The model can execute commands, read/write files, install packages, and run scripts inside the sandboxed Linux environment — matching the behavior of Chat and Work modes.
+
+**Artifact handling:** When the model calls `share_artifact` during the agentic loop, the artifact is fully processed — files are copied from the sandbox to `~/.osaurus/artifacts/`, the tool result is enriched with `host_path` and `file_size`, and all plugins with `artifact_handler: true` are notified. This means plugins can both produce and consume artifacts through the inference API.
+
+**Capabilities hot-loading:** When the model calls `capabilities_load` during the agentic loop, newly discovered tools are dynamically injected into subsequent iterations. This allows the model to progressively expand its tool set as it discovers relevant capabilities.
+
 #### Embeddings
 
 ```c
@@ -1594,6 +1605,26 @@ const char* analyze_project(const osr_host_api* host, const char* agent_addr) {
     return host->complete(request);
     // The model will use file_search, file_read, etc. autonomously
     // and return a final summary with tool_calls_executed metadata
+}
+```
+
+#### Example: Sandbox Execution
+
+When the agent has autonomous execution enabled, the model can use sandbox tools to run commands and manage files in the sandboxed Linux environment:
+
+```c
+const char* run_in_sandbox(const osr_host_api* host, const char* agent_addr) {
+    char request[4096];
+    snprintf(request, sizeof(request),
+        "{\"agent_address\": \"%s\","
+        " \"messages\": [{\"role\": \"user\", \"content\": \"Install numpy, write a Python script that generates a 10x10 random matrix, and run it\"}],"
+        " \"tools\": true,"
+        " \"max_iterations\": 20}",
+        agent_addr);
+
+    return host->complete(request);
+    // The model will use sandbox_pip_install, sandbox_write_file,
+    // sandbox_exec, etc. to complete the task autonomously
 }
 ```
 

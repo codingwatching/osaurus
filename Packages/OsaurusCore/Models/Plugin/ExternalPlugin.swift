@@ -148,6 +148,9 @@ public struct PluginManifest: Decodable, Sendable {
     public let description: String?
     public let capabilities: Capabilities
 
+    /// System prompt instructions appended during plugin-initiated inference.
+    public let instructions: String?
+
     // Optional fields for registry
     public let name: String?
     public let version: String?
