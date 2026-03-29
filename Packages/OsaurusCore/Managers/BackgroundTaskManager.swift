@@ -251,7 +251,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch an work task for background execution.
     public func dispatchWork(_ request: DispatchRequest) async -> DispatchHandle? {
-        guard canDispatchNewTask() else { return nil }
+        guard canDispatchNewTask(agentId: request.agentId) else { return nil }
 
         let context = createContext(for: request)
         await context.prepare()
@@ -299,7 +299,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
-        guard canDispatchNewTask() else { return nil }
+        guard canDispatchNewTask(agentId: request.agentId) else { return nil }
 
         let context = createContext(for: request)
         await context.prepare()
@@ -355,14 +355,31 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Private: Dispatch Helpers
 
-    /// Check whether a new task can be dispatched without exceeding the configured limit.
-    private func canDispatchNewTask() -> Bool {
-        let limit = ToastConfigurationStore.load().maxConcurrentTasks
-        let activeCount = backgroundTasks.values.filter { $0.status.isActive }.count
-        guard activeCount < limit else {
-            print("[BackgroundTaskManager] Task limit reached (\(limit)), rejecting dispatch")
+    private static let maxTasksPerAgent = 5
+
+    /// Check whether a new task can be dispatched without exceeding the global
+    /// limit or the per-agent limit. The global limit is user-configurable via
+    /// settings; the per-agent limit prevents a single agent from monopolizing
+    /// all slots in multi-agent scenarios.
+    private func canDispatchNewTask(agentId: UUID?) -> Bool {
+        let globalLimit = ToastConfigurationStore.load().maxConcurrentTasks
+        let activeTasks = backgroundTasks.values.filter { $0.status.isActive }
+
+        guard activeTasks.count < globalLimit else {
+            print("[BackgroundTaskManager] Global task limit reached (\(globalLimit)), rejecting dispatch")
             return false
         }
+
+        if let agentId {
+            let agentCount = activeTasks.filter { $0.agentId == agentId }.count
+            guard agentCount < Self.maxTasksPerAgent else {
+                print(
+                    "[BackgroundTaskManager] Per-agent task limit reached (\(Self.maxTasksPerAgent)) for agent \(agentId), rejecting dispatch"
+                )
+                return false
+            }
+        }
+
         return true
     }
 
@@ -443,7 +460,8 @@ public final class BackgroundTaskManager: ObservableObject {
             loaded.plugin.notifyTaskEvent(
                 taskId: state.id.uuidString,
                 eventType: type,
-                eventJSON: json
+                eventJSON: json,
+                agentId: state.agentId
             )
         }
     }

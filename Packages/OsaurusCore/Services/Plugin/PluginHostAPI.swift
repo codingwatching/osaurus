@@ -72,41 +72,22 @@ final class PluginHostContext: @unchecked Sendable {
         return URLSession(configuration: config, delegate: NoRedirectDelegate.shared, delegateQueue: nil)
     }()
 
-    /// Sliding window timestamps for dispatch rate limiting (10/min per plugin).
+    /// Sliding window timestamps for dispatch rate limiting, keyed by agent ID.
+    /// Each agent gets its own 10/min budget so multiple agents sharing a
+    /// plugin don't exhaust each other's quota.
     private let rateLimitLock = NSLock()
-    private var dispatchTimestamps: [Date] = []
+    private var dispatchTimestamps: [UUID: [Date]] = [:]
     private static let dispatchRateLimit = 10
     private static let dispatchRateWindow: TimeInterval = 60
 
     // MARK: - Per-Request Agent Context
 
-    private let agentLock = NSLock()
-    private var _currentAgentId: UUID?
-
-    /// The agent whose config should be used for config_get/config_set.
-    /// Set by HTTP handler, dispatch, and tunnel propagation before invoking plugin code.
-    var currentAgentId: UUID? {
-        get { agentLock.withLock { _currentAgentId } }
-        set { agentLock.withLock { _currentAgentId = newValue } }
-    }
-
-    /// Resolved agent ID: explicit `currentAgentId`, or `Agent.defaultId` as fallback.
+    /// Resolved agent ID for the current thread. Checks thread-local storage
+    /// first (set per-dispatch in ExternalPlugin wrappers), then falls back to
+    /// `Agent.defaultId`. This is the primary concurrent-safe mechanism --
+    /// each invokeQueue / eventQueue thread gets its own value.
     var resolvedAgentId: UUID {
-        currentAgentId ?? Agent.defaultId
-    }
-
-    func withAgentContext<T>(_ agentId: UUID, block: () throws -> T) rethrows -> T {
-        let previous = currentAgentId
-        currentAgentId = agentId
-        defer { currentAgentId = previous }
-        return try block()
-    }
-
-    func withAgentContext<T>(_ agentId: UUID, block: () async throws -> T) async rethrows -> T {
-        let previous = currentAgentId
-        currentAgentId = agentId
-        defer { currentAgentId = previous }
-        return try await block()
+        Self.activeAgentId() ?? Agent.defaultId
     }
 
     init(pluginId: String) throws {
@@ -162,13 +143,6 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Dispatch Callbacks
 
     func dispatch(requestJSON: String) -> (result: String, taskId: UUID?) {
-        guard checkDispatchRateLimit() else {
-            return (
-                Self.jsonString(["error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded"]),
-                nil
-            )
-        }
-
         return Self.blockingAsync { [pluginId] in
             let data = Data(requestJSON.utf8)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -195,12 +169,17 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId = UUID(uuidString: idStr)
             }
 
-            if agentId == nil {
-                agentId = Agent.defaultId
-            }
+            let resolvedAgent = agentId ?? Agent.defaultId
 
-            if let resolved = agentId {
-                PluginHostContext.getContext(for: pluginId)?.currentAgentId = resolved
+            guard let ctx = PluginHostContext.getContext(for: pluginId),
+                ctx.checkDispatchRateLimit(agentId: resolvedAgent)
+            else {
+                return (
+                    Self.jsonString([
+                        "error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded",
+                    ]),
+                    UUID?.none
+                )
             }
 
             let title = json["title"] as? String
@@ -214,7 +193,7 @@ final class PluginHostContext: @unchecked Sendable {
                 id: requestId,
                 mode: mode,
                 prompt: prompt,
-                agentId: agentId,
+                agentId: resolvedAgent,
                 title: title,
                 folderBookmark: folderBookmark,
                 showToast: true,
@@ -246,8 +225,10 @@ final class PluginHostContext: @unchecked Sendable {
             return Self.jsonString(["error": "invalid_task_id", "message": "Invalid UUID format"])
         }
 
-        return Self.blockingMainActor {
-            guard let state = BackgroundTaskManager.shared.taskState(for: uuid) else {
+        return Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else {
                 return Self.jsonString(["error": "not_found", "message": "Task not found"])
             }
             return Self.serializeTaskState(id: uuid, state: state)
@@ -256,14 +237,20 @@ final class PluginHostContext: @unchecked Sendable {
 
     func dispatchCancel(taskId: String) {
         guard let uuid = UUID(uuidString: taskId) else { return }
-        Self.blockingMainActor {
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else { return }
             BackgroundTaskManager.shared.cancelTask(uuid)
         }
     }
 
     func dispatchClarify(taskId: String, response: String) {
         guard let uuid = UUID(uuidString: taskId) else { return }
-        Self.blockingMainActor {
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else { return }
             BackgroundTaskManager.shared.submitClarification(uuid, response: response)
         }
     }
@@ -290,7 +277,10 @@ final class PluginHostContext: @unchecked Sendable {
 
     func dispatchInterrupt(taskId: String, message: String?) {
         guard let uuid = UUID(uuidString: taskId) else { return }
-        Self.blockingMainActor {
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else { return }
             BackgroundTaskManager.shared.interruptTask(uuid, message: message)
         }
     }
@@ -1324,16 +1314,21 @@ final class PluginHostContext: @unchecked Sendable {
 // MARK: - Rate Limiting
 
 extension PluginHostContext {
-    /// Returns true if the dispatch is allowed under the rate limit.
-    func checkDispatchRateLimit() -> Bool {
-        rateLimitLock.lock()
-        defer { rateLimitLock.unlock() }
-        let now = Date()
-        let cutoff = now.addingTimeInterval(-Self.dispatchRateWindow)
-        dispatchTimestamps.removeAll { $0 < cutoff }
-        guard dispatchTimestamps.count < Self.dispatchRateLimit else { return false }
-        dispatchTimestamps.append(now)
-        return true
+    /// Returns true if the dispatch is allowed under the per-agent rate limit.
+    func checkDispatchRateLimit(agentId: UUID) -> Bool {
+        rateLimitLock.withLock {
+            let now = Date()
+            let cutoff = now.addingTimeInterval(-Self.dispatchRateWindow)
+            var timestamps = dispatchTimestamps[agentId, default: []]
+            timestamps.removeAll { $0 < cutoff }
+            guard timestamps.count < Self.dispatchRateLimit else {
+                dispatchTimestamps[agentId] = timestamps
+                return false
+            }
+            timestamps.append(now)
+            dispatchTimestamps[agentId] = timestamps
+            return true
+        }
     }
 }
 
@@ -1641,10 +1636,21 @@ extension PluginHostContext {
     /// Thread-local storage for the active plugin ID during C callback dispatch
     private static let tlsKey: String = "ai.osaurus.plugin.active"
 
+    /// Thread-local storage for the active agent ID during C callback dispatch.
+    /// Set per-thread around each plugin call so concurrent requests for
+    /// different agents on the same invokeQueue resolve the correct agent.
+    private static let agentTlsKey: String = "ai.osaurus.plugin.agent"
+
     /// Best-effort fallback for plugin-spawned background threads that don't
-    /// have TLS set. Racy under concurrent execution — TLS (option 1) is the
-    /// authoritative mechanism.
-    nonisolated(unsafe) static var lastDispatchedPluginId: String?
+    /// have TLS set. Protected by `fallbackLock` to avoid data races under
+    /// concurrent execution. TLS (option 1) is the authoritative mechanism.
+    private static let fallbackLock = NSLock()
+    private nonisolated(unsafe) static var _lastDispatchedPluginId: String?
+
+    private static var lastDispatchedPluginId: String? {
+        get { fallbackLock.withLock { _lastDispatchedPluginId } }
+        set { fallbackLock.withLock { _lastDispatchedPluginId = newValue } }
+    }
 
     static func setActivePlugin(_ pluginId: String) {
         Thread.current.threadDictionary[tlsKey] = pluginId
@@ -1653,6 +1659,18 @@ extension PluginHostContext {
 
     static func clearActivePlugin() {
         Thread.current.threadDictionary.removeObject(forKey: tlsKey)
+    }
+
+    static func setActiveAgent(_ agentId: UUID) {
+        Thread.current.threadDictionary[agentTlsKey] = agentId
+    }
+
+    static func clearActiveAgent() {
+        Thread.current.threadDictionary.removeObject(forKey: agentTlsKey)
+    }
+
+    static func activeAgentId() -> UUID? {
+        Thread.current.threadDictionary[agentTlsKey] as? UUID
     }
 
     private static func activeContext() -> PluginHostContext? {
