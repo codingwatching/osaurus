@@ -505,11 +505,11 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func notifyConfigChanged(key: String, value: String) {
-        notifyConfigBatch([(key: key, value: value)])
+    func notifyConfigChanged(key: String, value: String, agentId: UUID? = nil) {
+        notifyConfigBatch([(key: key, value: value)], agentId: agentId)
     }
 
-    func notifyConfigBatch(_ changes: [(key: String, value: String)]) {
+    func notifyConfigBatch(_ changes: [(key: String, value: String)], agentId: UUID? = nil) {
         guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
@@ -517,6 +517,9 @@ final class ExternalPlugin: @unchecked Sendable {
         invokeQueue.async { [self] in
             guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
+            if let agentId {
+                PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentId
+            }
             defer { PluginHostContext.clearActivePlugin() }
 
             for (key, value) in changes {
