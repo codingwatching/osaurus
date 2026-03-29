@@ -734,6 +734,7 @@ final class NativeMessageCellView: NSTableCellView {
                 hv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 hv.topAnchor.constraint(equalTo: topAnchor, constant: 12),
                 hv.heightAnchor.constraint(equalToConstant: 28),
+                hv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
             ])
             nativeHeaderView = hv
         }
@@ -1113,8 +1114,8 @@ final class NativeMessageCellView: NSTableCellView {
             addSubview(tv)
             NSLayoutConstraint.activate([
                 tv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-                tv.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-                tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+                tv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
                 tv.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
             ])
             nativeTypingView = tv
@@ -1272,13 +1273,14 @@ enum NativeCellHeightEstimator {
             return 52
 
         case .typingIndicator:
-            return 48
+            // 4 top + ~22 content + 6 bottom (tight to header / thinking row above)
+            return 32
 
         case let .pendingToolCall(_, argPreview, _):
             return argPreview != nil ? 80 : 62
 
         case let .thinking(_, text, _):
-            if !isExpanded { return 58 }
+            if !isExpanded { return 56 }
             let innerW = max(width - 64, 100)
             let charsPerLine = max(Int(innerW / 7), 20)
             let lines = max(1, (text.count + charsPerLine - 1) / charsPerLine)

@@ -116,7 +116,9 @@ final class NativeThinkingView: NSView {
 
     func measuredHeight() -> CGFloat {
         let headerH: CGFloat = 44
-        guard isExpanded, let mdv = markdownView else { return headerH + 14 }
+        // collapsed: header only — avoid reserving expanded-content slack (was +14, looked like a dead gap)
+        let collapsedBottomInset: CGFloat = 4
+        guard isExpanded, let mdv = markdownView else { return headerH + collapsedBottomInset }
         // minus contentContainer insets
         let contentH = mdv.measuredHeight(for: currentWidth - 28 - 28)
         return headerH + 1 + 8 + contentH + 10
@@ -178,7 +180,7 @@ final class NativeThinkingView: NSView {
         let headerH: CGFloat = 44
 
         // self sizing height constraint (priority 750, overridden by external bottomAnchor if present)
-        let h = heightAnchor.constraint(equalToConstant: headerH + 14)
+        let h = heightAnchor.constraint(equalToConstant: headerH + 4)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
         h.isActive = true
         selfHeight = h
