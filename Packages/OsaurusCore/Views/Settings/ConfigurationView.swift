@@ -1051,7 +1051,7 @@ extension ConfigurationView {
             guard !trimmedMaxConcurrent.isEmpty, let v = Int(trimmedMaxConcurrent) else {
                 return defaults.maxConcurrentTasks
             }
-            return max(1, min(20, v))
+            return max(1, min(50, v))
         }()
 
         let config = ToastConfiguration(

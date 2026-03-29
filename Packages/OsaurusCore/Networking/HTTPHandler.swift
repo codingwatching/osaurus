@@ -447,9 +447,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        // Move to background for PluginManager access and plugin invocation
-        let task = Task { @MainActor in
-            guard let loaded = PluginManager.shared.loadedPlugin(for: pluginId) else {
+        // Narrow MainActor scope: only the few lookups that need it run on
+        // MainActor. Route matching, auth, JSON encoding, plugin invocation,
+        // and response handling all run off MainActor to avoid serializing
+        // concurrent requests through the main thread.
+        let task = Task {
+            let loaded = await MainActor.run {
+                PluginManager.shared.loadedPlugin(for: pluginId)
+            }
+            guard let loaded else {
                 return self.sendPluginErrorFromTask(
                     loop: loop,
                     ctxBound: ctxBound,
@@ -463,9 +469,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: userAgent
                 )
             }
-
-            // Set the agent context so config_get/set resolve to this agent's config
-            PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentUUID
 
             let manifest = loaded.plugin.manifest
 
@@ -617,7 +620,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
             case .none, .verify:
-                // Rate limit public/verify routes
                 if !PluginRateLimiter.shared.allow(pluginId: pluginId) {
                     return self.sendPluginErrorFromTask(
                         loop: loop,
@@ -634,7 +636,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
             }
 
-            // Check plugin supports route handling
             guard loaded.plugin.hasRouteHandler else {
                 return self.sendPluginErrorFromTask(
                     loop: loop,
@@ -668,7 +669,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let serverPort = self.configuration.port
             let localBaseURL = "http://127.0.0.1:\(serverPort)"
 
-            let tunnelURL = Self.resolveTunnelBaseURL(for: agentUUID)
+            // Second (and last) MainActor hop: resolve tunnel URL and agent address
+            let (agentAddress, tunnelURL) = await MainActor.run {
+                let address = AgentManager.shared.agent(for: agentUUID)?.agentAddress ?? ""
+                let tunnel = Self.resolveTunnelBaseURL(for: agentUUID)
+                return (address, tunnel)
+            }
+
             let baseURL = tunnelURL ?? localBaseURL
             let pluginURL = "\(baseURL)/plugins/\(pluginId)"
 
@@ -685,7 +692,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 osaurus: .init(
                     base_url: baseURL,
                     plugin_url: pluginURL,
-                    agent_address: AgentManager.shared.agent(for: agentUUID)?.agentAddress ?? ""
+                    agent_address: agentAddress
                 )
             )
 
@@ -708,7 +715,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             do {
-                let responseJSON = try await loaded.plugin.handleRoute(requestJSON: requestJSON)
+                let responseJSON = try await loaded.plugin.handleRoute(requestJSON: requestJSON, agentId: agentUUID)
 
                 guard let responseData = responseJSON.data(using: .utf8),
                     let response = try? JSONDecoder().decode(OsaurusHTTPResponse.self, from: responseData)
@@ -727,7 +734,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 }
 
-                // Build NIO response
                 let httpStatus = HTTPResponseStatus(statusCode: response.status)
                 var responseHeaders: [(String, String)] = corsHeaders
                 if let hdrs = response.headers {
