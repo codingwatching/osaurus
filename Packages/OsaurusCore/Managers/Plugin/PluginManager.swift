@@ -210,15 +210,13 @@ final class PluginManager {
             guard case .success(let loaded) = entry.result else { continue }
             let pluginId = loaded.plugin.id
             guard let configSpec = loaded.plugin.manifest.capabilities.config,
-                let hostCtx = PluginHostContext.getContext(for: pluginId)
+                PluginHostContext.getContext(for: pluginId) != nil
             else { continue }
 
             let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
 
             for agent in agents {
                 let agentId = agent.id
-                hostCtx.currentAgentId = agentId
-
                 var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
 
                 for section in configSpec.sections {
@@ -243,7 +241,7 @@ final class PluginManager {
                     allFieldKeys.contains(key) ? (key: key, value: value) : nil
                 }
                 guard !changes.isEmpty else { continue }
-                loaded.plugin.notifyConfigBatch(changes)
+                loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
             }
         }
     }
@@ -305,22 +303,32 @@ final class PluginManager {
                     return nil
                 }()
 
-                let newValue = tunnelURL ?? ""
-                guard ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) != newValue
-                else { continue }
+                let storedValue = ToolSecretsKeychain.getSecret(
+                    id: "tunnel_url",
+                    for: pluginId,
+                    agentId: agentId
+                )
+                guard storedValue != tunnelURL else { continue }
 
                 if let tunnelURL {
                     ToolSecretsKeychain.saveSecret(tunnelURL, id: "tunnel_url", for: pluginId, agentId: agentId)
                 } else {
                     ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
                 }
+
                 NotificationCenter.default.post(
                     name: .pluginConfigDidChange,
                     object: nil,
-                    userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": newValue]
+                    userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": tunnelURL ?? ""]
                 )
-                PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentId
-                loaded.plugin.notifyConfigChanged(key: "tunnel_url", value: newValue)
+
+                if let tunnelURL {
+                    loaded.plugin.notifyConfigChanged(
+                        key: "tunnel_url",
+                        value: tunnelURL,
+                        agentId: agentId
+                    )
+                }
             }
         }
     }

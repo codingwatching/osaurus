@@ -590,7 +590,7 @@ struct PluginConfigView: View {
         let changes = values.compactMap { (key, value) in
             findField(key: key) != nil ? (key: key, value: value) : nil
         }
-        plugin?.notifyConfigBatch(changes)
+        plugin?.notifyConfigBatch(changes, agentId: agentId)
     }
 
     private func saveConfig() {
@@ -615,7 +615,7 @@ struct PluginConfigView: View {
             ToolSecretsKeychain.saveSecret(value, id: key, for: pluginId, agentId: agentId)
             batch.append((key: key, value: value))
         }
-        plugin?.notifyConfigBatch(batch)
+        plugin?.notifyConfigBatch(batch, agentId: agentId)
         editedSecrets.removeAll()
         isDirty = false
     }

@@ -77,6 +77,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var sandboxPlugins: [String]?
     /// Controls the agent's ability to run arbitrary commands in the sandbox
     public var autonomousExec: AutonomousExecConfig?
+    /// Per-agent plugin instruction overrides keyed by plugin ID
+    public var pluginInstructions: [String: String]?
 
     public init(
         id: UUID = UUID(),
@@ -95,7 +97,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         agentIndex: UInt32? = nil,
         agentAddress: String? = nil,
         sandboxPlugins: [String]? = nil,
-        autonomousExec: AutonomousExecConfig? = nil
+        autonomousExec: AutonomousExecConfig? = nil,
+        pluginInstructions: [String: String]? = nil
     ) {
         self.id = id
         self.name = name
@@ -114,6 +117,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.agentAddress = agentAddress
         self.sandboxPlugins = sandboxPlugins
         self.autonomousExec = autonomousExec
+        self.pluginInstructions = pluginInstructions
     }
 
     // MARK: - Built-in Agents

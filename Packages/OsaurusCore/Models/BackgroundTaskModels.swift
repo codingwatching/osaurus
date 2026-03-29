@@ -68,6 +68,10 @@ public struct BackgroundTaskActivityItem: Identifiable, Equatable, Sendable {
         case info
         case progress
         case tool
+        case toolCall
+        case toolResult
+        case thinking
+        case writing
         case warning
         case success
         case error
@@ -164,6 +168,9 @@ public final class BackgroundTaskState: ObservableObject, Identifiable {
 
     /// Plugin that originated this dispatch (for on_task_event callback routing).
     public var sourcePluginId: String?
+
+    /// Latest draft content sent by the plugin (e.g. for live-update messages).
+    public var draftText: String?
 
     private let maxActivityItems: Int = 40
 

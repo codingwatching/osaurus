@@ -141,6 +141,26 @@ private typealias osr_db_exec_fn =
 private typealias osr_db_query_fn =
     @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 private typealias osr_log_fn = @convention(c) (Int32, UnsafePointer<CChar>?) -> Void
+private typealias osr_dispatch_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+private typealias osr_task_status_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+private typealias osr_dispatch_cancel_fn = @convention(c) (UnsafePointer<CChar>?) -> Void
+private typealias osr_dispatch_clarify_fn =
+    @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+private typealias osr_complete_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+private typealias osr_on_chunk_fn =
+    @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?) -> Void
+private typealias osr_complete_stream_fn =
+    @convention(c) (UnsafePointer<CChar>?, osr_on_chunk_fn?, UnsafeMutableRawPointer?) -> UnsafePointer<CChar>?
+private typealias osr_embed_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+private typealias osr_list_models_fn = @convention(c) () -> UnsafePointer<CChar>?
+private typealias osr_http_request_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+private typealias osr_file_read_fn = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+private typealias osr_list_active_tasks_fn = @convention(c) () -> UnsafePointer<CChar>?
+private typealias osr_send_draft_fn = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+private typealias osr_dispatch_interrupt_fn =
+    @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+private typealias osr_dispatch_add_issue_fn =
+    @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
 private struct osr_host_api {
     var version: UInt32
@@ -150,6 +170,20 @@ private struct osr_host_api {
     var db_exec: osr_db_exec_fn?
     var db_query: osr_db_query_fn?
     var log: osr_log_fn?
+    var dispatch: osr_dispatch_fn?
+    var task_status: osr_task_status_fn?
+    var dispatch_cancel: osr_dispatch_cancel_fn?
+    var dispatch_clarify: osr_dispatch_clarify_fn?
+    var complete: osr_complete_fn?
+    var complete_stream: osr_complete_stream_fn?
+    var embed: osr_embed_fn?
+    var list_models: osr_list_models_fn?
+    var http_request: osr_http_request_fn?
+    var file_read: osr_file_read_fn?
+    var list_active_tasks: osr_list_active_tasks_fn?
+    var send_draft: osr_send_draft_fn?
+    var dispatch_interrupt: osr_dispatch_interrupt_fn?
+    var dispatch_add_issue: osr_dispatch_add_issue_fn?
 }
 
 // MARK: Plugin API (plugin function table returned to host)

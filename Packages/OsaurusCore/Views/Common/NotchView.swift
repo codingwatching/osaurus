@@ -837,7 +837,8 @@ private struct NotchActivityRow: View {
     private var dotColor: Color {
         switch item.kind {
         case .progress: return accent
-        case .tool: return accent.opacity(0.9)
+        case .tool, .toolCall, .toolResult: return accent.opacity(0.9)
+        case .thinking, .writing: return accent.opacity(0.7)
         case .warning: return Color.orange
         case .success: return Color.green
         case .error: return Color.red
