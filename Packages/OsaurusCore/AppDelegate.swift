@@ -162,7 +162,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Context indexes: open DBs and construct VecturaKit instances in order so only one
         // SwiftEmbedder-backed init runs at a time (see EmbeddingService.sharedEmbedder).
         // Rebuild paths batch documents into a single embed call per index, not N serial adds.
-        Task {
+        // Registered as startup init task so ModelRuntime can gate MLX inference until
+        // CoreML embedding work finishes (prevents concurrent Metal operations).
+        let embeddingInitTask = Task {
             try? MethodDatabase.shared.open()
             await MethodSearchService.shared.initialize()
 
@@ -175,6 +177,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await SkillSearchService.shared.rebuildIndex()
             await MethodSearchService.shared.rebuildIndex()
         }
+        EmbeddingService.setStartupInitTask(embeddingInitTask)
 
         // Auto-start server on app launch
         Task { @MainActor in
