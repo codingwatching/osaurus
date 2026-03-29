@@ -36,6 +36,7 @@ final class NativeMarkdownView: NSView {
     private var lastBlocks: [SelectableTextBlock] = []
     private var lastWidth: CGFloat = 0
     private var lastThemeFingerprint: String = ""
+    private var lastIsStreaming: Bool = false
     private var parseTask: Task<Void, Never>?
 
     // MARK: Callback
@@ -76,11 +77,16 @@ final class NativeMarkdownView: NSView {
         let textChanged = text != lastText
         let widthChanged = abs(width - lastWidth) > 0.5
         let themeChanged = themeFingerprint != lastThemeFingerprint
+        let streamingChanged = isStreaming != lastIsStreaming
 
-        guard textChanged || widthChanged || themeChanged else { return }
+        // must re-run layout when streaming ends even if text matches the last delta — otherwise
+        // configure() returns early, measuredHeight/onHeightChanged never fire, height cache is
+        // empty, and the table falls back to NativeCellHeightEstimator (too small).
+        guard textChanged || widthChanged || themeChanged || streamingChanged else { return }
 
         lastWidth = width
         lastThemeFingerprint = themeFingerprint
+        lastIsStreaming = isStreaming
 
         if let cached = ThreadCache.shared.markdown(for: text) {
             applySegments(cached.segments, cacheKey: cacheKey, textChanged: textChanged || themeChanged, widthChanged: widthChanged, width: width, theme: theme)
