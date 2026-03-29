@@ -677,6 +677,12 @@ public final class WorkSession: ObservableObject {
         await executeIssue(issue, images: images)
     }
 
+    /// Adds a new issue from a plugin dispatch. Creates the issue and queues it for execution.
+    public func addIssueFromPlugin(query: String) async {
+        guard let task = currentTask else { return }
+        try? await addIssueToTask(query: query, task: task)
+    }
+
     /// Loads an existing task
     public func loadTask(_ task: WorkTask) async {
         currentTask = task

@@ -45,7 +45,7 @@ This document describes how to build external plugins for Osaurus using the Gene
 graph LR
     Plugin["Plugin (.dylib)"] -- "osaurus_plugin_entry_v2(host)" --> Osaurus
     Osaurus -- "init / get_manifest / invoke / handle_route" --> Plugin
-    Plugin -- "host->complete / dispatch / db_exec / ..." --> HostAPI["osr_host_api (16 callbacks)"]
+    Plugin -- "host->complete / dispatch / db_exec / ..." --> HostAPI["osr_host_api (20 callbacks)"]
     HostAPI --> Osaurus
 ```
 
@@ -280,7 +280,7 @@ Osaurus supports two ABI versions. Existing v1 plugins continue to work without 
 
 **v2 ABI (Full Host API):**
 
-- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides 16 callbacks across eight groups.
+- **Entry Point**: Plugin exports `osaurus_plugin_entry_v2(const osr_host_api* host)`. The host API struct provides 20 callbacks across nine groups.
 - **New fields on `osr_plugin_api`** (appended after v1 fields for binary compatibility):
   - `version`: Set to `2` (`OSR_ABI_VERSION_2`).
   - `handle_route(ctx, request_json)`: Called when an HTTP request hits a plugin route. Returns JSON. May be `NULL` if the plugin has no routes.
@@ -290,7 +290,7 @@ Osaurus supports two ABI versions. Existing v1 plugins continue to work without 
   - **Config Store**: `config_get` / `config_set` / `config_delete` — Keychain-backed secrets and settings.
   - **Data Store**: `db_exec` / `db_query` — Sandboxed per-plugin SQLite database.
   - **Logging**: `log` — Structured logging to the Insights tab.
-  - **Agent Dispatch**: `dispatch` / `task_status` / `dispatch_cancel` / `dispatch_clarify` — Background agent work with full tool access.
+  - **Agent Dispatch**: `dispatch` / `task_status` / `dispatch_cancel` / `dispatch_clarify` / `list_active_tasks` / `dispatch_interrupt` / `dispatch_add_issue` / `send_draft` — Background agent work with full tool access.
   - **Inference**: `complete` / `complete_stream` / `embed` — Chat completion and embeddings through any configured provider.
   - **Models**: `list_models` — Enumerate available models (local MLX, Apple Foundation, remote).
   - **HTTP Client**: `http_request` — Outbound HTTP with SSRF protection.
@@ -304,7 +304,7 @@ Upgrading is additive. Change your entry point from `osaurus_plugin_entry` to `o
 
 New in v2:
 - **`on_task_event`**: Set this on `osr_plugin_api` to receive lifecycle events for dispatched tasks. Set to `NULL` to opt out.
-- **Host API callbacks**: The `osr_host_api` now provides 16 callbacks across 8 capability groups — config, data store, logging, agent dispatch, inference, models, HTTP client, and file I/O. All are available from the moment `osaurus_plugin_entry_v2` returns.
+- **Host API callbacks**: The `osr_host_api` now provides 20 callbacks across 9 capability groups — config, data store, logging, agent dispatch (core + extended), inference, models, HTTP client, and file I/O. All are available from the moment `osaurus_plugin_entry_v2` returns.
 - **Artifact handling**: Plugins can declare `"artifact_handler": true` in their manifest capabilities to intercept shared artifacts. See [Artifact Handling](#artifact-handling).
 
 ---
@@ -1132,7 +1132,7 @@ const char* invoke(osr_plugin_ctx_t ctx, const char* type,
 
 ## Host API Reference
 
-v2 plugins receive an `osr_host_api` struct at init time with 16 callbacks across eight capability groups. All callbacks are available from the moment `osaurus_plugin_entry_v2` returns.
+v2 plugins receive an `osr_host_api` struct at init time with 20 callbacks across nine capability groups. All callbacks are available from the moment `osaurus_plugin_entry_v2` returns.
 
 ### Config Store
 
@@ -1269,9 +1269,14 @@ const char* status = host->task_status("<task_id>");
 
 | Field          | Type   | Description                                                   |
 | -------------- | ------ | ------------------------------------------------------------- |
+| `id`           | string | Task UUID                                                     |
+| `title`        | string | Task title                                                    |
+| `mode`         | string | `"work"` or `"chat"`                                          |
 | `status`       | string | `"running"`, `"completed"`, `"failed"`, `"cancelled"`, `"awaiting_clarification"` |
 | `progress`     | number | 0.0 – 1.0 progress estimate                                  |
 | `current_step` | string | Description of current activity (if running)                  |
+| `output`       | string | Current streaming output text (running tasks only, may be absent if empty) |
+| `draft`        | string | Draft content set via `send_draft` (if any)                   |
 
 #### Cancelling a Task
 
@@ -1290,6 +1295,47 @@ host->dispatch_clarify("<task_id>", "Use the staging environment");
 ```
 
 This resumes the task with the provided response. Clarification is only available in `"work"` mode.
+
+#### Interrupting a Task (Soft Stop)
+
+```c
+// Plain soft stop — agent wraps up gracefully and returns partial results
+host->dispatch_interrupt("<task_id>", NULL);
+
+// Interrupt and redirect — interrupts current work, re-enters with new instructions
+host->dispatch_interrupt("<task_id>", "Focus on the login page instead");
+```
+
+Unlike `dispatch_cancel` (hard stop), `dispatch_interrupt` lets the agent finish its current step. When a message is provided, the agent resumes with that message injected into the conversation. The task emits `COMPLETED` (not `CANCELLED`) when it finishes. Work mode only; chat mode falls back to `stop()`.
+
+#### Adding Issues to a Running Task
+
+```c
+const char* result = host->dispatch_add_issue(
+    "<task_id>",
+    "{\"title\": \"Fix the navbar\", \"description\": \"The navbar overflows on mobile\"}"
+);
+// Returns: {"status": "queued", "title": "Fix the navbar"}
+```
+
+Adds a new issue to a running work-mode task. The issue is queued and executed after the current issue completes. Returns an error if the task is not found, not active, or not in work mode.
+
+#### Listing Active Tasks
+
+```c
+const char* result = host->list_active_tasks();
+// Returns: {"tasks": [<task_status objects>]}
+```
+
+Returns all active tasks dispatched by the calling plugin. Useful for recovering state after a plugin restart — call this during `init()` to discover tasks that are still running.
+
+#### Sending Draft Content
+
+```c
+host->send_draft("<task_id>", "{\"text\": \"Working on it...\", \"parse_mode\": \"markdown\"}");
+```
+
+Stores draft content on a task and emits a `DRAFT` event (type 8) back to the originating plugin. Use this for live-update messages — for example, a Telegram plugin can call `editMessageText` (which works in groups) to show progressive updates.
 
 #### Example: Webhook-Triggered Dispatch
 
@@ -1339,16 +1385,17 @@ Set `on_task_event` to `NULL` to opt out — the host will not call it.
 
 #### Event Types
 
-| Constant                       | Value | Fired When                        | Payload Fields                              |
-| ------------------------------ | ----- | --------------------------------- | ------------------------------------------- |
-| `OSR_TASK_EVENT_STARTED`       | 0     | Task begins execution             | `status`, `mode`, `title`                   |
-| `OSR_TASK_EVENT_ACTIVITY`      | 1     | Meaningful action occurs          | `kind`, `title`, `detail`, `timestamp`      |
-| `OSR_TASK_EVENT_PROGRESS`      | 2     | Progress or step changes          | `progress`, `current_step`                  |
-| `OSR_TASK_EVENT_CLARIFICATION` | 3     | Agent needs human input           | `question`, `options`                       |
-| `OSR_TASK_EVENT_COMPLETED`     | 4     | Task finishes successfully        | `success` (true), `summary`, `session_id`   |
-| `OSR_TASK_EVENT_FAILED`        | 5     | Task finishes with failure        | `success` (false), `summary`                |
-| `OSR_TASK_EVENT_CANCELLED`     | 6     | Task is cancelled                 | `{}`                                        |
-| `OSR_TASK_EVENT_OUTPUT`        | 7     | Agent generates streaming text    | `text`                                      |
+| Constant                       | Value | Fired When                        | Payload Fields                                              |
+| ------------------------------ | ----- | --------------------------------- | ----------------------------------------------------------- |
+| `OSR_TASK_EVENT_STARTED`       | 0     | Task begins execution             | `status`, `mode`, `title`                                   |
+| `OSR_TASK_EVENT_ACTIVITY`      | 1     | Meaningful action occurs          | `kind`, `title`, `detail`, `timestamp`, `metadata`          |
+| `OSR_TASK_EVENT_PROGRESS`      | 2     | Progress or step changes          | `progress`, `current_step`, `title`                         |
+| `OSR_TASK_EVENT_CLARIFICATION` | 3     | Agent needs human input           | `question`, `options`                                       |
+| `OSR_TASK_EVENT_COMPLETED`     | 4     | Task finishes successfully        | `success` (true), `summary`, `session_id`, `title`, `output` |
+| `OSR_TASK_EVENT_FAILED`        | 5     | Task finishes with failure        | `success` (false), `summary`, `title`                       |
+| `OSR_TASK_EVENT_CANCELLED`     | 6     | Task is cancelled                 | `title`                                                     |
+| `OSR_TASK_EVENT_OUTPUT`        | 7     | Agent generates streaming text    | `text`, `title`                                             |
+| `OSR_TASK_EVENT_DRAFT`         | 8     | Plugin sends draft content        | `title`, `draft`                                            |
 
 #### Event Payloads
 
@@ -1361,17 +1408,32 @@ All payloads are JSON strings. Examples:
 
 **Activity:**
 ```json
-{"kind": "tool_call", "title": "read_file", "detail": "Reading main.swift", "timestamp": "2025-06-15T10:30:00Z"}
+{"kind": "tool_call", "title": "Tool", "detail": "grep", "timestamp": "2025-06-15T10:30:00Z", "metadata": {"tool_name": "grep"}}
 ```
 
-Activity events fire for meaningful actions: tool calls, issue starts/completes, and artifacts. Step-level noise (`willExecuteStep`, `completedStep`) is filtered out.
+Activity events fire for meaningful actions: tool calls, issue starts/completes, and artifacts. Step-level noise (`willExecuteStep`, `completedStep`) is filtered out. The `metadata` field provides structured data when available (e.g., `tool_name` for tool calls, `filename` for artifacts).
+
+Available `kind` values:
+
+| Kind          | Description                                    |
+| ------------- | ---------------------------------------------- |
+| `tool`        | Generic tool usage (backward-compatible alias) |
+| `tool_call`   | Agent invoked a tool                           |
+| `tool_result` | Tool returned a result                         |
+| `thinking`    | Agent is reasoning or summarizing context      |
+| `writing`     | Agent is generating text output                |
+| `info`        | Informational status update                    |
+| `progress`    | Progress milestone                             |
+| `warning`     | Recoverable warning (e.g. retry)               |
+| `success`     | Successful completion of a sub-task            |
+| `error`       | Error in a sub-task                            |
 
 **Progress:**
 ```json
-{"progress": 0.45, "current_step": "Analyzing code structure"}
+{"progress": 0.45, "current_step": "Analyzing code structure", "title": "Build feature"}
 ```
 
-Progress events are throttled to one per 500ms per task to avoid flooding the plugin.
+Progress events are throttled to one per 500ms per task to avoid flooding the plugin. The `title` field is the task title, enabling displays like "Build feature — 45%".
 
 **Clarification:**
 ```json
@@ -1382,25 +1444,34 @@ When this event fires, the task is paused. Call `host->dispatch_clarify(task_id,
 
 **Completed:**
 ```json
-{"success": true, "summary": "Created PR #42 with commit summary", "session_id": "abc-123"}
+{"success": true, "summary": "Created PR #42 with commit summary", "session_id": "abc-123", "title": "Build feature", "output": "Here is the full agent output..."}
 ```
+
+The `output` field contains the full accumulated agent output text. This makes the completed event self-contained — plugins don't need to stitch together `OUTPUT` events to get the final result.
 
 **Failed:**
 ```json
-{"success": false, "summary": "Could not access repository"}
+{"success": false, "summary": "Could not access repository", "title": "Build feature"}
 ```
 
 **Cancelled:**
 ```json
-{}
+{"title": "Build feature"}
 ```
 
 **Output:**
 ```json
-{"text": "Here are the best restaurants in Irvine:\n\n1. ..."}
+{"text": "Here are the best restaurants in Irvine:\n\n1. ...", "title": "Restaurant search"}
 ```
 
 Output events stream the agent's accumulated response text during work-mode execution. Throttled to one per second per task. Use this to show progressive response updates (e.g. draft messages in a chat integration).
+
+**Draft:**
+```json
+{"title": "Build feature", "draft": {"text": "Working on it...", "parse_mode": "markdown"}}
+```
+
+Draft events are emitted when a plugin calls `host->send_draft()`. The `draft` object mirrors the JSON passed to `send_draft`. Use this for live-update messages in chat integrations (e.g., editing a placeholder message with progressive status).
 
 #### Example: Handling Events
 
@@ -2044,7 +2115,7 @@ const osr_plugin_api* osaurus_plugin_entry_v2(const osr_host_api* host);
 // v1 entry point (legacy)
 const osr_plugin_api* osaurus_plugin_entry(void);
 
-// Host API struct (16 callbacks across 8 capability groups)
+// Host API struct (20 callbacks across 9 capability groups)
 typedef struct {
     uint32_t           version;           // OSR_ABI_VERSION_2
 
@@ -2073,6 +2144,12 @@ typedef struct {
 
     // File I/O
     osr_file_read_fn        file_read;
+
+    // Extended Agent Dispatch (v2 trailing fields)
+    osr_list_active_tasks_fn   list_active_tasks;
+    osr_send_draft_fn          send_draft;
+    osr_dispatch_interrupt_fn  dispatch_interrupt;
+    osr_dispatch_add_issue_fn  dispatch_add_issue;
 } osr_host_api;
 
 // Task lifecycle event types (for on_task_event callback)
@@ -2084,6 +2161,7 @@ typedef struct {
 #define OSR_TASK_EVENT_FAILED           5
 #define OSR_TASK_EVENT_CANCELLED        6
 #define OSR_TASK_EVENT_OUTPUT           7
+#define OSR_TASK_EVENT_DRAFT            8
 
 // ABI version constants
 #define OSR_ABI_VERSION_1 1
@@ -2115,4 +2193,4 @@ typedef struct {
 
 ### Rust Authors
 
-Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route`, `on_config_changed`, and `on_task_event`. Store the `osr_host_api` pointer passed to the v2 entry point for access to all 16 host callbacks — config, data store, logging, agent dispatch (`dispatch`, `task_status`, `dispatch_cancel`, `dispatch_clarify`), inference (`complete`, `complete_stream`, `embed`), model enumeration (`list_models`), outbound HTTP (`http_request`), and file I/O (`file_read`). All callbacks use C strings (null-terminated UTF-8) with JSON payloads; wrap them in safe Rust abstractions using `CStr`/`CString`.
+Create a `cdylib` exposing `osaurus_plugin_entry` (v1) or `osaurus_plugin_entry_v2` (v2) that returns the generic function table. For v1, implement `init`, `destroy`, `get_manifest`, `invoke`, and `free_string`. For v2, also set `version = 2` and optionally implement `handle_route`, `on_config_changed`, and `on_task_event`. Store the `osr_host_api` pointer passed to the v2 entry point for access to all 20 host callbacks — config, data store, logging, agent dispatch (`dispatch`, `task_status`, `dispatch_cancel`, `dispatch_clarify`, `list_active_tasks`, `dispatch_interrupt`, `dispatch_add_issue`, `send_draft`), inference (`complete`, `complete_stream`, `embed`), model enumeration (`list_models`), outbound HTTP (`http_request`), and file I/O (`file_read`). All callbacks use C strings (null-terminated UTF-8) with JSON payloads; wrap them in safe Rust abstractions using `CStr`/`CString`.

@@ -57,6 +57,7 @@ enum TaskEventType: Int32 {
     case failed = 5
     case cancelled = 6
     case output = 7
+    case draft = 8
 }
 
 // Host API callback types (host → plugin, injected at init for v2)
@@ -93,6 +94,13 @@ typealias osr_http_request_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafeP
 // File I/O
 typealias osr_file_read_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+// Extended Agent Dispatch
+typealias osr_list_active_tasks_t = @convention(c) () -> UnsafePointer<CChar>?
+typealias osr_send_draft_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+typealias osr_dispatch_interrupt_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+typealias osr_dispatch_add_issue_t =
+    @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
 struct osr_host_api {
     var version: UInt32
 
@@ -121,6 +129,12 @@ struct osr_host_api {
 
     // File I/O
     var file_read: osr_file_read_t?
+
+    // Extended Agent Dispatch (v2 trailing fields)
+    var list_active_tasks: osr_list_active_tasks_t?
+    var send_draft: osr_send_draft_t?
+    var dispatch_interrupt: osr_dispatch_interrupt_t?
+    var dispatch_add_issue: osr_dispatch_add_issue_t?
 }
 
 struct osr_plugin_api {
@@ -384,6 +398,12 @@ final class ExternalPlugin: @unchecked Sendable {
     /// Concurrent (not serial) so multiple route handlers can run in parallel.
     private let invokeQueue: DispatchQueue
 
+    /// Dedicated serial queue for task event delivery. Separated from
+    /// `invokeQueue` so that blocking event callbacks (e.g. http_request inside
+    /// on_task_event) don't starve route handlers. Serial ordering preserves
+    /// the logical event sequence (STARTED → ACTIVITY → COMPLETED).
+    private let eventQueue: DispatchQueue
+
     init(
         handle: UnsafeMutableRawPointer,
         api: osr_plugin_api,
@@ -404,25 +424,32 @@ final class ExternalPlugin: @unchecked Sendable {
             qos: .userInitiated,
             attributes: .concurrent
         )
+        self.eventQueue = DispatchQueue(
+            label: "com.osaurus.plugin.events.\(manifest.plugin_id)",
+            qos: .utility
+        )
     }
 
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
-    /// Tears down the plugin context by draining all in-flight concurrent work
-    /// (barrier) and then calling `destroy`. Uses async dispatch so the
-    /// destroy callback (which may call host API trampolines like httpRequest)
-    /// never runs on the main thread, avoiding deadlocks with `blockingAsync`.
+    /// Tears down the plugin context by draining the event queue first
+    /// (barrier), then the invoke queue (barrier), before calling `destroy`.
+    /// Uses async dispatch so the destroy callback (which may call host API
+    /// trampolines like httpRequest) never runs on the main thread, avoiding
+    /// deadlocks with `blockingAsync`.
     func shutdown() async {
         await withCheckedContinuation { continuation in
-            invokeQueue.async(flags: .barrier) { [self] in
-                guard !self.isShutDown else {
+            eventQueue.async(flags: .barrier) { [self] in
+                self.invokeQueue.async(flags: .barrier) { [self] in
+                    guard !self.isShutDown else {
+                        continuation.resume()
+                        return
+                    }
+                    self.isShutDown = true
+                    self.api.destroy?(self.ctx)
                     continuation.resume()
-                    return
                 }
-                self.isShutDown = true
-                self.api.destroy?(self.ctx)
-                continuation.resume()
             }
         }
     }
@@ -553,7 +580,7 @@ final class ExternalPlugin: @unchecked Sendable {
         let pluginId = self.id
         let rawType = eventType.rawValue
 
-        invokeQueue.async { [self] in
+        eventQueue.async { [self] in
             guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
             PluginHostContext.currentContext = PluginHostContext.getContext(for: pluginId)

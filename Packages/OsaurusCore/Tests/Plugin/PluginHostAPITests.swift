@@ -521,17 +521,20 @@ struct EventSerializationTests {
     @Test func progressEvent() {
         let json = PluginHostContext.serializeProgressEvent(
             progress: 0.75,
-            currentStep: "Running tests"
+            currentStep: "Running tests",
+            taskTitle: "Build App"
         )
         let dict = parse(json)
         #expect(dict?["progress"] as? Double == 0.75)
         #expect(dict?["current_step"] as? String == "Running tests")
+        #expect(dict?["title"] as? String == "Build App")
     }
 
     @Test func progressEventWithoutStep() {
         let json = PluginHostContext.serializeProgressEvent(
             progress: 0.5,
-            currentStep: nil
+            currentStep: nil,
+            taskTitle: "Build App"
         )
         let dict = parse(json)
         #expect(dict?["progress"] as? Double == 0.5)
@@ -568,7 +571,8 @@ struct EventSerializationTests {
         let json = PluginHostContext.serializeCompletedEvent(
             success: true,
             summary: "All done",
-            sessionId: sessionId
+            sessionId: sessionId,
+            taskTitle: "Build App"
         )
         let dict = parse(json)
         #expect(dict?["success"] as? Bool == true)
@@ -580,7 +584,8 @@ struct EventSerializationTests {
         let json = PluginHostContext.serializeCompletedEvent(
             success: false,
             summary: "Build failed",
-            sessionId: nil
+            sessionId: nil,
+            taskTitle: "Build App"
         )
         let dict = parse(json)
         #expect(dict?["success"] as? Bool == false)
@@ -590,8 +595,86 @@ struct EventSerializationTests {
     }
 
     @Test func cancelledEvent() {
-        let json = PluginHostContext.serializeCancelledEvent()
-        #expect(json == "{}")
+        let json = PluginHostContext.serializeCancelledEvent(taskTitle: "Build App")
+        let dict = parse(json)
+        #expect(dict?["title"] as? String == "Build App")
+    }
+}
+
+// MARK: - Task State Dict
+
+@MainActor
+struct TaskStateDictTests {
+
+    private func parse(_ json: String) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+    }
+
+    @Test func runningTaskIncludesTitleModeAndOutput() {
+        let session = WorkSession(agentId: Agent.defaultId)
+        session.streamingContent = "Hello from agent"
+        let state = BackgroundTaskState(
+            id: UUID(),
+            taskId: "t1",
+            taskTitle: "Build feature",
+            agentId: Agent.defaultId,
+            session: session,
+            progress: 0.5,
+            currentStep: "Writing code"
+        )
+        let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
+        #expect(dict["title"] as? String == "Build feature")
+        #expect(dict["mode"] as? String == "work")
+        #expect(dict["status"] as? String == "running")
+        #expect(dict["progress"] as? Double == 0.5)
+        #expect(dict["current_step"] as? String == "Writing code")
+        #expect(dict["output"] as? String == "Hello from agent")
+    }
+
+    @Test func runningTaskOmitsEmptyOutput() {
+        let session = WorkSession(agentId: Agent.defaultId)
+        let state = BackgroundTaskState(
+            id: UUID(),
+            taskId: "t1",
+            taskTitle: "Build feature",
+            agentId: Agent.defaultId,
+            session: session
+        )
+        let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
+        #expect(dict["output"] == nil)
+    }
+
+    @Test func taskStateDictIncludesDraft() {
+        let session = WorkSession(agentId: Agent.defaultId)
+        let state = BackgroundTaskState(
+            id: UUID(),
+            taskId: "t1",
+            taskTitle: "Build feature",
+            agentId: Agent.defaultId,
+            session: session
+        )
+        state.draftText = "{\"text\":\"working...\"}"
+        let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
+        let draft = dict["draft"] as? [String: Any]
+        #expect(draft?["text"] as? String == "working...")
+    }
+
+    @Test func completedTaskIncludesTitleAndMode() {
+        let session = WorkSession(agentId: Agent.defaultId)
+        let state = BackgroundTaskState(
+            id: UUID(),
+            taskId: "t1",
+            taskTitle: "Deploy app",
+            agentId: Agent.defaultId,
+            session: session,
+            status: .completed(success: true, summary: "All done")
+        )
+        let dict = PluginHostContext.taskStateDict(id: state.id, state: state)
+        #expect(dict["title"] as? String == "Deploy app")
+        #expect(dict["mode"] as? String == "work")
+        #expect(dict["status"] as? String == "completed")
+        #expect(dict["success"] as? Bool == true)
+        #expect(dict["summary"] as? String == "All done")
     }
 }
 
