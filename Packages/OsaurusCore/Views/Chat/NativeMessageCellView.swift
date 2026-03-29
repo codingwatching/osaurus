@@ -1062,7 +1062,7 @@ final class NativeMessageCellView: NSTableCellView {
             while stack.arrangedSubviews.count < images.count {
                 let iv = UserAttachmentThumbnailView()
                 iv.translatesAutoresizingMaskIntoConstraints = false
-                iv.widthAnchor.constraint(equalToConstant: 96).isActive = true
+                // height is fixed at 96; width is flexible via intrinsicContentSize
                 iv.heightAnchor.constraint(equalToConstant: 96).isActive = true
                 stack.addArrangedSubview(iv)
             }
@@ -1235,31 +1235,44 @@ final class NativeMessageCellView: NSTableCellView {
 }
 
 /// Thumbnail in user bubble — tap opens full-screen preview (wired via `CellRenderingContext.onUserImagePreview`).
-/// `NSImageView` draws via `NSImageCell`; layer `cornerRadius` can clip unevenly. a shape layer mask clips all four corners reliably.
+/// `CALayer` corner radius + `NSImageView` in `NSTableView` still drew a square trailing edge here; clipping in `draw(_:)` is the reliable fix.
 private final class UserAttachmentThumbnailView: NSView {
     private static let cornerRadius: CGFloat = 8
+
+    override var isFlipped: Bool { true }
 
     var attachmentId: String = ""
     var onTap: ((String) -> Void)?
 
-    private let imageView = NSImageView()
-    private let roundedMask = CAShapeLayer()
+    private var lastDrawBounds: NSRect = .zero
+
+    var image: NSImage? {
+        didSet {
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard let img = image else { return NSSize(width: 96, height: 96) }
+        let size = img.size
+        guard size.width > 0, size.height > 0 else { return NSSize(width: 96, height: 96) }
+        
+        let aspectRatio = size.width / size.height
+        if aspectRatio > 1 {
+            // landscape: fixed width 96, height shrinks (to stay within 96x96 box)
+            return NSSize(width: 96, height: max(16, 96 / aspectRatio))
+        } else {
+            // portrait/square: fixed height 96, width shrinks
+            return NSSize(width: max(16, 96 * aspectRatio), height: 96)
+        }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        // parent `NativeMessageCellView` is layer-backed; this makes `draw(_:)` reliably update the bitmap
         wantsLayer = true
-        layer?.masksToBounds = true
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.imageScaling = .scaleProportionallyUpOrDown
-        imageView.imageAlignment = .alignTopLeft
-        imageView.clipsToBounds = true
-        addSubview(imageView)
-        NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            imageView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            imageView.topAnchor.constraint(equalTo: topAnchor),
-            imageView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
     }
 
     @available(*, unavailable)
@@ -1269,22 +1282,33 @@ private final class UserAttachmentThumbnailView: NSView {
 
     override func layout() {
         super.layout()
-        guard let l = layer else { return }
-        let b = l.bounds
-        guard b.width > 0, b.height > 0 else { return }
-        roundedMask.frame = b
-        roundedMask.path = CGPath(
-            roundedRect: CGRect(origin: .zero, size: b.size),
-            cornerWidth: Self.cornerRadius,
-            cornerHeight: Self.cornerRadius,
-            transform: nil
-        )
-        l.mask = roundedMask
+        if bounds != lastDrawBounds {
+            lastDrawBounds = bounds
+            needsDisplay = true
+        }
     }
 
-    var image: NSImage? {
-        get { imageView.image }
-        set { imageView.image = newValue }
+    override func draw(_ dirtyRect: NSRect) {
+        guard let img = image else { return }
+        let rect = bounds
+        guard rect.width > 0, rect.height > 0 else { return }
+
+        NSGraphicsContext.saveGraphicsState()
+        // clip to the actual view bounds (which now match the aspect ratio via intrinsicContentSize)
+        NSBezierPath(roundedRect: rect, xRadius: Self.cornerRadius, yRadius: Self.cornerRadius).addClip()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        
+        // since the view bounds (rect) already match the aspect ratio,
+        // simple drawing into rect will show the full image correctly without stretching.
+        img.draw(
+            in: rect,
+            from: NSRect(origin: .zero, size: img.size),
+            operation: .sourceOver,
+            fraction: 1.0,
+            respectFlipped: true,
+            hints: nil
+        )
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     override func mouseDown(with event: NSEvent) {
