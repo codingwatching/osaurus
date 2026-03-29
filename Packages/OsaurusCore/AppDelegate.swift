@@ -159,7 +159,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
-        // Initialize context management (sequential to avoid concurrent CoreML model loads).
+        // Context indexes: open DBs and construct VecturaKit instances in order so only one
+        // SwiftEmbedder-backed init runs at a time (see EmbeddingService.sharedEmbedder).
+        // Rebuild paths batch documents into a single embed call per index, not N serial adds.
         Task {
             try? MethodDatabase.shared.open()
             await MethodSearchService.shared.initialize()
