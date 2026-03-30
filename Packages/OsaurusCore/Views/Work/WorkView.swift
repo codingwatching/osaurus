@@ -184,37 +184,11 @@ struct WorkView: View {
 
     // MARK: - Background
 
+    /// solid / gradient / image only — same as `ChatView.chatBackground`. `ThemedGlassSurface` was removed
+    /// (NSVisualEffectView blur) because it spiked WindowServer GPU usage.
     private var agentBackground: some View {
-        ZStack {
-            // Layer 1: Base background (solid, gradient, or image)
-            baseBackgroundLayer
-                .clipShape(backgroundShape)
-
-            // Layer 2: Glass effect (if enabled)
-            if theme.glassEnabled {
-                ThemedGlassSurface(
-                    cornerRadius: 24,
-                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
-                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
-                )
-                .allowsHitTesting(false)
-
-                // Solid backing scaled by glass opacity so low values produce real transparency
-                let baseBacking = theme.windowBackingOpacity
-                let backingOpacity = baseBacking * (0.4 + theme.glassOpacityPrimary * 0.6)
-
-                LinearGradient(
-                    colors: [
-                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 0.3),
-                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary * 0.2),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .clipShape(backgroundShape)
-                .allowsHitTesting(false)
-            }
-        }
+        baseBackgroundLayer
+            .clipShape(backgroundShape)
     }
 
     private var backgroundShape: UnevenRoundedRectangle {
