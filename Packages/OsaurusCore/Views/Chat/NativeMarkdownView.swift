@@ -19,6 +19,17 @@ import AppKit
 
 final class NativeMarkdownView: NSView {
 
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // first try subviews (SelectableNSTextView, etc)
+        if let sub = super.hitTest(point) { return sub }
+        // if point is in our bounds, return ourselves so we can be part of the responder chain
+        if NSPointInRect(point, bounds) { return self }
+        return nil
+    }
+
     // MARK: Subviews
 
     /// Primary text view — used when all segments are plain text.
@@ -354,7 +365,7 @@ final class NativeMarkdownView: NSView {
                 } else {
                     lv = NSTextField(labelWithString: "")
                     lv.translatesAutoresizingMaskIntoConstraints = false
-                    lv.isEditable = false; lv.isBordered = false; lv.drawsBackground = false
+                    lv.isEditable = false; lv.isSelectable = true; lv.isBordered = false; lv.drawsBackground = false
                     lv.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.codeSize), weight: .regular)
                     lv.textColor = NSColor(theme.primaryText)
                     lv.maximumNumberOfLines = 0
@@ -408,6 +419,7 @@ final class NativeMarkdownView: NSView {
             tv.leadingAnchor.constraint(equalTo: leadingAnchor),
             tv.trailingAnchor.constraint(equalTo: trailingAnchor),
             tv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            tv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
         ])
 
         self.textView = tv

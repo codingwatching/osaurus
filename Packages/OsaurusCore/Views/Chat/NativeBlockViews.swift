@@ -684,6 +684,15 @@ final class NativePreflightCapabilitiesView: NSView {
 
 final class NativeCodeBlockView: NSView {
 
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let sub = super.hitTest(point) { return sub }
+        if NSPointInRect(point, bounds) { return self }
+        return nil
+    }
+
     // MARK: Subviews
 
     private let headerView = NSView()
@@ -763,7 +772,7 @@ final class NativeCodeBlockView: NSView {
         copyButton.title = ""
         copyButton.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
         copyButton.isBordered = false
-        copyButton.alphaValue = 0
+        copyButton.alphaValue = 1 // Ensure it's visible
         copyButton.target = self
         copyButton.action = #selector(copyCode)
         headerView.addSubview(copyButton)
@@ -799,8 +808,9 @@ final class NativeCodeBlockView: NSView {
         cv.textContainer?.containerSize = NSSize(width: lastWidth - 24, height: .greatestFiniteMagnitude)
         cv.textContainer?.widthTracksTextView = false
         cv.textContainer?.lineFragmentPadding = 0
-        cv.selectedTextAttributes = [.backgroundColor: NSColor.selectedTextBackgroundColor]
-        cv.lineNumberColor = .tertiaryLabelColor.withAlphaComponent(0.4)
+        cv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
+        cv.insertionPointColor = NSColor(theme.cursorColor)
+        cv.lineNumberColor = NSColor(theme.tertiaryText).withAlphaComponent(0.4)
         addSubview(cv)
         
         let hc = cv.heightAnchor.constraint(equalToConstant: 0)

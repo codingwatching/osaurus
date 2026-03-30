@@ -135,7 +135,13 @@ final class NativeThinkingView: NSView {
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
 
-        // icons/labels first so they're in front of the button
+        // header button in back - transparent overlay covering the header row for click handling
+        headerButton.translatesAutoresizingMaskIntoConstraints = false
+        headerButton.title = ""; headerButton.isBordered = false; headerButton.bezelStyle = .inline
+        headerButton.target = self; headerButton.action = #selector(headerTapped)
+        addSubview(headerButton)
+
+        // icons/labels
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: nil)
         iconView.contentTintColor = thinkingTint
@@ -170,12 +176,6 @@ final class NativeThinkingView: NSView {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.isHidden = true
         addSubview(contentContainer)
-
-        // header button on top — transparent overlay covering the header row for click handling
-        headerButton.translatesAutoresizingMaskIntoConstraints = false
-        headerButton.title = ""; headerButton.isBordered = false; headerButton.bezelStyle = .inline
-        headerButton.target = self; headerButton.action = #selector(headerTapped)
-        addSubview(headerButton)  // added last → front of Z-order
 
         let headerH: CGFloat = 44
 

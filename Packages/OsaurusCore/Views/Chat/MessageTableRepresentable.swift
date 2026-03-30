@@ -182,7 +182,6 @@ struct MessageTableRepresentable: NSViewRepresentable {
         tv.backgroundColor = .clear
         tv.intercellSpacing = .zero
         tv.usesAlternatingRowBackgroundColors = false
-        tv.refusesFirstResponder = true
         tv.allowsMultipleSelection = false
         tv.allowsEmptySelection = true
         tv.gridStyleMask = []

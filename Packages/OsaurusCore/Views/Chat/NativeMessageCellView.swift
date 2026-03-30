@@ -71,11 +71,13 @@ final class NativeHeaderView: NSView {
         translatesAutoresizingMaskIntoConstraints = false
 
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.isSelectable = true
         nameLabel.maximumNumberOfLines = 1
         nameLabel.lineBreakMode = .byTruncatingTail
         addSubview(nameLabel)
 
         editingBadge.translatesAutoresizingMaskIntoConstraints = false
+        editingBadge.isSelectable = true
         editingBadge.isHidden = true
         addSubview(editingBadge)
 

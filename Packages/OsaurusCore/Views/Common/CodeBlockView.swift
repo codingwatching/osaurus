@@ -364,6 +364,14 @@ final class CodeNSTextView: NSTextView {
     var lineCount: Int = 0
     var codeFontSize: CGFloat = 12
 
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if NSPointInRect(point, bounds) { return self }
+        return nil
+    }
+
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .iBeam)
     }
