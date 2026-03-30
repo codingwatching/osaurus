@@ -20,7 +20,8 @@ struct CellRenderingContext {
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let theme: any ThemeProtocol
-    let expandedIds: Set<String>
+    /// mutable so `configureCell` can override with coordinator `expandedIds` before `applyBlocks` runs again
+    var expandedIds: Set<String>
     let onToggleExpand: (String) -> Void
     /// Called by native views after they've measured their own height.
     /// Coordinator updates heightCache and calls noteHeightOfRows if delta > 2pt.

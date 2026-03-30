@@ -328,9 +328,25 @@ extension MessageTableRepresentable {
             sessionStore.toggle(id)
             expandedIds = sessionStore.expandedIds
 
-            // find which row contains the toggled block and invalidate its height.
-            if let row = blockIds.firstIndex(where: { blockLookup[$0]?.id == id }) {
-                heightCache.removeValue(forKey: blockIds[row])
+            // find row: block id (thinking, etc.) or tool call id inside a toolCallGroup block
+            let row = blockIds.firstIndex(where: { bid in
+                guard let b = blockLookup[bid] else { return false }
+                if b.id == id { return true }
+                if case .toolCallGroup(let calls) = b.kind {
+                    return calls.contains { $0.call.id == id }
+                }
+                return false
+            })
+
+            if let row {
+                let blockId = blockIds[row]
+                heightCache.removeValue(forKey: blockId)
+                if let cell = tableView?.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView,
+                    let block = blockLookup[blockId]
+                {
+                    configureCell(cell, with: block)
+                    cell.layoutSubtreeIfNeeded()
+                }
                 // let the hosting view settle before re-measuring
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                     self?.noteRowHeightsChanged(IndexSet(integer: row))
@@ -383,6 +399,7 @@ extension MessageTableRepresentable {
             autoScrollEnabled: Bool
         ) {
             let widthChanged = abs(ctx.width - context.width) > 1.0
+            let expandedIdsChanged = context.expandedIds != ctx.expandedIds
             let previousEditingTurnId = ctx.editingTurnId
             let previousStreaming = ctx.isStreaming
             let previousLastAssistantTurnId = ctx.lastAssistantTurnId
@@ -428,6 +445,7 @@ extension MessageTableRepresentable {
                 let contextAffectsCells =
                     previousStreaming != context.isStreaming
                     || previousLastAssistantTurnId != context.lastAssistantTurnId
+                    || expandedIdsChanged
                 if contextAffectsCells {
                     reconfigureAllCellsFromLookup(newLookup)
                 }
@@ -626,6 +644,7 @@ extension MessageTableRepresentable {
         private func configureCell(_ cell: NativeMessageCellView, with block: ContentBlock) {
             let groupId = groupHeaderMap[block.turnId] ?? block.turnId
             var context = ctx
+            context.expandedIds = expandedIds
             context.isTurnHovered = hoveredGroupId == groupId
             cell.configure(block: block, context: context)
         }

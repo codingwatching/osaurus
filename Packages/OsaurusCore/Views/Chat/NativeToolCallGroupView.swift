@@ -85,6 +85,7 @@ final class NativeToolCallGroupView: NSView {
             let row = NativeToolCallRowView()
             row.translatesAutoresizingMaskIntoConstraints = false
             rowStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: rowStack.widthAnchor).isActive = true
             rowViews.append(row)
         }
         while rowViews.count > calls.count {
@@ -149,6 +150,8 @@ final class NativeToolCallGroupView: NSView {
         rowStack.orientation = .vertical
         rowStack.spacing = 0
         rowStack.distribution = .fill
+        // default .center horizontally centers subviews in a vertical stack; keep rows flush left
+        rowStack.alignment = .leading
         rowStack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(rowStack)
 
