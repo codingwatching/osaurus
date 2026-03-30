@@ -732,12 +732,16 @@ final class NativeMessageCellView: NSTableCellView {
             let hv = NativeHeaderView()
             hv.translatesAutoresizingMaskIntoConstraints = false
             addSubview(hv)
+            let bottomGap = bottomAnchor.constraint(equalTo: hv.bottomAnchor, constant: 12)
+            // below required so transient table sizing (e.g. NSView-Encapsulated-Layout-Height) can
+            // squeeze the cell without fighting 12 + 28 + 12; row height still comes from the delegate
+            bottomGap.priority = .init(999)
             NSLayoutConstraint.activate([
                 hv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 hv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 hv.topAnchor.constraint(equalTo: topAnchor, constant: 12),
                 hv.heightAnchor.constraint(equalToConstant: 28),
-                hv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+                bottomGap,
             ])
             nativeHeaderView = hv
         }
