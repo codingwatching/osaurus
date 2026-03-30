@@ -2,10 +2,8 @@
 //  NativeMessageCellView.swift
 //  osaurus
 //
-//  NSTableCellView subclass — pure AppKit rendering for all block types.
-//  Zero NSHostingView in cell rendering paths. All content is rendered via
-//  native AppKit views: NativeMarkdownView, NativeThinkingView,
-//  NativeToolCallGroupView, NativeTypingIndicatorView, etc.
+//  NSTableCellView subclass — pure AppKit rendering for all block types
+//  (preflight chips: NativePreflightCapabilitiesView).
 //
 
 import AppKit
@@ -1175,11 +1173,19 @@ final class NativeMessageCellView: NSTableCellView {
                 pfv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 pfv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
                 pfv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
-                pfv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -4),
             ])
             nativePreflightView = pfv
         }
-        nativePreflightView?.configure(items: items, theme: context.theme)
+        guard let pfv = nativePreflightView else { return }
+        pfv.onHeightChanged = { [weak self, weak pfv] in
+            guard let self, let pfv, let id = self.currentBlockId else { return }
+            context.onHeightMeasured?(pfv.measuredContentHeight() + 8, id)
+        }
+        pfv.configure(items: items, theme: context.theme, layoutWidth: context.width)
+        layoutSubtreeIfNeeded()
+        let est = PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: context.width)
+        let h = max(pfv.measuredContentHeight(), est) + 8
+        context.onHeightMeasured?(h, block.id)
     }
 
     // MARK: - Unsupported (should never appear; zero-height placeholder)
@@ -1354,7 +1360,7 @@ extension ContentBlockKind {
 /// Used by the NSTableView height delegate as a fast path.
 enum NativeCellHeightEstimator {
 
-    static func estimatedHeight(
+    @MainActor static func estimatedHeight(
         for block: ContentBlock,
         width: CGFloat,
         theme: any ThemeProtocol,
@@ -1415,6 +1421,9 @@ enum NativeCellHeightEstimator {
         case let .toolCallGroup(calls):
             // each row self-sizes at ~41pt (40pt header + 1pt separator)
             return CGFloat(calls.count) * 41 + 8
+
+        case let .preflightCapabilities(items):
+            return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         default:
             return 80

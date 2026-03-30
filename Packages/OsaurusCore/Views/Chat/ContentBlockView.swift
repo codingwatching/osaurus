@@ -184,7 +184,7 @@ struct ContentBlockView: View, Equatable {
                 .padding(.bottom, isLastInTurn ? 16 : 6)
 
         case let .preflightCapabilities(items):
-            PreflightCapabilitiesView(items: items)
+            PreflightCapabilitiesBlockView(items: items, theme: theme, width: innerWidth)
                 .padding(.top, 4)
                 .padding(.bottom, isLastInTurn ? 8 : 4)
 
@@ -503,56 +503,6 @@ private struct ActionButton: View {
     }
 }
 
-// MARK: - Preflight Capabilities View
-
-private struct PreflightCapabilitiesView: View {
-    let items: [PreflightCapabilityItem]
-
-    @Environment(\.theme) private var theme
-
-    private var icon: String {
-        let types = Set(items.map(\.type))
-        if types.count == 1, let only = types.first {
-            return only.icon
-        }
-        return "sparkles"
-    }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-
-            FlowLayout(spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    CapabilityBadge(item: item)
-                }
-            }
-        }
-    }
-}
-
-private struct CapabilityBadge: View {
-    let item: PreflightCapabilityItem
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Text(item.name)
-            .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .lineLimit(1)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground)
-            )
-            .help(item.description)
-    }
-}
-
 // MARK: - Pending Tool Call View
 
 private struct PendingToolCallView: View {
@@ -633,5 +583,23 @@ private struct PendingToolCallView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Preflight (AppKit via NSViewRepresentable)
+
+private struct PreflightCapabilitiesBlockView: NSViewRepresentable {
+    let items: [PreflightCapabilityItem]
+    let theme: ThemeProtocol
+    let width: CGFloat
+
+    func makeNSView(context: Context) -> NativePreflightCapabilitiesView {
+        let v = NativePreflightCapabilitiesView()
+        v.translatesAutoresizingMaskIntoConstraints = false
+        return v
+    }
+
+    func updateNSView(_ nsView: NativePreflightCapabilitiesView, context: Context) {
+        nsView.configure(items: items, theme: theme, layoutWidth: width)
     }
 }
