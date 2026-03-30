@@ -83,6 +83,8 @@ final class NativeHeaderView: NSView {
         actionStack.orientation = .horizontal
         actionStack.spacing = 4
         actionStack.alignment = .centerY
+        // `.fill` stretches subviews on the cross axis to the stack height; that breaks square chips.
+        actionStack.distribution = .equalSpacing
         actionStack.alphaValue = 0
         addSubview(actionStack)
 
@@ -151,58 +153,137 @@ final class NativeHeaderView: NSView {
             v.removeFromSuperview()
         }
 
-        addBtn(icon: "doc.on.doc", theme: theme, tint: nil) { [weak self] in
+        addBtn(icon: "doc.on.doc", help: "Copy", theme: theme, tint: nil) { [weak self] in
             guard let self else { return }
             self.onCopy?(self.turnId)
         }
 
         if role == .assistant {
-            addBtn(icon: "arrow.counterclockwise", theme: theme, tint: nil) { [weak self] in
+            addBtn(icon: "arrow.counterclockwise", help: "Regenerate", theme: theme, tint: nil) { [weak self] in
                 guard let self else { return }
                 self.onRegenerate?(self.turnId)
             }
         } else {
-            addBtn(icon: "pencil", theme: theme, tint: nil) { [weak self] in
+            addBtn(icon: "pencil", help: "Edit", theme: theme, tint: nil) { [weak self] in
                 guard let self else { return }
                 self.onEdit?(self.turnId)
             }
-            addBtn(icon: "trash", theme: theme, tint: NSColor(theme.errorColor)) { [weak self] in
+            addBtn(icon: "trash", help: "Delete", theme: theme, tint: nil) { [weak self] in
                 guard let self else { return }
                 self.onDelete?(self.turnId)
             }
         }
 
         if isEditing, let onCancelEdit {
-            addBtn(icon: "xmark", theme: theme, tint: nil, action: onCancelEdit)
+            addBtn(icon: "xmark", help: "Cancel edit", theme: theme, tint: nil, action: onCancelEdit)
         }
     }
 
-    private func addBtn(icon: String, theme: any ThemeProtocol, tint: NSColor?, action: @escaping () -> Void) {
-        let btn = ActionButton(action: action)
-        btn.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
-        btn.isBordered = false
-        btn.bezelStyle = .inline
-        btn.contentTintColor = tint ?? NSColor(theme.secondaryText)
-        btn.translatesAutoresizingMaskIntoConstraints = false
+    private static let actionButtonSize: CGFloat = 28
+
+    private func addBtn(icon: String, help: String, theme: any ThemeProtocol, tint: NSColor?, action: @escaping () -> Void) {
+        let control = HeaderCircleActionControl(action: action)
+        let pointSize = CGFloat(theme.captionSize) - 1
+        let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        control.setSymbol(
+            NSImage(systemSymbolName: icon, accessibilityDescription: help)?.withSymbolConfiguration(cfg),
+            toolTip: help,
+            theme: theme,
+            iconTint: tint
+        )
+        control.translatesAutoresizingMaskIntoConstraints = false
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        control.setContentCompressionResistancePriority(.required, for: .vertical)
         NSLayoutConstraint.activate([
-            btn.widthAnchor.constraint(equalToConstant: 22),
-            btn.heightAnchor.constraint(equalToConstant: 22),
+            control.widthAnchor.constraint(equalToConstant: Self.actionButtonSize),
+            control.heightAnchor.constraint(equalToConstant: Self.actionButtonSize),
         ])
-        actionStack.addArrangedSubview(btn)
+        actionStack.addArrangedSubview(control)
     }
 }
 
-// MARK: - ActionButton
+// MARK: - Circular header action buttons (matches SwiftUI `HeaderBlockContent` / `ActionButton`)
 
-private final class ActionButton: NSButton {
+/// `NSButton`’s cell/layer often disagree with `bounds`, producing non-circular backgrounds; draw the
+/// chrome on a plain `NSView` and keep a borderless `NSButton` for hit-testing and keyboard focus.
+private final class HeaderCircleActionControl: NSView {
+    private let button: NSButton
     private let block: () -> Void
+    private var fillBase: NSColor = .clear
+    private var fillHover: NSColor = .clear
+    private var tracking: NSTrackingArea?
+
     init(action: @escaping () -> Void) {
         self.block = action
+        let btn = NSButton(frame: .zero)
+        self.button = btn
         super.init(frame: .zero)
-        target = self
-        self.action = #selector(fire)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.masksToBounds = true
+
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.target = self
+        btn.action = #selector(fire)
+        btn.isBordered = false
+        btn.bezelStyle = .inline
+        btn.focusRingType = .none
+        btn.imagePosition = .imageOnly
+        btn.imageScaling = .scaleProportionallyDown
+        btn.wantsLayer = false
+        addSubview(btn)
+        NSLayoutConstraint.activate([
+            btn.leadingAnchor.constraint(equalTo: leadingAnchor),
+            btn.trailingAnchor.constraint(equalTo: trailingAnchor),
+            btn.topAnchor.constraint(equalTo: topAnchor),
+            btn.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
+
     required init?(coder: NSCoder) { fatalError() }
+
+    func setSymbol(_ image: NSImage?, toolTip: String, theme: any ThemeProtocol, iconTint: NSColor?) {
+        button.image = image
+        button.toolTip = toolTip
+        button.contentTintColor = iconTint ?? NSColor(theme.tertiaryText)
+        let secondary = NSColor(theme.secondaryBackground)
+        fillBase = secondary.withAlphaComponent(0.8)
+        fillHover = secondary.withAlphaComponent(0.95)
+        layer?.backgroundColor = fillBase.cgColor
+    }
+
+    override func layout() {
+        super.layout()
+        layer?.frame = bounds
+        let side = min(bounds.width, bounds.height)
+        layer?.cornerRadius = side > 0 ? side / 2 : 0
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking {
+            removeTrackingArea(tracking)
+        }
+        let ta = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseEnteredAndExited, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(ta)
+        tracking = ta
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        layer?.backgroundColor = fillHover.cgColor
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        layer?.backgroundColor = fillBase.cgColor
+    }
+
     @objc private func fire() { block() }
 }
 
