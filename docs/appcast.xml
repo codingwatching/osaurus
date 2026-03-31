@@ -11,7 +11,7 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.15/Osaurus-0.15.15.dmg" length="33179270" type="application/octet-stream" sparkle:edSignature="PkikDzMVxR82l1X+QhespbHiUxJZjdhQ4BcXKfS2yMD8i12+CMftvTwWbApUtgJbyaLR8/zQTwQqaXVht85MBA=="/>
-            <description><![CDATA[
+            <description sparkle:descriptionFormat="markdown"><![CDATA[
 ## What's Changed
 
 ## 🧰 Maintenance
@@ -30,7 +30,7 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.14/Osaurus-0.15.14.dmg" length="33177450" type="application/octet-stream" sparkle:edSignature="HM3i7rSy59Doc/Iz7RyK/W9Ho+mxQeQcjjJnK5HBgTo3IrFcrKprm3f3EdJYmcxOgiyLJY1WmCNRT3KeQIu7DA=="/>
-            <description><![CDATA[
+            <description sparkle:descriptionFormat="markdown"><![CDATA[
 ## What's Changed
 
 ## 🧰 Maintenance
@@ -58,5 +58,6 @@
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.13/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
-        </item>  </channel>
+        </item>
+  </channel>
 </rss>
