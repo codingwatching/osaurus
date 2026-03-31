@@ -79,7 +79,20 @@ if ! grep -q 'edSignature' updates/appcast-arm64.xml; then
   echo "✅ Injected edSignature via sign_update."
 fi
 
-# Inject <description> (markdown) and <sparkle:hardwareRequirements> into current version's items
+# If RELEASE_NOTES.md doesn't exist, fetch release notes from the GitHub Release
+if [ ! -f "RELEASE_NOTES.md" ]; then
+  echo "No local RELEASE_NOTES.md found; fetching from GitHub Release..."
+  BODY=$(curl -sf \
+    -H "Authorization: token ${GH_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${PUBLIC_REPO}/releases/tags/${VERSION}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('body',''))" 2>/dev/null || true)
+  if [ -n "$BODY" ]; then
+    printf '%s\n' "$BODY" > RELEASE_NOTES.md
+  fi
+fi
+
+# Inject <description> (markdown) into current version's item
 # Remove any releaseNotesLink since we use inline description instead
 # Notes are read via ENVIRON to avoid awk -v interpreting backslash escape sequences
 tmpfile=$(mktemp)
@@ -92,7 +105,6 @@ NOTES_FILE="$RELEASE_NOTES_FILE" awk -v ver="${VERSION}" '
   $0 ~ vtag { is_current=1 }
   /<sparkle:releaseNotesLink>/ && is_current { next }
   /<\/item>/ && is_current {
-    print "            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>"
     nf = ENVIRON["NOTES_FILE"]
     if (nf != "") {
       print "            <description><![CDATA["
