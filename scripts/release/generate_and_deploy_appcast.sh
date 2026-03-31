@@ -107,7 +107,7 @@ NOTES_FILE="$RELEASE_NOTES_FILE" awk -v ver="${VERSION}" '
   /<\/item>/ && is_current {
     nf = ENVIRON["NOTES_FILE"]
     if (nf != "") {
-      print "            <description><![CDATA["
+      print "            <description sparkle:descriptionFormat=\"markdown\"><![CDATA["
       while ((getline line < nf) > 0) {
         gsub(/\]\]>/, "]]]]><![CDATA[>", line)
         print line
