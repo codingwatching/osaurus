@@ -1166,13 +1166,21 @@ final class NativeMessageCellView: NSTableCellView {
                 if let img = ChatImageCache.shared.cachedImage(for: attachId) {
                     iv.image = img
                 } else if let data = attachment.imageData {
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
                         let img = await ChatImageCache.shared.decode(data, id: attachId)
                         iv.image = img
+                        self.layoutSubtreeIfNeeded()
+                        context.onHeightMeasured?(self.measureFittedRowHeight(), block.id)
                     }
                 }
             }
         }
+
+        // push fitted height even when NativeMarkdownView.configure returns early (no onHeightChanged),
+        // and so row height updates when estimate vs fittingSize differ by only 1–2pt (see reportMeasuredHeight)
+        layoutSubtreeIfNeeded()
+        context.onHeightMeasured?(measureFittedRowHeight(), block.id)
     }
 
     // MARK: - PendingToolCall
@@ -1227,16 +1235,24 @@ final class NativeMessageCellView: NSTableCellView {
             let av = NativeArtifactCardView()
             av.translatesAutoresizingMaskIntoConstraints = false
             addSubview(av)
+            let bottomToCell = av.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6)
+            // row height is often 44 until `heightOfRow` + cache apply; don't fight intrinsic card height
+            bottomToCell.priority = NSLayoutConstraint.Priority(250)
             NSLayoutConstraint.activate([
                 av.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
                 av.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -16),
                 av.widthAnchor.constraint(lessThanOrEqualToConstant: 420),
                 av.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-                av.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+                bottomToCell,
             ])
             nativeArtifactView = av
         }
         nativeArtifactView?.configure(artifact: artifact, theme: context.theme)
+        layoutSubtreeIfNeeded()
+        if let av = nativeArtifactView {
+            let h = av.measuredCardHeight() + 12
+            context.onHeightMeasured?(h, block.id)
+        }
     }
 
     // MARK: - PreflightCapabilities
@@ -1506,8 +1522,14 @@ enum NativeCellHeightEstimator {
         case let .preflightCapabilities(items):
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
-        default:
-            return 80
+        case let .sharedArtifact(artifact):
+            // header ~52 + size line ~16 + footer ~30 + vertical gaps + optional desc; image column adds thumbnail height
+            var h: CGFloat = 10 + 32 + 2 + 22 + 8 + 16 + 8 + 30 + 10 + 12
+            if let d = artifact.description, !d.isEmpty { h += 22 }
+            if artifact.mimeType.hasPrefix("image/") {
+                h += 160 + 8
+            }
+            return h
         }
     }
 }

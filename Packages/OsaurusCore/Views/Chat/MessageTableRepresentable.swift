@@ -819,7 +819,8 @@ extension MessageTableRepresentable {
             let existing = heightCache[blockId]
             let delta = abs((existing ?? 0) - height)
             heightCache[blockId] = height
-            if delta > 2 {
+            // 2pt was too coarse — short rows (user bubble + corner stroke) looked clipped before the next scroll
+            if delta > 0.5 {
                 NSAnimationContext.beginGrouping()
                 NSAnimationContext.current.duration = 0
                 tv.noteHeightOfRows(withIndexesChanged: IndexSet(integer: row))

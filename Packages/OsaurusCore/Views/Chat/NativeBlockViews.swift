@@ -379,27 +379,49 @@ final class NativeArtifactCardView: NSView {
     private let descLabel = NSTextField(labelWithString: "")
     private let sizeLabel = NSTextField(labelWithString: "")
     private let thumbnailView = NSImageView()
+    private let footerStack = NSStackView()
+    private let openInFinderButton = NSButton(title: "Open in Finder", target: nil, action: nil)
+    private let openInBrowserButton = NSButton(title: "Open in Browser", target: nil, action: nil)
+
+    private var thumbnailTallConstraints: [NSLayoutConstraint] = []
+    private var thumbnailCollapsedConstraints: [NSLayoutConstraint] = []
+    private var sizeTrailingToThumbnail: NSLayoutConstraint?
+    private var sizeTrailingToCard: NSLayoutConstraint?
 
     // MARK: State
 
     private var currentArtifactId: String = ""
+    private var hostPath: String = ""
+    private var isArtifactDirectory = false
+    /// avoids layout/fittingSize recursion in `intrinsicContentSize` during provisional table row layout
+    private var cachedLayoutHeight: CGFloat = 120
 
     // MARK: Init
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         buildViews()
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: max(1, cachedLayoutHeight))
+    }
 
     // MARK: Configure
 
     func configure(artifact: SharedArtifact, theme: any ThemeProtocol) {
         guard artifact.id != currentArtifactId else { return }
         currentArtifactId = artifact.id
+        hostPath = artifact.hostPath
+        isArtifactDirectory = artifact.isDirectory
 
         let accent = NSColor(theme.accentColor)
+        openInFinderButton.contentTintColor = accent
+        openInBrowserButton.contentTintColor = accent
         accentStrip.layer?.backgroundColor = accent.cgColor
         layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.5).cgColor
         layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.2).cgColor
@@ -430,17 +452,21 @@ final class NativeArtifactCardView: NSView {
         sizeLabel.stringValue = Self.formatSize(artifact.fileSize)
         sizeLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2)
         sizeLabel.textColor = NSColor(theme.tertiaryText)
+        sizeLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+
+        let showImageThumb = artifact.mimeType.hasPrefix("image/")
+        setThumbnailMode(showImageColumn: showImageThumb)
 
         // async thumbnail for image artifacts
-        if artifact.mimeType.hasPrefix("image/") {
+        if showImageThumb {
             thumbnailView.isHidden = false
-            let hostPath = artifact.hostPath
+            let path = artifact.hostPath
             let artId = artifact.id
             if let img = ChatImageCache.shared.cachedImage(for: artId) {
                 thumbnailView.image = img
             } else {
                 Task { @MainActor in
-                    if let data = try? Data(contentsOf: URL(fileURLWithPath: hostPath)) {
+                    if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
                         let img = await ChatImageCache.shared.decode(data, id: artId)
                         self.thumbnailView.image = img
                     }
@@ -448,7 +474,64 @@ final class NativeArtifactCardView: NSView {
             }
         } else {
             thumbnailView.isHidden = true
+            thumbnailView.image = nil
         }
+
+        let canOpen = !artifact.hostPath.isEmpty
+        openInFinderButton.isHidden = !canOpen
+        openInFinderButton.isEnabled = canOpen
+        let showBrowser = canOpen && (artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)))
+        openInBrowserButton.isHidden = !showBrowser
+        openInBrowserButton.isEnabled = showBrowser
+
+        layoutSubtreeIfNeeded()
+        cachedLayoutHeight = max(fittingSize.height, 1)
+        invalidateIntrinsicContentSize()
+    }
+
+    /// vertical size for table row cache — call after layout
+    func measuredCardHeight() -> CGFloat {
+        layoutSubtreeIfNeeded()
+        let h = fittingSize.height
+        cachedLayoutHeight = max(h, 1)
+        return h
+    }
+
+    private func setThumbnailMode(showImageColumn: Bool) {
+        if showImageColumn {
+            NSLayoutConstraint.deactivate(thumbnailCollapsedConstraints)
+            NSLayoutConstraint.activate(thumbnailTallConstraints)
+            sizeTrailingToCard?.isActive = false
+            sizeTrailingToThumbnail?.isActive = true
+        } else {
+            NSLayoutConstraint.deactivate(thumbnailTallConstraints)
+            NSLayoutConstraint.activate(thumbnailCollapsedConstraints)
+            sizeTrailingToThumbnail?.isActive = false
+            sizeTrailingToCard?.isActive = true
+        }
+    }
+
+    @objc private func openInFinderTapped() {
+        guard !hostPath.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: hostPath)])
+    }
+
+    @objc private func openInBrowserTapped() {
+        guard !hostPath.isEmpty else { return }
+        let url: URL
+        if isArtifactDirectory {
+            url = URL(fileURLWithPath: hostPath).appendingPathComponent("index.html")
+        } else {
+            url = URL(fileURLWithPath: hostPath)
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private static func hasIndexHTML(_ artifact: SharedArtifact) -> Bool {
+        guard artifact.isDirectory else { return false }
+        return FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: artifact.hostPath).appendingPathComponent("index.html").path
+        )
     }
 
     // MARK: - Private: Build
@@ -499,6 +582,30 @@ final class NativeArtifactCardView: NSView {
         thumbnailView.isHidden = true
         addSubview(thumbnailView)
 
+        footerStack.translatesAutoresizingMaskIntoConstraints = false
+        footerStack.orientation = .horizontal
+        footerStack.spacing = 8
+        footerStack.alignment = .centerY
+        footerStack.distribution = .fill
+        footerStack.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        let footerSpacer = NSView()
+        footerSpacer.translatesAutoresizingMaskIntoConstraints = false
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        footerStack.addArrangedSubview(footerSpacer)
+        for b in [openInBrowserButton, openInFinderButton] {
+            b.translatesAutoresizingMaskIntoConstraints = false
+            b.bezelStyle = .inline
+            b.isBordered = false
+            b.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        }
+        openInFinderButton.target = self
+        openInFinderButton.action = #selector(openInFinderTapped)
+        openInBrowserButton.target = self
+        openInBrowserButton.action = #selector(openInBrowserTapped)
+        footerStack.addArrangedSubview(openInBrowserButton)
+        footerStack.addArrangedSubview(openInFinderButton)
+        addSubview(footerStack)
+
         NSLayoutConstraint.activate([
             accentStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
             accentStrip.topAnchor.constraint(equalTo: topAnchor),
@@ -528,13 +635,32 @@ final class NativeArtifactCardView: NSView {
 
             sizeLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             sizeLabel.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8),
-            sizeLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
 
+            footerStack.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            footerStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            footerStack.topAnchor.constraint(greaterThanOrEqualTo: sizeLabel.bottomAnchor, constant: 8),
+            footerStack.topAnchor.constraint(greaterThanOrEqualTo: thumbnailView.bottomAnchor, constant: 8),
+            footerStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+        ])
+
+        sizeTrailingToCard = sizeLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
+        sizeTrailingToThumbnail = sizeLabel.trailingAnchor.constraint(lessThanOrEqualTo: thumbnailView.leadingAnchor, constant: -8)
+
+        thumbnailTallConstraints = [
             thumbnailView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            thumbnailView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             thumbnailView.widthAnchor.constraint(equalToConstant: 80),
-        ])
+            thumbnailView.heightAnchor.constraint(equalToConstant: 160),
+        ]
+        thumbnailCollapsedConstraints = [
+            thumbnailView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            thumbnailView.widthAnchor.constraint(equalToConstant: 0),
+            thumbnailView.heightAnchor.constraint(equalToConstant: 0),
+        ]
+
+        sizeTrailingToCard?.isActive = true
+        NSLayoutConstraint.activate(thumbnailCollapsedConstraints)
     }
 
     // MARK: - Static Helpers

@@ -57,6 +57,8 @@ final class NativeMarkdownView: NSView {
     private var lastThemeFingerprint: String = ""
     private var lastIsStreaming: Bool = false
     private var parseTask: Task<Void, Never>?
+    /// invalid until first layout pass with positive width — drives remeasure in `layout()`
+    private var lastLayoutWidthForHeight: CGFloat = -1
 
     // MARK: Callback
 
@@ -76,6 +78,21 @@ final class NativeMarkdownView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        // first `measuredHeight` often runs before `bounds.width` exists; remeasure once width is real
+        // so row height and text wrapping match (avoids clipped last line + trailing edge mismatch).
+        let w = bounds.width
+        guard textView != nil, w > 0.5 else { return }
+        guard abs(w - lastLayoutWidthForHeight) > 0.5 else { return }
+        lastLayoutWidthForHeight = w
+        let before = heightConstraint?.constant ?? 0
+        let newH = measuredHeight(for: lastWidth)
+        if abs(newH - before) > 0.5 {
+            onHeightChanged?()
+        }
+    }
     
     // provide intrinsic content size based on height constraint
     override var intrinsicContentSize: NSSize {
@@ -136,9 +153,6 @@ final class NativeMarkdownView: NSView {
         removeSegmentViews()
         let tv = ensureTextView(width: width, theme: theme)
 
-        if widthChanged {
-            tv.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        }
         updateTextViewColors(tv, theme: theme)
 
         if textChanged || widthChanged || themeChanged {
@@ -161,19 +175,38 @@ final class NativeMarkdownView: NSView {
 
     // MARK: Height
 
+    /// Width for `NSLayoutManager` measurement — use the *narrowest* positive candidate so we never
+    /// underestimate line count (stale configure width alone can be wider than laid-out bounds → too-short height).
+    private func measurementContentWidth(fallbackWidth: CGFloat) -> CGFloat {
+        var candidates: [CGFloat] = []
+        if bounds.width > 0.5 { candidates.append(bounds.width) }
+        if let tv = textView, tv.bounds.width > 0.5 { candidates.append(tv.bounds.width) }
+        if fallbackWidth > 0.5 { candidates.append(fallbackWidth) }
+        guard !candidates.isEmpty else { return max(fallbackWidth, 1) }
+        return candidates.min() ?? max(fallbackWidth, 1)
+    }
+
     func measuredHeight(for width: CGFloat) -> CGFloat {
         if let tv = textView {
-            tv.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
+            // widthTracksTextView syncs the container to the text view; before first layout, bounds can
+            // be 0 and usedRect height is far too small (clipped text). For measurement only, apply an
+            // explicit width (laid-out bounds when available, else configure width). do not call
+            // layoutSubtreeIfNeeded() — it can re-enter during subview enumeration (tool row tap).
             guard let lm = tv.layoutManager, let tc = tv.textContainer else { return 0 }
+            let measureW = measurementContentWidth(fallbackWidth: width)
+            let wasTracking = tc.widthTracksTextView
+            tc.widthTracksTextView = false
+            tc.containerSize = NSSize(width: measureW, height: CGFloat.greatestFiniteMagnitude)
+            defer { tc.widthTracksTextView = wasTracking }
             lm.ensureLayout(for: tc)
-            let h = ceil(lm.usedRect(for: tc).height) + 8
+            // +8: text view top/bottom inset (4+4) to superview; +4: slack for font leading / subpixel glyph bounds
+            let h = ceil(lm.usedRect(for: tc).height) + 8 + 4
             heightConstraint?.constant = max(h, 8) // ensure minimum height
             invalidateIntrinsicContentSize()
             return max(h, 8)
         }
         
         // multi segment: match applyMixedSegments — 4pt top, then each segment's spacingBefore + height.
-        layoutSubtreeIfNeeded()
         var totalH: CGFloat = 4
         for seg in lastMixedSegments {
             guard let entry = segmentViews.first(where: { $0.key == seg.id }) else { continue }
@@ -248,10 +281,6 @@ final class NativeMarkdownView: NSView {
         removeSegmentViews()
 
         let tv = ensureTextView(width: width, theme: theme)
-
-        if widthChanged {
-            tv.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        }
 
         updateTextViewColors(tv, theme: theme)
 
@@ -415,8 +444,9 @@ final class NativeMarkdownView: NSView {
         tv.textContainerInset = .zero
         tv.isVerticallyResizable = false
         tv.isHorizontallyResizable = false
-        tv.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
-        tv.textContainer?.widthTracksTextView = false
+        // fixed container width + stale configure() width makes lines wrap too wide vs visible bounds
+        tv.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainer?.widthTracksTextView = true
         tv.textContainer?.lineFragmentPadding = 0
         tv.translatesAutoresizingMaskIntoConstraints = false
 
@@ -464,6 +494,7 @@ final class NativeMarkdownView: NSView {
         textView?.removeFromSuperview()
         textView = nil
         lastBlocks = []
+        lastLayoutWidthForHeight = -1
     }
 
     private func removeSegmentViews() {
