@@ -408,6 +408,7 @@ final class NativeToolCallRowView: NSView {
         addSubview(argPreviewLabel)
 
         chevron.translatesAutoresizingMaskIntoConstraints = false
+        chevron.wantsLayer = true
         chevron.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         chevron.contentTintColor = .tertiaryLabelColor
         chevron.imageScaling = .scaleProportionallyUpOrDown

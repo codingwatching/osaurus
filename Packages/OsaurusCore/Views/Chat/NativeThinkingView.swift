@@ -213,6 +213,7 @@ final class NativeThinkingView: NSView {
         addSubview(charCountLabel)
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
+        chevronView.wantsLayer = true
         chevronView.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: nil)
         chevronView.contentTintColor = .tertiaryLabelColor
         chevronView.imageScaling = .scaleProportionallyUpOrDown

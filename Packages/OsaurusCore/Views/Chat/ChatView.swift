@@ -998,15 +998,15 @@ final class ChatSession: ObservableObject {
                             }
                             if let toolName = StreamingToolHint.decode(delta) {
                                 assistantTurn.pendingToolName = toolName
-                                self.objectWillChange.send()
+                                rebuildVisibleBlocks()
                                 continue
                             }
                             if let argFragment = StreamingToolHint.decodeArgs(delta) {
                                 assistantTurn.appendToolArgFragment(argFragment)
-                                // throttle: only signal every 5 fragments to avoid flooding the
+                                // throttle: only refresh every 5 fragments to avoid flooding the
                                 // table with row reconfigurations during arg streaming.
                                 if assistantTurn.pendingToolArgSize % 5 == 0 {
-                                    self.objectWillChange.send()
+                                    rebuildVisibleBlocks()
                                 }
                                 continue
                             }

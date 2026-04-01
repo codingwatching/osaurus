@@ -14,6 +14,7 @@
 //
 
 import AppKit
+import Foundation
 
 // MARK: - NativeMarkdownView
 
@@ -57,6 +58,8 @@ final class NativeMarkdownView: NSView {
     private var lastThemeFingerprint: String = ""
     private var lastIsStreaming: Bool = false
     private var parseTask: Task<Void, Never>?
+    /// cancels stale loads when segment id is reused with a new URL or view is removed
+    private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// invalid until first layout pass with positive width — drives remeasure in `layout()`
     private var lastLayoutWidthForHeight: CGFloat = -1
 
@@ -318,6 +321,7 @@ final class NativeMarkdownView: NSView {
         // remove stale segment views
         segmentViews = segmentViews.filter { entry in
             if requiredKeys.contains(entry.key) { return true }
+            cancelImageLoadTask(forSegmentId: entry.key)
             entry.view.removeFromSuperview()
             return false
         }
@@ -386,13 +390,8 @@ final class NativeMarkdownView: NSView {
                     iv.layer?.masksToBounds = true
                     iv.heightAnchor.constraint(equalToConstant: 160).isActive = true
                     addSubview(iv)
-                    if let url = URL(string: urlString) {
-                        Task { @MainActor in
-                            if let data = try? Data(contentsOf: url),
-                               let img = NSImage(data: data) { iv.image = img }
-                        }
-                    }
                 }
+                scheduleImageLoad(segmentId: seg.id, urlString: urlString, imageView: iv)
                 segView = iv
 
             case .math:
@@ -498,9 +497,67 @@ final class NativeMarkdownView: NSView {
     }
 
     private func removeSegmentViews() {
+        cancelAllImageLoadTasks()
         for entry in segmentViews { entry.view.removeFromSuperview() }
         segmentViews = []
         lastMixedSegments = []
+    }
+
+    private func cancelAllImageLoadTasks() {
+        for (_, (_, t)) in imageLoadTasks { t.cancel() }
+        imageLoadTasks.removeAll()
+    }
+
+    private func cancelImageLoadTask(forSegmentId id: String) {
+        if let (_, t) = imageLoadTasks[id] { t.cancel() }
+        imageLoadTasks[id] = nil
+    }
+
+    /// loads image data off the main thread; ignores stale completions when URL or layout changes
+    private func scheduleImageLoad(segmentId: String, urlString: String, imageView: NSImageView) {
+        cancelImageLoadTask(forSegmentId: segmentId)
+        guard let url = URL(string: urlString) else {
+            imageView.image = nil
+            return
+        }
+
+        let token = UUID()
+        let task = Task { [weak self, weak imageView] in
+            let data: Data?
+            if url.isFileURL {
+                let fileURL = url
+                data = try? await Task.detached(priority: .userInitiated) {
+                    try Data(contentsOf: fileURL)
+                }.value
+            } else {
+                do {
+                    let (d, _) = try await URLSession.shared.data(from: url)
+                    data = d
+                } catch {
+                    data = nil
+                }
+            }
+            guard !Task.isCancelled else { return }
+            guard let data, let img = NSImage(data: data) else {
+                await MainActor.run {
+                    guard let self, let imageView else { return }
+                    guard self.imageLoadTasks[segmentId]?.0 == token else { return }
+                    guard self.segmentViews.contains(where: { $0.key == segmentId && $0.view === imageView }) else { return }
+                    imageView.image = nil
+                    self.imageLoadTasks.removeValue(forKey: segmentId)
+                }
+                return
+            }
+            await MainActor.run {
+                guard let self, let imageView else { return }
+                guard self.imageLoadTasks[segmentId]?.0 == token else { return }
+                guard self.segmentViews.contains(where: { $0.key == segmentId && $0.view === imageView }) else { return }
+                imageView.image = img
+                self.imageLoadTasks.removeValue(forKey: segmentId)
+                self.onHeightChanged?()
+            }
+        }
+        imageLoadTasks[segmentId] = (token, task)
     }
 
     // MARK: - Theme Fingerprint

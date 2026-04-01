@@ -391,6 +391,8 @@ final class NativeArtifactCardView: NSView {
     // MARK: State
 
     private var currentArtifactId: String = ""
+    private var currentThemeFingerprint: String = ""
+    private var thumbnailLoadTask: Task<Void, Never>?
     private var hostPath: String = ""
     private var isArtifactDirectory = false
     /// avoids layout/fittingSize recursion in `intrinsicContentSize` during provisional table row layout
@@ -414,8 +416,10 @@ final class NativeArtifactCardView: NSView {
     // MARK: Configure
 
     func configure(artifact: SharedArtifact, theme: any ThemeProtocol) {
-        guard artifact.id != currentArtifactId else { return }
+        let themeFP = artifactThemeFingerprint(theme)
+        guard artifact.id != currentArtifactId || themeFP != currentThemeFingerprint else { return }
         currentArtifactId = artifact.id
+        currentThemeFingerprint = themeFP
         hostPath = artifact.hostPath
         isArtifactDirectory = artifact.isDirectory
 
@@ -462,17 +466,30 @@ final class NativeArtifactCardView: NSView {
             thumbnailView.isHidden = false
             let path = artifact.hostPath
             let artId = artifact.id
+            thumbnailLoadTask?.cancel()
+            thumbnailLoadTask = nil
             if let img = ChatImageCache.shared.cachedImage(for: artId) {
                 thumbnailView.image = img
             } else {
-                Task { @MainActor in
-                    if let data = try? Data(contentsOf: URL(fileURLWithPath: path)) {
-                        let img = await ChatImageCache.shared.decode(data, id: artId)
+                let fileURL = URL(fileURLWithPath: path)
+                thumbnailLoadTask = Task { [weak self] in
+                    let data = try? await Task.detached(priority: .userInitiated) {
+                        try Data(contentsOf: fileURL)
+                    }.value
+                    guard !Task.isCancelled else { return }
+                    guard let data else { return }
+                    let img = await ChatImageCache.shared.decode(data, id: artId)
+                    await MainActor.run {
+                        guard let self else { return }
+                        guard self.currentArtifactId == artId else { return }
                         self.thumbnailView.image = img
+                        self.thumbnailLoadTask = nil
                     }
                 }
             }
         } else {
+            thumbnailLoadTask?.cancel()
+            thumbnailLoadTask = nil
             thumbnailView.isHidden = true
             thumbnailView.image = nil
         }
@@ -495,6 +512,10 @@ final class NativeArtifactCardView: NSView {
         let h = fittingSize.height
         cachedLayoutHeight = max(h, 1)
         return h
+    }
+
+    private func artifactThemeFingerprint(_ theme: any ThemeProtocol) -> String {
+        "\(theme.bodySize)|\(theme.captionSize)|\(NSColor(theme.accentColor).description)|\(NSColor(theme.secondaryBackground).description)|\(NSColor(theme.primaryBorder).description)|\(NSColor(theme.primaryText).description)|\(NSColor(theme.tertiaryText).description)"
     }
 
     private func setThumbnailMode(showImageColumn: Bool) {
@@ -1081,7 +1102,12 @@ final class NativeCodeBlockView: NSView {
             theme: theme
         )
         cv.textStorage?.setAttributedString(attrStr)
-        cv.codeFontSize = CGFloat(theme.codeSize) * 0.85
+        // must match CodeContentView.buildAttributedString: gutter + headIndent use
+        // bodySize * Typography.scale * 0.85 — not theme.codeSize, or drawn line
+        // numbers use different metrics than the text and crowd the code when narrow
+        let scale = Typography.scale(for: lastWidth - 24)
+        let bodyFontSize = CGFloat(theme.bodySize) * scale
+        cv.codeFontSize = bodyFontSize * 0.85
         cv.lineCount = code.components(separatedBy: "\n").count
         
         // update height constraint based on measured text height
