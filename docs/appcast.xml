@@ -3,6 +3,34 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.15.16</title>
+            <pubDate>Wed, 01 Apr 2026 18:36:57 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.15.16</sparkle:version>
+            <sparkle:shortVersionString>0.15.16</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.16/Osaurus-0.15.16.dmg" length="33219122" type="application/octet-stream" sparkle:edSignature="XaVCEdl5BUADaPyJhBuOgBM+UT/cD7gei5O9uP102v9qVPvvSwBTSKewKMysdhjBCBtwu9cZU5dkpSk2S3v3Cw=="/>
+            <description sparkle:descriptionFormat="markdown"><![CDATA[
+## What's Changed
+
+- chore: added linting on pre-push hook using lefthook (#761) by @ritave
+- feat: add bonjour broadcast and discovery for agents (#683) by @ritave
+- GPU optimizations (#759) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- updated relay to refresh after load (#758) by @tpae
+
+## 🧰 Maintenance
+
+- fix team id (#762) by @tpae
+- fixed embedding / skills related potential crashes, extended unit tests (#760) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.15.15...0.15.16
+]]></description>
+        </item>
+        <item>
             <title>0.15.15</title>
             <pubDate>Tue, 31 Mar 2026 19:24:03 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
@@ -58,6 +86,5 @@
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.5</sparkle:minimumSystemVersion>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.13/Osaurus-0.0.9.dmg" length="7520848" type="application/octet-stream"/>
-        </item>
-  </channel>
+        </item>  </channel>
 </rss>
