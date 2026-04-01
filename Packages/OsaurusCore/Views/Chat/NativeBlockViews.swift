@@ -881,6 +881,7 @@ final class NativeCodeBlockView: NSView {
         copyButton.alphaValue = 1 // Ensure it's visible
         copyButton.target = self
         copyButton.action = #selector(copyCode)
+        copyButton.alphaValue = 0.45
         headerView.addSubview(copyButton)
 
         NSLayoutConstraint.activate([
@@ -990,9 +991,10 @@ final class NativeCodeBlockView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
+        // keep a non-zero alpha so the control stays hit-testable (alpha 0 can drop clicks through to views below)
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
-            copyButton.animator().alphaValue = 0
+            copyButton.animator().alphaValue = 0.45
         }
     }
 

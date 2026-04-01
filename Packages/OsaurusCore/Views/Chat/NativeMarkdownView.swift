@@ -23,9 +23,17 @@ final class NativeMarkdownView: NSView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // first try subviews (SelectableNSTextView, etc)
         if let sub = super.hitTest(point) { return sub }
-        // if point is in our bounds, return ourselves so we can be part of the responder chain
+        // when the container is taller than the laid-out text (or timing leaves super.hitTest nil),
+        // route into the text view so drags and clicks still start selection
+        if let tv = textView {
+            let pInTv = convert(point, to: tv)
+            if let hit = tv.hitTest(pInTv) { return hit }
+        }
+        for entry in segmentViews.reversed() {
+            let pInSeg = convert(point, to: entry.view)
+            if let hit = entry.view.hitTest(pInSeg) { return hit }
+        }
         if NSPointInRect(point, bounds) { return self }
         return nil
     }
@@ -427,6 +435,8 @@ final class NativeMarkdownView: NSView {
     }
 
     private func updateTextViewColors(_ tv: SelectableNSTextView, theme: any ThemeProtocol) {
+        tv.isEditable = false
+        tv.isSelectable = true
         tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
         tv.insertionPointColor = NSColor(theme.cursorColor)
         tv.accentColor = NSColor(theme.accentColor)

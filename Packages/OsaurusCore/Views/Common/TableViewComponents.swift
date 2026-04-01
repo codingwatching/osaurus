@@ -42,6 +42,8 @@ final class HoverTrackingTableView: NSTableView {
     /// to become first responder without requiring the row to be selected first.
     override func validateProposedFirstResponder(_ responder: NSResponder, for event: NSEvent?) -> Bool {
         if responder is NSTextView || responder is NSTextField { return true }
+        // code block copy buttons, tool row headers, etc.
+        if responder is NSButton { return true }
         return super.validateProposedFirstResponder(responder, for: event)
     }
 }

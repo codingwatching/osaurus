@@ -123,6 +123,10 @@ final class ChatSession: ObservableObject {
                 await self?.refreshPickerItems()
             }
         }
+
+        if MockChatData.isEnabled {
+            rebuildVisibleBlocks()
+        }
     }
 
     deinit {
@@ -203,12 +207,44 @@ final class ChatSession: ObservableObject {
     /// Precomputed group header map. Updated alongside `visibleBlocks`.
     @Published private(set) var visibleBlocksGroupHeaderMap: [UUID: UUID] = [:]
 
+    /// Whether the message thread has content (includes USE_MOCK_CHAT_DATA stress data).
+    var hasVisibleThreadMessages: Bool {
+        if MockChatData.isEnabled {
+            return !visibleBlocks.isEmpty
+        }
+        return !turns.isEmpty
+    }
+
+    /// Last assistant turn for hover/regen chrome; respects mock thread when enabled.
+    var lastAssistantTurnIdForThread: UUID? {
+        if MockChatData.isEnabled {
+            return visibleBlocks.last { $0.role == .assistant }?.turnId
+        }
+        return turns.last { $0.role == .assistant }?.id
+    }
+
     /// Rebuild `visibleBlocks` and `visibleBlocksGroupHeaderMap` from current turns.
     /// Cheap to call repeatedly — BlockMemoizer fast-paths when nothing changed.
     func rebuildVisibleBlocks() {
         let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
         let displayName = agent?.isBuiltIn == true ? "Assistant" : (agent?.name ?? "Assistant")
         let streamingTurnId = isStreaming ? turns.last?.id : nil
+
+        if MockChatData.isEnabled {
+            let mockTurns = MockChatData.mockTurnsForPerformanceTest()
+            let newBlocks = blockMemoizer.blocks(
+                from: mockTurns,
+                streamingTurnId: nil,
+                agentName: displayName,
+                thinkingEnabled: activeModelOptions["disableThinking"]?.boolValue == false
+            )
+            let newHeaderMap = blockMemoizer.groupHeaderMap
+            withAnimation(.none) {
+                visibleBlocks = newBlocks
+                visibleBlocksGroupHeaderMap = newHeaderMap
+            }
+            return
+        }
 
         let newBlocks = blockMemoizer.blocks(
             from: turns,
@@ -217,7 +253,7 @@ final class ChatSession: ObservableObject {
             thinkingEnabled: activeModelOptions["disableThinking"]?.boolValue == false
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
-        
+
         // use withAnimation(.none) to suppress the warning about publishing during view updates
         // this wraps the changes in a proper SwiftUI transaction
         withAnimation(.none) {
@@ -370,6 +406,8 @@ final class ChatSession: ObservableObject {
             selectedModel = pickerItems.first?.id
         }
         isLoadingModel = false
+
+        rebuildVisibleBlocks()
     }
 
     /// Reset for a specific agent
@@ -1255,7 +1293,7 @@ struct ChatView: View {
 
                         // Content area (show immediately, model discovery is async)
                         if session.hasAnyModel || session.isDiscoveringModels {
-                            if session.turns.isEmpty {
+                            if !session.hasVisibleThreadMessages {
                                 // Empty state
                                 ChatEmptyState(
                                     hasModels: true,
@@ -1351,7 +1389,7 @@ struct ChatView: View {
                             )
                         }
                     }
-                    .animation(theme.springAnimation(responseMultiplier: 0.9), value: session.turns.isEmpty)
+                    .animation(theme.springAnimation(responseMultiplier: 0.9), value: session.hasVisibleThreadMessages)
                 }
             }
         }
@@ -1552,7 +1590,7 @@ struct ChatView: View {
         let blocks = session.visibleBlocks
         let groupHeaderMap = session.visibleBlocksGroupHeaderMap
         let displayName = windowState.cachedAgentDisplayName
-        let lastAssistantTurnId = session.turns.last { $0.role == .assistant }?.id
+        let lastAssistantTurnId = session.lastAssistantTurnIdForThread
 
         return ZStack {
             MessageThreadView(
@@ -1587,7 +1625,7 @@ struct ChatView: View {
                     Spacer()
                     ScrollToBottomButton(
                         isPinnedToBottom: isPinnedToBottom,
-                        hasTurns: !session.turns.isEmpty,
+                        hasTurns: session.hasVisibleThreadMessages,
                         onTap: {
                             isPinnedToBottom = true
                             scrollToBottomTrigger += 1

@@ -1058,6 +1058,10 @@ final class SelectableNSTextView: NSTextView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        // table cells and overlay views sometimes prevent first responder; claim it before link handling
+        if window?.firstResponder != self {
+            window?.makeFirstResponder(self)
+        }
         let point = convert(event.locationInWindow, from: nil)
         let charIndex = characterIndexForInsertion(at: point)
 

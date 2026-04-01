@@ -46,6 +46,9 @@ final class NativeThinkingView: NSView {
     // MARK: Colors
 
     private let thinkingTint = NSColor(red: 0.55, green: 0.45, blue: 0.85, alpha: 1)
+    private let cornerRadius: CGFloat = 10
+    /// reliable stroke in table cells — CALayer `borderWidth` is often invisible when layer-backed
+    private var borderStrokeLayer: CAShapeLayer?
 
     // MARK: Init
 
@@ -55,6 +58,48 @@ final class NativeThinkingView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        updateBorderStrokePath()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if let h = hit {
+            // `contentContainer` can return itself for transparent gaps; route into markdown for selection
+            if h === contentContainer && isExpanded, let mdv = markdownView {
+                let p = convert(point, to: mdv)
+                return mdv.hitTest(p) ?? h
+            }
+            return h
+        }
+        guard isExpanded, let mdv = markdownView else { return nil }
+        let p = convert(point, to: mdv)
+        return mdv.hitTest(p)
+    }
+
+    private func updateBorderStrokePath() {
+        let b = bounds
+        guard b.width > 2, b.height > 2 else { return }
+        if borderStrokeLayer == nil {
+            let stroke = CAShapeLayer()
+            stroke.fillColor = nil
+            stroke.lineWidth = 0.5
+            stroke.lineJoin = .round
+            layer?.addSublayer(stroke)
+            borderStrokeLayer = stroke
+        }
+        guard let stroke = borderStrokeLayer else { return }
+        let lw = stroke.lineWidth
+        let inset = lw / 2
+        // path is in stroke layer local coordinates (origin top-left for layer matching view bounds)
+        stroke.frame = b
+        let rect = CGRect(origin: .zero, size: b.size).insetBy(dx: inset, dy: inset)
+        let r = max(cornerRadius - inset, 0)
+        stroke.path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).cgPath
+        stroke.strokeColor = thinkingTint.withAlphaComponent(0.22).cgColor
+    }
 
     // MARK: Configure
 
@@ -89,10 +134,16 @@ final class NativeThinkingView: NSView {
         updateChevron(expanded: isExpanded, animated: isExpanded != self.isExpanded)
         self.isExpanded = isExpanded
 
+        // matches ThinkingBlockView: fill + strokeBorder + light shadow (stroke via CAShapeLayer in layout)
+        layer?.cornerRadius = cornerRadius
+        layer?.masksToBounds = false
         layer?.backgroundColor = thinkingTint.withAlphaComponent(0.05).cgColor
-        layer?.cornerRadius = 10
-        layer?.borderWidth = 0.5
-        layer?.borderColor = thinkingTint.withAlphaComponent(0.15).cgColor
+        layer?.borderWidth = 0
+        layer?.borderColor = nil
+        layer?.shadowColor = thinkingTint.withAlphaComponent(0.04).cgColor
+        layer?.shadowOffset = CGSize(width: 0, height: 1)
+        layer?.shadowRadius = 2
+        layer?.shadowOpacity = 1
 
         contentContainer.isHidden = !isExpanded
         separatorView.isHidden = !isExpanded
@@ -119,8 +170,8 @@ final class NativeThinkingView: NSView {
         // collapsed: header only — avoid reserving expanded-content slack (was +14, looked like a dead gap)
         let collapsedBottomInset: CGFloat = 4
         guard isExpanded, let mdv = markdownView else { return headerH + collapsedBottomInset }
-        // minus contentContainer insets
-        let contentH = mdv.measuredHeight(for: currentWidth - 28 - 28)
+        // must match `mdv.configure(..., width: width - 28)` — do not subtract container insets twice
+        let contentH = mdv.measuredHeight(for: currentWidth - 28)
         return headerH + 1 + 8 + contentH + 10
     }
 
@@ -221,6 +272,9 @@ final class NativeThinkingView: NSView {
             contentContainer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
             contentContainer.topAnchor.constraint(equalTo: separatorView.bottomAnchor, constant: 8),
         ])
+
+        // keep the transparent header control behind expanded content so it cannot steal clicks
+        addSubview(headerButton, positioned: .below, relativeTo: nil)
     }
 
     private func ensureMarkdownView() -> NativeMarkdownView {
@@ -232,6 +286,7 @@ final class NativeThinkingView: NSView {
             mdv.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
             mdv.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
             mdv.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            mdv.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
         markdownView = mdv
         return mdv

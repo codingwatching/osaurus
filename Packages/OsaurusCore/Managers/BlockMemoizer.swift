@@ -172,6 +172,10 @@ final class BlockMemoizer {
     }
 
     private func limited(streaming: Bool) -> [ContentBlock] {
+        // synthetic stress thread for profiling — must not truncate (see MockChatData)
+        if ProcessInfo.processInfo.environment["USE_MOCK_CHAT_DATA"] == "1" {
+            return cached
+        }
         // during streaming, cap tightly to prevent layout thrash on every delta.
         // use a smooth transition: once streaming ends the cap rises gradually so
         // the table doesn't get a sudden burst of new rows all at once.

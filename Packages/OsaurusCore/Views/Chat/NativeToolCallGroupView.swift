@@ -196,9 +196,21 @@ final class NativeToolCallRowView: NSView {
 
     // Expanded content
     private let contentContainer = NSView()
+    private let argumentsSectionTitle = NSTextField(labelWithString: "ARGUMENTS")
+    private var resultSectionTitle: NSTextField?
     private var argsView: NativeMarkdownView?
     private var resultView: NativeMarkdownView?
     private let separatorView = NSView()
+    /// pins contentContainer height for hit-testing; toggled when result section is shown
+    private var contentBottomToArgs: NSLayoutConstraint?
+    private var contentBottomToResult: NSLayoutConstraint?
+    private var resultTitleTopToArgs: NSLayoutConstraint?
+    private var resultViewTopToTitle: NSLayoutConstraint?
+
+    /// headings + body share the same left/right inset (matches reference: ARGUMENTS/RESULT align with code/result text)
+    private static let sectionContentInset: CGFloat = 12
+    /// row `contentContainer` is inset 12+12; section content is inset 12+12 → `innerWidth - 48` for markdown
+    private static var sectionMarkdownWidthDeduction: CGFloat { 4 * sectionContentInset }
 
     // MARK: Self-sizing height constraint
 
@@ -224,6 +236,26 @@ final class NativeToolCallRowView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        if let h = hit {
+            if h === contentContainer && isExpanded {
+                if let a = argsView {
+                    let pa = convert(point, to: a)
+                    if let inner = a.hitTest(pa) { return inner }
+                }
+                if let r = resultView, !r.isHidden {
+                    let pr = convert(point, to: r)
+                    if let inner = r.hitTest(pr) { return inner }
+                }
+            }
+            return h
+        }
+        guard isExpanded else { return nil }
+        let pc = convert(point, to: contentContainer)
+        return contentContainer.hitTest(pc)
+    }
 
     // MARK: Configure
 
@@ -274,6 +306,8 @@ final class NativeToolCallRowView: NSView {
         contentContainer.isHidden = !isExpanded
 
         if isExpanded {
+            applyToolDetailSectionHeading(to: argumentsSectionTitle, text: "ARGUMENTS", theme: theme)
+
             let rawArgs = item.call.function.arguments
             if isNew || cachedArgs == nil {
                 let pretty = JSONFormatter.prettyJSON(rawArgs)
@@ -281,19 +315,25 @@ final class NativeToolCallRowView: NSView {
             }
             if let args = cachedArgs {
                 let av = ensureArgsView()
-                av.configure(text: "```json\n\(args)\n```", width: width - 24, theme: theme,
+                let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
+                av.configure(text: "```json\n\(args)\n```", width: textW, theme: theme,
                              cacheKey: "args-\(item.call.id)", isStreaming: false)
                 av.onHeightChanged = { [weak self] in self?.applyHeight() }
             }
             if let result = item.result {
                 let displayResult = result.hasPrefix("[REJECTED]") ? result : result
+                ensureResultSectionTitle(theme: theme).isHidden = false
+
                 let rv = ensureResultView()
                 rv.isHidden = false
-                rv.configure(text: displayResult, width: width - 24, theme: theme,
+                let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
+                rv.configure(text: displayResult, width: textW, theme: theme,
                              cacheKey: "result-\(item.call.id)", isStreaming: false)
                 rv.onHeightChanged = { [weak self] in self?.applyHeight() }
+                contentBottomToArgs?.isActive = false
+                contentBottomToResult?.isActive = true
             } else {
-                resultView?.isHidden = true
+                tearDownResultSection()
             }
         }
 
@@ -310,14 +350,17 @@ final class NativeToolCallRowView: NSView {
     func measuredHeight() -> CGFloat {
         let rowH: CGFloat = 40
         guard isExpanded else { return rowH + 1 }  // 40pt header + 1pt separator line at bottom
-        let argsH = argsView?.measuredHeight(for: currentWidth - 24) ?? 0
+        // matches InlineToolCallView ToolDetailSection header row (~9pt bold + padding)
+        let sectionTitleH: CGFloat = 22
+        let textW = max(0, currentWidth - Self.sectionMarkdownWidthDeduction)
+        let argsH = argsView?.measuredHeight(for: textW) ?? 0
         let resultH: CGFloat
         if let rv = resultView, !rv.isHidden {
-            resultH = 8 + rv.measuredHeight(for: currentWidth - 24)
+            resultH = 8 + sectionTitleH + rv.measuredHeight(for: textW)
         } else {
             resultH = 0
         }
-        return rowH + 1 + 8 + argsH + resultH + 8
+        return rowH + 1 + 8 + sectionTitleH + argsH + resultH + 8
     }
 
     // MARK: - Private
@@ -380,6 +423,19 @@ final class NativeToolCallRowView: NSView {
         contentContainer.translatesAutoresizingMaskIntoConstraints = false
         contentContainer.isHidden = true
         addSubview(contentContainer)
+
+        argumentsSectionTitle.translatesAutoresizingMaskIntoConstraints = false
+        argumentsSectionTitle.isEditable = false
+        argumentsSectionTitle.isBordered = false
+        argumentsSectionTitle.drawsBackground = false
+        argumentsSectionTitle.alignment = .left
+        contentContainer.addSubview(argumentsSectionTitle)
+
+        NSLayoutConstraint.activate([
+            argumentsSectionTitle.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
+            argumentsSectionTitle.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor),
+            argumentsSectionTitle.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+        ])
 
         // header button ON TOP — transparent overlay for click handling
         headerButton.translatesAutoresizingMaskIntoConstraints = false
@@ -464,28 +520,102 @@ final class NativeToolCallRowView: NSView {
         v.onHeightChanged = { [weak self] in self?.applyHeight() }
         contentContainer.addSubview(v)
         NSLayoutConstraint.activate([
-            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            v.topAnchor.constraint(equalTo: contentContainer.topAnchor),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -Self.sectionContentInset),
+            v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: 4),
         ])
         argsView = v
+
+        let pinArgs = contentContainer.bottomAnchor.constraint(equalTo: v.bottomAnchor)
+        pinArgs.isActive = true
+        contentBottomToArgs = pinArgs
         return v
+    }
+
+    private func ensureResultSectionTitle(theme: any ThemeProtocol) -> NSTextField {
+        if let t = resultSectionTitle {
+            applyToolDetailSectionHeading(to: t, text: "RESULT", theme: theme)
+            return t
+        }
+        let t = NSTextField(labelWithString: "RESULT")
+        t.translatesAutoresizingMaskIntoConstraints = false
+        t.isEditable = false
+        t.isBordered = false
+        t.drawsBackground = false
+        t.alignment = .left
+        applyToolDetailSectionHeading(to: t, text: "RESULT", theme: theme)
+        contentContainer.addSubview(t)
+        let av = ensureArgsView()
+        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8)
+        top.isActive = true
+        resultTitleTopToArgs = top
+        NSLayoutConstraint.activate([
+            t.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
+            t.trailingAnchor.constraint(lessThanOrEqualTo: contentContainer.trailingAnchor),
+        ])
+        resultSectionTitle = t
+        return t
     }
 
     private func ensureResultView() -> NativeMarkdownView {
         if let v = resultView { return v }
-        let av = ensureArgsView()
+        guard let rt = resultSectionTitle, argsView != nil else {
+            fatalError("ensureResultView: call ensureResultSectionTitle before ensureResultView")
+        }
         let v = NativeMarkdownView()
         v.translatesAutoresizingMaskIntoConstraints = false
         v.onHeightChanged = { [weak self] in self?.applyHeight() }
         contentContainer.addSubview(v)
+
+        contentBottomToArgs?.isActive = false
+        let pinResult = contentContainer.bottomAnchor.constraint(equalTo: v.bottomAnchor)
+        pinResult.isActive = true
+        contentBottomToResult = pinResult
+
+        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: 4)
+        topToTitle.isActive = true
+        resultViewTopToTitle = topToTitle
+
         NSLayoutConstraint.activate([
-            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor),
-            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor),
-            v.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+            v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: Self.sectionContentInset),
+            v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -Self.sectionContentInset),
         ])
         resultView = v
         return v
+    }
+
+    /// removes result UI so the args section can own `contentContainer.bottom` without conflicting constraints
+    private static func toolDetailSectionHeadingFont() -> NSFont {
+        let base = NSFont.systemFont(ofSize: 9, weight: .bold)
+        guard let roundedDesc = base.fontDescriptor.withDesign(.rounded) else { return base }
+        return NSFont(descriptor: roundedDesc, size: 9) ?? base
+    }
+
+    private func applyToolDetailSectionHeading(to field: NSTextField, text: String, theme: any ThemeProtocol) {
+        let font = Self.toolDetailSectionHeadingFont()
+        let s = NSMutableAttributedString(string: text)
+        let full = NSRange(location: 0, length: s.length)
+        s.addAttribute(.font, value: font, range: full)
+        s.addAttribute(.kern, value: 0.8, range: full)
+        s.addAttribute(.foregroundColor, value: NSColor(theme.tertiaryText), range: full)
+        field.attributedStringValue = s
+    }
+
+    private func tearDownResultSection() {
+        resultTitleTopToArgs?.isActive = false
+        resultViewTopToTitle?.isActive = false
+        resultTitleTopToArgs = nil
+        resultViewTopToTitle = nil
+
+        contentBottomToResult?.isActive = false
+        contentBottomToResult = nil
+
+        resultSectionTitle?.removeFromSuperview()
+        resultSectionTitle = nil
+        resultView?.removeFromSuperview()
+        resultView = nil
+
+        contentBottomToArgs?.isActive = true
     }
 
     private func statusInfo(item: ToolCallItem, theme: any ThemeProtocol) -> (String, NSColor) {
