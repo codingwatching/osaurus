@@ -44,6 +44,9 @@ final class ChatWindowState: ObservableObject {
 
     @Published var agentId: UUID
     @Published private(set) var agents: [Agent] = []
+    @Published private(set) var discoveredAgents: [DiscoveredAgent] = []
+    @Published var selectedDiscoveredAgent: DiscoveredAgent?
+    @Published var selectedDiscoveredAgentProviderId: UUID?
 
     // MARK: - Theme State
 
@@ -61,6 +64,7 @@ final class ChatWindowState: ObservableObject {
 
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
     private var sessionRefreshWorkItem: DispatchWorkItem?
+    private var bonjourCancellable: AnyCancellable?
 
     // MARK: - Initialization
 
@@ -92,6 +96,7 @@ final class ChatWindowState: ObservableObject {
         }
 
         setupNotificationObservers()
+        observeBonjourBrowser()
     }
 
     /// Wrap an existing `ExecutionContext`, reusing its sessions without duplication.
@@ -122,6 +127,7 @@ final class ChatWindowState: ObservableObject {
         }
 
         setupNotificationObservers()
+        observeBonjourBrowser()
     }
 
     deinit {
@@ -131,6 +137,9 @@ final class ChatWindowState: ObservableObject {
 
     /// Stops any running execution and breaks reference chains — call when window is closing.
     func cleanup() {
+        removeEphemeralProviderIfNeeded()
+        selectedDiscoveredAgent = nil
+        selectedDiscoveredAgentProviderId = nil
         workSession?.cancelExecution()
         session.stop()
         workSession = nil
@@ -148,6 +157,9 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         if !session.turns.isEmpty { session.save() }
         agentId = newAgentId
+        removeEphemeralProviderIfNeeded()
+        selectedDiscoveredAgent = nil
+        selectedDiscoveredAgentProviderId = nil
         session.reset(for: newAgentId)
         refreshTheme()
         refreshSessions()
@@ -286,6 +298,28 @@ final class ChatWindowState: ObservableObject {
     }
 
     // MARK: - Private
+
+    private func observeBonjourBrowser() {
+        bonjourCancellable = BonjourBrowser.shared.$discoveredAgents
+            .receive(on: RunLoop.main)
+            .sink { [weak self] agents in
+                self?.discoveredAgents = agents
+                if let selected = self?.selectedDiscoveredAgent,
+                    !agents.contains(where: { $0.id == selected.id })
+                {
+                    self?.removeEphemeralProviderIfNeeded()
+                    self?.selectedDiscoveredAgent = nil
+                    self?.selectedDiscoveredAgentProviderId = nil
+                }
+            }
+    }
+
+    private func removeEphemeralProviderIfNeeded() {
+        guard let providerId = selectedDiscoveredAgentProviderId,
+            RemoteProviderManager.shared.isEphemeral(id: providerId)
+        else { return }
+        RemoteProviderManager.shared.removeProvider(id: providerId)
+    }
 
     private static func loadTheme(for agentId: UUID) -> ThemeProtocol {
         if let themeId = AgentManager.shared.themeId(for: agentId),

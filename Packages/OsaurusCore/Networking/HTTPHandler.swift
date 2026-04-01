@@ -2090,7 +2090,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let loop = context.eventLoop
             let writerBound = NIOLoopBound(writer, eventLoop: loop)
             let ctx = NIOLoopBound(context, eventLoop: loop)
-            let chatEngine = self.chatEngine
             let hop = makeHop(channel: context.channel, loop: loop)
             hop {
                 writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
@@ -2105,6 +2104,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
+                    let chatEngine = self.chatEngine
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
 
                     // Compute prefix hash after enrichment so it matches the cache key
@@ -2247,7 +2247,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let cors = stateRef.value.corsHeaders
             let loop = context.eventLoop
             let ctx = NIOLoopBound(context, eventLoop: loop)
-            let chatEngine = self.chatEngine
             let hop = makeHop(channel: context.channel, loop: loop)
             // Capture for logging
             let logStartTime = startTime
@@ -2259,6 +2258,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let logSelf = self
             Task(priority: .userInitiated) {
                 do {
+                    let chatEngine = self.chatEngine
                     let enrichedReq = await Self.enrichWithAgentContext(req, agentId: memoryAgentId)
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
                     // Compute prefix hash after enrichment so it matches the cache key
@@ -2395,7 +2395,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let chatEngine = self.chatEngine
         let hop = makeHop(channel: context.channel, loop: loop)
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
@@ -2410,6 +2409,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logSelf = self
         Task(priority: .userInitiated) {
             do {
+                let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: req)
                 for try await delta in stream {
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -3180,7 +3180,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let chatEngine = self.chatEngine
         let hop = makeHop(channel: context.channel, loop: loop)
 
         // Estimate input tokens (rough: 1 token per 4 chars)
@@ -3209,6 +3208,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
+                let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -3308,7 +3308,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let chatEngine = self.chatEngine
         let hop = makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
@@ -3320,6 +3319,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
+                let chatEngine = self.chatEngine
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert OpenAI response to Anthropic format
@@ -3799,7 +3799,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let chatEngine = self.chatEngine
         let hop = makeHop(channel: context.channel, loop: loop)
 
         // Estimate input tokens (rough: 1 token per 4 chars)
@@ -3845,6 +3844,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
+                let chatEngine = self.chatEngine
                 let stream = try await chatEngine.streamChat(request: internalReq)
                 for try await delta in stream {
                     if StreamingToolHint.isSentinel(delta) { continue }
@@ -3958,7 +3958,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let chatEngine = self.chatEngine
         let hop = makeHop(channel: context.channel, loop: loop)
 
         // Capture for logging
@@ -3970,6 +3969,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         Task(priority: .userInitiated) {
             do {
+                let chatEngine = self.chatEngine
                 let resp = try await chatEngine.completeChat(request: internalReq)
 
                 // Convert to Open Responses format

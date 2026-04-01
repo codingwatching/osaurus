@@ -5,6 +5,7 @@
 //  Created by Terence on 8/17/25.
 //
 
+import Combine
 import Darwin
 import Foundation
 import NIOCore
@@ -43,6 +44,7 @@ final class ServerController: ObservableObject {
     private var eventLoopGroup: MultiThreadedEventLoopGroup?
     private var serverChannel: Channel?
     private var serverActor: OsaurusServer?
+    private var agentsCancellable: AnyCancellable?
 
     // Singleton holder to allow async access to the current controller instance when injected as EnvironmentObject
     @MainActor
@@ -118,6 +120,11 @@ final class ServerController: ObservableObject {
             lastErrorMessage = nil
             print("[Osaurus] NIO server started successfully on port \(configuration.port)")
 
+            if configuration.exposeToNetwork {
+                BonjourAdvertiser.shared.startAdvertising(port: configuration.port)
+            } else {
+                BonjourAdvertiser.shared.stopAdvertising()
+            }
             RelayTunnelManager.shared.reconnectIfNeeded(port: configuration.port)
         } catch {
             handleServerError(error)
@@ -144,6 +151,7 @@ final class ServerController: ObservableObject {
         print("[Osaurus] Stopping NIO server...")
 
         RelayTunnelManager.shared.disconnectAll()
+        BonjourAdvertiser.shared.stopAdvertising()
         isRunning = false
 
         // Stop the actor-backed server if present
@@ -186,6 +194,20 @@ final class ServerController: ObservableObject {
         if let saved = ServerConfigurationStore.load() {
             self.configuration = saved
         }
+        // Keep exposeToNetwork in sync with Bonjour-enabled agents
+        agentsCancellable = AgentManager.shared.$agents
+            .sink { agents in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let shouldExpose = agents.contains { $0.bonjourEnabled }
+                    guard self.configuration.exposeToNetwork != shouldExpose else { return }
+                    self.configuration.exposeToNetwork = shouldExpose
+                    self.saveConfiguration()
+                    if self.isRunning {
+                        await self.restartServer()
+                    }
+                }
+            }
     }
 
     /// Checks if the server is responsive

@@ -266,7 +266,7 @@ struct WorkView: View {
             },
             onSelectAgent: { newAgentId in
                 windowState.switchAgent(to: newAgentId)
-            }
+            },
         )
     }
 

@@ -171,6 +171,9 @@ struct AgentPill: View {
     let agents: [Agent]
     let activeAgentId: UUID
     let onSelectAgent: (UUID) -> Void
+    var discoveredAgents: [DiscoveredAgent] = []
+    var onSelectDiscoveredAgent: ((DiscoveredAgent) -> Void)? = nil
+    var activeDiscoveredAgent: DiscoveredAgent? = nil
 
     @State private var isHovered = false
     @Environment(\.theme) private var theme
@@ -179,16 +182,51 @@ struct AgentPill: View {
         agents.first { $0.id == activeAgentId } ?? Agent.default
     }
 
+    private func shortHost(_ host: String) -> String {
+        host
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            .replacingOccurrences(of: "\\.local$", with: "", options: .regularExpression)
+    }
+
+    private func label(for agent: DiscoveredAgent) -> String {
+        var parts = [agent.name]
+        if let host = agent.host { parts.append("(\(shortHost(host)))") }
+        if !agent.agentDescription.isEmpty { parts.append("– \(agent.agentDescription)") }
+        return parts.joined(separator: " ")
+    }
+
+    private var displayName: String {
+        guard let discovered = activeDiscoveredAgent else { return activeAgent.name }
+        if let host = discovered.host {
+            return "\(discovered.name) (\(shortHost(host)))"
+        }
+        return discovered.name
+    }
+
     var body: some View {
         Menu {
             ForEach(agents) { agent in
                 Button(action: { onSelectAgent(agent.id) }) {
                     HStack {
                         Text(agent.name)
-                        if agent.id == activeAgentId {
+                        if agent.id == activeAgentId && activeDiscoveredAgent == nil {
                             Spacer()
                             Image(systemName: "checkmark")
                                 .font(.system(size: 12, weight: .medium))
+                        }
+                    }
+                }
+            }
+
+            if !discoveredAgents.isEmpty && onSelectDiscoveredAgent != nil {
+                Divider()
+                Section("On This Network") {
+                    ForEach(discoveredAgents) { remote in
+                        Button(action: { onSelectDiscoveredAgent?(remote) }) {
+                            Label(
+                                label(for: remote),
+                                systemImage: activeDiscoveredAgent?.id == remote.id ? "checkmark" : "network"
+                            )
                         }
                     }
                 }
@@ -203,11 +241,11 @@ struct AgentPill: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "person.fill")
+                Image(systemName: activeDiscoveredAgent != nil ? "network" : "person.fill")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
 
-                Text(activeAgent.name)
+                Text(displayName)
                     .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
                     .foregroundColor(theme.primaryText)
 

@@ -58,7 +58,7 @@ final class ChatSession: ObservableObject {
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
     var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
-        ChatEngine(remoteServices: RemoteProviderManager.shared.connectedServices(), source: .chatUI)
+        ChatEngine(source: .chatUI)
     }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
@@ -1154,12 +1154,25 @@ struct ChatView: View {
     @State private var editingTurnId: UUID?
     @State private var editText: String = ""
     @State private var userImagePreview: NSImage?
+    // Bonjour agent connection
+    @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
 
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
+
+    /// Picker items filtered to the active Bonjour provider, or all items when no Bonjour agent is selected.
+    private var filteredPickerItems: [ModelPickerItem] {
+        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
+            return session.pickerItems
+        }
+        return session.pickerItems.filter {
+            if case .remote(_, let id) = $0.source { return id == providerId }
+            return false
+        }
+    }
 
     /// Observed session - needed to properly propagate @Published changes from ChatSession
     @ObservedObject private var observedSession: ChatSession
@@ -1321,7 +1334,10 @@ struct ChatView: View {
                                     onSelectAgent: { newAgentId in
                                         windowState.switchAgent(to: newAgentId)
                                     },
-                                    onOpenOnboarding: nil
+                                    onOpenOnboarding: nil,
+                                    discoveredAgents: windowState.discoveredAgents,
+                                    onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent },
+                                    activeDiscoveredAgent: windowState.selectedDiscoveredAgent
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
@@ -1338,7 +1354,7 @@ struct ChatView: View {
                                 isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
                                 voiceInputState: $observedSession.voiceInputState,
                                 showVoiceOverlay: $observedSession.showVoiceOverlay,
-                                pickerItems: observedSession.pickerItems,
+                                pickerItems: filteredPickerItems,
                                 activeModelOptions: $observedSession.activeModelOptions,
                                 isStreaming: observedSession.isStreaming,
                                 supportsImages: observedSession.selectedModelSupportsImages,
@@ -1391,7 +1407,9 @@ struct ChatView: View {
                                     ChatWindowManager.shared.closeWindow(id: windowState.windowId)
                                     // Show onboarding window
                                     AppDelegate.shared?.showOnboardingWindow()
-                                }
+                                },
+                                discoveredAgents: windowState.discoveredAgents,
+                                onSelectDiscoveredAgent: { agent in pendingDiscoveredAgent = agent }
                             )
                         }
                     }
@@ -1436,8 +1454,83 @@ struct ChatView: View {
         .onDisappear {
             cleanupKeyMonitor()
         }
+        .onChange(of: observedSession.pickerItems) { _, newItems in
+            guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
+            let providerItems = newItems.filter {
+                if case .remote(_, let id) = $0.source { return id == providerId }
+                return false
+            }
+            guard let firstItem = providerItems.first else { return }
+            let currentIsFromProvider =
+                newItems.first(where: { $0.id == session.selectedModel }).map {
+                    if case .remote(_, let id) = $0.source { return id == providerId }
+                    return false
+                } ?? false
+            if !currentIsFromProvider {
+                session.selectedModel = firstItem.id
+            }
+        }
+        .onChange(of: windowState.selectedDiscoveredAgentProviderId) { _, providerId in
+            guard providerId == nil else { return }
+            // Bonjour agent deselected — restore agent's preferred model
+            let agentModel = AgentManager.shared.effectiveModel(for: windowState.agentId)
+            if let model = agentModel, session.pickerItems.contains(where: { $0.id == model }) {
+                session.selectedModel = model
+            } else {
+                session.selectedModel = session.pickerItems.first?.id
+            }
+        }
         .environment(\.theme, windowState.theme)
         .tint(theme.accentColor)
+        .sheet(item: $pendingDiscoveredAgent) { agent in
+            BonjourTokenSheet(agentName: agent.name) { token in
+                connectToDiscoveredAgent(agent, token: token)
+                pendingDiscoveredAgent = nil
+            } onCancel: {
+                pendingDiscoveredAgent = nil
+            }
+            .environment(\.theme, windowState.theme)
+        }
+    }
+
+    private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String) {
+        // Strip trailing dot from mDNS hostnames (e.g. "device.local." -> "device.local")
+        let rawHost = agent.host ?? "localhost"
+        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
+        let manager = RemoteProviderManager.shared
+
+        let providerId: UUID
+        // Reuse an existing provider that points to the same host:port
+        if let existing = manager.configuration.providers.first(where: {
+            $0.host == host && $0.effectivePort == agent.port
+        }) {
+            providerId = existing.id
+            if !token.isEmpty {
+                var updated = existing
+                updated.authType = .apiKey
+                updated.enabled = true
+                manager.updateProvider(updated, apiKey: token)
+            }
+            Task { try? await manager.connect(providerId: existing.id) }
+        } else {
+            let provider = RemoteProvider(
+                name: agent.name,
+                host: host,
+                providerProtocol: .http,
+                port: agent.port,
+                basePath: "/v1",
+                authType: token.isEmpty ? .none : .apiKey,
+                providerType: .openai,
+                enabled: true,
+                autoConnect: true
+            )
+            providerId = provider.id
+            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: true)
+        }
+
+        windowState.selectedDiscoveredAgent = agent
+        windowState.selectedDiscoveredAgentProviderId = providerId
+        Task { await session.refreshPickerItems() }
     }
 
     // MARK: - Background
@@ -1779,6 +1872,49 @@ struct ChatView: View {
             NSEvent.removeMonitor(monitor)
             keyMonitor = nil
         }
+    }
+}
+
+// MARK: - Bonjour Token Sheet
+
+/// Sheet shown when the user selects a Bonjour-discovered remote agent.
+/// Prompts for an optional server token before connecting.
+private struct BonjourTokenSheet: View {
+    let agentName: String
+    let onConnect: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var token: String = ""
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Connect to \(agentName)")
+                    .font(theme.font(size: 16, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+
+                Text("Enter the server token for this agent, or leave blank if none is required.")
+                    .font(theme.font(size: 13))
+                    .foregroundColor(theme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            SecureField("Server token (optional)", text: $token)
+                .textFieldStyle(.roundedBorder)
+                .font(theme.font(size: 13))
+
+            HStack {
+                Button("Cancel") { onCancel() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Connect") { onConnect(token) }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
     }
 }
 
