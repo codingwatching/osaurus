@@ -452,6 +452,18 @@ extension MessageTableRepresentable {
                 return
             }
 
+            // --- Path 1b: width-only (same IDs, same block data) ---
+            // Path 3 applies a snapshot but only reconfigures rows whose ContentBlock
+            // changed; when only SwiftUI's layout width changes (e.g. sidebar toggle),
+            // stableChangedIds is empty so cells would keep stale layout width until
+            // some later content update — visible as a gap on the first resize.
+            if widthChanged, newIds == blockIds, !hasContentChanges(newLookup: newLookup) {
+                blockLookup = newLookup
+                streamingBlockId = newStreamingBlockId
+                reconfigureAllCellsFromLookup(newLookup)
+                return
+            }
+
             // --- Path 2: In-place update (IDs unchanged, content changed) ---
             if !widthChanged, newIds == blockIds {
                 reconfigureChangedCells(newLookup: newLookup, streamId: newStreamingBlockId)
