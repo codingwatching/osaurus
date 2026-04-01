@@ -11,7 +11,7 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.16/Osaurus-0.15.16.dmg" length="33219122" type="application/octet-stream" sparkle:edSignature="XaVCEdl5BUADaPyJhBuOgBM+UT/cD7gei5O9uP102v9qVPvvSwBTSKewKMysdhjBCBtwu9cZU5dkpSk2S3v3Cw=="/>
-            <description sparkle:descriptionFormat="markdown"><![CDATA[
+            <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
 
 - chore: added linting on pre-push hook using lefthook (#761) by @ritave
@@ -39,7 +39,7 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.15/Osaurus-0.15.15.dmg" length="33179270" type="application/octet-stream" sparkle:edSignature="PkikDzMVxR82l1X+QhespbHiUxJZjdhQ4BcXKfS2yMD8i12+CMftvTwWbApUtgJbyaLR8/zQTwQqaXVht85MBA=="/>
-            <description sparkle:descriptionFormat="markdown"><![CDATA[
+            <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
 
 ## 🧰 Maintenance
@@ -58,7 +58,7 @@
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
             <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.15.14/Osaurus-0.15.14.dmg" length="33177450" type="application/octet-stream" sparkle:edSignature="HM3i7rSy59Doc/Iz7RyK/W9Ho+mxQeQcjjJnK5HBgTo3IrFcrKprm3f3EdJYmcxOgiyLJY1WmCNRT3KeQIu7DA=="/>
-            <description sparkle:descriptionFormat="markdown"><![CDATA[
+            <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
 
 ## 🧰 Maintenance
