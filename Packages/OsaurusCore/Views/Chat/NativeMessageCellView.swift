@@ -333,14 +333,17 @@ private final class PaddedInlineButtonCell: NSButtonCell {
 }
 
 private final class PaddedInlineButton: NSButton {
-    fileprivate var paddedCell: PaddedInlineButtonCell { cell as! PaddedInlineButtonCell }
+    private let paddedButtonCell: PaddedInlineButtonCell
+
+    fileprivate var paddedCell: PaddedInlineButtonCell { paddedButtonCell }
 
     override init(frame frameRect: NSRect) {
-        let c = PaddedInlineButtonCell(textCell: "")
-        c.bezelStyle = .rounded
-        c.isBordered = false
+        let buttonCell = PaddedInlineButtonCell(textCell: "")
+        buttonCell.bezelStyle = .rounded
+        buttonCell.isBordered = false
+        self.paddedButtonCell = buttonCell
         super.init(frame: frameRect)
-        cell = c
+        cell = buttonCell
     }
 
     required init?(coder: NSCoder) { fatalError() }
