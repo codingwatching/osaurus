@@ -184,8 +184,6 @@ struct WorkView: View {
 
     // MARK: - Background
 
-    /// solid / gradient / image only — same as `ChatView.chatBackground`. `ThemedGlassSurface` was removed
-    /// (NSVisualEffectView blur) because it spiked WindowServer GPU usage.
     private var agentBackground: some View {
         baseBackgroundLayer
             .clipShape(backgroundShape)

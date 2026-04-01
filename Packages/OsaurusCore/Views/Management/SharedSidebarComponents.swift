@@ -111,22 +111,14 @@ struct SidebarBackground: View {
 
     var body: some View {
         ZStack {
-            // Layer 1: Glass material (if enabled)
-            /*
-            if theme.glassEnabled {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
-            }
-            */
-
-            // Layer 2: Semi-transparent card background
+            // Layer 1: Semi-transparent card background
             theme.cardBackground.opacity(
                 theme.glassEnabled
                     ? (theme.isDark ? SidebarStyle.glassOpacityDark : SidebarStyle.glassOpacityLight)
                     : 1.0
             )
 
-            // Layer 3: Accent gradient for visual polish
+            // Layer 2: Accent gradient for visual polish
             LinearGradient(
                 colors: [
                     theme.accentColor.opacity(
