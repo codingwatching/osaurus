@@ -533,12 +533,10 @@ private final class UserMessageInlineEditView: NSView, NSTextViewDelegate {
             }
         }
 
-        layoutSubtreeIfNeeded()
         onHeightChanged()
     }
 
     private func refreshScrollerVisibility() {
-        layoutSubtreeIfNeeded()
         if let tc = textView.textContainer {
             textView.layoutManager?.ensureLayout(for: tc)
         }
@@ -696,7 +694,7 @@ final class NativeMessageCellView: NSTableCellView {
     /// AppKit `NSView` uses `fittingSize` (UIKit’s `systemLayoutSizeFitting` is not available here).
     /// Table view still uses `heightOfRow:` + cache (see MessageTableRepresentable); this only feeds accurate measurements.
     private func measureFittedRowHeight() -> CGFloat {
-        layoutSubtreeIfNeeded()
+        // never call layoutSubtreeIfNeeded() here — heightOfRow / onHeightMeasured can run during an active layout pass
         let targetWidth = max(bounds.width > 1 ? bounds.width : lastContextWidth, 100)
 
         // user message: measure bubble subtree height (container bottom is tied to content, not the cell — see configureAsUserMessage)
@@ -709,7 +707,6 @@ final class NativeMessageCellView: NSTableCellView {
                 widthPin = c
             }
             defer { widthPin?.isActive = false }
-            layoutSubtreeIfNeeded()
             var h = container.fittingSize.height
             if h < 2, let mv = userTextView {
                 let inner = max(lastContextWidth - 32, 100)
@@ -717,7 +714,6 @@ final class NativeMessageCellView: NSTableCellView {
                 let textH = mv.measuredHeight(for: textW)
                 h = 38 + textH + 16
             }
-            layoutSubtreeIfNeeded()
             return ceil(max(h, 1))
         }
 
@@ -729,7 +725,6 @@ final class NativeMessageCellView: NSTableCellView {
             widthPin = c
         }
         defer { widthPin?.isActive = false }
-        layoutSubtreeIfNeeded()
         let h = fittingSize.height
         return ceil(max(h, 1))
     }
@@ -1173,7 +1168,6 @@ final class NativeMessageCellView: NSTableCellView {
                         guard let self else { return }
                         let img = await ChatImageCache.shared.decode(data, id: attachId)
                         iv.image = img
-                        self.layoutSubtreeIfNeeded()
                         context.onHeightMeasured?(self.measureFittedRowHeight(), block.id)
                     }
                 }
@@ -1182,7 +1176,6 @@ final class NativeMessageCellView: NSTableCellView {
 
         // push fitted height even when NativeMarkdownView.configure returns early (no onHeightChanged),
         // and so row height updates when estimate vs fittingSize differ by only 1–2pt (see reportMeasuredHeight)
-        layoutSubtreeIfNeeded()
         context.onHeightMeasured?(measureFittedRowHeight(), block.id)
     }
 
@@ -1250,8 +1243,12 @@ final class NativeMessageCellView: NSTableCellView {
             ])
             nativeArtifactView = av
         }
+        let blockId = block.id
+        nativeArtifactView?.onHeightChanged = { [weak self] in
+            guard let self, let av = self.nativeArtifactView else { return }
+            context.onHeightMeasured?(av.measuredCardHeight() + 12, blockId)
+        }
         nativeArtifactView?.configure(artifact: artifact, theme: context.theme)
-        layoutSubtreeIfNeeded()
         if let av = nativeArtifactView {
             let h = av.measuredCardHeight() + 12
             context.onHeightMeasured?(h, block.id)
@@ -1282,7 +1279,6 @@ final class NativeMessageCellView: NSTableCellView {
             context.onHeightMeasured?(pfv.measuredContentHeight() + 8, id)
         }
         pfv.configure(items: items, theme: context.theme, layoutWidth: context.width)
-        layoutSubtreeIfNeeded()
         let est = PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: context.width)
         let h = max(pfv.measuredContentHeight(), est) + 8
         context.onHeightMeasured?(h, block.id)
@@ -1526,11 +1522,24 @@ enum NativeCellHeightEstimator {
             return 8 + PreflightCapabilitiesRowHeight.estimated(items: items, tableWidth: width)
 
         case let .sharedArtifact(artifact):
-            // header ~52 + size line ~16 + footer ~30 + vertical gaps + optional desc; image column adds thumbnail height
-            var h: CGFloat = 10 + 32 + 2 + 22 + 8 + 16 + 8 + 30 + 10 + 12
-            if let d = artifact.description, !d.isEmpty { h += 22 }
-            if artifact.mimeType.hasPrefix("image/") {
+            // matches NativeArtifactCardView: inner padding + title row + gaps + footer + cell margins
+            var h: CGFloat = 12 + 24 + 8 + 8 + 26 + 12 + 12
+            if let d = artifact.description, !d.isEmpty { h += 20 }
+            let pathEmpty = artifact.hostPath.isEmpty
+            if pathEmpty {
+                if artifact.isText, let c = artifact.content, !c.isEmpty {
+                    let lines = min(6, max(1, c.components(separatedBy: "\n").count))
+                    h += CGFloat(lines) * 14 + 12
+                }
+            } else if artifact.isImage || artifact.isPDF || artifact.isVideo {
                 h += 160 + 8
+            } else if artifact.isAudio {
+                h += 56 + 8
+            } else if artifact.isHTML || artifact.isDirectory {
+                h += 44 + 8
+            } else if artifact.isText, let c = artifact.content, !c.isEmpty {
+                let lines = min(6, max(1, c.components(separatedBy: "\n").count))
+                h += CGFloat(lines) * 14 + 12
             }
             return h
         }

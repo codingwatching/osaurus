@@ -62,6 +62,8 @@ final class NativeMarkdownView: NSView {
     private var imageLoadTasks: [String: (UUID, Task<Void, Never>)] = [:]
     /// invalid until first layout pass with positive width — drives remeasure in `layout()`
     private var lastLayoutWidthForHeight: CGFloat = -1
+    /// avoids re-entrant `measuredHeight` when `layoutSubtreeIfNeeded` runs during tool-row expand (same instance)
+    private var measurementDepth = 0
 
     // MARK: Callback
 
@@ -190,6 +192,12 @@ final class NativeMarkdownView: NSView {
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
+        if measurementDepth > 0 {
+            return heightConstraint?.constant ?? 20
+        }
+        measurementDepth += 1
+        defer { measurementDepth -= 1 }
+
         if let tv = textView {
             // widthTracksTextView syncs the container to the text view; before first layout, bounds can
             // be 0 and usedRect height is far too small (clipped text). For measurement only, apply an
@@ -229,21 +237,26 @@ final class NativeMarkdownView: NSView {
             return nmv.measuredHeight(for: width)
         }
         if let cb = view as? NativeCodeBlockView {
-            cb.layoutSubtreeIfNeeded()
-            let h = cb.intrinsicContentSize.height
-            if h > 0 && h != NSView.noIntrinsicMetric { return h }
-            return max(cb.bounds.height, 60)
+            return cb.measureHeightForOuterWidth(width)
         }
         if let iv = view as? NSImageView {
             return iv.bounds.height > 0 ? iv.bounds.height : 160
         }
         if let field = view as? NSTextField {
-            field.layoutSubtreeIfNeeded()
-            let h = field.intrinsicContentSize.height
-            if h > 0 && h != NSView.noIntrinsicMetric { return h }
-            return max(field.bounds.height, 24)
+            if width > 0.5 {
+                field.preferredMaxLayoutWidth = width
+            }
+            let h = field.attributedStringValue.boundingRect(
+                with: NSSize(width: max(1, width), height: CGFloat.greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            ).height
+            if h.isFinite, h > 0 { return ceil(h) + 4 }
+            let ic = field.intrinsicContentSize.height
+            if ic > 0 && ic != NSView.noIntrinsicMetric { return ic }
+            return 24
         }
-        view.layoutSubtreeIfNeeded()
+        let ic = view.intrinsicContentSize.height
+        if ic > 0 && ic != NSView.noIntrinsicMetric { return ic }
         return max(view.bounds.height, 0)
     }
 

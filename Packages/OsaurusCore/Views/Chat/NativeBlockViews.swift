@@ -6,7 +6,7 @@
 //
 //    NativeTypingIndicatorView     — bouncing CALayer dots + memory label
 //    NativePendingToolCallView     — pulsing dot + tool name + scrolling arg preview
-//    NativeArtifactCardView        — accent strip + icon + filename/desc + thumbnail
+//    (NativeArtifactCardView lives in NativeArtifactCardView.swift)
 //
 
 import AppKit
@@ -365,351 +365,6 @@ final class NativePendingToolCallView: NSView {
     }
 }
 
-// MARK: - NativeArtifactCardView
-
-final class NativeArtifactCardView: NSView {
-
-    // MARK: Subviews
-
-    private let accentStrip = NSView()
-    private let iconBadge = NSImageView()
-    private let iconBg = NSView()
-    private let nameLabel = NSTextField(labelWithString: "")
-    private let typeLabel = NSTextField(labelWithString: "")
-    private let descLabel = NSTextField(labelWithString: "")
-    private let sizeLabel = NSTextField(labelWithString: "")
-    private let thumbnailView = NSImageView()
-    private let footerStack = NSStackView()
-    private let openInFinderButton = NSButton(title: "Open in Finder", target: nil, action: nil)
-    private let openInBrowserButton = NSButton(title: "Open in Browser", target: nil, action: nil)
-
-    private var thumbnailTallConstraints: [NSLayoutConstraint] = []
-    private var thumbnailCollapsedConstraints: [NSLayoutConstraint] = []
-    private var sizeTrailingToThumbnail: NSLayoutConstraint?
-    private var sizeTrailingToCard: NSLayoutConstraint?
-
-    // MARK: State
-
-    private var currentArtifactId: String = ""
-    private var currentThemeFingerprint: String = ""
-    private var thumbnailLoadTask: Task<Void, Never>?
-    private var hostPath: String = ""
-    private var isArtifactDirectory = false
-    /// avoids layout/fittingSize recursion in `intrinsicContentSize` during provisional table row layout
-    private var cachedLayoutHeight: CGFloat = 120
-
-    // MARK: Init
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        buildViews()
-        setContentHuggingPriority(.required, for: .vertical)
-        setContentCompressionResistancePriority(.required, for: .vertical)
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: max(1, cachedLayoutHeight))
-    }
-
-    // MARK: Configure
-
-    func configure(artifact: SharedArtifact, theme: any ThemeProtocol) {
-        let themeFP = artifactThemeFingerprint(theme)
-        guard artifact.id != currentArtifactId || themeFP != currentThemeFingerprint else { return }
-        currentArtifactId = artifact.id
-        currentThemeFingerprint = themeFP
-        hostPath = artifact.hostPath
-        isArtifactDirectory = artifact.isDirectory
-
-        let accent = NSColor(theme.accentColor)
-        openInFinderButton.contentTintColor = accent
-        openInBrowserButton.contentTintColor = accent
-        accentStrip.layer?.backgroundColor = accent.cgColor
-        layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.5).cgColor
-        layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.2).cgColor
-
-        // icon based on mime type
-        let iconName = Self.iconName(for: artifact)
-        iconBadge.image = NSImage(systemSymbolName: iconName, accessibilityDescription: nil)
-        iconBadge.contentTintColor = accent
-        iconBg.layer?.backgroundColor = accent.withAlphaComponent(0.12).cgColor
-
-        nameLabel.stringValue = artifact.filename
-        nameLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.bodySize), weight: .semibold)
-        nameLabel.textColor = NSColor(theme.primaryText)
-
-        typeLabel.stringValue = Self.typePill(for: artifact)
-        typeLabel.font = NSFont.monospacedSystemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
-        typeLabel.textColor = NSColor(theme.tertiaryText)
-
-        if let desc = artifact.description, !desc.isEmpty {
-            descLabel.stringValue = desc
-            descLabel.isHidden = false
-        } else {
-            descLabel.isHidden = true
-        }
-        descLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1)
-        descLabel.textColor = NSColor(theme.tertiaryText)
-
-        sizeLabel.stringValue = Self.formatSize(artifact.fileSize)
-        sizeLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2)
-        sizeLabel.textColor = NSColor(theme.tertiaryText)
-        sizeLabel.setContentCompressionResistancePriority(.required, for: .vertical)
-
-        let showImageThumb = artifact.mimeType.hasPrefix("image/")
-        setThumbnailMode(showImageColumn: showImageThumb)
-
-        // async thumbnail for image artifacts
-        if showImageThumb {
-            thumbnailView.isHidden = false
-            let path = artifact.hostPath
-            let artId = artifact.id
-            thumbnailLoadTask?.cancel()
-            thumbnailLoadTask = nil
-            if let img = ChatImageCache.shared.cachedImage(for: artId) {
-                thumbnailView.image = img
-            } else {
-                let fileURL = URL(fileURLWithPath: path)
-                thumbnailLoadTask = Task { [weak self] in
-                    let data = try? await Task.detached(priority: .userInitiated) {
-                        try Data(contentsOf: fileURL)
-                    }.value
-                    guard !Task.isCancelled else { return }
-                    guard let data else { return }
-                    let img = await ChatImageCache.shared.decode(data, id: artId)
-                    await MainActor.run {
-                        guard let self else { return }
-                        guard self.currentArtifactId == artId else { return }
-                        self.thumbnailView.image = img
-                        self.thumbnailLoadTask = nil
-                    }
-                }
-            }
-        } else {
-            thumbnailLoadTask?.cancel()
-            thumbnailLoadTask = nil
-            thumbnailView.isHidden = true
-            thumbnailView.image = nil
-        }
-
-        let canOpen = !artifact.hostPath.isEmpty
-        openInFinderButton.isHidden = !canOpen
-        openInFinderButton.isEnabled = canOpen
-        let showBrowser = canOpen && (artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)))
-        openInBrowserButton.isHidden = !showBrowser
-        openInBrowserButton.isEnabled = showBrowser
-
-        layoutSubtreeIfNeeded()
-        cachedLayoutHeight = max(fittingSize.height, 1)
-        invalidateIntrinsicContentSize()
-    }
-
-    /// vertical size for table row cache — call after layout
-    func measuredCardHeight() -> CGFloat {
-        layoutSubtreeIfNeeded()
-        let h = fittingSize.height
-        cachedLayoutHeight = max(h, 1)
-        return h
-    }
-
-    private func artifactThemeFingerprint(_ theme: any ThemeProtocol) -> String {
-        "\(theme.bodySize)|\(theme.captionSize)|\(NSColor(theme.accentColor).description)|\(NSColor(theme.secondaryBackground).description)|\(NSColor(theme.primaryBorder).description)|\(NSColor(theme.primaryText).description)|\(NSColor(theme.tertiaryText).description)"
-    }
-
-    private func setThumbnailMode(showImageColumn: Bool) {
-        if showImageColumn {
-            NSLayoutConstraint.deactivate(thumbnailCollapsedConstraints)
-            NSLayoutConstraint.activate(thumbnailTallConstraints)
-            sizeTrailingToCard?.isActive = false
-            sizeTrailingToThumbnail?.isActive = true
-        } else {
-            NSLayoutConstraint.deactivate(thumbnailTallConstraints)
-            NSLayoutConstraint.activate(thumbnailCollapsedConstraints)
-            sizeTrailingToThumbnail?.isActive = false
-            sizeTrailingToCard?.isActive = true
-        }
-    }
-
-    @objc private func openInFinderTapped() {
-        guard !hostPath.isEmpty else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: hostPath)])
-    }
-
-    @objc private func openInBrowserTapped() {
-        guard !hostPath.isEmpty else { return }
-        let url: URL
-        if isArtifactDirectory {
-            url = URL(fileURLWithPath: hostPath).appendingPathComponent("index.html")
-        } else {
-            url = URL(fileURLWithPath: hostPath)
-        }
-        NSWorkspace.shared.open(url)
-    }
-
-    private static func hasIndexHTML(_ artifact: SharedArtifact) -> Bool {
-        guard artifact.isDirectory else { return false }
-        return FileManager.default.fileExists(
-            atPath: URL(fileURLWithPath: artifact.hostPath).appendingPathComponent("index.html").path
-        )
-    }
-
-    // MARK: - Private: Build
-
-    private func buildViews() {
-        translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.cornerRadius = 10
-        layer?.borderWidth = 1
-
-        accentStrip.translatesAutoresizingMaskIntoConstraints = false
-        accentStrip.wantsLayer = true
-        addSubview(accentStrip)
-
-        iconBg.translatesAutoresizingMaskIntoConstraints = false
-        iconBg.wantsLayer = true
-        iconBg.layer?.cornerRadius = 8
-        addSubview(iconBg)
-
-        iconBadge.translatesAutoresizingMaskIntoConstraints = false
-        iconBadge.imageScaling = .scaleProportionallyUpOrDown
-        iconBg.addSubview(iconBadge)
-
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.isEditable = false; nameLabel.isBordered = false; nameLabel.drawsBackground = false
-        nameLabel.maximumNumberOfLines = 1
-        addSubview(nameLabel)
-
-        typeLabel.translatesAutoresizingMaskIntoConstraints = false
-        typeLabel.isEditable = false; typeLabel.isBordered = false; typeLabel.drawsBackground = false
-        typeLabel.maximumNumberOfLines = 1
-        addSubview(typeLabel)
-
-        descLabel.translatesAutoresizingMaskIntoConstraints = false
-        descLabel.isEditable = false; descLabel.isBordered = false; descLabel.drawsBackground = false
-        descLabel.maximumNumberOfLines = 1
-        addSubview(descLabel)
-
-        sizeLabel.translatesAutoresizingMaskIntoConstraints = false
-        sizeLabel.isEditable = false; sizeLabel.isBordered = false; sizeLabel.drawsBackground = false
-        addSubview(sizeLabel)
-
-        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
-        thumbnailView.imageScaling = .scaleProportionallyUpOrDown
-        thumbnailView.wantsLayer = true
-        thumbnailView.layer?.cornerRadius = 6
-        thumbnailView.layer?.masksToBounds = true
-        thumbnailView.isHidden = true
-        addSubview(thumbnailView)
-
-        footerStack.translatesAutoresizingMaskIntoConstraints = false
-        footerStack.orientation = .horizontal
-        footerStack.spacing = 8
-        footerStack.alignment = .centerY
-        footerStack.distribution = .fill
-        footerStack.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        let footerSpacer = NSView()
-        footerSpacer.translatesAutoresizingMaskIntoConstraints = false
-        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        footerStack.addArrangedSubview(footerSpacer)
-        for b in [openInBrowserButton, openInFinderButton] {
-            b.translatesAutoresizingMaskIntoConstraints = false
-            b.bezelStyle = .inline
-            b.isBordered = false
-            b.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        }
-        openInFinderButton.target = self
-        openInFinderButton.action = #selector(openInFinderTapped)
-        openInBrowserButton.target = self
-        openInBrowserButton.action = #selector(openInBrowserTapped)
-        footerStack.addArrangedSubview(openInBrowserButton)
-        footerStack.addArrangedSubview(openInFinderButton)
-        addSubview(footerStack)
-
-        NSLayoutConstraint.activate([
-            accentStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
-            accentStrip.topAnchor.constraint(equalTo: topAnchor),
-            accentStrip.bottomAnchor.constraint(equalTo: bottomAnchor),
-            accentStrip.widthAnchor.constraint(equalToConstant: 4),
-
-            iconBg.leadingAnchor.constraint(equalTo: accentStrip.trailingAnchor, constant: 10),
-            iconBg.topAnchor.constraint(equalTo: topAnchor, constant: 10),
-            iconBg.widthAnchor.constraint(equalToConstant: 32),
-            iconBg.heightAnchor.constraint(equalToConstant: 32),
-
-            iconBadge.centerXAnchor.constraint(equalTo: iconBg.centerXAnchor),
-            iconBadge.centerYAnchor.constraint(equalTo: iconBg.centerYAnchor),
-            iconBadge.widthAnchor.constraint(equalToConstant: 16),
-            iconBadge.heightAnchor.constraint(equalToConstant: 16),
-
-            nameLabel.leadingAnchor.constraint(equalTo: iconBg.trailingAnchor, constant: 8),
-            nameLabel.topAnchor.constraint(equalTo: iconBg.topAnchor),
-
-            typeLabel.leadingAnchor.constraint(equalTo: nameLabel.trailingAnchor, constant: 6),
-            typeLabel.centerYAnchor.constraint(equalTo: nameLabel.centerYAnchor),
-            typeLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
-
-            descLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            descLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-            descLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10),
-
-            sizeLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            sizeLabel.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8),
-
-            footerStack.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            footerStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            footerStack.topAnchor.constraint(greaterThanOrEqualTo: sizeLabel.bottomAnchor, constant: 8),
-            footerStack.topAnchor.constraint(greaterThanOrEqualTo: thumbnailView.bottomAnchor, constant: 8),
-            footerStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-        ])
-
-        sizeTrailingToCard = sizeLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -10)
-        sizeTrailingToThumbnail = sizeLabel.trailingAnchor.constraint(lessThanOrEqualTo: thumbnailView.leadingAnchor, constant: -8)
-
-        thumbnailTallConstraints = [
-            thumbnailView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            thumbnailView.widthAnchor.constraint(equalToConstant: 80),
-            thumbnailView.heightAnchor.constraint(equalToConstant: 160),
-        ]
-        thumbnailCollapsedConstraints = [
-            thumbnailView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            thumbnailView.widthAnchor.constraint(equalToConstant: 0),
-            thumbnailView.heightAnchor.constraint(equalToConstant: 0),
-        ]
-
-        sizeTrailingToCard?.isActive = true
-        NSLayoutConstraint.activate(thumbnailCollapsedConstraints)
-    }
-
-    // MARK: - Static Helpers
-
-    private static func iconName(for artifact: SharedArtifact) -> String {
-        if artifact.isDirectory { return "folder.fill" }
-        let mime = artifact.mimeType
-        if mime.hasPrefix("image/") { return "photo" }
-        if mime.hasPrefix("video/") { return "video.fill" }
-        if mime.hasPrefix("audio/") { return "music.note" }
-        if mime == "application/pdf" { return "doc.fill" }
-        if mime.hasPrefix("text/") { return "doc.text.fill" }
-        return "doc.fill"
-    }
-
-    private static func typePill(for artifact: SharedArtifact) -> String {
-        if artifact.isDirectory { return "folder" }
-        let parts = artifact.mimeType.split(separator: "/")
-        return parts.last.map(String.init) ?? artifact.mimeType
-    }
-
-    private static func formatSize(_ bytes: Int) -> String {
-        if bytes < 1024 { return "\(bytes) B" }
-        if bytes < 1024 * 1024 { return String(format: "%.1f KB", Double(bytes) / 1024) }
-        return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
-    }
-}
-
 // MARK: - Preflight row height (NSTableView delegate fast path)
 
 enum PreflightCapabilitiesRowHeight {
@@ -1004,6 +659,26 @@ final class NativeCodeBlockView: NSView {
         if codeChanged || themeChanged || widthChanged {
             applyHighlighting(to: cv, code: code, language: language, theme: theme)
         }
+    }
+
+    /// TextKit-only height for parents (`NativeMarkdownView.measuredHeight`) — must not call
+    /// `layoutSubtreeIfNeeded()` on this view; that re-enters AppKit layout while a tool row is expanding.
+    func measureHeightForOuterWidth(_ outerWidth: CGFloat) -> CGFloat {
+        guard let cv = codeView, let tc = cv.textContainer, let lm = cv.layoutManager else {
+            return max(intrinsicContentSize.height, 60)
+        }
+        let innerW = max(1, outerWidth - 24)
+        let wasTracking = tc.widthTracksTextView
+        let wasSize = tc.containerSize
+        tc.widthTracksTextView = false
+        tc.containerSize = NSSize(width: innerW, height: CGFloat.greatestFiniteMagnitude)
+        defer {
+            tc.widthTracksTextView = wasTracking
+            tc.containerSize = wasSize
+        }
+        lm.ensureLayout(for: tc)
+        let textH = ceil(lm.usedRect(for: tc).height)
+        return 28 + max(textH, 1) + 8
     }
 
     // MARK: - Private: Build

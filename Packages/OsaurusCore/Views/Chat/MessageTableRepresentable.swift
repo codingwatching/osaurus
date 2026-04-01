@@ -344,7 +344,6 @@ extension MessageTableRepresentable {
                     let block = blockLookup[blockId]
                 {
                     configureCell(cell, with: block)
-                    cell.layoutSubtreeIfNeeded()
                 }
                 // let the hosting view settle before re-measuring
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
@@ -363,9 +362,6 @@ extension MessageTableRepresentable {
             guard visible.length > 0 else { return }
             let rows = IndexSet(integersIn: visible.location ..< visible.location + visible.length)
             for row in rows {
-                if let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: false) {
-                    cell.layoutSubtreeIfNeeded()
-                }
                 if row < blockIds.count {
                     heightCache.removeValue(forKey: blockIds[row])
                 }
@@ -706,9 +702,6 @@ extension MessageTableRepresentable {
                 // Force the hosting view to flush its SwiftUI layout cycle so the
                 // new intrinsic content size (driven by streamingContentHeight) is
                 // committed before we ask the table to re-measure the row.
-                if let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) {
-                    cell.layoutSubtreeIfNeeded()
-                }
                 self.noteRowHeightsChanged(IndexSet(integer: row))
 
                 if self.scrollAnchor.isPinnedToBottom {
@@ -747,7 +740,6 @@ extension MessageTableRepresentable {
             if let cell = tv.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView {
                 heightCache.removeValue(forKey: streamId)
                 configureCell(cell, with: block)
-                cell.layoutSubtreeIfNeeded()
             }
 
             noteRowHeightsChanged(IndexSet(integer: row))
