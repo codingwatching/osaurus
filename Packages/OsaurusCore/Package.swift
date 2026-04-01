@@ -16,7 +16,7 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.29.1"),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
-        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.6"),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.13.4"),
         .package(url: "https://github.com/rryam/VecturaKit", branch: "main"),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
@@ -54,6 +54,7 @@ let package = Package(
             dependencies: [
                 "OsaurusCore",
                 .product(name: "NIOEmbedded", package: "swift-nio"),
+                .product(name: "VecturaKit", package: "VecturaKit"),
             ],
             path: "Tests"
         ),

@@ -3,6 +3,7 @@ import SwiftUI
 // MARK: - Configuration View
 struct ConfigurationView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @EnvironmentObject private var updater: UpdaterViewModel
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -87,6 +88,8 @@ struct ConfigurationView: View {
                             "Hotkey",
                             "Login",
                             "Start at Login",
+                            "Beta",
+                            "Updates",
                             "CLI",
                             "Command Line",
                             "Install",
@@ -114,6 +117,13 @@ struct ConfigurationView: View {
                                         title: "Hide Dock Icon",
                                         description: "Run in menu bar only (requires restart)",
                                         isOn: $tempHideDockIcon
+                                    )
+
+                                    SettingsToggle(
+                                        title: "Beta Updates",
+                                        description:
+                                            "Receive pre-release updates with new features before they're generally available",
+                                        isOn: $updater.isBetaChannel
                                     )
 
                                     SettingsDivider()
@@ -268,9 +278,11 @@ struct ConfigurationView: View {
                                                 Text("Disable tools")
                                                     .font(.system(size: 12))
                                             }
-                                            Text("Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent.")
-                                                .font(.system(size: 11))
-                                                .foregroundColor(theme.tertiaryText)
+                                            Text(
+                                                "Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent."
+                                            )
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
                                         }
                                     }
 
@@ -1049,7 +1061,7 @@ extension ConfigurationView {
             guard !trimmedMaxConcurrent.isEmpty, let v = Int(trimmedMaxConcurrent) else {
                 return defaults.maxConcurrentTasks
             }
-            return max(1, min(20, v))
+            return max(1, min(50, v))
         }()
 
         let config = ToastConfiguration(

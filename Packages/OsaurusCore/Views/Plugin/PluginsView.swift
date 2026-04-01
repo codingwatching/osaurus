@@ -827,7 +827,6 @@ private struct PluginCard: View {
 
 private struct PluginDetailView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var relayManager = RelayTunnelManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
@@ -850,10 +849,6 @@ private struct PluginDetailView: View {
     @State private var changelogContent: String?
     @State private var hasMissingSecrets = false
     @State private var cachedSecrets: [PluginManifest.SecretSpec] = []
-    @State private var copiedURL: String?
-    @State private var expandedAgents: Set<UUID> = []
-    @State private var showRelayConfirmation = false
-    @State private var pendingRelayAgentId: UUID?
 
     private var loadedPlugin: PluginManager.LoadedPlugin? {
         PluginManager.shared.loadedPlugin(for: plugin.pluginId)
@@ -891,10 +886,6 @@ private struct PluginDetailView: View {
 
                     if !missingPermissions.isEmpty && !plugin.hasLoadError {
                         permissionsBanner
-                    }
-
-                    if plugin.isInstalled && !plugin.hasLoadError {
-                        agentsSection
                     }
 
                     if readmeContent != nil {
@@ -963,21 +954,6 @@ private struct PluginDetailView: View {
                 }
             },
             secondaryButton: .cancel("Cancel")
-        )
-        .themedAlert(
-            "Expose Agent to Internet?",
-            isPresented: $showRelayConfirmation,
-            message:
-                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
-            primaryButton: .destructive("Enable Relay") {
-                if let id = pendingRelayAgentId {
-                    relayManager.setTunnelEnabled(true, for: id)
-                }
-                pendingRelayAgentId = nil
-            },
-            secondaryButton: .cancel("Cancel") {
-                pendingRelayAgentId = nil
-            }
         )
         .sheet(isPresented: $showSecretsSheet) {
             ToolSecretsSheet(
@@ -1390,241 +1366,6 @@ private struct PluginDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-
-    // MARK: - Agents Section (toggle + config + endpoints per agent)
-
-    private var agentsSection: some View {
-        let customAgents = agentManager.agents
-            .filter { !$0.isBuiltIn }
-            .sorted { $0.name < $1.name }
-
-        return detailSection(title: "Agents", icon: "person.2") {
-            if customAgents.isEmpty {
-                VStack(spacing: 8) {
-                    Text("No agents yet")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    Text("Create an agent in the Agents tab to enable this plugin.")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-            } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(customAgents.enumerated()), id: \.element.id) { idx, agent in
-                        if idx > 0 {
-                            Divider().opacity(0.4).padding(.vertical, 2)
-                        }
-                        agentPluginRow(agent: agent)
-                    }
-                }
-            }
-        }
-    }
-
-    private func agentPluginRow(agent: Agent) -> some View {
-        let isExpanded = expandedAgents.contains(agent.id)
-        let hasConfig = loadedPlugin?.plugin.manifest.capabilities.config != nil
-        let hasRoutes = !(loadedPlugin?.routes.isEmpty ?? true)
-        let canExpand = hasConfig || hasRoutes
-        let tunnelStatus = relayManager.agentStatuses[agent.id]
-        let tunnelURL: String? = {
-            if case .connected(let baseURL) = tunnelStatus {
-                return "\(baseURL)/plugins/\(plugin.pluginId)"
-            }
-            return nil
-        }()
-
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundColor(theme.accentColor)
-
-                Text(agent.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                if canExpand {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                }
-            }
-            .padding(10)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                guard canExpand else { return }
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if isExpanded {
-                        expandedAgents.remove(agent.id)
-                    } else {
-                        expandedAgents.insert(agent.id)
-                    }
-                }
-            }
-
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 12) {
-                    if hasRoutes {
-                        agentRelaySection(agent: agent, tunnelStatus: tunnelStatus, tunnelURL: tunnelURL)
-                    }
-
-                    if let loaded = loadedPlugin,
-                        let configSpec = loaded.plugin.manifest.capabilities.config
-                    {
-                        PluginConfigView(
-                            pluginId: plugin.pluginId,
-                            agentId: agent.id,
-                            configSpec: configSpec,
-                            plugin: loaded.plugin
-                        )
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.bottom, 10)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.3))
-        )
-    }
-
-    @ViewBuilder
-    private func agentRelaySection(agent: Agent, tunnelStatus: AgentRelayStatus?, tunnelURL: String?) -> some View {
-        let isRelayEnabled = relayManager.isTunnelEnabled(for: agent.id)
-        let hasIdentity = agent.agentAddress != nil && agent.agentIndex != nil
-        let isConnected = tunnelURL != nil
-
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "globe")
-                    .font(.system(size: 12))
-                    .foregroundColor(isConnected ? theme.successColor : theme.accentColor)
-                Text("Relay")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                if hasIdentity {
-                    relayStatusBadge(
-                        tunnelStatus: tunnelStatus,
-                        isConnected: isConnected,
-                        isEnabled: isRelayEnabled
-                    )
-
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { isRelayEnabled },
-                            set: { newValue in
-                                if newValue {
-                                    pendingRelayAgentId = agent.id
-                                    showRelayConfirmation = true
-                                } else {
-                                    relayManager.setTunnelEnabled(false, for: agent.id)
-                                }
-                            }
-                        )
-                    )
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
-                }
-            }
-
-            if !hasIdentity {
-                Text("Set up an identity for this agent in Agent Details to enable relay.")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            } else if let url = tunnelURL {
-                urlRow(label: "Tunnel", url: url)
-            } else if !isRelayEnabled {
-                Text(
-                    "This plugin uses webhooks to receive messages. Enable relay to create a public URL that forwards requests to your local server."
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.3))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(
-                            (isConnected ? theme.successColor : theme.accentColor).opacity(0.2),
-                            lineWidth: 1
-                        )
-                )
-        )
-    }
-
-    @ViewBuilder
-    private func relayStatusBadge(tunnelStatus: AgentRelayStatus?, isConnected: Bool, isEnabled: Bool) -> some View {
-        if case .connecting = tunnelStatus {
-            statusDot(label: "Connecting...", color: theme.warningColor)
-        } else if case .error(let msg) = tunnelStatus {
-            statusDot(label: msg, color: theme.errorColor)
-        } else if isConnected {
-            statusDot(label: "Connected", color: theme.successColor)
-        } else if isEnabled {
-            statusDot(label: "Start server", color: theme.warningColor, textColor: theme.secondaryText)
-        }
-    }
-
-    private func statusDot(label: String, color: Color, textColor: Color? = nil) -> some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(color)
-                .frame(width: 6, height: 6)
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(textColor ?? color)
-                .lineLimit(1)
-        }
-    }
-
-    private func urlRow(label: String, url: String) -> some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(label == "Tunnel" ? theme.accentColor : theme.tertiaryText)
-                .frame(width: 44, alignment: .leading)
-
-            Text(url)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(label == "Tunnel" ? theme.accentColor : theme.secondaryText)
-                .textSelection(.enabled)
-
-            Spacer(minLength: 4)
-
-            Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
-                copiedURL = url
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                    if copiedURL == url { copiedURL = nil }
-                }
-            } label: {
-                Image(systemName: copiedURL == url ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(copiedURL == url ? theme.successColor : theme.tertiaryText)
-                    .frame(width: 22, height: 22)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .help("Copy URL")
-        }
-        .padding(.leading, 18)
     }
 
     private func loadServerPort() -> Int {

@@ -85,6 +85,28 @@ typedef const char* (*osr_http_request_fn)(const char* request_json);
 // Restricted to artifact paths for security.
 typedef const char* (*osr_file_read_fn)(const char* request_json);
 
+// List all active tasks dispatched by the calling plugin.
+// Returns JSON: {"tasks": [<task_status objects>]}.
+typedef const char* (*osr_list_active_tasks_fn)(void);
+
+// Store/emit draft content for a task (e.g. live-update messages).
+// draft_json has "text" (required) and optional "parse_mode".
+typedef void        (*osr_send_draft_fn)(const char* task_id,
+                                         const char* draft_json);
+
+// Soft-stop a running task. If message is non-NULL, interrupts and
+// re-enters execution with the message injected (redirect). If NULL,
+// sets interruptRequested so the agent wraps up gracefully.
+// Work mode only; chat mode falls back to stop().
+typedef void        (*osr_dispatch_interrupt_fn)(const char* task_id,
+                                                 const char* message);
+
+// Add a new issue to a running work-mode task without interrupting
+// the current issue. issue_json has "title" and "description".
+// Returns JSON with the new issue id, or error.
+typedef const char* (*osr_dispatch_add_issue_fn)(const char* task_id,
+                                                 const char* issue_json);
+
 typedef struct {
     uint32_t           version;       // OSR_ABI_VERSION_2
 
@@ -113,6 +135,12 @@ typedef struct {
 
     // File I/O
     osr_file_read_fn        file_read;
+
+    // Extended Agent Dispatch (v2 trailing fields)
+    osr_list_active_tasks_fn   list_active_tasks;
+    osr_send_draft_fn          send_draft;
+    osr_dispatch_interrupt_fn  dispatch_interrupt;
+    osr_dispatch_add_issue_fn  dispatch_add_issue;
 } osr_host_api;
 
 // ── Task lifecycle event types ──
@@ -125,6 +153,7 @@ typedef struct {
 #define OSR_TASK_EVENT_FAILED           5
 #define OSR_TASK_EVENT_CANCELLED        6
 #define OSR_TASK_EVENT_OUTPUT           7
+#define OSR_TASK_EVENT_DRAFT            8
 
 // Unified task lifecycle callback.
 // event_type: one of the OSR_TASK_EVENT_* constants above.

@@ -47,10 +47,14 @@ public final class CentralRepositoryManager: @unchecked Sendable {
             if let branch = central.branch {
                 _ = runGit(in: cloneDir, args: ["checkout", branch])
             }
-            if fetchStatus == 0 && pullStatus == 0 {
+            if fetchStatus == 0 && pullStatus == 0 && validateCloneIntegrity(cloneDir) {
                 return true
             }
-            NSLog("[Osaurus] Registry pull failed (fetch=%d, pull=%d), re-cloning", fetchStatus, pullStatus)
+            NSLog(
+                "[Osaurus] Registry pull failed or integrity check failed (fetch=%d, pull=%d), re-cloning",
+                fetchStatus,
+                pullStatus
+            )
             try? fm.removeItem(at: cloneDir)
             return cloneFresh(root: root, cloneDir: cloneDir)
         } else {
@@ -84,6 +88,34 @@ public final class CentralRepositoryManager: @unchecked Sendable {
         } catch {
             return (-1, "\(error)")
         }
+    }
+
+    /// The `plugins/` directory must exist and contain at least one
+    /// JSON file that decodes as a valid `PluginSpec`.
+    private func validateCloneIntegrity(_ cloneDir: URL) -> Bool {
+        let fm = FileManager.default
+        let pluginsDir = cloneDir.appendingPathComponent("plugins", isDirectory: true)
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: pluginsDir.path, isDirectory: &isDir), isDir.boolValue,
+            let enumerator = fm.enumerator(
+                at: pluginsDir,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            )
+        else {
+            NSLog("[Osaurus] Clone integrity check failed for %@", cloneDir.path)
+            return false
+        }
+        for case let fileURL as URL in enumerator {
+            if fileURL.pathExtension.lowercased() == "json",
+                let data = try? Data(contentsOf: fileURL),
+                (try? JSONDecoder().decode(PluginSpec.self, from: data)) != nil
+            {
+                return true
+            }
+        }
+        NSLog("[Osaurus] Clone integrity check failed: no valid spec JSON in %@", pluginsDir.path)
+        return false
     }
 
     public func listAllSpecs() -> [PluginSpec] {

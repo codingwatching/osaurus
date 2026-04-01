@@ -155,28 +155,33 @@ private struct OrbShaderContent: View {
     @State private var isAppActive = true
 
     var body: some View {
-        // .animation(minimumInterval:, paused:) is display-link driven and actually stops
-        // the display link when paused — .periodic fires at the given interval regardless
-        // of app state, still submitting CA draw calls that keep the compositor busy.
-        // paused: !isAppActive ensures zero CA updates when the app is not in the foreground.
-        TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !isAppActive)) { timeline in
-            let elapsed = Float(timeline.date.timeIntervalSince(startTime))
-            // when paused, timeline.date stops advancing, but on resume it jumps to wall-clock
-            // time; use frozenTime to preserve the shader's animation phase across pause/resume.
-            let time = isAppActive ? elapsed : frozenTime
+        GeometryReader { geometry in
+            let size = geometry.size
+            if size.width > 0 && size.height > 0 {
+                // .animation(minimumInterval:, paused:) is display-link driven and actually stops
+                // the display link when paused — .periodic fires at the given interval regardless
+                // of app state, still submitting CA draw calls that keep the compositor busy.
+                // paused: !isAppActive ensures zero CA updates when the app is not in the foreground.
+                TimelineView(.animation(minimumInterval: 1.0 / 15.0, paused: !isAppActive)) { timeline in
+                    let elapsed = Float(timeline.date.timeIntervalSince(startTime))
+                    // when paused, timeline.date stops advancing, but on resume it jumps to wall-clock
+                    // time; use frozenTime to preserve the shader's animation phase across pause/resume.
+                    let time = isAppActive ? elapsed : frozenTime
 
-            ZStack {
-                Rectangle()
-                    .fill(color)
-                    .colorEffect(
-                        ShaderLibrary.orbEffect(
-                            .float(time),
-                            .float(seedHash),
-                            .boundingRect
-                        )
-                    )
+                    ZStack {
+                        Rectangle()
+                            .fill(color)
+                            .colorEffect(
+                                ShaderLibrary.orbEffect(
+                                    .float(time),
+                                    .float(seedHash),
+                                    .boundingRect
+                                )
+                            )
 
-                particleCanvas(time: time)
+                        particleCanvas(time: time)
+                    }
+                }
             }
         }
         .onReceive(

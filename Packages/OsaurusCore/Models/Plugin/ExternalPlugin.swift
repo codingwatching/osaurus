@@ -57,6 +57,7 @@ enum TaskEventType: Int32 {
     case failed = 5
     case cancelled = 6
     case output = 7
+    case draft = 8
 }
 
 // Host API callback types (host → plugin, injected at init for v2)
@@ -93,6 +94,13 @@ typealias osr_http_request_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafeP
 // File I/O
 typealias osr_file_read_t = @convention(c) (UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
 
+// Extended Agent Dispatch
+typealias osr_list_active_tasks_t = @convention(c) () -> UnsafePointer<CChar>?
+typealias osr_send_draft_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+typealias osr_dispatch_interrupt_t = @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> Void
+typealias osr_dispatch_add_issue_t =
+    @convention(c) (UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafePointer<CChar>?
+
 struct osr_host_api {
     var version: UInt32
 
@@ -121,6 +129,12 @@ struct osr_host_api {
 
     // File I/O
     var file_read: osr_file_read_t?
+
+    // Extended Agent Dispatch (v2 trailing fields)
+    var list_active_tasks: osr_list_active_tasks_t?
+    var send_draft: osr_send_draft_t?
+    var dispatch_interrupt: osr_dispatch_interrupt_t?
+    var dispatch_add_issue: osr_dispatch_add_issue_t?
 }
 
 struct osr_plugin_api {
@@ -147,6 +161,9 @@ public struct PluginManifest: Decodable, Sendable {
     public let plugin_id: String
     public let description: String?
     public let capabilities: Capabilities
+
+    /// System prompt instructions appended during plugin-initiated inference.
+    public let instructions: String?
 
     // Optional fields for registry
     public let name: String?
@@ -381,6 +398,32 @@ final class ExternalPlugin: @unchecked Sendable {
     /// Concurrent (not serial) so multiple route handlers can run in parallel.
     private let invokeQueue: DispatchQueue
 
+    /// Per-task serial queues for event delivery. Each task gets its own queue
+    /// so a slow event handler (e.g. http_request inside on_task_event) for one
+    /// task doesn't block event delivery to other tasks. Serial ordering within
+    /// each queue preserves the logical event sequence per task
+    /// (STARTED → ACTIVITY → COMPLETED).
+    private var taskEventQueues: [String: DispatchQueue] = [:]
+    private let taskEventQueuesLock = NSLock()
+
+    private func eventQueue(for taskId: String) -> DispatchQueue {
+        taskEventQueuesLock.withLock {
+            if let q = taskEventQueues[taskId] { return q }
+            let q = DispatchQueue(
+                label: "com.osaurus.plugin.events.\(id).\(taskId)",
+                qos: .utility
+            )
+            taskEventQueues[taskId] = q
+            return q
+        }
+    }
+
+    private func removeEventQueue(for taskId: String) {
+        taskEventQueuesLock.withLock {
+            _ = taskEventQueues.removeValue(forKey: taskId)
+        }
+    }
+
     init(
         handle: UnsafeMutableRawPointer,
         api: osr_plugin_api,
@@ -406,13 +449,23 @@ final class ExternalPlugin: @unchecked Sendable {
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
     var hasTaskEventHandler: Bool { abiVersion >= 2 && api.on_task_event != nil }
 
-    /// Tears down the plugin context by draining all in-flight concurrent work
-    /// (barrier) and then calling `destroy`. Uses async dispatch so the
-    /// destroy callback (which may call host API trampolines like httpRequest)
-    /// never runs on the main thread, avoiding deadlocks with `blockingAsync`.
+    /// Tears down the plugin context by draining all per-task event queues
+    /// first, then the invoke queue (barrier), before calling `destroy`.
+    /// Uses async dispatch so the destroy callback (which may call host API
+    /// trampolines like httpRequest) never runs on the main thread, avoiding
+    /// deadlocks with `blockingAsync`.
     func shutdown() async {
-        await withCheckedContinuation { continuation in
-            invokeQueue.async(flags: .barrier) { [self] in
+        let queues: [DispatchQueue] = taskEventQueuesLock.withLock {
+            Array(taskEventQueues.values)
+        }
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let group = DispatchGroup()
+            for q in queues {
+                group.enter()
+                q.async(flags: .barrier) { group.leave() }
+            }
+            group.notify(flags: .barrier, queue: self.invokeQueue) { [self] in
                 guard !self.isShutDown else {
                     continuation.resume()
                     return
@@ -426,7 +479,10 @@ final class ExternalPlugin: @unchecked Sendable {
 
     /// Dispatches a blocking C ABI call on `invokeQueue` and returns the resulting string.
     /// Keeps `self` alive for the duration of the call to prevent `ctx` from being freed.
+    /// `agentId` is propagated via thread-local storage so concurrent requests
+    /// for different agents resolve the correct config.
     private func dispatchPluginCall(
+        agentId: UUID? = nil,
         errorCode: Int,
         errorMessage: String,
         _ call: @Sendable @escaping (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
@@ -448,7 +504,13 @@ final class ExternalPlugin: @unchecked Sendable {
                     return
                 }
                 PluginHostContext.setActivePlugin(pluginId)
-                defer { PluginHostContext.clearActivePlugin() }
+                if let agentId {
+                    PluginHostContext.setActiveAgent(agentId)
+                }
+                defer {
+                    PluginHostContext.clearActivePlugin()
+                    PluginHostContext.clearActiveAgent()
+                }
 
                 guard let resPtr = call(ctx) else {
                     continuation.resume(
@@ -469,7 +531,7 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func invoke(type: String, id: String, payload: String) async throws -> String {
+    func invoke(type: String, id: String, payload: String, agentId: UUID? = nil) async throws -> String {
         guard let invokeFn = api.invoke else {
             throw NSError(
                 domain: "ExternalPlugin",
@@ -478,7 +540,11 @@ final class ExternalPlugin: @unchecked Sendable {
             )
         }
 
-        return try await dispatchPluginCall(errorCode: 2, errorMessage: "Plugin returned NULL response") { ctx in
+        return try await dispatchPluginCall(
+            agentId: agentId,
+            errorCode: 2,
+            errorMessage: "Plugin returned NULL response"
+        ) { ctx in
             type.withCString { typePtr in
                 id.withCString { idPtr in
                     payload.withCString { payloadPtr in
@@ -489,7 +555,7 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func handleRoute(requestJSON: String) async throws -> String {
+    func handleRoute(requestJSON: String, agentId: UUID? = nil) async throws -> String {
         guard abiVersion >= 2, let routeFn = api.handle_route else {
             throw NSError(
                 domain: "ExternalPlugin",
@@ -498,26 +564,37 @@ final class ExternalPlugin: @unchecked Sendable {
             )
         }
 
-        return try await dispatchPluginCall(errorCode: 4, errorMessage: "Plugin route handler returned NULL") { ctx in
+        return try await dispatchPluginCall(
+            agentId: agentId,
+            errorCode: 4,
+            errorMessage: "Plugin route handler returned NULL"
+        ) { ctx in
             requestJSON.withCString { reqPtr in
                 routeFn(ctx, reqPtr)
             }
         }
     }
 
-    func notifyConfigChanged(key: String, value: String) {
-        notifyConfigBatch([(key: key, value: value)])
+    func notifyConfigChanged(key: String, value: String, agentId: UUID? = nil) {
+        notifyConfigBatch([(key: key, value: value)], agentId: agentId)
     }
 
-    func notifyConfigBatch(_ changes: [(key: String, value: String)]) {
+    func notifyConfigBatch(_ changes: [(key: String, value: String)], agentId: UUID? = nil) {
         guard abiVersion >= 2, let configFn = api.on_config_changed, !changes.isEmpty else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
 
         invokeQueue.async { [self] in
             guard !self.isShutDown else { return }
+
             PluginHostContext.setActivePlugin(pluginId)
-            defer { PluginHostContext.clearActivePlugin() }
+            if let agentId {
+                PluginHostContext.setActiveAgent(agentId)
+            }
+            defer {
+                PluginHostContext.clearActivePlugin()
+                PluginHostContext.clearActiveAgent()
+            }
 
             for (key, value) in changes {
                 key.withCString { keyPtr in
@@ -530,21 +607,32 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func notifyTaskEvent(taskId: String, eventType: TaskEventType, eventJSON: String) {
+    func notifyTaskEvent(taskId: String, eventType: TaskEventType, eventJSON: String, agentId: UUID? = nil) {
         guard abiVersion >= 2, let eventFn = api.on_task_event else { return }
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
         let rawType = eventType.rawValue
+        let isTerminal = eventType == .completed || eventType == .failed || eventType == .cancelled
 
-        invokeQueue.async { [self] in
+        eventQueue(for: taskId).async { [self] in
             guard !self.isShutDown else { return }
             PluginHostContext.setActivePlugin(pluginId)
-            defer { PluginHostContext.clearActivePlugin() }
+            if let agentId {
+                PluginHostContext.setActiveAgent(agentId)
+            }
+            defer {
+                PluginHostContext.clearActivePlugin()
+                PluginHostContext.clearActiveAgent()
+            }
 
             taskId.withCString { taskIdPtr in
                 eventJSON.withCString { jsonPtr in
                     eventFn(ctx, taskIdPtr, rawType, jsonPtr)
                 }
+            }
+
+            if isTerminal {
+                self.removeEventQueue(for: taskId)
             }
             withExtendedLifetime(self) {}
         }

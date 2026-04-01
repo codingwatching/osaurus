@@ -25,6 +25,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // Detect repeated startup crashes and enter safe mode if needed
+        LaunchGuard.checkOnLaunch()
+
         // Configure as regular app (show Dock icon) by default, or accessory if hidden
         let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false
         if hideDockIcon {
@@ -116,9 +119,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize directory access early so security-scoped bookmark is active
         let _ = DirectoryPickerService.shared
 
-        // Load external tool plugins at launch (after core is initialized)
-        Task { @MainActor in
-            await PluginManager.shared.loadAll()
+        if LaunchGuard.isSafeMode {
+            NotificationService.shared.postSafeModeActive()
+            LaunchGuard.markStartupComplete()
+        } else {
+            // Load external tool plugins at launch (after core is initialized)
+            Task { @MainActor in
+                await PluginManager.shared.loadAll()
+                LaunchGuard.markStartupComplete()
+            }
+
+            // Start plugin repository background refresh for update checking
+            PluginRepositoryService.shared.startBackgroundRefresh()
         }
 
         // Pre-warm caches immediately for instant first window (no async deps)
@@ -132,16 +144,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
-        // Start plugin repository background refresh for update checking
-        PluginRepositoryService.shared.startBackgroundRefresh()
-
-        // Initialize memory system with retry
-        Task { @MainActor in
-            var opened = false
+        // All VecturaKit inits run sequentially in one Task to prevent concurrent
+        // CoreML model loads that can SIGSEGV on Apple Silicon.
+        // Memory DB opens first because MemorySearchService.initialize() needs it
+        // for reverse maps. Registered as startup init task so ModelRuntime can
+        // gate MLX inference until CoreML embedding work finishes.
+        let embeddingInitTask = Task {
+            var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
                     try MemoryDatabase.shared.open()
-                    opened = true
+                    memoryDBOpened = true
                     break
                 } catch {
                     MemoryLogger.database.error("Memory database open attempt \(attempt)/3 failed: \(error)")
@@ -150,31 +163,33 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     }
                 }
             }
-            if opened {
-                ActivityTracker.shared.start()
+            if memoryDBOpened {
                 await MemorySearchService.shared.initialize()
-                await MemoryService.shared.recoverOrphanedSignals()
             } else {
                 MemoryLogger.database.error("Memory system disabled — database failed to open after 3 attempts")
             }
-        }
 
-        // Initialize context management system (methods, tool index, skill search)
-        Task {
-            async let methodsInit: Void = {
-                try? MethodDatabase.shared.open()
-                await MethodSearchService.shared.initialize()
-            }()
-            async let toolsInit: Void = {
-                try? ToolDatabase.shared.open()
-                await ToolSearchService.shared.initialize()
-            }()
-            async let skillsInit: Void = SkillSearchService.shared.initialize()
+            try? MethodDatabase.shared.open()
+            await MethodSearchService.shared.initialize()
 
-            _ = await (methodsInit, toolsInit, skillsInit)
+            try? ToolDatabase.shared.open()
+            await ToolSearchService.shared.initialize()
+
+            await SkillSearchService.shared.initialize()
+
             await ToolIndexService.shared.syncFromRegistry()
             await SkillSearchService.shared.rebuildIndex()
             await MethodSearchService.shared.rebuildIndex()
+        }
+        EmbeddingService.setStartupInitTask(embeddingInitTask)
+
+        // Start activity tracking and recover orphaned signals once DB is ready
+        Task { @MainActor in
+            await embeddingInitTask.value
+            if MemoryDatabase.shared.isOpen {
+                ActivityTracker.shared.start()
+                await MemoryService.shared.recoverOrphanedSignals()
+            }
         }
 
         // Auto-start server on app launch

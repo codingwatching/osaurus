@@ -74,6 +74,14 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         center.add(request, withCompletionHandler: nil)
     }
 
+    func postSafeModeActive() {
+        let content = UNMutableNotificationContent()
+        content.title = "Osaurus started in safe mode"
+        content.body = "Plugins disabled after repeated crashes. Run \"osaurus tools reset\" in Terminal to recover."
+        let request = UNNotificationRequest(identifier: "safe-mode", content: content, trigger: nil)
+        center.add(request, withCompletionHandler: nil)
+    }
+
     func postPluginUpdatesAvailable(count: Int, pluginNames: [String]) {
         guard count > 0 else { return }
 

@@ -4,8 +4,7 @@ import UniformTypeIdentifiers
 // MARK: - Shared Helpers
 
 func agentColorFor(_ name: String) -> Color {
-    let hash = abs(name.hashValue)
-    let hue = Double(hash % 360) / 360.0
+    let hue = Double(abs(name.hashValue % 360)) / 360.0
     return Color(hue: hue, saturation: 0.6, brightness: 0.8)
 }
 
@@ -608,6 +607,11 @@ private enum DetailTab: String, CaseIterable {
     }
 }
 
+private enum AgentTab: Hashable {
+    case builtIn(DetailTab)
+    case plugin(String)
+}
+
 // MARK: - Agent Detail View
 
 struct AgentDetailView: View {
@@ -650,16 +654,18 @@ struct AgentDetailView: View {
     @State private var chatQuickActions: [AgentQuickAction]?
     @State private var workQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
+    @State private var pluginInstructionsMap: [String: String] = [:]
 
     // MARK: - UI State
 
-    @State private var selectedTab: DetailTab = .configure
+    @State private var selectedTab: AgentTab = .builtIn(.configure)
     @State private var hasAppeared = false
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
     @State private var showRelayConfirmation = false
     @State private var copiedRelayURL = false
+    @State private var copiedRouteURL: String?
     @State private var pickerItems: [ModelPickerItem] = []
     @State private var showModelPicker = false
     @State private var selectedModel: String?
@@ -692,6 +698,17 @@ struct AgentDetailView: View {
 
     private var agentColor: Color { agentColorFor(name) }
 
+    private var agentPlugins: [PluginManager.LoadedPlugin] {
+        PluginManager.shared.plugins.filter { loaded in
+            let hasConfig = loaded.plugin.manifest.capabilities.config != nil
+            let hasInstructions =
+                loaded.plugin.manifest.instructions != nil
+                || currentAgent.pluginInstructions?[loaded.plugin.id] != nil
+            let hasRoutes = !loaded.routes.isEmpty
+            return hasConfig || hasInstructions || hasRoutes
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             detailHeaderBar
@@ -711,14 +728,16 @@ struct AgentDetailView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         switch selectedTab {
-                        case .configure:
+                        case .builtIn(.configure):
                             configureTabContent
-                        case .sandbox:
+                        case .builtIn(.sandbox):
                             sandboxTabContent
-                        case .automation:
+                        case .builtIn(.automation):
                             automationTabContent
-                        case .memory:
+                        case .builtIn(.memory):
                             memoryTabContent
+                        case .plugin(let pid):
+                            pluginTabContent(for: pid)
                         }
                     }
                     .padding(24)
@@ -924,62 +943,78 @@ struct AgentDetailView: View {
 
     // MARK: - Tab Bar
 
-    private func tabBadgeCount(for tab: DetailTab) -> Int? {
+    private func tabBadgeCount(for tab: AgentTab) -> Int? {
         switch tab {
-        case .configure: return nil
-        case .sandbox: return nil
-        case .automation:
-            let count = linkedSchedules.count + linkedWatchers.count
-            return count > 0 ? count : nil
-        case .memory:
-            let count = chatSessions.count + workTasks.count
-            return count > 0 ? count : nil
+        case .builtIn(let dt):
+            switch dt {
+            case .configure: return nil
+            case .sandbox: return nil
+            case .automation:
+                let count = linkedSchedules.count + linkedWatchers.count
+                return count > 0 ? count : nil
+            case .memory:
+                let count = chatSessions.count + workTasks.count
+                return count > 0 ? count : nil
+            }
+        case .plugin:
+            return nil
         }
     }
 
     private var tabBar: some View {
         HStack(spacing: 0) {
             ForEach(DetailTab.allCases, id: \.self) { tab in
-                let isSelected = selectedTab == tab
-                Button {
-                    selectedTab = tab
-                } label: {
-                    VStack(spacing: 0) {
-                        HStack(spacing: 5) {
-                            Image(systemName: tab.icon)
-                                .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
-
-                            Text(tab.label)
-                                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-
-                            if let count = tabBadgeCount(for: tab) {
-                                Text("\(count)")
-                                    .font(.system(size: 9, weight: .bold, design: .rounded))
-                                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(
-                                        Capsule()
-                                            .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
-                                    )
-                            }
-                        }
-                        .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 10)
-                        .padding(.bottom, 8)
-
-                        Rectangle()
-                            .fill(isSelected ? theme.accentColor : Color.clear)
-                            .frame(height: 2)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
+                tabButton(for: .builtIn(tab), label: tab.label, icon: tab.icon)
+            }
+            ForEach(agentPlugins, id: \.plugin.id) { loaded in
+                tabButton(
+                    for: .plugin(loaded.plugin.id),
+                    label: loaded.plugin.manifest.name ?? loaded.plugin.id,
+                    icon: "puzzlepiece.extension"
+                )
             }
             Spacer()
         }
         .padding(.horizontal, 4)
+    }
+
+    private func tabButton(for tab: AgentTab, label: String, icon: String) -> some View {
+        let isSelected = selectedTab == tab
+        return Button {
+            selectedTab = tab
+        } label: {
+            VStack(spacing: 0) {
+                HStack(spacing: 5) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: isSelected ? .semibold : .regular))
+
+                    Text(label)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+
+                    if let count = tabBadgeCount(for: tab) {
+                        Text("\(count)")
+                            .font(.system(size: 9, weight: .bold, design: .rounded))
+                            .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(
+                                Capsule()
+                                    .fill(isSelected ? theme.accentColor.opacity(0.12) : theme.inputBackground)
+                            )
+                    }
+                }
+                .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+
+                Rectangle()
+                    .fill(isSelected ? theme.accentColor : Color.clear)
+                    .frame(height: 2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 
     private func tabHelperText(_ text: String) -> some View {
@@ -1163,6 +1198,270 @@ struct AgentDetailView: View {
             }
             .onChange(of: temperature) { debouncedSave() }
             .onChange(of: maxTokens) { debouncedSave() }
+        }
+    }
+
+    // MARK: - Plugin Tab Content
+
+    @ViewBuilder
+    private func pluginTabContent(for pid: String) -> some View {
+        if let loaded = PluginManager.shared.loadedPlugin(for: pid) {
+            let pluginName = loaded.plugin.manifest.name ?? pid
+            tabHelperText("Configure \(pluginName) settings for this agent.")
+
+            if loaded.plugin.manifest.instructions != nil || pluginInstructionsMap[pid] != nil {
+                pluginInstructionsCard(for: loaded)
+            }
+
+            if let configSpec = loaded.plugin.manifest.capabilities.config {
+                AgentDetailSection(title: "Configuration", icon: "slider.horizontal.3") {
+                    PluginConfigView(
+                        pluginId: pid,
+                        agentId: agent.id,
+                        configSpec: configSpec,
+                        plugin: loaded.plugin
+                    )
+                }
+            }
+
+            if !loaded.routes.isEmpty {
+                pluginRoutesCard(for: loaded)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pluginInstructionsCard(for loaded: PluginManager.LoadedPlugin) -> some View {
+        let pid = loaded.plugin.id
+        let manifestDefault = loaded.plugin.manifest.instructions ?? ""
+
+        AgentDetailSection(title: "Instructions", icon: "text.bubble") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Customize how the AI uses this plugin.")
+                        .font(.system(size: 12))
+                        .foregroundColor(theme.secondaryText)
+
+                    Spacer()
+
+                    if let current = pluginInstructionsMap[pid],
+                        !manifestDefault.isEmpty,
+                        current.trimmingCharacters(in: .whitespacesAndNewlines)
+                            != manifestDefault.trimmingCharacters(in: .whitespacesAndNewlines)
+                    {
+                        Button {
+                            pluginInstructionsMap[pid] = manifestDefault
+                            debouncedSave()
+                        } label: {
+                            Text("Reset to Default")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundColor(theme.accentColor)
+                    }
+                }
+
+                ZStack(alignment: .topLeading) {
+                    if (pluginInstructionsMap[pid] ?? "").isEmpty {
+                        Text("Custom instructions for this plugin...")
+                            .font(.system(size: 12))
+                            .foregroundColor(theme.placeholderText)
+                            .padding(.top, 10)
+                            .padding(.leading, 14)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextEditor(
+                        text: Binding(
+                            get: { pluginInstructionsMap[pid] ?? manifestDefault },
+                            set: { pluginInstructionsMap[pid] = $0 }
+                        )
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 80, maxHeight: 160)
+                    .padding(10)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            }
+            .onChange(of: pluginInstructionsMap) { debouncedSave() }
+        }
+    }
+
+    @ViewBuilder
+    private func pluginRoutesCard(for loaded: PluginManager.LoadedPlugin) -> some View {
+        let pid = loaded.plugin.id
+        let tunnelStatus = relayManager.agentStatuses[agent.id]
+        let tunnelBaseURL: String? = {
+            if case .connected(let baseURL) = tunnelStatus {
+                return "\(baseURL)/plugins/\(pid)"
+            }
+            return nil
+        }()
+
+        AgentDetailSection(title: "Route Endpoints", icon: "arrow.left.arrow.right") {
+            VStack(alignment: .leading, spacing: 16) {
+                if let baseURL = tunnelBaseURL {
+                    routeBaseURLRow(
+                        label: "Public URL",
+                        url: baseURL,
+                        dotColor: theme.successColor
+                    )
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                        Text("Enable relay in the Sandbox tab to get a public URL.")
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(loaded.routes.enumerated()), id: \.element.id) { idx, route in
+                        if idx > 0 {
+                            Divider().opacity(0.3)
+                        }
+                        routeRow(route: route, pluginId: pid, baseURL: tunnelBaseURL)
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.tertiaryBackground.opacity(0.3))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
+            }
+        }
+    }
+
+    private func routeBaseURLRow(label: String, url: String, dotColor: Color) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(dotColor)
+                .frame(width: 6, height: 6)
+
+            Text(label)
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(theme.tertiaryText)
+                .frame(width: 60, alignment: .leading)
+
+            Text(url)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundColor(theme.accentColor)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+
+            Spacer(minLength: 4)
+
+            routeCopyButton(url: url)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(dotColor.opacity(0.06))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(dotColor.opacity(0.15), lineWidth: 1)
+                )
+        )
+    }
+
+    private func routeRow(route: PluginManifest.RouteSpec, pluginId: String, baseURL: String?) -> some View {
+        let fullPath = "/plugins/\(pluginId)\(route.path)"
+        let fullURL = baseURL.map { "\($0)\(route.path)" }
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(route.methods.joined(separator: ", "))
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(routeMethodColor(route.methods.first ?? "GET"))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(routeMethodColor(route.methods.first ?? "GET").opacity(0.12))
+                    )
+
+                Text(fullPath)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+
+                Spacer()
+
+                Text(route.auth.rawValue)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(routeAuthColor(route.auth))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(routeAuthColor(route.auth).opacity(0.12))
+                    )
+
+                if let url = fullURL {
+                    routeCopyButton(url: url)
+                }
+            }
+
+            if let desc = route.description, !desc.isEmpty {
+                Text(desc)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    private func routeCopyButton(url: String) -> some View {
+        let isCopied = copiedRouteURL == url
+        return Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url, forType: .string)
+            copiedRouteURL = url
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                if copiedRouteURL == url { copiedRouteURL = nil }
+            }
+        } label: {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(isCopied ? theme.successColor : theme.tertiaryText)
+                .frame(width: 20, height: 20)
+                .background(Circle().fill(theme.tertiaryBackground.opacity(0.5)))
+        }
+        .buttonStyle(PlainButtonStyle())
+        .help(isCopied ? "Copied" : "Copy URL")
+    }
+
+    private func routeMethodColor(_ method: String) -> Color {
+        switch method.uppercased() {
+        case "GET": return .green
+        case "POST": return .blue
+        case "PUT", "PATCH": return .orange
+        case "DELETE": return .red
+        default: return theme.accentColor
+        }
+    }
+
+    private func routeAuthColor(_ auth: PluginManifest.RouteAuth) -> Color {
+        switch auth {
+        case .none: return .green
+        case .verify: return .orange
+        case .owner: return .blue
         }
     }
 
@@ -2150,6 +2449,16 @@ struct AgentDetailView: View {
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         workQuickActions = agent.workQuickActions
+
+        var instrMap: [String: String] = [:]
+        let overrides = agent.pluginInstructions ?? [:]
+        for loaded in PluginManager.shared.plugins {
+            let pid = loaded.plugin.id
+            if let text = overrides[pid] ?? loaded.plugin.manifest.instructions {
+                instrMap[pid] = text
+            }
+        }
+        pluginInstructionsMap = instrMap
     }
 
     private func loadMemoryData() {
@@ -2175,6 +2484,16 @@ struct AgentDetailView: View {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else { return }
 
+        let effectivePluginInstructions: [String: String]? = {
+            let overrides = pluginInstructionsMap.filter { pid, text in
+                let manifest = PluginManager.shared.loadedPlugin(for: pid)?.plugin.manifest.instructions ?? ""
+                return text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    != manifest.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return overrides.isEmpty ? nil : overrides
+        }()
+
+        let current = currentAgent
         let updated = Agent(
             id: agent.id,
             name: trimmedName,
@@ -2188,7 +2507,12 @@ struct AgentDetailView: View {
             workQuickActions: workQuickActions,
             isBuiltIn: false,
             createdAt: agent.createdAt,
-            updatedAt: Date()
+            updatedAt: Date(),
+            agentIndex: current.agentIndex,
+            agentAddress: current.agentAddress,
+            sandboxPlugins: current.sandboxPlugins,
+            autonomousExec: current.autonomousExec,
+            pluginInstructions: effectivePluginInstructions
         )
 
         agentManager.update(updated)

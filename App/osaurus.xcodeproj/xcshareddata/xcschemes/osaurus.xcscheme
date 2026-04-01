@@ -6,36 +6,36 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
-       <BuildActionEntries>
-          <BuildActionEntry
-             buildForTesting = "YES"
-             buildForRunning = "YES"
-             buildForProfiling = "YES"
-             buildForArchiving = "YES"
-             buildForAnalyzing = "YES">
-             <BuildableReference
-                BuildableIdentifier = "primary"
-                BlueprintIdentifier = "F0BB3C252E51FBCC00895593"
-                BuildableName = "osaurus.app"
-                BlueprintName = "osaurus"
-                ReferencedContainer = "container:osaurus.xcodeproj">
-             </BuildableReference>
-          </BuildActionEntry>
-          <BuildActionEntry
-             buildForTesting = "YES"
-             buildForRunning = "NO"
-             buildForProfiling = "NO"
-             buildForArchiving = "NO"
-             buildForAnalyzing = "NO">
-             <BuildableReference
-                BuildableIdentifier = "primary"
-                BlueprintIdentifier = "OsaurusCoreTests"
-                BuildableName = "OsaurusCoreTests"
-                BlueprintName = "OsaurusCoreTests"
-                ReferencedContainer = "container:../Packages/OsaurusCore">
-             </BuildableReference>
-          </BuildActionEntry>
-       </BuildActionEntries>
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "F0BB3C252E51FBCC00895593"
+               BuildableName = "osaurus.app"
+               BlueprintName = "osaurus"
+               ReferencedContainer = "container:osaurus.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "OsaurusCoreTests"
+               BuildableName = "OsaurusCoreTests"
+               BlueprintName = "OsaurusCoreTests"
+               ReferencedContainer = "container:../Packages/OsaurusCore">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
    </BuildAction>
    <TestAction
       buildConfiguration = "Debug"
@@ -47,36 +47,36 @@
          <TestableReference
             skipped = "NO"
             parallelizable = "YES">
-             <BuildableReference
-                BuildableIdentifier = "primary"
-                BlueprintIdentifier = "OsaurusCoreTests"
-                BuildableName = "OsaurusCoreTests"
-                BlueprintName = "OsaurusCoreTests"
-                ReferencedContainer = "container:../Packages/OsaurusCore">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "OsaurusCoreTests"
+               BuildableName = "OsaurusCoreTests"
+               BlueprintName = "OsaurusCoreTests"
+               ReferencedContainer = "container:../Packages/OsaurusCore">
             </BuildableReference>
          </TestableReference>
          <TestableReference
-             skipped = "YES"
-             parallelizable = "YES">
-             <BuildableReference
-                BuildableIdentifier = "primary"
-                BlueprintIdentifier = "F0BB3C332E51FBCD00895593"
-                BuildableName = "osaurusTests.xctest"
-                BlueprintName = "osaurusTests"
-                ReferencedContainer = "container:osaurus.xcodeproj">
-             </BuildableReference>
-          </TestableReference>
-          <TestableReference
-             skipped = "YES"
-             parallelizable = "YES">
-             <BuildableReference
-                BuildableIdentifier = "primary"
-                BlueprintIdentifier = "F0BB3C3D2E51FBCD00895593"
-                BuildableName = "osaurusUITests.xctest"
-                BlueprintName = "osaurusUITests"
-                ReferencedContainer = "container:osaurus.xcodeproj">
-             </BuildableReference>
-          </TestableReference>
+            skipped = "YES"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "F0BB3C332E51FBCD00895593"
+               BuildableName = "osaurusTests.xctest"
+               BlueprintName = "osaurusTests"
+               ReferencedContainer = "container:osaurus.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "YES"
+            parallelizable = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "F0BB3C3D2E51FBCD00895593"
+               BuildableName = "osaurusUITests.xctest"
+               BlueprintName = "osaurusUITests"
+               ReferencedContainer = "container:osaurus.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

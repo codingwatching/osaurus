@@ -128,7 +128,7 @@ public struct ToastConfiguration: Codable, Equatable, Sendable {
         maxVisibleToasts: Int = 5,
         groupByAgent: Bool = true,
         enabled: Bool = true,
-        maxConcurrentTasks: Int = 5
+        maxConcurrentTasks: Int = 20
     ) {
         self.position = position
         self.defaultTimeout = defaultTimeout

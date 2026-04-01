@@ -153,12 +153,17 @@ public final class BackgroundTaskManager: ObservableObject {
                     json: PluginHostContext.serializeCompletedEvent(
                         success: true,
                         summary: summary,
-                        sessionId: state.executionContext?.id
+                        sessionId: state.executionContext?.id,
+                        taskTitle: state.taskTitle
                     )
                 )
             } else {
                 state.status = .cancelled
-                emitPluginEvent(state, type: .cancelled, json: PluginHostContext.serializeCancelledEvent())
+                emitPluginEvent(
+                    state,
+                    type: .cancelled,
+                    json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
+                )
             }
         }
 
@@ -201,7 +206,11 @@ public final class BackgroundTaskManager: ObservableObject {
 
         state.status = .cancelled
         resumeCompletion(for: backgroundId, result: .cancelled)
-        emitPluginEvent(state, type: .cancelled, json: PluginHostContext.serializeCancelledEvent())
+        emitPluginEvent(
+            state,
+            type: .cancelled,
+            json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
+        )
         lastProgressEmit.removeValue(forKey: backgroundId)
         scheduleAutoFinalize(backgroundId)
     }
@@ -212,11 +221,37 @@ public final class BackgroundTaskManager: ObservableObject {
         Task { await session.submitClarification(response) }
     }
 
+    /// Soft-stop a running task. If message is provided, interrupts and re-enters
+    /// with the message injected (work mode redirect). If nil, just sets interrupt flag.
+    public func interruptTask(_ backgroundId: UUID, message: String?) {
+        guard let state = backgroundTasks[backgroundId], state.status.isActive else { return }
+
+        switch state.mode {
+        case .work:
+            if let message {
+                state.session?.redirectExecution(message: message)
+            } else {
+                state.session?.stopExecution()
+            }
+        case .chat:
+            state.chatSession?.stop()
+        }
+    }
+
+    /// Emit a draft event to the originating plugin.
+    func emitDraftEvent(_ state: BackgroundTaskState, draftJSON: String) {
+        emitPluginEvent(
+            state,
+            type: .draft,
+            json: PluginHostContext.serializeDraftEvent(draftJSON: draftJSON, taskTitle: state.taskTitle)
+        )
+    }
+
     // MARK: - Dispatch
 
     /// Dispatch an work task for background execution.
     public func dispatchWork(_ request: DispatchRequest) async -> DispatchHandle? {
-        guard canDispatchNewTask() else { return nil }
+        guard canDispatchNewTask(agentId: request.agentId) else { return nil }
 
         let context = createContext(for: request)
         await context.prepare()
@@ -264,7 +299,7 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// Dispatch a chat task for background execution.
     public func dispatchChat(_ request: DispatchRequest) async -> DispatchHandle? {
-        guard canDispatchNewTask() else { return nil }
+        guard canDispatchNewTask(agentId: request.agentId) else { return nil }
 
         let context = createContext(for: request)
         await context.prepare()
@@ -320,14 +355,31 @@ public final class BackgroundTaskManager: ObservableObject {
 
     // MARK: - Private: Dispatch Helpers
 
-    /// Check whether a new task can be dispatched without exceeding the configured limit.
-    private func canDispatchNewTask() -> Bool {
-        let limit = ToastConfigurationStore.load().maxConcurrentTasks
-        let activeCount = backgroundTasks.values.filter { $0.status.isActive }.count
-        guard activeCount < limit else {
-            print("[BackgroundTaskManager] Task limit reached (\(limit)), rejecting dispatch")
+    private static let maxTasksPerAgent = 5
+
+    /// Check whether a new task can be dispatched without exceeding the global
+    /// limit or the per-agent limit. The global limit is user-configurable via
+    /// settings; the per-agent limit prevents a single agent from monopolizing
+    /// all slots in multi-agent scenarios.
+    private func canDispatchNewTask(agentId: UUID?) -> Bool {
+        let globalLimit = ToastConfigurationStore.load().maxConcurrentTasks
+        let activeTasks = backgroundTasks.values.filter { $0.status.isActive }
+
+        guard activeTasks.count < globalLimit else {
+            print("[BackgroundTaskManager] Global task limit reached (\(globalLimit)), rejecting dispatch")
             return false
         }
+
+        if let agentId {
+            let agentCount = activeTasks.filter { $0.agentId == agentId }.count
+            guard agentCount < Self.maxTasksPerAgent else {
+                print(
+                    "[BackgroundTaskManager] Per-agent task limit reached (\(Self.maxTasksPerAgent)) for agent \(agentId), rejecting dispatch"
+                )
+                return false
+            }
+        }
+
         return true
     }
 
@@ -374,11 +426,14 @@ public final class BackgroundTaskManager: ObservableObject {
 
         let eventType: TaskEventType = success ? .completed : .failed
         let artifacts = state.executionContext?.workSession?.sharedArtifacts ?? []
+        let outputText = state.session?.streamingContent
         let json = PluginHostContext.serializeCompletedEvent(
             success: success,
             summary: summary,
             sessionId: state.executionContext?.id,
-            artifacts: artifacts
+            taskTitle: state.taskTitle,
+            artifacts: artifacts,
+            outputText: outputText
         )
         emitPluginEvent(state, type: eventType, json: json)
         lastProgressEmit.removeValue(forKey: state.id)
@@ -405,7 +460,8 @@ public final class BackgroundTaskManager: ObservableObject {
             loaded.plugin.notifyTaskEvent(
                 taskId: state.id.uuidString,
                 eventType: type,
-                eventJSON: json
+                eventJSON: json,
+                agentId: state.agentId
             )
         }
     }
@@ -527,7 +583,7 @@ public final class BackgroundTaskManager: ObservableObject {
                 self.emitPluginEvent(
                     state,
                     type: .output,
-                    json: PluginHostContext.serializeOutputEvent(text: text)
+                    json: PluginHostContext.serializeOutputEvent(text: text, taskTitle: state.taskTitle)
                 )
             }
             .store(in: &cancellables)
@@ -631,28 +687,31 @@ public final class BackgroundTaskManager: ObservableObject {
             return
         }
 
-        typealias Activity = (kind: BackgroundTaskActivityItem.Kind, title: String, detail: String?)
+        typealias Activity = (
+            kind: BackgroundTaskActivityItem.Kind, title: String,
+            detail: String?, metadata: [String: Any]?
+        )
 
         let activity: Activity? =
             switch event {
             case .startedIssue(let title):
-                (.info, "Task", title)
+                (.info, "Task", title, nil)
             case .toolExecuted(let name):
-                (.tool, "Tool", name)
+                (.toolCall, "Tool", name, ["tool_name": name])
             case .retrying(let attempt, let waitSeconds):
-                (.warning, "Retrying", "Attempt \(attempt), wait \(waitSeconds)s")
+                (.warning, "Retrying", "Attempt \(attempt), wait \(waitSeconds)s", nil)
             case .sharedArtifact(let filename, let isFinal):
-                (.info, isFinal ? "Final artifact" : "Shared artifact", filename)
+                (.info, isFinal ? "Final artifact" : "Shared artifact", filename, ["filename": filename])
             case .completedIssue(let success):
-                (success ? .success : .error, success ? "Task completed" : "Task failed", nil)
+                (success ? .success : .error, success ? "Task completed" : "Task failed", nil, nil)
             case .optimizedMemory:
-                (.info, "Memory", "Freed up space from older results")
+                (.info, "Memory", "Freed up space from older results", nil)
             case .savingProgress:
-                (.info, "Progress", "Saving key findings before summarizing")
+                (.thinking, "Progress", "Saving key findings before summarizing", nil)
             case .summarizingWork:
-                (.progress, "Context", "Condensing conversation history")
+                (.thinking, "Context", "Condensing conversation history", nil)
             case .resumedWithSummary:
-                (.success, "Context", "Earlier work summarized")
+                (.success, "Context", "Earlier work summarized", nil)
             case .willExecuteStep, .completedStep, .needsClarification:
                 nil
             }
@@ -665,7 +724,8 @@ public final class BackgroundTaskManager: ObservableObject {
             json: PluginHostContext.serializeActivityEvent(
                 kind: activity.kind,
                 title: activity.title,
-                detail: activity.detail
+                detail: activity.detail,
+                metadata: activity.metadata
             )
         )
     }
@@ -688,7 +748,11 @@ public final class BackgroundTaskManager: ObservableObject {
         if task?.status == .cancelled, state.status != .cancelled {
             state.status = .cancelled
             resumeCompletion(for: taskId, result: .cancelled)
-            emitPluginEvent(state, type: .cancelled, json: PluginHostContext.serializeCancelledEvent())
+            emitPluginEvent(
+                state,
+                type: .cancelled,
+                json: PluginHostContext.serializeCancelledEvent(taskTitle: state.taskTitle)
+            )
             lastProgressEmit.removeValue(forKey: taskId)
             scheduleAutoFinalize(taskId)
         } else if let clarification {
@@ -752,7 +816,8 @@ public final class BackgroundTaskManager: ObservableObject {
                     type: .progress,
                     json: PluginHostContext.serializeProgressEvent(
                         progress: state.progress,
-                        currentStep: state.currentStep
+                        currentStep: state.currentStep,
+                        taskTitle: state.taskTitle
                     )
                 )
             }

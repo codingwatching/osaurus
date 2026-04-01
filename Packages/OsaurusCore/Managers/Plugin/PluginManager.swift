@@ -197,6 +197,7 @@ final class PluginManager {
         migrateGlobalConfigToPerAgent()
         notifyNewPluginsWithAgentConfig(from: scanResult)
         observeTunnelStatus()
+        sendCurrentTunnelURLToNewPlugins(from: scanResult)
     }
 
     /// For each newly loaded plugin, re-deliver its config for every agent.
@@ -210,15 +211,13 @@ final class PluginManager {
             guard case .success(let loaded) = entry.result else { continue }
             let pluginId = loaded.plugin.id
             guard let configSpec = loaded.plugin.manifest.capabilities.config,
-                let hostCtx = PluginHostContext.getContext(for: pluginId)
+                PluginHostContext.getContext(for: pluginId) != nil
             else { continue }
 
             let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
 
             for agent in agents {
                 let agentId = agent.id
-                hostCtx.currentAgentId = agentId
-
                 var values = ToolSecretsKeychain.getAllSecrets(for: pluginId, agentId: agentId)
 
                 for section in configSpec.sections {
@@ -243,7 +242,7 @@ final class PluginManager {
                     allFieldKeys.contains(key) ? (key: key, value: value) : nil
                 }
                 guard !changes.isEmpty else { continue }
-                loaded.plugin.notifyConfigBatch(changes)
+                loaded.plugin.notifyConfigBatch(changes, agentId: agentId)
             }
         }
     }
@@ -297,32 +296,57 @@ final class PluginManager {
 
     private func handleTunnelStatusChange(_ statuses: [UUID: AgentRelayStatus]) {
         for loaded in plugins where !loaded.routes.isEmpty {
-            let pluginId = loaded.plugin.id
-
             for (agentId, status) in statuses {
-                let tunnelURL: String? = {
-                    if case .connected(let url) = status { return url }
-                    return nil
-                }()
+                let tunnelURL: String? = if case .connected(let url) = status { url } else { nil }
 
-                let newValue = tunnelURL ?? ""
-                guard ToolSecretsKeychain.getSecret(id: "tunnel_url", for: pluginId, agentId: agentId) != newValue
-                else { continue }
-
-                if let tunnelURL {
-                    ToolSecretsKeychain.saveSecret(tunnelURL, id: "tunnel_url", for: pluginId, agentId: agentId)
-                } else {
-                    ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
-                }
-                NotificationCenter.default.post(
-                    name: .pluginConfigDidChange,
-                    object: nil,
-                    userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": newValue]
+                let storedValue = ToolSecretsKeychain.getSecret(
+                    id: "tunnel_url",
+                    for: loaded.plugin.id,
+                    agentId: agentId
                 )
-                PluginHostContext.getContext(for: pluginId)?.currentAgentId = agentId
-                loaded.plugin.notifyConfigChanged(key: "tunnel_url", value: newValue)
+                guard storedValue != tunnelURL else { continue }
+
+                pushTunnelURL(tunnelURL, to: loaded, agentId: agentId)
             }
         }
+    }
+
+    /// Delivers the current tunnel URL to freshly loaded plugins that declare
+    /// routes, bypassing the keychain dedup so that newly-loaded plugins
+    /// always receive the URL when the relay is already connected.
+    private func sendCurrentTunnelURLToNewPlugins(from scanResult: PluginScanResult) {
+        let statuses = RelayTunnelManager.shared.agentStatuses
+
+        for entry in scanResult.loadResults {
+            guard case .success(let loaded) = entry.result, !loaded.routes.isEmpty else { continue }
+
+            for (agentId, status) in statuses {
+                guard case .connected(let url) = status else { continue }
+                pushTunnelURL(url, to: loaded, agentId: agentId)
+            }
+        }
+    }
+
+    private func pushTunnelURL(_ url: String?, to loaded: LoadedPlugin, agentId: UUID) {
+        let pluginId = loaded.plugin.id
+
+        if let url {
+            ToolSecretsKeychain.saveSecret(url, id: "tunnel_url", for: pluginId, agentId: agentId)
+        } else {
+            ToolSecretsKeychain.deleteSecret(id: "tunnel_url", for: pluginId, agentId: agentId)
+        }
+
+        NotificationCenter.default.post(
+            name: .pluginConfigDidChange,
+            object: nil,
+            userInfo: ["pluginId": pluginId, "key": "tunnel_url", "value": url ?? ""]
+        )
+
+        loaded.plugin.notifyConfigChanged(
+            key: "tunnel_url",
+            value: url ?? "",
+            agentId: agentId
+        )
     }
 
     // MARK: - Artifact Handler Notifications
@@ -356,7 +380,11 @@ final class PluginManager {
         var loadResults: [(url: URL, result: Result<LoadedPlugin, PluginLoadError>)] = []
         for url in urls {
             if alreadyLoadedPaths.contains(url.path) { continue }
-            loadResults.append((url: url, result: loadPluginWithError(at: url)))
+            let pluginId = extractPluginId(from: url)
+            writeLoadingMarker(pluginId: pluginId)
+            let result = loadPluginWithError(at: url)
+            clearLoadingMarker()
+            loadResults.append((url: url, result: result))
         }
 
         return PluginScanResult(
@@ -678,12 +706,66 @@ final class PluginManager {
         return toolsDirectoryURLsWithFailures().urls
     }
 
+    // MARK: - Plugin Quarantine
+
+    private nonisolated static func currentlyLoadingURL() -> URL {
+        toolsRootDirectory().appendingPathComponent(".currently_loading", isDirectory: false)
+    }
+
+    private nonisolated static func quarantineURL() -> URL {
+        toolsRootDirectory().appendingPathComponent(".quarantine", isDirectory: false)
+    }
+
+    nonisolated static func quarantinedPluginIds() -> Set<String> {
+        guard let data = try? Data(contentsOf: quarantineURL()),
+            let ids = try? JSONDecoder().decode([String].self, from: data)
+        else { return [] }
+        return Set(ids)
+    }
+
+    private nonisolated static func addToQuarantine(_ pluginId: String) {
+        var ids = quarantinedPluginIds()
+        ids.insert(pluginId)
+        if let data = try? JSONEncoder().encode(Array(ids)) {
+            try? data.write(to: quarantineURL())
+        }
+        NSLog("[Osaurus] Quarantined plugin '%@' after crash during load", pluginId)
+    }
+
+    nonisolated static func clearQuarantine() {
+        try? FileManager.default.removeItem(at: quarantineURL())
+        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+    }
+
+    /// If a `.currently_loading` marker was left behind by a crash during
+    /// dlopen/init, quarantine that plugin so it is skipped on future launches.
+    private nonisolated static func promoteStaleLoadingMarker() {
+        let markerURL = currentlyLoadingURL()
+        guard let data = try? Data(contentsOf: markerURL),
+            let pluginId = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !pluginId.isEmpty
+        else { return }
+        addToQuarantine(pluginId)
+        try? FileManager.default.removeItem(at: markerURL)
+    }
+
+    private nonisolated static func writeLoadingMarker(pluginId: String) {
+        try? pluginId.data(using: .utf8)?.write(to: currentlyLoadingURL())
+    }
+
+    private nonisolated static func clearLoadingMarker() {
+        try? FileManager.default.removeItem(at: currentlyLoadingURL())
+    }
+
     /// Returns dylib URLs to load and a dictionary of verification failures (pluginId -> error message)
     nonisolated static func toolsDirectoryURLsWithFailures() -> (urls: [URL], failures: [String: String]) {
+        promoteStaleLoadingMarker()
+
         let fm = FileManager.default
         let root = toolsRootDirectory()
         var dylibURLs: [URL] = []
         var failures: [String: String] = [:]
+        let quarantined = quarantinedPluginIds()
 
         guard
             let pluginDirs = try? fm.contentsOfDirectory(
@@ -697,6 +779,12 @@ final class PluginManager {
 
         for pluginDir in pluginDirs where pluginDir.hasDirectoryPath {
             let pluginId = pluginDir.lastPathComponent
+
+            if quarantined.contains(pluginId) {
+                failures[pluginId] = "Plugin quarantined after a crash during load — run `osaurus tools reset` to retry"
+                continue
+            }
+
             let currentLink = pluginDir.appendingPathComponent("current", isDirectory: false)
             var versionDir: URL?
             if let dest = try? fm.destinationOfSymbolicLink(atPath: currentLink.path) {

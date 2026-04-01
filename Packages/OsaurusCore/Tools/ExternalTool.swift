@@ -42,18 +42,17 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        // Inject secrets into the payload if the plugin has secrets configured
-        let payloadWithSecrets = injectSecrets(into: argumentsJSON)
-        // Inject folder context so plugins can resolve relative paths
+        let agentId = WorkExecutionContext.currentAgentId
+        let payloadWithSecrets = injectSecrets(into: argumentsJSON, agentId: agentId)
         let payloadWithContext = injectFolderContext(into: payloadWithSecrets)
-        return try await plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext)
+        return try await plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext, agentId: agentId)
     }
 
     /// Injects plugin secrets into the tool payload under the `_secrets` key
     /// - Parameter payload: Original JSON payload
     /// - Returns: Payload with secrets injected, or original payload if no secrets or parsing fails
-    private func injectSecrets(into payload: String) -> String {
-        let agentId = PluginHostContext.getContext(for: pluginId)?.resolvedAgentId ?? Agent.defaultId
+    private func injectSecrets(into payload: String, agentId: UUID? = nil) -> String {
+        let agentId = agentId ?? Agent.defaultId
         let secrets = plugin.resolvedSecrets(agentId: agentId)
         guard !secrets.isEmpty else { return payload }
 

@@ -26,30 +26,41 @@ public actor MethodSearchService {
     public func initialize() async {
         guard !isInitialized else { return }
 
-        do {
-            let storageDir = OsaurusPaths.methods().appendingPathComponent("vectura", isDirectory: true)
-            OsaurusPaths.ensureExistsSilent(storageDir)
+        let storageDir = OsaurusPaths.methods().appendingPathComponent("vectura", isDirectory: true)
 
-            let config = try VecturaConfig(
-                name: "osaurus-methods",
-                directoryURL: storageDir,
-                searchOptions: VecturaConfig.SearchOptions(
-                    defaultNumResults: 10,
-                    minThreshold: 0.3,
-                    hybridWeight: 0.5,
-                    k1: 1.2,
-                    b: 0.75
-                ),
-                memoryStrategy: .automatic()
-            )
+        for attempt in 1 ... 2 {
+            do {
+                OsaurusPaths.ensureExistsSilent(storageDir)
 
-            let embedder = SwiftEmbedder(modelSource: .default)
-            vectorDB = try await VecturaKit(config: config, embedder: embedder)
-            isInitialized = true
-            MethodLogger.search.info("VecturaKit initialized successfully for methods")
-        } catch {
-            MethodLogger.search.error("VecturaKit init failed for methods (search unavailable): \(error)")
-            vectorDB = nil
+                let config = try VecturaConfig(
+                    name: "osaurus-methods",
+                    directoryURL: storageDir,
+                    dimension: EmbeddingService.embeddingDimension,
+                    searchOptions: VecturaConfig.SearchOptions(
+                        defaultNumResults: 10,
+                        minThreshold: 0.3,
+                        hybridWeight: 0.5,
+                        k1: 1.2,
+                        b: 0.75
+                    ),
+                    memoryStrategy: .automatic()
+                )
+
+                vectorDB = try await VecturaKit(config: config, embedder: EmbeddingService.sharedEmbedder)
+                isInitialized = true
+                MethodLogger.search.info("VecturaKit initialized successfully for methods")
+                break
+            } catch {
+                if attempt == 1 {
+                    MethodLogger.search.warning(
+                        "VecturaKit init failed for methods, deleting storage to recover: \(error)"
+                    )
+                    try? FileManager.default.removeItem(at: storageDir)
+                } else {
+                    MethodLogger.search.error("VecturaKit init failed for methods (search unavailable): \(error)")
+                    vectorDB = nil
+                }
+            }
         }
     }
 
@@ -85,6 +96,7 @@ public actor MethodSearchService {
         topK: Int = 10,
         threshold: Float? = nil
     ) async -> [MethodSearchResult] {
+        guard topK > 0 else { return [] }
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
@@ -132,11 +144,17 @@ public actor MethodSearchService {
             let toolDescs = Self.loadToolDescriptions()
 
             let methods = try MethodDatabase.shared.loadAllMethods()
+            var texts: [String] = []
+            var ids: [UUID] = []
+            texts.reserveCapacity(methods.count)
+            ids.reserveCapacity(methods.count)
             for method in methods {
                 let id = deterministicUUID(for: method.id)
-                let text = buildIndexText(for: method, toolDescriptions: toolDescs)
-                _ = try await db.addDocument(text: text, id: id)
-                reverseIdMap[id.uuidString] = method.id
+                texts.append(buildIndexText(for: method, toolDescriptions: toolDescs))
+                ids.append(id)
+            }
+            if !texts.isEmpty {
+                _ = try await db.addDocuments(texts: texts, ids: ids)
             }
             MethodLogger.search.info("Method index rebuilt with \(methods.count) methods")
         } catch {

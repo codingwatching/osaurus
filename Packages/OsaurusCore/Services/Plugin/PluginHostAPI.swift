@@ -72,41 +72,22 @@ final class PluginHostContext: @unchecked Sendable {
         return URLSession(configuration: config, delegate: NoRedirectDelegate.shared, delegateQueue: nil)
     }()
 
-    /// Sliding window timestamps for dispatch rate limiting (10/min per plugin).
+    /// Sliding window timestamps for dispatch rate limiting, keyed by agent ID.
+    /// Each agent gets its own 10/min budget so multiple agents sharing a
+    /// plugin don't exhaust each other's quota.
     private let rateLimitLock = NSLock()
-    private var dispatchTimestamps: [Date] = []
+    private var dispatchTimestamps: [UUID: [Date]] = [:]
     private static let dispatchRateLimit = 10
     private static let dispatchRateWindow: TimeInterval = 60
 
     // MARK: - Per-Request Agent Context
 
-    private let agentLock = NSLock()
-    private var _currentAgentId: UUID?
-
-    /// The agent whose config should be used for config_get/config_set.
-    /// Set by HTTP handler, dispatch, and tunnel propagation before invoking plugin code.
-    var currentAgentId: UUID? {
-        get { agentLock.withLock { _currentAgentId } }
-        set { agentLock.withLock { _currentAgentId = newValue } }
-    }
-
-    /// Resolved agent ID: explicit `currentAgentId`, or `Agent.defaultId` as fallback.
+    /// Resolved agent ID for the current thread. Checks thread-local storage
+    /// first (set per-dispatch in ExternalPlugin wrappers), then falls back to
+    /// `Agent.defaultId`. This is the primary concurrent-safe mechanism --
+    /// each invokeQueue / eventQueue thread gets its own value.
     var resolvedAgentId: UUID {
-        currentAgentId ?? Agent.defaultId
-    }
-
-    func withAgentContext<T>(_ agentId: UUID, block: () throws -> T) rethrows -> T {
-        let previous = currentAgentId
-        currentAgentId = agentId
-        defer { currentAgentId = previous }
-        return try block()
-    }
-
-    func withAgentContext<T>(_ agentId: UUID, block: () async throws -> T) async rethrows -> T {
-        let previous = currentAgentId
-        currentAgentId = agentId
-        defer { currentAgentId = previous }
-        return try await block()
+        Self.activeAgentId() ?? Agent.defaultId
     }
 
     init(pluginId: String) throws {
@@ -162,13 +143,6 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: - Dispatch Callbacks
 
     func dispatch(requestJSON: String) -> (result: String, taskId: UUID?) {
-        guard checkDispatchRateLimit() else {
-            return (
-                Self.jsonString(["error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded"]),
-                nil
-            )
-        }
-
         return Self.blockingAsync { [pluginId] in
             let data = Data(requestJSON.utf8)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -195,12 +169,17 @@ final class PluginHostContext: @unchecked Sendable {
                 agentId = UUID(uuidString: idStr)
             }
 
-            if agentId == nil {
-                agentId = Agent.defaultId
-            }
+            let resolvedAgent = agentId ?? Agent.defaultId
 
-            if let resolved = agentId {
-                PluginHostContext.getContext(for: pluginId)?.currentAgentId = resolved
+            guard let ctx = PluginHostContext.getContext(for: pluginId),
+                ctx.checkDispatchRateLimit(agentId: resolvedAgent)
+            else {
+                return (
+                    Self.jsonString([
+                        "error": "rate_limit_exceeded", "message": "Dispatch rate limit (10/min) exceeded",
+                    ]),
+                    UUID?.none
+                )
             }
 
             let title = json["title"] as? String
@@ -214,7 +193,7 @@ final class PluginHostContext: @unchecked Sendable {
                 id: requestId,
                 mode: mode,
                 prompt: prompt,
-                agentId: agentId,
+                agentId: resolvedAgent,
                 title: title,
                 folderBookmark: folderBookmark,
                 showToast: true,
@@ -246,8 +225,10 @@ final class PluginHostContext: @unchecked Sendable {
             return Self.jsonString(["error": "invalid_task_id", "message": "Invalid UUID format"])
         }
 
-        return Self.blockingMainActor {
-            guard let state = BackgroundTaskManager.shared.taskState(for: uuid) else {
+        return Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else {
                 return Self.jsonString(["error": "not_found", "message": "Task not found"])
             }
             return Self.serializeTaskState(id: uuid, state: state)
@@ -256,15 +237,78 @@ final class PluginHostContext: @unchecked Sendable {
 
     func dispatchCancel(taskId: String) {
         guard let uuid = UUID(uuidString: taskId) else { return }
-        Self.blockingMainActor {
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else { return }
             BackgroundTaskManager.shared.cancelTask(uuid)
         }
     }
 
     func dispatchClarify(taskId: String, response: String) {
         guard let uuid = UUID(uuidString: taskId) else { return }
-        Self.blockingMainActor {
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else { return }
             BackgroundTaskManager.shared.submitClarification(uuid, response: response)
+        }
+    }
+
+    func listActiveTasks() -> String {
+        Self.blockingMainActor { [pluginId] in
+            let tasks = BackgroundTaskManager.shared.backgroundTasks.values
+                .filter { $0.sourcePluginId == pluginId && $0.status.isActive }
+                .map { PluginHostContext.taskStateDict(id: $0.id, state: $0) }
+            return Self.jsonString(["tasks": tasks])
+        }
+    }
+
+    func sendDraft(taskId: String, draftJSON: String) {
+        guard let uuid = UUID(uuidString: taskId) else { return }
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId, state.status.isActive
+            else { return }
+            state.draftText = draftJSON
+            BackgroundTaskManager.shared.emitDraftEvent(state, draftJSON: draftJSON)
+        }
+    }
+
+    func dispatchInterrupt(taskId: String, message: String?) {
+        guard let uuid = UUID(uuidString: taskId) else { return }
+        Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId
+            else { return }
+            BackgroundTaskManager.shared.interruptTask(uuid, message: message)
+        }
+    }
+
+    func dispatchAddIssue(taskId: String, issueJSON: String) -> String {
+        guard let uuid = UUID(uuidString: taskId) else {
+            return Self.jsonString(["error": "invalid_task_id", "message": "Invalid UUID format"])
+        }
+
+        let data = Data(issueJSON.utf8)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let title = json["title"] as? String
+        else {
+            return Self.jsonString(["error": "invalid_request", "message": "Missing required field: title"])
+        }
+        let query = json["description"] as? String ?? title
+
+        return Self.blockingMainActor { [pluginId] in
+            guard let state = BackgroundTaskManager.shared.taskState(for: uuid),
+                state.sourcePluginId == pluginId,
+                state.status.isActive, state.mode == .work,
+                let session = state.session
+            else {
+                return Self.jsonString(["error": "not_found", "message": "Active work task not found"])
+            }
+
+            Task { await session.addIssueFromPlugin(query: query) }
+            return Self.jsonString(["status": "queued", "title": title])
         }
     }
 
@@ -283,6 +327,19 @@ final class PluginHostContext: @unchecked Sendable {
         let temperature: Float?
         let maxTokens: Int?
         let tools: [Tool]?
+        let executionMode: WorkExecutionMode
+
+        func prependingSystemContent(_ content: String) -> AgentContext {
+            AgentContext(
+                agentId: agentId,
+                systemPrompt: content + "\n\n" + systemPrompt,
+                model: model,
+                temperature: temperature,
+                maxTokens: maxTokens,
+                tools: tools,
+                executionMode: executionMode
+            )
+        }
     }
 
     private struct InferenceOptions {
@@ -299,7 +356,7 @@ final class PluginHostContext: @unchecked Sendable {
     }
 
     private struct EnrichedInference {
-        let request: ChatCompletionRequest
+        var request: ChatCompletionRequest
         let tools: [Tool]?
     }
 
@@ -309,6 +366,9 @@ final class PluginHostContext: @unchecked Sendable {
         let options: InferenceOptions
         let engine: ChatEngine
         let budgetManager: ContextBudgetManager?
+        let agentId: UUID?
+        let executionMode: WorkExecutionMode
+        let contextId: String
     }
 
     // MARK: Request Parsing
@@ -333,18 +393,43 @@ final class PluginHostContext: @unchecked Sendable {
     /// enriches the request, creates the engine and budget manager.
     private static func prepareInference(
         request: ChatCompletionRequest,
-        rawJSON: [String: Any]
+        rawJSON: [String: Any],
+        pluginId: String? = nil
     ) async -> PreparedInference {
         let options = InferenceOptions(from: rawJSON)
         let agentCtx = await resolveAgentContext(json: rawJSON)
+        let execMode = agentCtx?.executionMode ?? .none
         var enriched = enrichRequest(request, context: agentCtx, options: options)
+        if let pid = pluginId {
+            let instructions: String? = await MainActor.run {
+                if let agentId = agentCtx?.agentId,
+                    let agent = AgentManager.shared.agent(for: agentId),
+                    let override = agent.pluginInstructions?[pid],
+                    !override.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                {
+                    return override
+                }
+                return PluginManager.shared.loadedPlugin(for: pid)?.plugin.manifest.instructions
+            }
+            if let instructions {
+                SystemPromptBuilder.appendSystemContent(instructions, into: &enriched.request.messages)
+            }
+        }
         if options.wantsPreflight {
-            enriched = await applyPreflightSearch(to: enriched)
+            enriched = await applyPreflightSearch(to: enriched, executionMode: execMode)
         }
         let remoteServices = await MainActor.run { RemoteProviderManager.shared.connectedServices() }
         let engine = ChatEngine(remoteServices: remoteServices, source: .plugin)
         let budgetMgr = await createBudgetManager(for: enriched, maxIterations: options.maxIterations)
-        return PreparedInference(enriched: enriched, options: options, engine: engine, budgetManager: budgetMgr)
+        return PreparedInference(
+            enriched: enriched,
+            options: options,
+            engine: engine,
+            budgetManager: budgetMgr,
+            agentId: agentCtx?.agentId,
+            executionMode: execMode,
+            contextId: enriched.request.session_id ?? UUID().uuidString
+        )
     }
 
     // MARK: Agent Context Resolution
@@ -352,36 +437,50 @@ final class PluginHostContext: @unchecked Sendable {
     private static func resolveAgentContext(json: [String: Any]) async -> AgentContext? {
         guard let address = json["agent_address"] as? String else { return nil }
 
-        let info: AgentContext? = await MainActor.run {
+        let resolved: (id: UUID, autonomousEnabled: Bool)? = await MainActor.run {
             guard let agent = AgentManager.shared.agent(byAddress: address) else { return nil }
+            let enabled = AgentManager.shared.effectiveAutonomousExec(for: agent.id)?.enabled == true
+            return (agent.id, enabled)
+        }
+        guard let resolved else { return nil }
+        let agentId = resolved.id
+
+        if resolved.autonomousEnabled {
+            await SandboxToolRegistrar.shared.registerTools(for: agentId)
+        }
+
+        var ctx: AgentContext = await MainActor.run {
             let mgr = AgentManager.shared
-            let id = agent.id
-            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            let execMode = ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
+            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: execMode)
+
+            var systemPrompt = mgr.effectiveSystemPrompt(for: agentId)
+            if execMode.usesSandboxTools {
+                let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
+                let section = WorkExecutionEngine.chatSandboxPromptSection(secretNames: secretNames)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if !section.isEmpty {
+                    systemPrompt = systemPrompt.isEmpty ? section : systemPrompt + "\n\n" + section
+                }
+            }
+
             return AgentContext(
-                agentId: id,
-                systemPrompt: mgr.effectiveSystemPrompt(for: id),
-                model: mgr.effectiveModel(for: id),
-                temperature: mgr.effectiveTemperature(for: id),
-                maxTokens: mgr.effectiveMaxTokens(for: id),
-                tools: tools.isEmpty ? nil : tools
+                agentId: agentId,
+                systemPrompt: systemPrompt,
+                model: mgr.effectiveModel(for: agentId),
+                temperature: mgr.effectiveTemperature(for: agentId),
+                maxTokens: mgr.effectiveMaxTokens(for: agentId),
+                tools: tools.isEmpty ? nil : tools,
+                executionMode: execMode
             )
         }
-        guard var ctx = info else { return nil }
 
-        let memoryConfig = MemoryConfigurationStore.load()
         let memoryCtx = await MemoryContextAssembler.assembleContext(
-            agentId: ctx.agentId.uuidString,
-            config: memoryConfig
+            agentId: agentId.uuidString,
+            config: MemoryConfigurationStore.load()
         )
         if !memoryCtx.isEmpty {
-            ctx = AgentContext(
-                agentId: ctx.agentId,
-                systemPrompt: memoryCtx + "\n\n" + ctx.systemPrompt,
-                model: ctx.model,
-                temperature: ctx.temperature,
-                maxTokens: ctx.maxTokens,
-                tools: ctx.tools
-            )
+            ctx = ctx.prependingSystemContent(memoryCtx)
         }
         return ctx
     }
@@ -476,12 +575,15 @@ final class PluginHostContext: @unchecked Sendable {
         messages.last(where: { $0.role == "user" })?.content ?? ""
     }
 
-    private static func applyPreflightSearch(to inference: EnrichedInference) async -> EnrichedInference {
+    private static func applyPreflightSearch(
+        to inference: EnrichedInference,
+        executionMode: WorkExecutionMode = .none
+    ) async -> EnrichedInference {
         // If this session already has a preflight result, reuse it without re-running the search.
         if let sid = inference.request.session_id {
             let cached = preflightCacheLock.withLock { preflightCache[sid] }
             if let cached {
-                let builtInTools = await MainActor.run { ToolRegistry.shared.alwaysLoadedSpecs(mode: .none) }
+                let builtInTools = await MainActor.run { ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode) }
                 return applyPreflightResult(cached, to: inference, builtInTools: builtInTools)
             }
         }
@@ -491,7 +593,7 @@ final class PluginHostContext: @unchecked Sendable {
 
         let (preflightMode, builtInTools) = await MainActor.run {
             let mode = ChatConfigurationStore.load().preflightSearchMode ?? .balanced
-            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            let tools = ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
             return (mode, tools)
         }
 
@@ -570,17 +672,65 @@ final class PluginHostContext: @unchecked Sendable {
 
     // MARK: Tool Execution
 
+    /// Post-processes a tool result after execution, handling special tools
+    /// like `share_artifact` (copy files, notify handlers) and `capabilities_load`
+    /// (hot-load newly discovered tools into the active set).
+    private static func postProcessToolResult(
+        toolName: String,
+        result: String,
+        prep: PreparedInference,
+        toolSpecs: inout [Tool]?
+    ) async -> String {
+        switch toolName {
+        case "share_artifact":
+            let agentName: String? = await MainActor.run {
+                prep.agentId.map { SandboxAgentProvisioner.linuxName(for: $0.uuidString) }
+            }
+            guard
+                let processed = SharedArtifact.processToolResult(
+                    result,
+                    contextId: prep.contextId,
+                    contextType: .chat,
+                    executionMode: prep.executionMode,
+                    sandboxAgentName: agentName
+                )
+            else { return result }
+            await PluginManager.shared.notifyArtifactHandlers(artifact: processed.artifact)
+            return processed.enrichedToolResult
+
+        case "capabilities_load":
+            let newTools = await CapabilityLoadBuffer.shared.drain()
+            let existing = Set((toolSpecs ?? []).map { $0.function.name })
+            let additions = newTools.filter { !existing.contains($0.function.name) }
+            if !additions.isEmpty {
+                toolSpecs = (toolSpecs ?? []) + additions
+            }
+            return result
+
+        default:
+            return result
+        }
+    }
+
     private static func executeToolCall(
         name: String,
-        argumentsJSON: String
+        argumentsJSON: String,
+        agentId: UUID? = nil,
+        executionMode: WorkExecutionMode = .none
     ) async -> String {
-        await withTaskGroup(of: String?.self) { group in
+        if executionMode.usesSandboxTools, let agentId {
+            await SandboxToolRegistrar.shared.registerTools(for: agentId)
+        }
+
+        return await withTaskGroup(of: String?.self) { group in
             group.addTask {
                 do {
-                    return try await ToolRegistry.shared.execute(
-                        name: name,
-                        argumentsJSON: argumentsJSON
-                    )
+                    return try await WorkExecutionContext.$currentAgentId.withValue(agentId) {
+                        try await ToolRegistry.shared.execute(
+                            name: name,
+                            argumentsJSON: argumentsJSON
+                        )
+                    }
                 } catch {
                     return "[REJECTED] \(error.localizedDescription)"
                 }
@@ -598,7 +748,8 @@ final class PluginHostContext: @unchecked Sendable {
     // MARK: complete (non-streaming)
 
     func complete(requestJSON: String) -> String {
-        Self.blockingAsync {
+        let pid = self.pluginId
+        return Self.blockingAsync {
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -607,16 +758,21 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            let prep = await Self.prepareInference(request: request, rawJSON: rawJSON)
+            let prep = await Self.prepareInference(
+                request: request,
+                rawJSON: rawJSON,
+                pluginId: pid
+            )
             var messages = prep.enriched.request.messages
             var toolCallsExecuted: [[String: String]] = []
+            var toolSpecs = prep.enriched.tools
 
             for iteration in 1 ... prep.options.maxIterations {
                 let effective = prep.budgetManager?.trimMessages(messages) ?? messages
                 let iterReq = Self.iterationRequest(
                     from: prep.enriched.request,
                     messages: effective,
-                    tools: prep.enriched.tools
+                    tools: toolSpecs
                 )
 
                 do {
@@ -631,9 +787,17 @@ final class PluginHostContext: @unchecked Sendable {
                     {
                         messages.append(choice.message)
                         for tc in calls {
-                            let result = await Self.executeToolCall(
+                            var result = await Self.executeToolCall(
                                 name: tc.function.name,
-                                argumentsJSON: tc.function.arguments
+                                argumentsJSON: tc.function.arguments,
+                                agentId: prep.agentId,
+                                executionMode: prep.executionMode
+                            )
+                            result = await Self.postProcessToolResult(
+                                toolName: tc.function.name,
+                                result: result,
+                                prep: prep,
+                                toolSpecs: &toolSpecs
                             )
                             messages.append(
                                 ChatMessage(
@@ -677,6 +841,7 @@ final class PluginHostContext: @unchecked Sendable {
         onChunk: osr_on_chunk_t?,
         userData: UnsafeMutableRawPointer?
     ) -> String {
+        let pid = self.pluginId
         nonisolated(unsafe) let userData = userData
         return Self.blockingAsync {
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
@@ -687,11 +852,16 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            let prep = await Self.prepareInference(request: request, rawJSON: rawJSON)
+            let prep = await Self.prepareInference(
+                request: request,
+                rawJSON: rawJSON,
+                pluginId: pid
+            )
             let cid = "cmpl-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12))"
             var messages = prep.enriched.request.messages
             var lastContent = ""
             var toolCallsExecuted: [[String: String]] = []
+            var toolSpecs = prep.enriched.tools
 
             let emit: ([String: Any]) -> Void = { payload in
                 Self.emitChunk(payload, callback: onChunk, userData: userData)
@@ -702,7 +872,7 @@ final class PluginHostContext: @unchecked Sendable {
                 let iterReq = Self.iterationRequest(
                     from: prep.enriched.request,
                     messages: effective,
-                    tools: prep.enriched.tools
+                    tools: toolSpecs
                 )
 
                 do {
@@ -744,10 +914,19 @@ final class PluginHostContext: @unchecked Sendable {
                     ]
                     emit(Self.chunkPayload(id: cid, delta: tcDelta, finishReason: "tool_calls"))
 
-                    let result = await Self.executeToolCall(
+                    var result = await Self.executeToolCall(
                         name: inv.toolName,
-                        argumentsJSON: inv.jsonArguments
+                        argumentsJSON: inv.jsonArguments,
+                        agentId: prep.agentId,
+                        executionMode: prep.executionMode
                     )
+                    result = await Self.postProcessToolResult(
+                        toolName: inv.toolName,
+                        result: result,
+                        prep: prep,
+                        toolSpecs: &toolSpecs
+                    )
+
                     emit(
                         Self.chunkPayload(
                             id: cid,
@@ -1114,7 +1293,11 @@ final class PluginHostContext: @unchecked Sendable {
                 embed: PluginHostContext.trampolineEmbed,
                 list_models: PluginHostContext.trampolineListModels,
                 http_request: PluginHostContext.trampolineHttpRequest,
-                file_read: PluginHostContext.trampolineFileRead
+                file_read: PluginHostContext.trampolineFileRead,
+                list_active_tasks: PluginHostContext.trampolineListActiveTasks,
+                send_draft: PluginHostContext.trampolineSendDraft,
+                dispatch_interrupt: PluginHostContext.trampolineDispatchInterrupt,
+                dispatch_add_issue: PluginHostContext.trampolineDispatchAddIssue
             )
         )
         hostAPIPtr = ptr
@@ -1131,16 +1314,21 @@ final class PluginHostContext: @unchecked Sendable {
 // MARK: - Rate Limiting
 
 extension PluginHostContext {
-    /// Returns true if the dispatch is allowed under the rate limit.
-    func checkDispatchRateLimit() -> Bool {
-        rateLimitLock.lock()
-        defer { rateLimitLock.unlock() }
-        let now = Date()
-        let cutoff = now.addingTimeInterval(-Self.dispatchRateWindow)
-        dispatchTimestamps.removeAll { $0 < cutoff }
-        guard dispatchTimestamps.count < Self.dispatchRateLimit else { return false }
-        dispatchTimestamps.append(now)
-        return true
+    /// Returns true if the dispatch is allowed under the per-agent rate limit.
+    func checkDispatchRateLimit(agentId: UUID) -> Bool {
+        rateLimitLock.withLock {
+            let now = Date()
+            let cutoff = now.addingTimeInterval(-Self.dispatchRateWindow)
+            var timestamps = dispatchTimestamps[agentId, default: []]
+            timestamps.removeAll { $0 < cutoff }
+            guard timestamps.count < Self.dispatchRateLimit else {
+                dispatchTimestamps[agentId] = timestamps
+                return false
+            }
+            timestamps.append(now)
+            dispatchTimestamps[agentId] = timestamps
+            return true
+        }
     }
 }
 
@@ -1202,14 +1390,24 @@ extension PluginHostContext {
     }()
 
     @MainActor
-    static func serializeTaskState(id: UUID, state: BackgroundTaskState) -> String {
-        var result: [String: Any] = ["id": id.uuidString]
+    static func taskStateDict(id: UUID, state: BackgroundTaskState) -> [String: Any] {
+        var result: [String: Any] = [
+            "id": id.uuidString,
+            "title": state.taskTitle,
+            "mode": state.mode == .work ? "work" : "chat",
+        ]
+
+        if let draft = state.draftText, let parsed = parseJSON(draft) { result["draft"] = parsed }
 
         switch state.status {
         case .running:
             result["status"] = "running"
             result["progress"] = state.progress
             if let step = state.currentStep { result["current_step"] = step }
+
+            if let output = state.session?.streamingContent, !output.isEmpty {
+                result["output"] = output
+            }
 
             let activity: [[String: Any]] = state.activityFeed.suffix(20).map { item in
                 var entry: [String: Any] = [
@@ -1246,12 +1444,21 @@ extension PluginHostContext {
             result["status"] = "cancelled"
         }
 
-        return jsonString(result)
+        return result
+    }
+
+    @MainActor
+    static func serializeTaskState(id: UUID, state: BackgroundTaskState) -> String {
+        jsonString(taskStateDict(id: id, state: state))
     }
 
     private static func activityKindString(_ kind: BackgroundTaskActivityItem.Kind) -> String {
         switch kind {
         case .tool: "tool"
+        case .toolCall: "tool_call"
+        case .toolResult: "tool_result"
+        case .thinking: "thinking"
+        case .writing: "writing"
         case .info: "info"
         case .progress: "progress"
         case .warning: "warning"
@@ -1272,20 +1479,25 @@ extension PluginHostContext {
     }
 
     @MainActor
-    static func serializeActivityEvent(kind: BackgroundTaskActivityItem.Kind, title: String, detail: String?) -> String
-    {
+    static func serializeActivityEvent(
+        kind: BackgroundTaskActivityItem.Kind,
+        title: String,
+        detail: String?,
+        metadata: [String: Any]? = nil
+    ) -> String {
         var dict: [String: Any] = [
             "kind": activityKindString(kind),
             "title": title,
             "timestamp": isoFormatter.string(from: Date()),
         ]
         if let detail { dict["detail"] = detail }
+        if let metadata, !metadata.isEmpty { dict["metadata"] = metadata }
         return jsonString(dict)
     }
 
     @MainActor
-    static func serializeProgressEvent(progress: Double, currentStep: String?) -> String {
-        var dict: [String: Any] = ["progress": progress]
+    static func serializeProgressEvent(progress: Double, currentStep: String?, taskTitle: String) -> String {
+        var dict: [String: Any] = ["progress": progress, "title": taskTitle]
         if let step = currentStep { dict["current_step"] = step }
         return jsonString(dict)
     }
@@ -1307,12 +1519,17 @@ extension PluginHostContext {
         success: Bool,
         summary: String,
         sessionId: UUID?,
-        artifacts: [SharedArtifact] = []
+        taskTitle: String,
+        artifacts: [SharedArtifact] = [],
+        outputText: String? = nil
     ) -> String {
-        var dict: [String: Any] = ["success": success, "summary": summary]
+        var dict: [String: Any] = ["success": success, "summary": summary, "title": taskTitle]
         if let sid = sessionId { dict["session_id"] = sid.uuidString }
         if !artifacts.isEmpty {
             dict["artifacts"] = artifacts.map { serializeArtifactDict($0) }
+        }
+        if let output = outputText, !output.isEmpty {
+            dict["output"] = output
         }
         return jsonString(dict)
     }
@@ -1333,12 +1550,18 @@ extension PluginHostContext {
         return dict
     }
 
-    static func serializeCancelledEvent() -> String {
-        jsonString([:])
+    static func serializeCancelledEvent(taskTitle: String) -> String {
+        jsonString(["title": taskTitle])
     }
 
-    static func serializeOutputEvent(text: String) -> String {
-        jsonString(["text": text])
+    static func serializeOutputEvent(text: String, taskTitle: String) -> String {
+        jsonString(["text": text, "title": taskTitle])
+    }
+
+    static func serializeDraftEvent(draftJSON: String, taskTitle: String) -> String {
+        var dict: [String: Any] = ["title": taskTitle]
+        if let draft = parseJSON(draftJSON) { dict["draft"] = draft }
+        return jsonString(dict)
     }
 }
 
@@ -1383,6 +1606,14 @@ extension PluginHostContext {
         guard let data = try? JSONSerialization.data(withJSONObject: dict, options: []) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }
+
+    /// Parse a JSON string back into a dictionary.
+    static func parseJSON(_ string: String) -> [String: Any]? {
+        guard let data = string.data(using: .utf8),
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj
+    }
 }
 
 // MARK: - C Trampoline Functions
@@ -1405,10 +1636,21 @@ extension PluginHostContext {
     /// Thread-local storage for the active plugin ID during C callback dispatch
     private static let tlsKey: String = "ai.osaurus.plugin.active"
 
+    /// Thread-local storage for the active agent ID during C callback dispatch.
+    /// Set per-thread around each plugin call so concurrent requests for
+    /// different agents on the same invokeQueue resolve the correct agent.
+    private static let agentTlsKey: String = "ai.osaurus.plugin.agent"
+
     /// Best-effort fallback for plugin-spawned background threads that don't
-    /// have TLS set. Racy under concurrent execution — TLS (option 1) is the
-    /// authoritative mechanism.
-    nonisolated(unsafe) static var lastDispatchedPluginId: String?
+    /// have TLS set. Protected by `fallbackLock` to avoid data races under
+    /// concurrent execution. TLS (option 1) is the authoritative mechanism.
+    private static let fallbackLock = NSLock()
+    private nonisolated(unsafe) static var _lastDispatchedPluginId: String?
+
+    private static var lastDispatchedPluginId: String? {
+        get { fallbackLock.withLock { _lastDispatchedPluginId } }
+        set { fallbackLock.withLock { _lastDispatchedPluginId = newValue } }
+    }
 
     static func setActivePlugin(_ pluginId: String) {
         Thread.current.threadDictionary[tlsKey] = pluginId
@@ -1417,6 +1659,18 @@ extension PluginHostContext {
 
     static func clearActivePlugin() {
         Thread.current.threadDictionary.removeObject(forKey: tlsKey)
+    }
+
+    static func setActiveAgent(_ agentId: UUID) {
+        Thread.current.threadDictionary[agentTlsKey] = agentId
+    }
+
+    static func clearActiveAgent() {
+        Thread.current.threadDictionary.removeObject(forKey: agentTlsKey)
+    }
+
+    static func activeAgentId() -> UUID? {
+        Thread.current.threadDictionary[agentTlsKey] as? UUID
     }
 
     private static func activeContext() -> PluginHostContext? {
@@ -1614,6 +1868,71 @@ extension PluginHostContext {
             durationMs: ms,
             requestBody: response
         )
+    }
+
+    // MARK: Extended Dispatch Trampolines
+
+    static let trampolineListActiveTasks: osr_list_active_tasks_t = {
+        guard let ctx = activeContext() else { return nil }
+        var result = ""
+        let ms = measureMs { result = ctx.listActiveTasks() }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "GET",
+            path: "/host-api/tasks",
+            statusCode: 200,
+            durationMs: ms,
+            responseBody: result
+        )
+        return makeCString(result)
+    }
+
+    static let trampolineSendDraft: osr_send_draft_t = { taskIdPtr, draftPtr in
+        guard let taskIdPtr, let draftPtr, let ctx = activeContext() else { return }
+        let taskId = String(cString: taskIdPtr)
+        let draftJSON = String(cString: draftPtr)
+        let ms = measureMs { ctx.sendDraft(taskId: taskId, draftJSON: draftJSON) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/tasks/\(taskId)/draft",
+            statusCode: 200,
+            durationMs: ms,
+            requestBody: draftJSON
+        )
+    }
+
+    static let trampolineDispatchInterrupt: osr_dispatch_interrupt_t = { taskIdPtr, messagePtr in
+        guard let taskIdPtr, let ctx = activeContext() else { return }
+        let taskId = String(cString: taskIdPtr)
+        let message: String? = messagePtr.map { String(cString: $0) }
+        let ms = measureMs { ctx.dispatchInterrupt(taskId: taskId, message: message) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/tasks/\(taskId)/interrupt",
+            statusCode: 200,
+            durationMs: ms,
+            requestBody: message
+        )
+    }
+
+    static let trampolineDispatchAddIssue: osr_dispatch_add_issue_t = { taskIdPtr, issuePtr in
+        guard let taskIdPtr, let issuePtr, let ctx = activeContext() else { return nil }
+        let taskId = String(cString: taskIdPtr)
+        let issueJSON = String(cString: issuePtr)
+        var result = ""
+        let ms = measureMs { result = ctx.dispatchAddIssue(taskId: taskId, issueJSON: issueJSON) }
+        logPluginCall(
+            pluginId: ctx.pluginId,
+            method: "POST",
+            path: "/host-api/tasks/\(taskId)/issues",
+            statusCode: responseContainsError(result) ? 400 : 201,
+            durationMs: ms,
+            requestBody: issueJSON,
+            responseBody: result
+        )
+        return makeCString(result)
     }
 
     // MARK: Inference Trampolines
