@@ -1377,14 +1377,31 @@ extension FloatingInputCard {
 
     // MARK: - Clipboard Chip
 
+    private var clipboardChipInfo: (icon: String, label: String) {
+        guard let content = clipboardService.currentContent else {
+            return ("paperclip", "Clipboard")
+        }
+        switch content {
+        case .text:
+            return ("text.quote", "Content")
+        case .image:
+            return ("photo", "Image")
+        case .file(let url):
+            let kind = Attachment.Kind.document(filename: url.lastPathComponent, content: "", fileSize: 0)
+            let icon = Attachment(kind: kind).fileIcon
+            return (icon, url.lastPathComponent)
+        }
+    }
+
     private var clipboardChipLabel: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "paperclip")
+        let info = clipboardChipInfo
+        return HStack(spacing: 5) {
+            Image(systemName: info.icon)
                 .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
             HStack(spacing: 4) {
-                Text("Paste Content From")
+                Text("Paste \(info.label) From")
                     .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                     .foregroundColor(theme.secondaryText)
                 
@@ -1465,10 +1482,21 @@ extension FloatingInputCard {
                 clipboardService.markAsRead()
             }
             Divider()
-            Button("Paste to Input") {
-                if let text = clipboardService.currentClipboardText {
-                    localText += text
-                    clipboardService.markAsRead()
+            if let content = clipboardService.currentContent {
+                switch content {
+                case .text(let text):
+                    Button("Paste to Input") {
+                        localText += text
+                        clipboardService.markAsRead()
+                    }
+                case .file:
+                    Button("Attach File") {
+                        attachClipboardSnippet()
+                    }
+                case .image:
+                    Button("Attach Image") {
+                        attachClipboardSnippet()
+                    }
                 }
             }
         }
@@ -1491,7 +1519,7 @@ extension FloatingInputCard {
         clipboardPulseOpacity = 1.0
         
         // animate the stroke clockwise around the capsule
-        withAnimation(.easeInOut(duration: 1.2)) {
+        withAnimation(.easeInOut(duration: 0.7)) {
             clipboardPulseAmount = 1.0
         }
         
@@ -1504,22 +1532,51 @@ extension FloatingInputCard {
     }
 
     private func attachClipboardSnippet() {
-        guard let text = clipboardService.currentClipboardText else { return }
+        guard let content = clipboardService.currentContent else { return }
         
-        withAnimation(theme.springAnimation()) {
-            if localText.isEmpty {
-                localText = text
-            } else {
-                // if there's already text, add a newline first
-                if !localText.hasSuffix("\n") {
-                    localText += "\n"
+        switch content {
+        case .text(let text):
+            // Inject directly into the text input area for better UX (editing)
+            withAnimation(theme.springAnimation()) {
+                if localText.isEmpty {
+                    localText = text
+                } else {
+                    if !localText.hasSuffix("\n") {
+                        localText += "\n"
+                    }
+                    localText += text
                 }
-                localText += text
+                clipboardService.markAsRead()
+                isFocused = true
             }
-            clipboardService.markAsRead()
             
-            // re-focus the input so the user can edit immediately
-            isFocused = true
+        case .image(let data):
+            withAnimation(theme.springAnimation()) {
+                pendingAttachments.append(.image(data))
+                clipboardService.markAsRead()
+            }
+            
+        case .file(let url):
+            if DocumentParser.isImageFile(url: url) {
+                if let data = try? Data(contentsOf: url),
+                   let nsImage = NSImage(data: data),
+                   let pngData = nsImage.pngData() {
+                    withAnimation(theme.springAnimation()) {
+                        pendingAttachments.append(.image(pngData))
+                        clipboardService.markAsRead()
+                    }
+                }
+            } else if DocumentParser.canParse(url: url) {
+                do {
+                    let attachment = try DocumentParser.parse(url: url)
+                    withAnimation(theme.springAnimation()) {
+                        pendingAttachments.append(attachment)
+                        clipboardService.markAsRead()
+                    }
+                } catch {
+                    ToastManager.shared.error("Could not attach file", message: error.localizedDescription)
+                }
+            }
         }
     }
 

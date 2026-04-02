@@ -14,8 +14,20 @@ import Foundation
 public final class ClipboardService: ObservableObject {
     public static let shared = ClipboardService()
 
-    /// The current text on the pasteboard
-    @Published public private(set) var currentClipboardText: String?
+    /// Supported content types on the clipboard
+    public enum ClipboardContent: Equatable {
+        case text(String)
+        case image(Data)
+        case file(URL)
+        
+        public var isText: Bool {
+            if case .text = self { return true }
+            return false
+        }
+    }
+
+    /// The current content on the pasteboard
+    @Published public private(set) var currentContent: ClipboardContent?
     
     /// The application that was frontmost when the clipboard last changed
     @Published public private(set) var lastSourceApp: String?
@@ -59,24 +71,51 @@ public final class ClipboardService: ObservableObject {
         print("[ClipboardService] Pasteboard change detected. Count: \(pb.changeCount) (was \(lastChangeCount))")
         lastChangeCount = pb.changeCount
         
-        if let text = pb.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // only update if text actually changed to avoid noise from non-string clipboard changes
-            if text != currentClipboardText {
-                print("[ClipboardService] New text content detected: \"\(text.prefix(30))...\"")
-                currentClipboardText = text
+        let newContent = detectContent(in: pb)
+        
+        if let content = newContent {
+            // Only update if content actually changed
+            if content != currentContent {
+                print("[ClipboardService] New content detected: \(content)")
+                currentContent = content
                 hasNewContent = true
                 
-                // identify the source application
+                // Identify the source application
                 if let frontmost = NSWorkspace.shared.frontmostApplication {
                     lastSourceApp = frontmost.localizedName ?? frontmost.bundleIdentifier
                     print("[ClipboardService] Source app identified: \(lastSourceApp ?? "unknown")")
                 }
             } else {
-                print("[ClipboardService] Change detected but text content is identical to current.")
+                print("[ClipboardService] Change detected but content is identical to current.")
             }
         } else {
-            print("[ClipboardService] Change detected but no meaningful text found on pasteboard.")
+            print("[ClipboardService] Change detected but no meaningful content found on pasteboard.")
         }
+    }
+
+    private func detectContent(in pb: NSPasteboard) -> ClipboardContent? {
+        // 1. try file URLs (copied files in Finder)
+        if let urls = pb.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], let url = urls.first {
+            // check if it's a supported document or image
+            if DocumentParser.canParse(url: url) || DocumentParser.isImageFile(url: url) {
+                return .file(url)
+            }
+        }
+        
+        // 2. try images (direct data)
+        if let imageData = pb.data(forType: .png) {
+            return .image(imageData)
+        }
+        if let tiffData = pb.data(forType: .tiff), let nsImage = NSImage(data: tiffData), let pngData = nsImage.pngData() {
+            return .image(pngData)
+        }
+        
+        // 3. try plain text
+        if let text = pb.string(forType: .string), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .text(text)
+        }
+        
+        return nil
     }
 
     /// Attempt to grab the current selection from the active application
@@ -102,7 +141,11 @@ public final class ClipboardService: ObservableObject {
             if pb.changeCount != startChangeCount {
                 print("[ClipboardService] Pasteboard update detected at iteration \(i+1). New count: \(pb.changeCount)")
                 checkPasteboard()
-                return currentClipboardText
+                
+                if case .text(let text) = currentContent {
+                    return text
+                }
+                return nil
             }
         }
         
