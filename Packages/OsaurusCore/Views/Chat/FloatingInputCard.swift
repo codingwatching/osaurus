@@ -1519,19 +1519,26 @@ extension FloatingInputCard {
     }
 
     private func triggerPulse() {
-        // Reset state
+        // reset state immediately and hide animation layers
         clipboardPulseAmount = 0
-        clipboardPulseOpacity = 1.0
+        clipboardPulseOpacity = 0
         
-        // animate the stroke clockwise around the capsule
-        withAnimation(.easeInOut(duration: 0.7)) {
-            clipboardPulseAmount = 1.0
-        }
-        
-        // fade out after completion
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            withAnimation(.easeOut(duration: 0.4)) {
-                clipboardPulseOpacity = 0
+        // small delay to ensure the window transition is complete
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeIn(duration: 0.1)) {
+                clipboardPulseOpacity = 1.0
+            }
+            
+            // animate the stroke clockwise around the capsule
+            withAnimation(.easeInOut(duration: 0.8)) {
+                clipboardPulseAmount = 1.0
+            }
+            
+            // fade out after completion
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    clipboardPulseOpacity = 0
+                }
             }
         }
     }
