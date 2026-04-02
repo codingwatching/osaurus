@@ -805,6 +805,18 @@ extension AppDelegate {
         let cfg = ChatConfigurationStore.load()
         HotKeyManager.shared.register(hotkey: cfg.hotkey) { [weak self] in
             Task { @MainActor in
+                // if opening (about to be shown), and clipboard monitoring is enabled, trigger a selection grab before showing Osaurus
+                // to capture content from the currently active application.
+                if !ChatWindowManager.shared.hasVisibleWindows && cfg.enableClipboardMonitoring {
+                    // start grabbing selection in the background before we take focus
+                    Task {
+                        _ = await ClipboardService.shared.grabSelection()
+                    }
+                    // small yield to allow Cmd+C to be posted before toggle takes focus
+                    // 50ms
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                
                 self?.toggleChatOverlay()
             }
         }

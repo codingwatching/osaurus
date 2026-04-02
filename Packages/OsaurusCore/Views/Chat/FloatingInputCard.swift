@@ -113,6 +113,8 @@ struct FloatingInputCard: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var folderContextService = WorkFolderContextService.shared
     @ObservedObject private var sandboxState = SandboxManager.State.shared
+    @ObservedObject private var clipboardService = ClipboardService.shared
+    @ObservedObject private var appConfig = AppConfiguration.shared
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -127,6 +129,9 @@ struct FloatingInputCard: View {
     @State private var isSandboxHovered = false
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
+    @State private var isClipboardHovered = false
+    @State private var clipboardPulseAmount: CGFloat = 0.0
+    @State private var clipboardPulseOpacity: Double = 0.0
     // Cache picker items to prevent popover refresh during streaming
     @State private var cachedPickerItems: [ModelPickerItem] = []
     // MARK: - Voice Input State
@@ -234,7 +239,10 @@ struct FloatingInputCard: View {
     private var mainContent: some View {
         VStack(spacing: 12) {
             if (pickerItems.count > 1
-                || displayContextTokens > 0 || isSandboxAvailable) && !showVoiceOverlay
+                || displayContextTokens > 0
+                || isSandboxAvailable
+                || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent))
+                && !showVoiceOverlay
             {
                 selectorRow
                     .padding(.top, 8)
@@ -940,6 +948,11 @@ extension FloatingInputCard {
                 sandboxToggleChip
             }
 
+            // Clipboard chip (visible when there's something new on the clipboard and monitoring is enabled)
+            if AppConfiguration.shared.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent {
+                clipboardToggleChip
+            }
+
             // Folder context selector (work mode only, hidden when sandbox is enabled)
             if workInputState != nil && (folderContextService.hasActiveFolder || isAgentEmptyMode) && !isSandboxEnabled
             {
@@ -1359,6 +1372,150 @@ extension FloatingInputCard {
                     ),
                     lineWidth: 1
                 )
+        }
+    }
+
+    // MARK: - Clipboard Chip
+
+    private var clipboardChipLabel: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "paperclip")
+                .font(.system(size: CGFloat(theme.captionSize) - 2, weight: .medium))
+                .foregroundColor(theme.accentColor)
+
+            HStack(spacing: 4) {
+                Text("Paste Content From")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .foregroundColor(theme.secondaryText)
+                
+                Text(clipboardService.lastSourceApp ?? "Clipboard")
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .bold))
+                    .foregroundColor(theme.accentColor)
+            }
+            .lineLimit(1)
+        }
+    }
+
+    private var clipboardToggleChip: some View {
+        Button(action: attachClipboardSnippet) {
+            clipboardChipLabel
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(theme.secondaryBackground.opacity(isClipboardHovered ? 0.95 : 0.8))
+                )
+                .clipShape(Capsule())
+                .overlay(
+                    // main static border
+                    Capsule()
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    theme.glassEdgeLight.opacity(isClipboardHovered ? 0.25 : 0.15),
+                                    theme.accentColor.opacity(isClipboardHovered ? 0.6 : 0.15),
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 1
+                        )
+                )
+                .overlay(
+                    // animated clockwise border sweep using custom shape to fix vertical frame issue
+                    ClipboardSweepShape()
+                        .trim(from: 0, to: clipboardPulseAmount)
+                        .stroke(
+                            LinearGradient(
+                                colors: [
+                                    theme.glassEdgeLight.opacity(0.8),
+                                    theme.accentColor,
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                        )
+                        .opacity(clipboardPulseOpacity)
+                )
+                .overlay(
+                    // accompanying glow that follows the sweep
+                    ClipboardSweepShape()
+                        .trim(from: 0, to: clipboardPulseAmount)
+                        .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .opacity(clipboardPulseOpacity * 0.4)
+                        .blur(radius: 3)
+                )
+                .shadow(
+                    color: theme.accentColor.opacity(isClipboardHovered ? 0.35 : (0.05 + clipboardPulseOpacity * 0.2)),
+                    radius: isClipboardHovered ? 6 : (4 + clipboardPulseOpacity * 4),
+                    x: 0,
+                    y: 1
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isClipboardHovered = hovering
+            }
+        }
+        .help("Attach snippet from \(clipboardService.lastSourceApp ?? "clipboard")")
+        .contextMenu {
+            Button("Dismiss") {
+                clipboardService.markAsRead()
+            }
+            Divider()
+            Button("Paste to Input") {
+                if let text = clipboardService.currentClipboardText {
+                    localText += text
+                    clipboardService.markAsRead()
+                }
+            }
+        }
+        .transition(.scale(scale: 0.8).combined(with: .opacity))
+        .onAppear {
+            if clipboardService.hasNewContent {
+                triggerPulse()
+            }
+        }
+        .onChange(of: clipboardService.hasNewContent) { _, newValue in
+            if newValue {
+                triggerPulse()
+            }
+        }
+    }
+
+    private func triggerPulse() {
+        // Reset state
+        clipboardPulseAmount = 0
+        clipboardPulseOpacity = 1.0
+        
+        // animate the stroke clockwise around the capsule
+        withAnimation(.easeInOut(duration: 1.2)) {
+            clipboardPulseAmount = 1.0
+        }
+        
+        // dade out after completion
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                clipboardPulseOpacity = 0
+            }
+        }
+    }
+
+    private func attachClipboardSnippet() {
+        guard let text = clipboardService.currentClipboardText else { return }
+        
+        let filename = "Snippet from \(clipboardService.lastSourceApp ?? "Clipboard")"
+        let attachment = Attachment.document(
+            filename: filename,
+            content: text,
+            fileSize: text.count
+        )
+        
+        withAnimation(theme.springAnimation()) {
+            pendingAttachments.append(attachment)
+            clipboardService.markAsRead()
         }
     }
 
@@ -1842,6 +1999,48 @@ extension FloatingInputCard {
 
     private var shadowColor: Color {
         isFocused ? theme.accentColor.opacity(0.18) : theme.shadowColor.opacity(0.12)
+    }
+}
+
+// MARK: - Clipboard Animation Shape
+
+/// A custom capsule shape that starts its path at the top center to allow for clockwise border sweeps
+struct ClipboardSweepShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let radius = rect.height / 2
+        
+        // Start at top center (12 o'clock)
+        path.move(to: CGPoint(x: rect.midX, y: 0))
+        
+        // Top right straight line
+        path.addLine(to: CGPoint(x: rect.maxX - radius, y: 0))
+        
+        // Right semi-circle
+        path.addArc(
+            center: CGPoint(x: rect.maxX - radius, y: radius),
+            radius: radius,
+            startAngle: Angle(degrees: -90),
+            endAngle: Angle(degrees: 90),
+            clockwise: false
+        )
+        
+        // Bottom straight line
+        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+        
+        // Left semi-circle
+        path.addArc(
+            center: CGPoint(x: rect.minX + radius, y: radius),
+            radius: radius,
+            startAngle: Angle(degrees: 90),
+            endAngle: Angle(degrees: 270),
+            clockwise: false
+        )
+        
+        // Top left straight line back to center
+        path.addLine(to: CGPoint(x: rect.midX, y: 0))
+        
+        return path
     }
 }
 

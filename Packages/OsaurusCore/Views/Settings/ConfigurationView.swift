@@ -27,6 +27,7 @@ struct ConfigurationView: View {
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempPreflightSearchMode: PreflightSearchMode = .balanced
     @State private var tempDisableTools: Bool = false
+    @State private var tempEnableClipboardMonitoring: Bool = false
 
     // Work generation settings state
     @State private var tempAgentTemperature: String = ""
@@ -280,6 +281,22 @@ struct ConfigurationView: View {
                                             }
                                             Text(
                                                 "Send messages directly to the model with no tool specs or capability injection. Keeps the prompt stable across turns for maximum KV-cache reuse. Recommended when osaurus is acting as a backend for an external agent."
+                                            )
+                                            .font(.system(size: 11))
+                                            .foregroundColor(theme.tertiaryText)
+                                        }
+                                    }
+
+                                    SettingsDivider()
+
+                                    SettingsSubsection(label: "Clipboard") {
+                                        VStack(alignment: .leading, spacing: 8) {
+                                            Toggle(isOn: $tempEnableClipboardMonitoring) {
+                                                Text("Enable clipboard monitoring")
+                                                    .font(.system(size: 12))
+                                            }
+                                            Text(
+                                                "Automatically detect and offer text from any app as context. Includes 'grab selection' feature when summoning Osaurus."
                                             )
                                             .font(.system(size: 11))
                                             .foregroundColor(theme.tertiaryText)
@@ -627,6 +644,7 @@ struct ConfigurationView: View {
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempPreflightSearchMode = chat.preflightSearchMode ?? .balanced
         tempDisableTools = chat.disableTools
+        tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
 
         // Work generation settings
         tempAgentTemperature = chat.workTemperature.map { String($0) } ?? ""
@@ -688,6 +706,7 @@ struct ConfigurationView: View {
         tempChatMaxToolAttempts = ""
         tempPreflightSearchMode = .balanced
         tempDisableTools = false
+        tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempAgentTemperature = ""
         tempAgentMaxTokens = ""
         tempAgentTopP = ""
@@ -853,7 +872,8 @@ struct ConfigurationView: View {
             workTopPOverride: parsedAgentTopP,
             workMaxIterations: parsedAgentMaxIterations,
             preflightSearchMode: tempPreflightSearchMode,
-            disableTools: tempDisableTools
+            disableTools: tempDisableTools,
+            enableClipboardMonitoring: tempEnableClipboardMonitoring
         )
         ChatConfigurationStore.save(chatCfg)
 
