@@ -40,7 +40,7 @@ public final class ClipboardService: ObservableObject {
     private let keyboardService = KeyboardSimulationService.shared
 
     private init() {
-        startMonitoring()
+        // monitoring is started/stopped by AppDelegate based on window visibility
     }
 
     /// Start polling the pasteboard for changes

@@ -861,12 +861,19 @@ extension AppDelegate {
         ChatWindowManager.shared.toggleLastFocused()
 
         if ChatWindowManager.shared.hasVisibleWindows {
+            // start clipboard monitoring and do an immediate check
+            ClipboardService.shared.startMonitoring()
+            ClipboardService.shared.checkPasteboard()
+
             // Pause VAD when chat window is shown (like when VAD detects a agent)
             // This allows voice input to work without competing for the microphone
             Task {
                 await VADService.shared.pause()
             }
             NotificationCenter.default.post(name: .chatOverlayActivated, object: nil)
+        } else {
+            // stop clipboard monitoring when overlay is hidden to save battery
+            ClipboardService.shared.stopMonitoring()
         }
     }
 
@@ -874,6 +881,10 @@ extension AppDelegate {
     @MainActor func showChatOverlay() {
         print("[AppDelegate] Creating new chat window via ChatWindowManager...")
         ChatWindowManager.shared.createWindow()
+        
+        // start clipboard monitoring and do an immediate check
+        ClipboardService.shared.startMonitoring()
+        ClipboardService.shared.checkPasteboard()
 
         // Pause VAD when chat window is shown (like when VAD detects a agent)
         // This allows voice input to work without competing for the microphone

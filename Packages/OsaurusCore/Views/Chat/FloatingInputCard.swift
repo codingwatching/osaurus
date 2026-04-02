@@ -1410,6 +1410,11 @@ extension FloatingInputCard {
                     .foregroundColor(theme.accentColor)
             }
             .lineLimit(1)
+
+            Image(systemName: "chevron.right")
+                .font(theme.font(size: CGFloat(theme.captionSize) - 4, weight: .bold))
+                .foregroundColor(theme.tertiaryText.opacity(0.7))
+                .padding(.leading, 2)
         }
     }
 
