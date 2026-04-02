@@ -15,23 +15,26 @@ import SwiftUI
 
 // MARK: - JSON Formatting Utility
 
-/// Formats JSON on a background thread to avoid blocking UI
 enum JSONFormatter {
-    static func prettyJSON(_ raw: String) -> String {
+    /// Single `JSONSerialization` parse; returns pretty text, or `nil` if `raw` is not JSON.
+    static func prettyPrintedJSONIfValid(_ raw: String) -> String? {
         guard let data = raw.data(using: .utf8),
             let obj = try? JSONSerialization.jsonObject(with: data)
-        else { return raw }
+        else { return nil }
 
-        // Return compact string for empty objects
         if let dict = obj as? [String: Any], dict.isEmpty {
             return "{}"
         }
 
-        guard let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys])
-        else {
-            return raw
-        }
-        return String(data: pretty, encoding: .utf8) ?? raw
+        guard let pretty = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]),
+            let s = String(data: pretty, encoding: .utf8)
+        else { return nil }
+        return s
+    }
+
+    /// Pretty-print when valid JSON; otherwise returns `raw` unchanged.
+    static func prettyJSON(_ raw: String) -> String {
+        prettyPrintedJSONIfValid(raw) ?? raw
     }
 }
 
@@ -589,14 +592,14 @@ final class NativeToolCallRowView: NSView {
                 av.onHeightChanged = { [weak self] in self?.applyHeight() }
             }
             if let result = item.result {
-                let displayResult = result.hasPrefix("[REJECTED]") ? result : result
                 ensureResultSectionTitle(theme: theme).isHidden = false
 
                 let rv = ensureResultView()
                 rv.isHidden = false
                 let textW = max(0, width - Self.sectionMarkdownWidthDeduction)
+                let resultMarkdown = Self.markdownForToolResultDisplay(result)
                 rv.configure(
-                    text: displayResult,
+                    text: resultMarkdown,
                     width: textW,
                     theme: theme,
                     cacheKey: "result-\(item.call.id)",
@@ -637,6 +640,21 @@ final class NativeToolCallRowView: NSView {
     }
 
     // MARK: - Private
+
+    /// JSON → fenced `json` block (pretty-printed). Anything else → raw markdown so prose/lists/**bold** render.
+    private static func markdownForToolResultDisplay(_ result: String) -> String {
+        if result.hasPrefix("[REJECTED]") {
+            return result
+        }
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return ""
+        }
+        if let pretty = JSONFormatter.prettyPrintedJSONIfValid(trimmed) {
+            return "```json\n\(pretty)\n```"
+        }
+        return trimmed
+    }
 
     private func applyHeight() {
         rowHeight?.constant = measuredHeight()

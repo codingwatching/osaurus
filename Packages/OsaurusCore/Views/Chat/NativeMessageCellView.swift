@@ -915,6 +915,10 @@ final class NativeMessageCellView: NSTableCellView {
             cacheKey: block.id,
             isStreaming: isStreaming
         )
+        // always report height: configure() can return early when text is unchanged (e.g. tool row
+        // expand/collapse) and otherwise the table keeps a stale row height → clipped / squeezed text.
+        let h = mv.measuredHeight(for: context.width - 32) + 8
+        context.onHeightMeasured?(h, block.id)
     }
 
     // MARK: - Thinking (NativeThinkingView)
@@ -1540,7 +1544,8 @@ enum NativeCellHeightEstimator {
             return 32
 
         case let .pendingToolCall(_, argPreview, _):
-            return argPreview != nil ? 80 : 62
+            // header row + 52pt arg box + cell vertical insets
+            return argPreview != nil ? 112 : 62
 
         case let .thinking(_, text, _):
             if !isExpanded { return 56 }
