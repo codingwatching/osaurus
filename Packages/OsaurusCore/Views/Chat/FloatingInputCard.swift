@@ -1495,9 +1495,9 @@ extension FloatingInputCard {
             clipboardPulseAmount = 1.0
         }
         
-        // dade out after completion
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-            withAnimation(.easeOut(duration: 0.6)) {
+        // fade out after completion
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            withAnimation(.easeOut(duration: 0.4)) {
                 clipboardPulseOpacity = 0
             }
         }
@@ -1506,16 +1506,20 @@ extension FloatingInputCard {
     private func attachClipboardSnippet() {
         guard let text = clipboardService.currentClipboardText else { return }
         
-        let filename = "Snippet from \(clipboardService.lastSourceApp ?? "Clipboard")"
-        let attachment = Attachment.document(
-            filename: filename,
-            content: text,
-            fileSize: text.count
-        )
-        
         withAnimation(theme.springAnimation()) {
-            pendingAttachments.append(attachment)
+            if localText.isEmpty {
+                localText = text
+            } else {
+                // if there's already text, add a newline first
+                if !localText.hasSuffix("\n") {
+                    localText += "\n"
+                }
+                localText += text
+            }
             clipboardService.markAsRead()
+            
+            // re-focus the input so the user can edit immediately
+            isFocused = true
         }
     }
 
