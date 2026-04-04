@@ -1580,14 +1580,21 @@ extension FloatingInputCard {
                     }
                 }
             } else if DocumentParser.canParse(url: url) {
-                do {
-                    let attachment = try DocumentParser.parse(url: url)
-                    withAnimation(theme.springAnimation()) {
-                        pendingAttachments.append(attachment)
-                        clipboardService.markAsRead()
+                let animation = theme.springAnimation()
+                Task.detached(priority: .userInitiated) {
+                    do {
+                        let attachments = try DocumentParser.parseAll(url: url)
+                        await MainActor.run {
+                            withAnimation(animation) {
+                                self.pendingAttachments.append(contentsOf: attachments)
+                                self.clipboardService.markAsRead()
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            ToastManager.shared.error("Could not attach file", message: error.localizedDescription)
+                        }
                     }
-                } catch {
-                    ToastManager.shared.error("Could not attach file", message: error.localizedDescription)
                 }
             }
         }
@@ -1786,14 +1793,24 @@ extension FloatingInputCard {
     }
 
     private func parseAndAttach(url: URL) {
-        do {
-            let attachment = try DocumentParser.parse(url: url)
-            appendAttachment(attachment)
-        } catch {
-            ToastManager.shared.error(
-                "Could not attach \(url.lastPathComponent)",
-                message: error.localizedDescription
-            )
+        let filename = url.lastPathComponent
+        let animation = theme.springAnimation()
+        Task.detached(priority: .userInitiated) {
+            do {
+                let attachments = try DocumentParser.parseAll(url: url)
+                await MainActor.run {
+                    withAnimation(animation) {
+                        self.pendingAttachments.append(contentsOf: attachments)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    ToastManager.shared.error(
+                        "Could not attach \(filename)",
+                        message: error.localizedDescription
+                    )
+                }
+            }
         }
     }
 
