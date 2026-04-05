@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.0</title>
+            <pubDate>Sun, 05 Apr 2026 18:12:00 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.0</sparkle:version>
+            <sparkle:shortVersionString>0.16.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.0/Osaurus-0.16.0.dmg" length="32785409" type="application/octet-stream" sparkle:edSignature="jMdvjZMZgoSwhruYjEsCdJRgUyPuhwwyPQ+83GOsBVv6gsc2PJULZdCrNyb+AY+ve8Q5a+uF0WAzxGOAL6oGAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added factory reset in settings (#780) by @RaajeevChandran
+
+## 🚀 Features
+
+- manual tool selection (#771) by @tpae
+
+## 🐛 Bug Fixes
+
+- address known swiftUI bug for skills import button and fixes few other crashes (#784) by @tpae
+- dynamic storage monitoring for custom model directories (#781) by @RaajeevChandran
+- fix: PDF attachment 'Document appears to be empty' error (#779) by @jjang-ai
+- fixed issue with model downloader (#778) by @tpae
+- preview and save image in artifact (#772) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- use latest mlx-swift-lm (#783) by @tpae
+- updated deps and ci flow for resolution (#775) by @tpae
+- added gemma4 support (#770) by @tpae
+- switch to osaurus mlx fork (#769) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.15.18...0.15.19
+]]></description>
+        </item>
+        <item>
             <title>0.15.18</title>
             <pubDate>Thu, 02 Apr 2026 21:04:13 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
