@@ -211,7 +211,10 @@ struct ModelPickerView: View {
 
             Button(action: {
                 onDismiss()
-                AppDelegate.shared?.showManagementWindow(initialTab: .models)
+                Task { @MainActor in
+                    try? await Task.sleepForPopoverDismiss()
+                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
+                }
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: "plus")

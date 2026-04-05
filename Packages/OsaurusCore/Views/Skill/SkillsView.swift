@@ -417,12 +417,18 @@ private struct ImportDropdownButton: View {
             VStack(alignment: .leading, spacing: 0) {
                 ImportMenuRow(icon: "link", title: "From GitHub") {
                     showMenu = false
-                    onGitHub()
+                    Task { @MainActor in
+                        try? await Task.sleepForPopoverDismiss()
+                        onGitHub()
+                    }
                 }
                 Divider().padding(.horizontal, 8)
                 ImportMenuRow(icon: "doc", title: "From File") {
                     showMenu = false
-                    onLocal()
+                    Task { @MainActor in
+                        try? await Task.sleepForPopoverDismiss()
+                        onLocal()
+                    }
                 }
             }
             .padding(.vertical, 6)
