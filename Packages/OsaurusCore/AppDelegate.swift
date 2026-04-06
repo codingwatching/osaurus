@@ -245,6 +245,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
                 showOnboardingWindow()
             }
+        } else {
+            // Fresh launch from terminated state: explicitly activate and show window
+            Task { @MainActor in
+                // Delay slightly to ensure services are ready
+                try? await Task.sleep(nanoseconds: 300_000_000)  // 300ms
+
+                // Ensure app is unhidden and active
+                NSApp.unhide(nil)
+                _ = NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+
+                if ChatWindowManager.shared.windowCount > 0 {
+                    ChatWindowManager.shared.focusAllWindows()
+                } else if WindowManager.shared.isVisible(.management) {
+                    WindowManager.shared.show(.management, center: false)
+                } else {
+                    showChatOverlay()
+                }
+            }
         }
     }
 
@@ -433,6 +451,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 self.showChatOverlay()
             }
         }
+
         return true
     }
 
