@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.1</title>
+            <pubDate>Mon, 06 Apr 2026 03:30:04 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.1</sparkle:version>
+            <sparkle:shortVersionString>0.16.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.1/Osaurus-0.16.1.dmg" length="32778261" type="application/octet-stream" sparkle:edSignature="vbO/kqiklATuDUdLv/4/X7wtyqBNeiuVc++IhTbtzAAiNn6Xb5XZuOqyto7CtztbRY26M+48o9Ja25YnfQMUCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- updated skills view to be more deterministic with calls (#787) by @tpae
+
+## 🧰 Maintenance
+
+- fix crashes, extend gemma support (#786) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.0...0.16.1
+]]></description>
+        </item>
+        <item>
             <title>0.16.0</title>
             <pubDate>Sun, 05 Apr 2026 18:12:00 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
