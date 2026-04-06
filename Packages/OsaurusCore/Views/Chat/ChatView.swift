@@ -1013,6 +1013,7 @@ final class ChatSession: ObservableObject {
                     do {
                         let streamStartTime = Date()
                         var uiDeltaCount = 0
+                        var firstDeltaTime: Date?
 
                         let processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
@@ -1045,7 +1046,13 @@ final class ChatSession: ObservableObject {
                                 }
                                 continue
                             }
+                            if let stats = StreamingStatsHint.decode(delta) {
+                                assistantTurn.generationTokenCount = stats.tokenCount
+                                assistantTurn.generationTokensPerSecond = stats.tokensPerSecond
+                                continue
+                            }
                             if !delta.isEmpty {
+                                if firstDeltaTime == nil { firstDeltaTime = Date() }
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }
@@ -1053,6 +1060,21 @@ final class ChatSession: ObservableObject {
 
                         // Flush any remaining buffered content (including partial tags)
                         processor.finalize()
+
+                        if let first = firstDeltaTime {
+                            assistantTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
+                            // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
+                            // Use the codebase's chars/4 heuristic to approximate tokens from generated text
+                            // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
+                            if assistantTurn.generationTokensPerSecond == nil, !assistantTurn.contentIsEmpty {
+                                let genTime = Date().timeIntervalSince(first)
+                                let estimatedTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                                if genTime > 0 && estimatedTokens > 0 {
+                                    assistantTurn.generationTokenCount = estimatedTokens
+                                    assistantTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
+                                }
+                            }
+                        }
 
                         let totalTime = Date().timeIntervalSince(streamStartTime)
                         print(

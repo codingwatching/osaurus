@@ -5,12 +5,11 @@
 //  Encapsulates MLX message preparation and generation stream construction.
 //
 
+import CoreImage
 import Foundation
-import Cmlx
 import MLX
 import MLXLLM
 @preconcurrency import MLXLMCommon
-import CoreImage
 import MLXVLM
 import os.log
 
@@ -77,7 +76,8 @@ struct MLXGenerationEngine {
         generation: GenerationParameters,
         runtime: RuntimeConfig,
         existingCache: [any KVCache]?,
-        cachedTokens: [Int]?
+        cachedTokens: [Int]?,
+        wiredMemoryTicket: WiredMemoryTicket?
     ) async throws -> (
         stream: AsyncStream<MLXLMCommon.TokenGeneration>,
         tokenizer: any Tokenizer,
@@ -172,9 +172,6 @@ struct MLXGenerationEngine {
             let newPromptTokens = fullLMInput.text.tokens.asArray(Int.self)
             engineLog.info(
                 "prepareAndGenerate: promptTokens=\(newPromptTokens.count, privacy: .public) hasImage=\(fullLMInput.image != nil, privacy: .public)"
-            )
-            print(
-                "[MLXGenerationEngine] promptTokens=\(newPromptTokens.count) hasImage=\(fullLMInput.image != nil)"
             )
             guard !newPromptTokens.isEmpty else {
                 throw NSError(
@@ -325,9 +322,6 @@ struct MLXGenerationEngine {
             debugLog(
                 "[MLXGenerationEngine] twoPhase=\(useTwoPhase) genPrefixLen=\(genPrefixLen) stableTokens=\(stableTokenCount) canTrim=\(canTrimPromptCache(cache)) hasExisting=\(existingCache != nil)"
             )
-            print(
-                "[MLXGenerationEngine] twoPhase=\(useTwoPhase) genPrefixLen=\(genPrefixLen) stableTokens=\(stableTokenCount) hasExisting=\(existingCache != nil)"
-            )
 
             if useTwoPhase {
                 // ── Phase 1: prefill stableTokens ─────────────────────────────────────
@@ -338,50 +332,26 @@ struct MLXGenerationEngine {
                 let stableSliceEnd = stableTokenCount
 
                 if stableSliceStart < stableSliceEnd {
-                    let stableSliceTokens = Array(newPromptTokens[stableSliceStart ..< stableSliceEnd])
-                    let prefillStep = runtime.prefillStep
-                    var remaining = stableSliceTokens[...]
-                    var isFirstChunk = true
-
-                    // Chunked prefill: process all chunks (advances cache in-place).
-                    //
-                    // IMPORTANT: the first chunk MUST go through model.prepare() rather than
-                    // callAsFunction().  For VLM models (Qwen3.5), prepare() calls
-                    // languageModel.resetPositionState() on text-only inputs, clearing any stale
-                    // precomputedPositionIds/ropeDeltas left over from the previous turn.
-                    // callAsFunction() skips this reset, causing a shape mismatch when the model
-                    // tries to reuse an old position-id tensor sized for the prior turn's tokens.
-                    while remaining.count > prefillStep {
-                        let chunk = Array(remaining.prefix(prefillStep))
-                        if isFirstChunk {
-                            let chunkLMInput = LMInput(text: .init(tokens: MLXArray(chunk)[.newAxis]))
-                            _ = try contextWithEOS.model.prepare(chunkLMInput, cache: cache, windowSize: nil)
-                            isFirstChunk = false
-                        } else {
-                            let chunkText = LMInput.Text(tokens: MLXArray(chunk)[.newAxis])
-                            _ = try withError {
-                                contextWithEOS.model(chunkText, cache: cache.isEmpty ? nil : cache, state: nil)
-                            }
+                    let stableTokens = Array(newPromptTokens[stableSliceStart ..< stableSliceEnd])
+                    let stableInput = LMInput(text: .init(tokens: MLXArray(stableTokens)))
+                    // model.prepare() handles chunked prefill internally with Memory.clearCache()
+                    // between chunks. Also resets VLM position state (ropeDeltas /
+                    // precomputedPositionIds) from the previous turn on the first call.
+                    let prepResult = try contextWithEOS.model.prepare(
+                        stableInput,
+                        cache: cache,
+                        windowSize: runtime.prefillStep
+                    )
+                    if case .tokens(let remainder) = prepResult, remainder.tokens.size > 0 {
+                        _ = try withError {
+                            contextWithEOS.model(
+                                LMInput.Text(tokens: remainder.tokens[.newAxis]),
+                                cache: cache.isEmpty ? nil : cache,
+                                state: nil
+                            )
                         }
-                        try withError { eval(cache) }
-                        remaining = remaining.dropFirst(prefillStep)
                     }
-
-                    // Process final stable chunk — this advances cache to stableTokenCount.
-                    if !remaining.isEmpty {
-                        let lastChunk = Array(remaining)
-                        if isFirstChunk {
-                            // This is also the first (and only) chunk — use prepare() to reset state.
-                            let lastLMInput = LMInput(text: .init(tokens: MLXArray(lastChunk)[.newAxis]))
-                            _ = try contextWithEOS.model.prepare(lastLMInput, cache: cache, windowSize: nil)
-                        } else {
-                            let lastText = LMInput.Text(tokens: MLXArray(lastChunk)[.newAxis])
-                            _ = try withError {
-                                contextWithEOS.model(lastText, cache: cache.isEmpty ? nil : cache, state: nil)
-                            }
-                        }
-                        try withError { eval(cache) }
-                    }
+                    try withError { eval(cache) }
                 }
 
                 // Deep-copy cache at stable boundary for snapshot storage.
@@ -421,7 +391,6 @@ struct MLXGenerationEngine {
                 debugLog(
                     "[MLXGenerationEngine] twoPhase post-prefill effectiveCacheOffset=\(postPrefillOffset)"
                 )
-                print("[MLXGenerationEngine] twoPhase post-prefill effectiveCacheOffset=\(postPrefillOffset)")
 
                 // Build stop-token set for EOS detection.
                 var stopTokenIDs: Set<Int> = contextWithEOS.configuration.eosTokenIds
@@ -436,147 +405,92 @@ struct MLXGenerationEngine {
 
                 // Manual generation loop — avoids TokenIterator which calls model.prepare()
                 // and resets internal VLM position state (ropeDeltas / precomputedPositionIds).
-                // We drive the model via callAsFunction which goes through the fast decode path.
-                let maxTokens = parameters.maxTokens
-                let capturedTokenizer = contextWithEOS.tokenizer
-                let capturedStopTokenIDs = stopTokenIDs
-                let capturedProcessor = processor
-                let capturedSampler = sampler
-                let capturedPromptTokens = newPromptTokens
-
-                // Wrap non-Sendable captures in an unchecked box (same pattern as CacheBox above).
-                final class GenContext: @unchecked Sendable {
+                final class LoopState: @unchecked Sendable {
                     let model: any LanguageModel
                     let cache: [any KVCache]
-                    let tokenizer: any Tokenizer
-                    let stopTokenIDs: Set<Int>
                     var processor: (any LogitProcessor)?
                     let sampler: any LogitSampler
-                    let promptTokenCount: Int
-                    let maxTokens: Int?
-                    init(
-                        model: any LanguageModel,
-                        cache: [any KVCache],
-                        tokenizer: any Tokenizer,
-                        stopTokenIDs: Set<Int>,
-                        processor: (any LogitProcessor)?,
-                        sampler: any LogitSampler,
-                        promptTokenCount: Int,
-                        maxTokens: Int?
-                    ) {
-                        self.model = model; self.cache = cache
-                        self.tokenizer = tokenizer; self.stopTokenIDs = stopTokenIDs
-                        self.processor = processor; self.sampler = sampler
-                        self.promptTokenCount = promptTokenCount; self.maxTokens = maxTokens
+                    init(_ m: any LanguageModel, _ c: [any KVCache], _ p: (any LogitProcessor)?, _ s: any LogitSampler)
+                    {
+                        model = m; cache = c; processor = p; sampler = s
                     }
                 }
-                let genCtx = GenContext(
-                    model: contextWithEOS.model,
-                    cache: cache,
-                    tokenizer: capturedTokenizer,
-                    stopTokenIDs: capturedStopTokenIDs,
-                    processor: capturedProcessor,
-                    sampler: capturedSampler,
-                    promptTokenCount: capturedPromptTokens.count,
-                    maxTokens: maxTokens
-                )
+                let loop = LoopState(contextWithEOS.model, cache, processor, sampler)
+                let unknownTokenId = contextWithEOS.tokenizer.unknownTokenId
+                let maxTokens = parameters.maxTokens
+                let promptTokenCount = newPromptTokens.count
 
                 let (genStream, genContinuation) = AsyncStream<MLXLMCommon.TokenGeneration>.makeStream()
                 let genTask = Task {
-                    // Pin model weights in GPU VRAM via Cmlx.
-                    // Prevents macOS paging weights to SSD between tokens.
-                    var prevWired: size_t = 0
-                    #if canImport(Metal)
-                        let maxWired =
-                            GPU.maxRecommendedWorkingSetBytes() ?? Int(ProcessInfo.processInfo.physicalMemory)
-                    #else
-                        let maxWired = Int(ProcessInfo.processInfo.physicalMemory)
-                    #endif
-                    Cmlx.mlx_set_wired_limit(
-                        &prevWired,
-                        size_t(min(maxWired, Int(ProcessInfo.processInfo.physicalMemory) * 3 / 4))
-                    )
+                    let performGeneration = {
+                        let genStart = Date.timeIntervalSinceReferenceDate
+                        var tokenCount = 0
+                        var currentToken = y0
+                        var stopReason: MLXLMCommon.GenerateStopReason = .stop
 
-                    let genStart = Date.timeIntervalSinceReferenceDate
-                    var tokenCount = 0
-                    var currentToken = y0
-                    var stopReason: MLXLMCommon.GenerateStopReason = .stop
-
-                    // Emit y0 (the first token sampled from gen-prefix logits).
-                    let isY0Stop =
-                        currentToken == genCtx.tokenizer.unknownTokenId
-                        || genCtx.stopTokenIDs.contains(currentToken)
-                    if !isY0Stop {
-                        genContinuation.yield(.token(currentToken))
-                        tokenCount += 1
-                    } else {
-                        stopReason = .stop
-                    }
-
-                    // Generate y1, y2, … by feeding one token at a time through callAsFunction.
-                    if !isY0Stop {
-                        while true {
-                            if Task.isCancelled {
-                                stopReason = .cancelled
-                                break
-                            }
-                            if let max = genCtx.maxTokens, tokenCount >= max {
-                                stopReason = .length
-                                break
-                            }
-
-                            let inputArr = MLXArray([currentToken])[.newAxis]
-                            let nextToken: Int
-                            do {
-                                nextToken = try withError {
-                                    let logits = genCtx.model(
-                                        inputArr,
-                                        cache: genCtx.cache.isEmpty ? nil : genCtx.cache
-                                    )
-                                    eval(genCtx.cache)
-
-                                    var nextLogits = logits[0..., -1, 0...]
-                                    nextLogits = genCtx.processor?.process(logits: nextLogits) ?? nextLogits
-                                    let nextArr = genCtx.sampler.sample(logits: nextLogits)
-                                    genCtx.processor?.didSample(token: nextArr)
-                                    return nextArr.item(Int.self)
-                                }
-                            } catch {
-                                stopReason = .cancelled
-                                break
-                            }
-
-                            let isStop =
-                                nextToken == genCtx.tokenizer.unknownTokenId
-                                || genCtx.stopTokenIDs.contains(nextToken)
-                            if isStop {
-                                stopReason = .stop
-                                break
-                            }
-
-                            genContinuation.yield(.token(nextToken))
+                        let isY0Stop = currentToken == unknownTokenId || stopTokenIDs.contains(currentToken)
+                        if !isY0Stop {
+                            genContinuation.yield(.token(currentToken))
                             tokenCount += 1
-                            currentToken = nextToken
                         }
+
+                        if !isY0Stop {
+                            while true {
+                                if Task.isCancelled { stopReason = .cancelled; break }
+                                if let max = maxTokens, tokenCount >= max { stopReason = .length; break }
+
+                                let nextToken: Int
+                                do {
+                                    nextToken = try withError {
+                                        let logits = loop.model(
+                                            MLXArray([currentToken])[.newAxis],
+                                            cache: loop.cache.isEmpty ? nil : loop.cache
+                                        )
+                                        eval(loop.cache)
+                                        var nextLogits = logits[0..., -1, 0...]
+                                        nextLogits = loop.processor?.process(logits: nextLogits) ?? nextLogits
+                                        let nextArr = loop.sampler.sample(logits: nextLogits)
+                                        loop.processor?.didSample(token: nextArr)
+                                        return nextArr.item(Int.self)
+                                    }
+                                } catch { stopReason = .cancelled; break }
+
+                                if nextToken == unknownTokenId || stopTokenIDs.contains(nextToken) {
+                                    stopReason = .stop; break
+                                }
+
+                                genContinuation.yield(.token(nextToken))
+                                tokenCount += 1
+                                currentToken = nextToken
+                            }
+                        }
+
+                        let generateTime = Date.timeIntervalSinceReferenceDate - genStart
+                        genContinuation.yield(
+                            .info(
+                                MLXLMCommon.GenerateCompletionInfo(
+                                    promptTokenCount: promptTokenCount,
+                                    generationTokenCount: tokenCount,
+                                    promptTime: 0,
+                                    generationTime: generateTime,
+                                    stopReason: stopReason
+                                )
+                            )
+                        )
+                        genContinuation.finish()
                     }
 
-                    let generateTime = Date.timeIntervalSinceReferenceDate - genStart
-                    Cmlx.mlx_set_wired_limit(&prevWired, prevWired)
-
-                    let info = MLXLMCommon.GenerateCompletionInfo(
-                        promptTokenCount: genCtx.promptTokenCount,
-                        generationTokenCount: tokenCount,
-                        promptTime: 0,
-                        generationTime: generateTime,
-                        stopReason: stopReason
-                    )
-                    genContinuation.yield(.info(info))
-                    genContinuation.finish()
+                    if let ticket = wiredMemoryTicket {
+                        await WiredMemoryTicket.withWiredLimit(ticket) {
+                            performGeneration()
+                        }
+                    } else {
+                        performGeneration()
+                    }
                 }
                 genContinuation.onTermination = { @Sendable _ in genTask.cancel() }
 
                 engineLog.info("prepareAndGenerate: twoPhase stream created, returning")
-                print("[MLXGenerationEngine] twoPhase manual-loop stream created, returning")
 
                 let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
                 return ResultBox(
@@ -592,12 +506,8 @@ struct MLXGenerationEngine {
             }
 
             // ── Single-phase (standard) path ──────────────────────────────────────────
-            // withError converts MLX C++ errors (e.g. shape mismatches from stale caches) to catchable Swift errors
             engineLog.info(
                 "prepareAndGenerate: constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0), privacy: .public)"
-            )
-            print(
-                "[MLXGenerationEngine] constructing TokenIterator effectiveTokens=\(effectiveInput.text.tokens.dim(0))"
             )
             let iterator = try withError {
                 try TokenIterator(
@@ -611,7 +521,6 @@ struct MLXGenerationEngine {
             debugLog(
                 "[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset) cacheCount=\(cache.count) cacheTypes=\(cache.prefix(4).map { type(of: $0) })"
             )
-            print("[MLXGenerationEngine] post-prefill effectiveCacheOffset=\(postPrefillOffset)")
             engineSignposter.emitEvent(
                 "prefillComplete",
                 id: engineSignposter.makeSignpostID(),
@@ -621,10 +530,10 @@ struct MLXGenerationEngine {
                 promptTokenCount: newPromptTokens.count,
                 modelConfiguration: contextWithEOS.configuration,
                 tokenizer: contextWithEOS.tokenizer,
-                iterator: iterator
+                iterator: iterator,
+                wiredMemoryTicket: wiredMemoryTicket
             )
             engineLog.info("prepareAndGenerate: generateTokenTask created, returning stream")
-            print("[MLXGenerationEngine] generateTokenTask created, returning stream")
 
             let toolCallFormat = contextWithEOS.configuration.toolCallFormat ?? .json
             return ResultBox(
