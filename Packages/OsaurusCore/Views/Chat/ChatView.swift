@@ -1024,7 +1024,7 @@ final class ChatSession: ObservableObject {
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
 
-                        let processor = StreamingDeltaProcessor(
+                        var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
                             modelId: selectedModel ?? "default",
                             modelOptions: activeModelOptions
@@ -1041,8 +1041,34 @@ final class ChatSession: ObservableObject {
                                 processor.finalize()
                                 break outer
                             }
+                            // Server-side tool call complete: add the call card + result turn to the chat log
+                            if let done = StreamingToolHint.decodeDone(delta) {
+                                processor.finalize()
+                                let call = ToolCall(
+                                    id: done.callId,
+                                    type: "function",
+                                    function: ToolCallFunction(name: done.name, arguments: done.arguments)
+                                )
+                                assistantTurn.pendingToolName = nil
+                                assistantTurn.clearPendingToolArgs()
+                                if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
+                                assistantTurn.toolCalls!.append(call)
+                                assistantTurn.toolResults[done.callId] = done.result
+                                let toolTurn = ChatTurn(role: .tool, content: done.result)
+                                toolTurn.toolCallId = done.callId
+                                let newAssistantTurn = ChatTurn(role: .assistant, content: "")
+                                turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                                assistantTurn = newAssistantTurn
+                                processor = StreamingDeltaProcessor(
+                                    turn: newAssistantTurn,
+                                    modelId: selectedModel ?? "default",
+                                    modelOptions: activeModelOptions
+                                ) { [weak self] in self?.rebuildVisibleBlocks() }
+                                rebuildVisibleBlocks()
+                                continue
+                            }
                             if let toolName = StreamingToolHint.decode(delta) {
-                                assistantTurn.pendingToolName = toolName
+                                assistantTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                                 rebuildVisibleBlocks()
                                 continue
                             }
@@ -1637,29 +1663,35 @@ struct ChatView: View {
         let manager = RemoteProviderManager.shared
 
         let providerId: UUID
-        // Reuse an existing provider that points to the same host:port
+        // Reuse an existing Osaurus provider that already targets the same agent
         if let existing = manager.configuration.providers.first(where: {
-            $0.host == host && $0.effectivePort == agent.port
+            $0.providerType == .osaurus && $0.remoteAgentId == agent.id
         }) {
             providerId = existing.id
+            var updated = existing
+            updated.host = host
+            updated.port = agent.port
+            updated.enabled = true
             if !token.isEmpty {
-                var updated = existing
                 updated.authType = .apiKey
-                updated.enabled = true
                 manager.updateProvider(updated, apiKey: token)
+            } else {
+                manager.updateProvider(updated, apiKey: nil)
             }
             Task { try? await manager.connect(providerId: existing.id) }
         } else {
+            // Use basePath="" so URLs are constructed directly as /agents/{id}/run
             let provider = RemoteProvider(
                 name: agent.name,
                 host: host,
                 providerProtocol: .http,
                 port: agent.port,
-                basePath: "/v1",
+                basePath: "",
                 authType: token.isEmpty ? .none : .apiKey,
-                providerType: .openai,
+                providerType: .osaurus,
                 enabled: true,
-                autoConnect: true
+                autoConnect: true,
+                remoteAgentId: agent.id
             )
             providerId = provider.id
             manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: true)
@@ -1667,6 +1699,7 @@ struct ChatView: View {
 
         windowState.selectedDiscoveredAgent = agent
         windowState.selectedDiscoveredAgentProviderId = providerId
+        session.reset()
         Task { await session.refreshPickerItems() }
     }
 
