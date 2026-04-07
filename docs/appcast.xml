@@ -3,6 +3,33 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.4</title>
+            <pubDate>Tue, 07 Apr 2026 01:01:08 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.4</sparkle:version>
+            <sparkle:shortVersionString>0.16.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.4/Osaurus-0.16.4.dmg" length="32821641" type="application/octet-stream" sparkle:edSignature="mMyZNqgah9K2tzmrNEnWmLc2pgyQejO1LUaL8vwjIdshzik9R5za0A42PCT5b9myZ8zO61w79BeVvU5cELtmDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fix: crash on second generation with Gemma 4 hybrid KV cache (#799) by @jjang-ai
+- fix app window focus and activation on launch (#794) by @RaajeevChandran
+- fix: VLM classification false positives and image persistence across model switches (#795) by @jjang-ai
+
+## 🧰 Maintenance
+
+- added osaurus curated models (#800) by @tpae
+- bumped versions on mlx lm library (#797) by @tpae
+- added metal gate to prevent crashes (#796) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.3...0.16.4
+]]></description>
+        </item>
+        <item>
             <title>0.16.3</title>
             <pubDate>Mon, 06 Apr 2026 14:49:02 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
