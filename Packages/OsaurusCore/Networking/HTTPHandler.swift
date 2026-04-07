@@ -1312,27 +1312,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         _ request: ChatCompletionRequest,
         agentId: String?
     ) async -> ChatCompletionRequest {
-        guard let agentId, !agentId.isEmpty else { return request }
+        guard let agentId, !agentId.isEmpty,
+            let agentUUID = UUID(uuidString: agentId)
+        else { return request }
 
         var enriched = request
-
-        if let agentUUID = UUID(uuidString: agentId) {
-            let agentPrompt = await MainActor.run {
-                SystemPromptBuilder.effectiveBasePrompt(
-                    AgentManager.shared.effectiveSystemPrompt(for: agentUUID)
-                )
-            }
-            SystemPromptBuilder.injectSystemContent(agentPrompt, into: &enriched.messages)
-        }
-
         let query = request.messages.last(where: { $0.role == "user" })?.content ?? ""
-        let memoryContext = await MemoryContextAssembler.assembleContext(
-            agentId: agentId,
-            config: MemoryConfigurationStore.load(),
-            query: query
+        let (hint, prefix) = await SystemPromptComposer.injectAgentContext(
+            agentId: agentUUID,
+            query: query,
+            into: &enriched.messages
         )
-        SystemPromptBuilder.injectMemoryContext(memoryContext, into: &enriched.messages)
-
+        if enriched.cache_hint == nil {
+            enriched.cache_hint = hint
+            enriched.staticPrefix = prefix
+        }
         return enriched
     }
 

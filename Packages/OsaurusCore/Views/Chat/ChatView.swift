@@ -45,11 +45,7 @@ final class ChatSession: ObservableObject {
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
-    private var _cachedBreakdown: ContextTokenBreakdown = .zero
-    private var _tokenCacheValid: Bool = false
-    private var _lastTokenTurnsCount: Int = 0
-    private var _lastTokenAttachmentsCount: Int = 0
-    private var _memoryContextTokens: Int = 0
+    private var cachedContext: ComposedContext?
     private let budgetTracker = ContextBudgetTracker()
 
     /// Callback when session needs to be saved (called after streaming completes)
@@ -281,9 +277,9 @@ final class ChatSession: ObservableObject {
     }
 
     /// Per-category breakdown of estimated context tokens.
-    /// During streaming, returns the snapshot from the active request with live
-    /// output tokens (O(1)). Otherwise uses cached full recomputation.
-    var estimatedContextBreakdown: ContextTokenBreakdown {
+    /// During streaming, returns the active snapshot with live output tokens.
+    /// Otherwise derives from the cached `ComposedContext` or a preview manifest.
+    var estimatedContextBreakdown: ContextBreakdown {
         if let active = budgetTracker.activeBreakdown(
             isActive: isStreaming,
             outputTurn: turns.last
@@ -291,48 +287,35 @@ final class ChatSession: ObservableObject {
             return active
         }
 
-        if _tokenCacheValid && !isStreaming && turns.count == _lastTokenTurnsCount
-            && pendingAttachments.count == _lastTokenAttachmentsCount
-        {
-            return _cachedBreakdown
-        }
-
-        var breakdown = ContextTokenBreakdown()
         let effectiveId = agentId ?? Agent.defaultId
         let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
 
-        let compact = SystemPromptBuilder.isLocalModel(selectedModel)
-        let systemPrompt = buildSystemPrompt(
-            base: AgentManager.shared.effectiveSystemPrompt(for: effectiveId)
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            agentId: effectiveId,
-            executionMode: executionMode,
-            compact: compact
-        )
-        breakdown.systemPrompt = ContextBudgetManager.estimateTokens(for: systemPrompt)
-
-        breakdown.memory = _memoryContextTokens
-
-        let toolSpecs = buildToolSpecs(executionMode: executionMode)
-        breakdown.tools = ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
-        breakdown.output = ContextBudgetManager.estimateOutputTokens(for: turns)
-        breakdown.conversation = ContextBudgetManager.estimateTokens(for: turns) - breakdown.output
-
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: turns)
+        let conversationTokens = ContextBudgetManager.estimateTokens(for: turns) - outputTokens
         var inputTokens = 0
-        if !input.isEmpty {
-            inputTokens += ContextBudgetManager.estimateTokens(for: input)
-        }
-        for attachment in pendingAttachments {
-            inputTokens += attachment.estimatedTokens
-        }
-        breakdown.input = inputTokens
+        if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
+        for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
 
-        _cachedBreakdown = breakdown
-        _tokenCacheValid = true
-        _lastTokenTurnsCount = turns.count
-        _lastTokenAttachmentsCount = pendingAttachments.count
+        if let ctx = cachedContext {
+            return .from(
+                context: ctx,
+                conversationTokens: conversationTokens,
+                inputTokens: inputTokens,
+                outputTokens: outputTokens
+            )
+        }
 
-        return breakdown
+        let manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
+        let toolTokens = ToolRegistry.shared.totalEstimatedTokens(
+            for: ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode)
+        )
+        return .from(
+            manifest: manifest,
+            toolTokens: toolTokens,
+            conversationTokens: conversationTokens,
+            inputTokens: inputTokens,
+            outputTokens: outputTokens
+        )
     }
 
     /// Builds the full user message text, prepending any attached document contents wrapped in XML tags.
@@ -403,7 +386,7 @@ final class ChatSession: ObservableObject {
 
         // Clear caches
         blockMemoizer.clear()
-        _tokenCacheValid = false
+        cachedContext = nil
         visibleBlocks = []
         visibleBlocksGroupHeaderMap = [:]
 
@@ -431,7 +414,7 @@ final class ChatSession: ObservableObject {
 
     /// Invalidate the token cache (called when tools/skills change)
     func invalidateTokenCache() {
-        _tokenCacheValid = false
+        cachedContext = nil
         budgetTracker.clear()
         objectWillChange.send()
     }
@@ -518,7 +501,7 @@ final class ChatSession: ObservableObject {
         isDirty = false  // Fresh load, not dirty
         // Clear caches to force a clean block rebuild for the new session
         blockMemoizer.clear()
-        _tokenCacheValid = false
+        cachedContext = nil
         rebuildVisibleBlocks()
 
         Task { [weak self] in await self?.refreshMemoryTokens() }
@@ -526,19 +509,14 @@ final class ChatSession: ObservableObject {
 
     private func refreshMemoryTokens() async {
         let effectiveAgentId = agentId ?? Agent.defaultId
-        let config = MemoryConfigurationStore.load()
         let context = await MemoryContextAssembler.assembleContext(
             agentId: effectiveAgentId.uuidString,
-            config: config
+            config: MemoryConfigurationStore.load()
         )
-        updateMemoryTokens(fromContext: context)
-    }
-
-    private func updateMemoryTokens(fromContext context: String) {
-        let tokens = context.isEmpty ? 0 : max(1, context.count / MemoryConfiguration.charsPerToken)
-        guard tokens != _memoryContextTokens else { return }
-        _memoryContextTokens = tokens
-        _tokenCacheValid = false
+        let newTokens = ContextBudgetManager.estimateTokens(for: context)
+        let oldTokens = cachedContext?.manifest.memoryTokens ?? 0
+        guard newTokens != oldTokens else { return }
+        cachedContext = nil
         objectWillChange.send()
     }
 
@@ -649,7 +627,6 @@ final class ChatSession: ObservableObject {
         currentTask = nil
         isStreaming = false
         budgetTracker.clear()
-        _tokenCacheValid = false
         ServerController.signalGenerationEnd()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
@@ -753,28 +730,19 @@ final class ChatSession: ObservableObject {
         return ToolRegistry.shared.resolveWorkExecutionMode(folderContext: nil)
     }
 
-    /// Build system prompt with execution-mode-specific sections (sandbox instructions, etc.).
-    func buildSystemPrompt(
-        base: String,
+    /// Synchronous manifest for offline token estimation (UI popover).
+    private func buildPreviewManifest(
         agentId: UUID,
         executionMode: WorkExecutionMode,
-        compact: Bool = false
-    ) -> String {
-        let prompt = base.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard executionMode.usesSandboxTools else { return prompt }
-        let secretNames = Array(AgentSecretsKeychain.getAllSecrets(agentId: agentId).keys)
-        let sandboxSection = WorkExecutionEngine.chatSandboxPromptSection(compact: compact, secretNames: secretNames)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if prompt.isEmpty {
-            return sandboxSection
-        }
-        return prompt + "\n\n" + sandboxSection
-    }
-
-    /// Build tool specifications: always-loaded set for chat mode.
-    func buildToolSpecs(executionMode: WorkExecutionMode, excludeCapabilityTools: Bool = false) -> [Tool] {
-        ToolRegistry.shared.alwaysLoadedSpecs(mode: executionMode, excludeCapabilityTools: excludeCapabilityTools)
+        memoryContext: String = ""
+    ) -> PromptManifest {
+        var composer = SystemPromptComposer.forChat(
+            agentId: agentId,
+            executionMode: executionMode,
+            model: selectedModel
+        )
+        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
+        return composer.manifest()
     }
 
     func send(_ text: String, attachments: [Attachment] = []) {
@@ -845,82 +813,25 @@ final class ChatSession: ObservableObject {
                 let executionMode = await prepareChatExecutionMode(agentId: effectiveAgentId)
                 guard isRunActive(runId) else { return }
 
-                let baseSystemPrompt = SystemPromptBuilder.effectiveBasePrompt(
-                    AgentManager.shared.effectiveSystemPrompt(for: effectiveAgentId)
-                )
-
-                let memoryConfig = MemoryConfigurationStore.load()
-                let memoryContext = await MemoryContextAssembler.assembleContext(
-                    agentId: effectiveAgentId.uuidString,
-                    config: memoryConfig
-                )
-                guard isRunActive(runId) else { return }
-                updateMemoryTokens(fromContext: memoryContext)
-
-                // Pre-flight RAG: search capabilities based on user's message.
-                // Skipped when disableTools is set or when the agent uses manual tool selection.
-                let toolsDisabled = chatCfg.disableTools
-                let toolMode = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId)
-                let preflight: PreflightResult
-                if !toolsDisabled && toolMode == .auto {
-                    let preflightMode = chatCfg.preflightSearchMode ?? .balanced
-                    preflight = await PreflightCapabilitySearch.search(query: trimmed, mode: preflightMode)
-                } else {
-                    preflight = PreflightResult(toolSpecs: [], contextSnippet: "", items: [])
-                }
-                guard isRunActive(runId) else { return }
-
-                if !preflight.items.isEmpty {
-                    assistantTurn.preflightCapabilities = preflight.items
-                }
-
-                let isCompact = SystemPromptBuilder.isLocalModel(selectedModel)
-                var sys = buildSystemPrompt(
-                    base: baseSystemPrompt,
+                let context = await SystemPromptComposer.composeChatContext(
                     agentId: effectiveAgentId,
                     executionMode: executionMode,
-                    compact: isCompact
+                    model: selectedModel,
+                    query: trimmed,
+                    toolsDisabled: chatCfg.disableTools
                 )
+                guard isRunActive(runId) else { return }
 
-                if !preflight.contextSnippet.isEmpty {
-                    sys += "\n\n" + preflight.contextSnippet
+                let sys = context.prompt
+                var toolSpecs = context.tools
+                let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
+                cachedContext = context
+
+                if !context.preflightItems.isEmpty {
+                    assistantTurn.preflightCapabilities = context.preflightItems
                 }
 
-                sys = SystemPromptBuilder.prependMemoryContext(memoryContext, to: sys)
-                let isManualTools = toolMode == .manual
-                var toolSpecs =
-                    toolsDisabled
-                    ? []
-                    : buildToolSpecs(executionMode: executionMode, excludeCapabilityTools: isManualTools)
-
-                if !toolsDisabled {
-                    if isManualTools {
-                        if let manualNames = AgentManager.shared.effectiveManualToolNames(for: effectiveAgentId) {
-                            let manualSpecs = ToolRegistry.shared.specs(forTools: manualNames)
-                            for spec in manualSpecs
-                            where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                                toolSpecs.append(spec)
-                            }
-                        }
-                    } else {
-                        for spec in preflight.toolSpecs
-                        where !toolSpecs.contains(where: { $0.function.name == spec.function.name }) {
-                            toolSpecs.append(spec)
-                        }
-                    }
-                }
-
-                if isManualTools,
-                    let section = await SkillManager.shared.manualSkillPromptSection(for: effectiveAgentId)
-                {
-                    sys += "\n\n" + section
-                }
-
-                budgetTracker.snapshot(
-                    systemPromptChars: sys.count,
-                    memoryTokens: _memoryContextTokens,
-                    toolTokens: ToolRegistry.shared.totalEstimatedTokens(for: toolSpecs)
-                )
+                budgetTracker.snapshot(context: context)
 
                 let effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
 
@@ -1015,6 +926,8 @@ final class ChatSession: ObservableObject {
                         tool_choice: toolSpecs.isEmpty ? nil : .auto,
                         session_id: sessionId?.uuidString
                     )
+                    req.cache_hint = context.cacheHint
+                    req.staticPrefix = context.staticPrefix
                     req.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                     debugLog(
                         "send: attempt=\(attempts) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
