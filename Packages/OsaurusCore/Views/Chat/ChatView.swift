@@ -34,6 +34,10 @@ final class ChatSession: ObservableObject {
     /// The agent this session belongs to
     @Published var agentId: UUID?
 
+    /// Skill ID to inject as one-off context for the next outgoing message.
+    /// Set when the user selects a skill from the slash command popup; cleared after send.
+    @Published var pendingOneOffSkillId: UUID?
+
     // MARK: - Persistence Properties
     @Published var sessionId: UUID?
     @Published var title: String = "New Chat"
@@ -374,6 +378,7 @@ final class ChatSession: ObservableObject {
         turns.removeAll()
         input = ""
         pendingAttachments = []
+        pendingOneOffSkillId = nil
         voiceInputState = .idle
         showVoiceOverlay = false
         // Clear session identity for new chat
@@ -822,7 +827,16 @@ final class ChatSession: ObservableObject {
                 )
                 guard isRunActive(runId) else { return }
 
-                let sys = context.prompt
+                // Inject one-off skill if the user selected one via slash command
+                var sys = context.prompt
+                if let skillId = pendingOneOffSkillId {
+                    pendingOneOffSkillId = nil
+                    if let skill = SkillManager.shared.skill(for: skillId) {
+                        let section = await SkillManager.shared.buildFullInstructions(for: skill)
+                        sys += "\n\n## Active Skill: \(skill.name)\n\n\(section)"
+                    }
+                }
+
                 var toolSpecs = context.tools
                 let isManualTools = AgentManager.shared.effectiveToolSelectionMode(for: effectiveAgentId) == .manual
                 cachedContext = context
@@ -1446,7 +1460,12 @@ struct ChatView: View {
                                 focusTrigger: focusTrigger,
                                 agentId: windowState.agentId,
                                 windowId: windowState.windowId,
-                                isCompact: windowState.showSidebar
+                                isCompact: windowState.showSidebar,
+                                onClearChat: { observedSession.reset() },
+                                onSkillSelected: { skillId in
+                                    observedSession.pendingOneOffSkillId = skillId
+                                },
+                                pendingSkillId: $observedSession.pendingOneOffSkillId
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -1804,6 +1823,11 @@ struct ChatView: View {
 
                 // Session deallocated means the window is gone — pass through
                 guard let session else { return event }
+
+                // Stage 0: Slash command popup is open — let the text view delegate handle it
+                if SlashCommandRegistry.shared.isPopupVisible {
+                    return event
+                }
 
                 // Check if voice input is active AND overlay is visible
                 if SpeechService.shared.isRecording && session.showVoiceOverlay {

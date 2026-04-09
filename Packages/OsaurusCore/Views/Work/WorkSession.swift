@@ -307,6 +307,9 @@ public final class WorkSession: ObservableObject {
     /// Selected model
     @Published var selectedModel: String?
 
+    /// Skill ID to inject as one-off context for the next outgoing message.
+    @Published var pendingOneOffSkillId: UUID?
+
     /// When true, voice input auto-restarts after AI responds (continuous conversation mode)
     @Published var isContinuousVoiceMode: Bool = false
     /// Active state of the voice input overlay

@@ -52,6 +52,13 @@ struct FloatingInputCard: View {
     var cumulativeTokens: Int? = nil
     /// Compact mode (sidebar open) - hides secondary chip content
     var isCompact: Bool = false
+    /// Callback to clear the current chat session (triggered by /clear command).
+    var onClearChat: (() -> Void)? = nil
+    /// Callback when the user selects a skill slash command. Passes the skill UUID so the
+    /// caller can inject that skill's instructions as one-off context for the next send.
+    var onSkillSelected: ((UUID) -> Void)? = nil
+    /// Binding to the session's pending one-off skill. Non-nil shows a dismissable skill chip.
+    @Binding var pendingSkillId: UUID?
 
     init(
         text: Binding<String>,
@@ -79,7 +86,10 @@ struct FloatingInputCard: View {
         onResume: (() -> Void)? = nil,
         canResume: Bool = false,
         cumulativeTokens: Int? = nil,
-        isCompact: Bool = false
+        isCompact: Bool = false,
+        onClearChat: (() -> Void)? = nil,
+        onSkillSelected: ((UUID) -> Void)? = nil,
+        pendingSkillId: Binding<UUID?> = .constant(nil)
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -107,6 +117,9 @@ struct FloatingInputCard: View {
         self.canResume = canResume
         self.cumulativeTokens = cumulativeTokens
         self.isCompact = isCompact
+        self.onClearChat = onClearChat
+        self.onSkillSelected = onSkillSelected
+        self._pendingSkillId = pendingSkillId
     }
 
     // Observe managers for reactive updates
@@ -115,6 +128,40 @@ struct FloatingInputCard: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
+
+    // MARK: - Slash Command State
+
+    private var slashRegistry = SlashCommandRegistry.shared
+    @State private var slashSelectedIndex: Int = 0
+
+    /// Non-nil when the cursor is inside a slash command token (e.g. "/tr" or "hello /tr").
+    /// The slash must be at the start of text or immediately after whitespace.
+    /// Nil once a space or newline follows the slash (command completed or dismissed).
+    private var activeSlashQuery: String? {
+        // Find the last '/' in the text
+        guard let slashRange = localText.range(of: "/", options: .backwards) else { return nil }
+
+        // The slash must be at position 0 or preceded by whitespace
+        let before = localText[..<slashRange.lowerBound]
+        if !before.isEmpty {
+            guard let lastChar = before.last, lastChar.isWhitespace else { return nil }
+        }
+
+        // Everything after the slash must have no spaces/newlines (still typing the token)
+        let afterSlash = String(localText[slashRange.upperBound...])
+        guard !afterSlash.contains(" ") && !afterSlash.contains("\n") else { return nil }
+
+        return afterSlash
+    }
+
+    private var slashFilteredCommands: [SlashCommand] {
+        guard let query = activeSlashQuery else { return [] }
+        return slashRegistry.filtered(query: query)
+    }
+
+    private var showSlashPopup: Bool {
+        activeSlashQuery != nil && !slashFilteredCommands.isEmpty
+    }
 
     // Local state for text input to prevent parent re-renders on every keystroke
     @State private var localText: String = ""
@@ -168,6 +215,9 @@ struct FloatingInputCard: View {
     private let maxImageSize: Int = 10 * 1024 * 1024  // 10MB limit
 
     private var canSend: Bool {
+        // While the slash command popup is visible, Enter selects a command — not sends
+        guard !showSlashPopup else { return false }
+
         let hasText = !localText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let hasContent = hasText || !pendingAttachments.isEmpty
 
@@ -283,18 +333,36 @@ struct FloatingInputCard: View {
                     )
                 )
             } else {
-                inputCard
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 20)
-                    .onDrop(of: [UTType.image, UTType.fileURL], isTargeted: $isDragOver) { providers in
-                        handleFileDrop(providers)
-                    }
-                    .transition(
-                        .asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.98)),
-                            removal: .opacity.combined(with: .scale(scale: 0.98))
+                VStack(spacing: 4) {
+                    // Slash command popup — appears above the input card
+                    if showSlashPopup {
+                        SlashCommandPopup(
+                            commands: slashFilteredCommands,
+                            selectedIndex: $slashSelectedIndex,
+                            onSelect: applySlashCommand
                         )
+                        .padding(.horizontal, 20)
+                        .transition(
+                            .asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                                removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                            )
+                        )
+                    }
+
+                    inputCard
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
+                        .onDrop(of: [UTType.image, UTType.fileURL], isTargeted: $isDragOver) { providers in
+                            handleFileDrop(providers)
+                        }
+                }
+                .transition(
+                    .asymmetric(
+                        insertion: .opacity.combined(with: .scale(scale: 0.98)),
+                        removal: .opacity.combined(with: .scale(scale: 0.98))
                     )
+                )
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: showVoiceOverlay)
@@ -407,6 +475,18 @@ struct FloatingInputCard: View {
                 if newValue != localText {
                     localText = newValue
                 }
+            }
+            .onChange(of: localText) { _, _ in
+                // Reset popup selection whenever the typed query changes
+                slashSelectedIndex = 0
+            }
+            .onChange(of: showSlashPopup) { _, isVisible in
+                // Keep registry in sync so the global key monitor can suppress
+                // Escape from closing the window while the popup is open.
+                SlashCommandRegistry.shared.isPopupVisible = isVisible
+            }
+            .onDisappear {
+                SlashCommandRegistry.shared.isPopupVisible = false
             }
             .onChange(of: focusTrigger) { _, _ in
                 isFocused = true
@@ -895,6 +975,103 @@ extension FloatingInputCard {
         text = localText
         onSendNow?()
         localText = ""
+    }
+
+    // MARK: - Slash Commands
+
+    /// Returns the text with the active slash token replaced by `replacement`.
+    private func replacingSlashToken(with replacement: String) -> String {
+        guard let slashRange = localText.range(of: "/", options: .backwards) else {
+            return replacement
+        }
+        let before = localText[..<slashRange.lowerBound]
+        // Strip trailing space added by the button if replacement is empty
+        let prefix = replacement.isEmpty ? before.trimmingCharacters(in: .whitespaces) : String(before)
+        return prefix + replacement
+    }
+
+    private func applySlashCommand(_ command: SlashCommand) {
+        switch command.kind {
+        case .action:
+            let newText = replacingSlashToken(with: "")
+            localText = newText
+            text = newText
+            handleBuiltInSlashAction(command.name)
+        case .template:
+            let templateText = command.template ?? ""
+            let newText = replacingSlashToken(with: templateText)
+            localText = newText
+            text = newText
+            isFocused = true
+        case .skill:
+            let newText = replacingSlashToken(with: "")
+            localText = newText
+            text = newText
+            isFocused = true
+            onSkillSelected?(command.id)
+        }
+    }
+
+    private func handleBuiltInSlashAction(_ name: String) {
+        switch name {
+        case "clear":
+            if let clearChat = onClearChat {
+                clearChat()
+            } else {
+                ToastManager.shared.info("Clear Chat", message: "Pass an onClearChat handler to enable /clear")
+            }
+        case "model":
+            showModelPicker = true
+        case "help":
+            ToastManager.shared.info(
+                "Slash Commands",
+                message: "Type / to open commands. ↑↓ to navigate, ↵ to select, Esc to dismiss."
+            )
+        default:
+            break
+        }
+    }
+
+    // MARK: - Pending Skill Chip
+
+    @ViewBuilder
+    private var pendingSkillChipView: some View {
+        if let skillId = pendingSkillId,
+           let skill = SkillManager.shared.skill(for: skillId)
+        {
+            HStack(spacing: 5) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(theme.accentColor)
+                Text(skill.name)
+                    .font(theme.font(size: 11, weight: .medium))
+                    .foregroundColor(theme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button {
+                    withAnimation(theme.springAnimation()) {
+                        pendingSkillId = nil
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundColor(theme.secondaryText)
+                        .padding(3)
+                        .background(Circle().fill(theme.tertiaryBackground))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(theme.accentColor.opacity(0.1))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 0.5)
+            )
+        }
     }
 
     // MARK: - Pending Attachments Preview (Inline)
@@ -1743,15 +1920,20 @@ extension FloatingInputCard {
                     .padding(.top, 8)
             }
 
-            if !pendingAttachments.isEmpty {
-                inlinePendingAttachmentsPreview
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
+            if !pendingAttachments.isEmpty || pendingSkillId != nil {
+                HStack(alignment: .center, spacing: 6) {
+                    pendingSkillChipView
+                    if !pendingAttachments.isEmpty {
+                        inlinePendingAttachmentsPreview
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
             }
 
             textInputArea
                 .padding(.horizontal, 12)
-                .padding(.top, pendingAttachments.isEmpty ? 10 : 6)
+                .padding(.top, (pendingAttachments.isEmpty && pendingSkillId == nil) ? 10 : 6)
                 .padding(.bottom, 6)
 
             buttonBar
@@ -1921,12 +2103,34 @@ extension FloatingInputCard {
             isComposing: $isComposing,
             maxHeight: maxHeight,
             onCommit: {
-                syncAndSend()
+                if showSlashPopup {
+                    let cmds = slashFilteredCommands
+                    if slashSelectedIndex < cmds.count {
+                        applySlashCommand(cmds[slashSelectedIndex])
+                    }
+                } else {
+                    syncAndSend()
+                }
             },
             onShiftCommit: isStreaming && onSendNow != nil
                 ? {
                     syncAndSendNow()
-                } : nil
+                } : nil,
+            onArrowUp: showSlashPopup ? {
+                slashSelectedIndex = max(0, slashSelectedIndex - 1)
+                return true
+            } : nil,
+            onArrowDown: showSlashPopup ? {
+                let maxIndex = slashFilteredCommands.count - 1
+                slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
+                return true
+            } : nil,
+            onEscape: showSlashPopup ? {
+                // Dismiss popup by clearing the slash prefix
+                localText = ""
+                text = ""
+                return true
+            } : nil
         )
         .frame(maxHeight: maxHeight)
         .overlay(alignment: .topLeading) {
@@ -1958,6 +2162,7 @@ extension FloatingInputCard {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
                 mediaButton
+                slashCommandButton
                 if isVoiceConfigured {
                     voiceInputButton
                         .disabled(isStreaming)
@@ -2037,6 +2242,20 @@ extension FloatingInputCard {
             help: "Attach file (image, PDF, text, etc.)",
             action: pickAttachment
         )
+    }
+
+    private var slashCommandButton: some View {
+        SlashCommandTriggerButton(isActive: showSlashPopup) {
+            guard !showSlashPopup else { return }
+            if localText.isEmpty {
+                localText = "/"
+            } else if localText.last?.isWhitespace == true {
+                localText += "/"
+            } else {
+                localText += " /"
+            }
+            isFocused = true
+        }
     }
 
     private var stopButton: some View {
@@ -2822,6 +3041,56 @@ private struct ModelOptionsSelectorView: View {
 // MARK: - Input Action Button
 
 /// Polished circular action button for input card (media, voice, etc.)
+private struct SlashCommandTriggerButton: View {
+    let isActive: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+
+                if isHovered {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.1), Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Text("/")
+                    .font(.system(size: 16, weight: .medium, design: .monospaced))
+                    .foregroundColor(isActive ? theme.accentColor : (isHovered ? theme.accentColor : theme.secondaryText))
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
+                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help(Text("Browse slash commands", bundle: .module))
+        .onHover { isHovered = $0 }
+    }
+}
+
 private struct InputActionButton: View {
     let icon: String
     let help: String

@@ -131,6 +131,8 @@ private extension ManagementView {
             ToolsManagerView()
         case .skills:
             SkillsView()
+        case .commands:
+            SlashCommandsView()
         case .memory:
             MemoryView()
         case .schedules:
@@ -185,6 +187,8 @@ private extension ManagementView {
             count = ToolRegistry.shared.listTools().count
         case .skills:
             count = skillManager.skills.count
+        case .commands:
+            count = SlashCommandRegistry.shared.customCommands.count
         case .memory:
             count = (try? MemoryDatabase.shared.activeEntryCount()) ?? 0
         case .agents:

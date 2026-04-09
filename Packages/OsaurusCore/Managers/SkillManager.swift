@@ -421,7 +421,7 @@ public final class SkillManager {
         return result
     }
 
-    private func buildFullInstructions(for skill: Skill) async -> String {
+    public func buildFullInstructions(for skill: Skill) async -> String {
         var sections = [skill.instructions]
 
         if !skill.references.isEmpty {

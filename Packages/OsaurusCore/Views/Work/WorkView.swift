@@ -93,7 +93,11 @@ struct WorkView: View {
                             onEndTask: { session.endTask() },
                             onResume: { Task { await session.resumeSelectedIssue() } },
                             canResume: session.canResumeSelectedIssue,
-                            cumulativeTokens: session.cumulativeTokens
+                            cumulativeTokens: session.cumulativeTokens,
+                            onSkillSelected: { skillId in
+                                session.pendingOneOffSkillId = skillId
+                            },
+                            pendingSkillId: $session.pendingOneOffSkillId
                         )
                     }
                 }

@@ -19,6 +19,12 @@ struct EditableTextView: NSViewRepresentable {
     var maxHeight: CGFloat = .infinity
     var onCommit: (() -> Void)? = nil
     var onShiftCommit: (() -> Void)? = nil
+    /// Called on ↑ arrow key. Return true to consume the event (prevents cursor movement).
+    var onArrowUp: (() -> Bool)? = nil
+    /// Called on ↓ arrow key. Return true to consume the event (prevents cursor movement).
+    var onArrowDown: (() -> Bool)? = nil
+    /// Called on Escape key. Return true to consume the event.
+    var onEscape: (() -> Bool)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -166,6 +172,17 @@ struct EditableTextView: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            // Arrow key and Escape interception (consumed only when a handler is set and returns true)
+            if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                if let handler = parent.onArrowUp, handler() { return true }
+            }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                if let handler = parent.onArrowDown, handler() { return true }
+            }
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                if let handler = parent.onEscape, handler() { return true }
+            }
+
             if commandSelector == #selector(NSResponder.insertNewline(_:)) {
                 if let event = NSApp.currentEvent, event.modifierFlags.contains(.shift) {
                     if let shiftCommit = parent.onShiftCommit {
