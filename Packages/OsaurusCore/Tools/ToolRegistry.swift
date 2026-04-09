@@ -349,12 +349,20 @@ final class ToolRegistry: ObservableObject {
     // MARK: - Sandbox Tool Registration
 
     /// Register a tool that requires the sandbox container.
+    /// Non-runtime-managed tools are auto-enabled on first registration so they
+    /// are immediately usable; subsequent registrations preserve the user's choice.
     func registerSandboxTool(_ tool: OsaurusTool, runtimeManaged: Bool = false) {
+        let firstTime =
+            toolsByName[tool.name] == nil
+            && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
         sandboxToolNames.insert(tool.name)
         if runtimeManaged {
             builtInSandboxToolNames.insert(tool.name)
         } else {
+            if firstTime {
+                setEnabled(true, for: tool.name)
+            }
             builtInSandboxToolNames.remove(tool.name)
             Task {
                 await ToolIndexService.shared.onToolRegistered(
@@ -418,9 +426,17 @@ final class ToolRegistry: ObservableObject {
     // MARK: - MCP Tool Registration
 
     /// Register a tool from a remote MCP provider.
+    /// Auto-enables the tool on first registration so it is immediately usable;
+    /// subsequent registrations preserve the user's choice.
     func registerMCPTool(_ tool: OsaurusTool) {
+        let firstTime =
+            toolsByName[tool.name] == nil
+            && !configuration.enabled.keys.contains(tool.name)
         toolsByName[tool.name] = tool
         mcpToolNames.insert(tool.name)
+        if firstTime {
+            setEnabled(true, for: tool.name)
+        }
         Task {
             await ToolIndexService.shared.onToolRegistered(
                 name: tool.name,
