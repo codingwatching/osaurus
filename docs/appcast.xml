@@ -3,6 +3,25 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.8</title>
+            <pubDate>Thu, 09 Apr 2026 11:54:33 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.8</sparkle:version>
+            <sparkle:shortVersionString>0.16.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.8/Osaurus-0.16.8.dmg" length="33427781" type="application/octet-stream" sparkle:edSignature="c82mFPdd7gks71LcKT4M5japKgJGyERFRQJAdg16p4bcj7ahbMYwjPE5ErJIJikIcZtU4CfpchQ1iqVbOr0FDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- fix: hide placeholder during IME composition to prevent text overlap (#819) by @SliverKeigo
+- Performance \& Visual improvements (#820) by @RaajeevChandran
+- feat: German localization (821 strings) (#785) by @HolliOnRoad
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.7...0.16.8
+]]></description>
+        </item>
+        <item>
             <title>0.16.7</title>
             <pubDate>Wed, 08 Apr 2026 23:40:26 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
