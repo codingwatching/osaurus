@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.9</title>
+            <pubDate>Thu, 09 Apr 2026 20:20:48 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.9</sparkle:version>
+            <sparkle:shortVersionString>0.16.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.9/Osaurus-0.16.9.dmg" length="33523059" type="application/octet-stream" sparkle:edSignature="FUQCgXbqNgRteKOpDFt7mr383G62qTW8kZP2H2wVkVmcX5ufDts2hG617B4agjoeQQj8UlvICrgDKsyrsXyWDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- slash commands (#822) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix Stage Manager window behavior and model change window activation (#824) by @RaajeevChandran
+- fix: auto-enable MCP and sandbox plugin tools on first registration (#827) by @jjang-ai
+
+## 🧰 Maintenance
+
+- updated acknowledgements (#826) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.8...0.16.9
+]]></description>
+        </item>
+        <item>
             <title>0.16.8</title>
             <pubDate>Thu, 09 Apr 2026 11:54:33 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
