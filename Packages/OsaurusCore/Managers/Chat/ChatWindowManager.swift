@@ -182,8 +182,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             window.deminiaturize(nil)
         }
 
-        // Activate app and pull focus forward
-        _ = NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        // Activate app and bring this specific window forward
+        _ = NSRunningApplication.current.activate(options: .activateIgnoringOtherApps)
 
         // Bring the window forward and make it key
         window.makeKeyAndOrderFront(nil)
@@ -476,7 +476,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         panel.hidesOnDeactivate = false
         panel.worksWhenModal = true
         panel.isReleasedWhenClosed = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.collectionBehavior = [.fullScreenAuxiliary, .managed]
 
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
