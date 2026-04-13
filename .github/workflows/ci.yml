@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -68,6 +70,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -105,6 +109,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install SwiftLint
         run: brew install swiftlint
@@ -117,6 +123,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
