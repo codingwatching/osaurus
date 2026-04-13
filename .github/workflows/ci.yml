@@ -32,7 +32,9 @@ jobs:
         run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Configure git for private SPM deps
-        run: git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+          git ls-remote https://github.com/osaurus-ai/vmlx-swift-lm HEAD
 
       - name: Cache SPM packages
         uses: actions/cache@v4
@@ -73,7 +75,9 @@ jobs:
           xcode-version: latest-stable
 
       - name: Configure git for private SPM deps
-        run: git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+          git ls-remote https://github.com/osaurus-ai/vmlx-swift-lm HEAD
 
       - name: Cache SPM packages
         uses: actions/cache@v4

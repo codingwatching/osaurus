@@ -20,7 +20,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-latest-xlarge
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
@@ -37,7 +38,9 @@ jobs:
         run: xcodebuild -downloadComponent MetalToolchain
 
       - name: Configure git for private SPM deps
-        run: git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+          git ls-remote https://github.com/osaurus-ai/vmlx-swift-lm HEAD
 
       - name: Setup build environment
         run: bash scripts/setup_env.sh
