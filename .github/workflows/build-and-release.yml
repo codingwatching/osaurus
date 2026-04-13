@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-latest-xlarge
+    runs-on: macos-latest
     timeout-minutes: 60
 
     steps:
