@@ -55,6 +55,9 @@ final class ChatSession: ObservableObject {
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
 
+    /// Weak back-reference to the owning window state (set by ChatWindowState).
+    weak var windowState: ChatWindowState?
+
     private var currentTask: Task<Void, Never>?
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
@@ -810,9 +813,9 @@ final class ChatSession: ObservableObject {
             // user-only while isStreaming is true and the table early-returns without assistant rows.
             rebuildVisibleBlocks()
             #if DEBUG
-            let ttftTrace: TTFTTrace? = TTFTTrace()
+                let ttftTrace: TTFTTrace? = TTFTTrace()
             #else
-            let ttftTrace: TTFTTrace? = nil
+                let ttftTrace: TTFTTrace? = nil
             #endif
             do {
                 let engine = chatEngineFactory()
@@ -942,22 +945,22 @@ final class ChatSession: ObservableObject {
                     ttftTrace?.set("conversationTurns", turns.count)
 
                     #if DEBUG
-                    // Dump full prompt to debug log for TTFT analysis
-                    if attempts == 1 {
-                        var promptDump = "═══ FULL PROMPT DUMP ═══\n"
-                        for (i, m) in msgs.enumerated() {
-                            promptDump += "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
-                            promptDump += (m.content ?? "(nil)") + "\n"
-                        }
-                        if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
-                            promptDump += "── TOOLS (\(tools.count)) ──\n"
-                            for t in tools {
-                                promptDump += "  - \(t.function.name): \(t.function.description)\n"
+                        // Dump full prompt to debug log for TTFT analysis
+                        if attempts == 1 {
+                            var promptDump = "═══ FULL PROMPT DUMP ═══\n"
+                            for (i, m) in msgs.enumerated() {
+                                promptDump += "── [\(i)] role=\(m.role) chars=\(m.content?.count ?? 0) ──\n"
+                                promptDump += (m.content ?? "(nil)") + "\n"
                             }
+                            if let tools = toolSpecs.isEmpty ? nil : toolSpecs {
+                                promptDump += "── TOOLS (\(tools.count)) ──\n"
+                                for t in tools {
+                                    promptDump += "  - \(t.function.name): \(t.function.description)\n"
+                                }
+                            }
+                            promptDump += "═══ END PROMPT DUMP ═══"
+                            debugLog(promptDump)
                         }
-                        promptDump += "═══ END PROMPT DUMP ═══"
-                        debugLog(promptDump)
-                    }
                     #endif
                     if let notice = pendingBudgetNotice {
                         msgs.append(ChatMessage(role: "user", content: notice))
@@ -1953,12 +1956,20 @@ private struct BonjourTokenSheet: View {
                 .font(theme.font(size: 13))
 
             HStack {
-                Button { onCancel() } label: { Text("Cancel", bundle: .module) }
-                    .keyboardShortcut(.cancelAction)
+                Button {
+                    onCancel()
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button { onConnect(token) } label: { Text("Connect", bundle: .module) }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                Button {
+                    onConnect(token)
+                } label: {
+                    Text("Connect", bundle: .module)
+                }
+                .keyboardShortcut(.defaultAction)
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(24)
