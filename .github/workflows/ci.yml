@@ -35,7 +35,7 @@ jobs:
 
       - name: Configure git for private SPM deps
         run: |
-          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/osaurus-ai/".insteadOf "https://github.com/osaurus-ai/"
           git ls-remote https://github.com/osaurus-ai/vmlx-swift-lm HEAD
 
       - name: Cache SPM packages
@@ -80,7 +80,7 @@ jobs:
 
       - name: Configure git for private SPM deps
         run: |
-          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${{ secrets.SPM_PAT }}@github.com/osaurus-ai/".insteadOf "https://github.com/osaurus-ai/"
           git ls-remote https://github.com/osaurus-ai/vmlx-swift-lm HEAD
 
       - name: Cache SPM packages
