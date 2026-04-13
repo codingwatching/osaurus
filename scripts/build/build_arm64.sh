@@ -20,7 +20,7 @@ fi
 
 # Ensure a clean build environment before archiving
 rm -rf build/DerivedData build/SourcePackages
-xcodebuild -resolvePackageDependencies -project App/osaurus.xcodeproj -scheme osaurus -clonedSourcePackagesDirPath build/SourcePackages
+xcodebuild -resolvePackageDependencies -project App/osaurus.xcodeproj -scheme osaurus -clonedSourcePackagesDirPath build/SourcePackages -disableAutomaticPackageResolution
 
 # 1. Build the CLI first (as a separate scheme)
 echo "Building CLI (OsaurusCLI)..."
