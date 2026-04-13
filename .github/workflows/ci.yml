@@ -15,6 +15,7 @@ permissions:
 jobs:
   test-core:
     runs-on: macos-latest
+    timeout-minutes: 45
     env:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
@@ -38,7 +39,6 @@ jobs:
         with:
           path: .spm-cache
           key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
 
       - name: Resolve dependencies
         run: >-
@@ -59,6 +59,7 @@ jobs:
 
   test-cli:
     runs-on: macos-latest
+    timeout-minutes: 45
     env:
       WORKSPACE: osaurus.xcworkspace
       SPM_CACHE: .spm-cache
@@ -79,7 +80,6 @@ jobs:
         with:
           path: .spm-cache
           key: spm-${{ runner.os }}-${{ hashFiles('osaurus.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
 
       - name: Resolve dependencies
         run: >-
