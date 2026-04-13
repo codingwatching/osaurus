@@ -50,6 +50,7 @@ jobs:
           -workspace $WORKSPACE
           -scheme OsaurusCoreTests
           -clonedSourcePackagesDirPath $SPM_CACHE
+          -disableAutomaticPackageResolution
 
       - name: Test OsaurusCore
         run: >-
@@ -95,6 +96,7 @@ jobs:
           -workspace $WORKSPACE
           -scheme OsaurusCLITests
           -clonedSourcePackagesDirPath $SPM_CACHE
+          -disableAutomaticPackageResolution
 
       - name: Test OsaurusCLI
         run: >-
