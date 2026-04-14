@@ -3,6 +3,25 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.16.11</title>
+            <pubDate>Tue, 14 Apr 2026 02:59:47 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.16.11</sparkle:version>
+            <sparkle:shortVersionString>0.16.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.16.11/Osaurus-0.16.11.dmg" length="34872218" type="application/octet-stream" sparkle:edSignature="f8Au1fJ0MAWPpxluWc8JkwPCcfbIdX6A4KA+zGgcpgTN1Y57pyIu8gPE9UwWeerDl0DlHfRd3zhg+x2hlDh8AQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- sandbox fixes and other updates (#853) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.16.10...0.16.11
+]]></description>
+        </item>
+        <item>
             <title>0.16.10</title>
             <pubDate>Mon, 13 Apr 2026 21:38:41 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
