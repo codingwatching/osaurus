@@ -998,6 +998,11 @@ final class ChatSession: ObservableObject {
                     do {
                         var uiDeltaCount = 0
                         var firstDeltaTime: Date?
+                        // Track the wall-clock time of the last non-empty delta so
+                        // the fallback tok/s calculation uses the actual last-token
+                        // moment as the denominator, not the stream's close time
+                        // (which is after cancellation / teardown).
+                        var lastDeltaTime: Date?
 
                         var processor = StreamingDeltaProcessor(
                             turn: assistantTurn,
@@ -1067,12 +1072,14 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             if !delta.isEmpty {
+                                let now = Date()
                                 if firstDeltaTime == nil {
-                                    firstDeltaTime = Date()
+                                    firstDeltaTime = now
                                     ttftTrace?.mark("first_text_delta")
                                     ttftTrace?.set("model", selectedModel ?? "unknown")
                                     ttftTrace?.emit()
                                 }
+                                lastDeltaTime = now
                                 uiDeltaCount += 1
                                 processor.receiveDelta(delta)
                             }
@@ -1086,9 +1093,21 @@ final class ChatSession: ObservableObject {
                             // Fall back to estimated tok/s when MLX stats weren't propagated (remote APIs).
                             // Use the codebase's chars/4 heuristic to approximate tokens from generated text
                             // rather than raw delta count, which doesn't map 1:1 to tokens for most providers.
-                            if assistantTurn.generationTokensPerSecond == nil, !assistantTurn.contentIsEmpty {
-                                let genTime = Date().timeIntervalSince(first)
-                                let estimatedTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                            if assistantTurn.generationTokensPerSecond == nil,
+                                !assistantTurn.contentIsEmpty || !assistantTurn.thinkingIsEmpty
+                            {
+                                let endTime = lastDeltaTime ?? Date()
+                                let genTime = endTime.timeIntervalSince(first)
+                                // Reasoning tokens are generated on the same clock as the
+                                // answer; leaving them out of the numerator while keeping
+                                // them in the denominator under-reports throughput on
+                                // thinking models. Count both.
+                                let answerTokens = ContextBudgetManager.estimateTokens(for: assistantTurn.content)
+                                let reasoningTokens =
+                                    assistantTurn.thinkingIsEmpty
+                                    ? 0
+                                    : ContextBudgetManager.estimateTokens(for: assistantTurn.thinking)
+                                let estimatedTokens = answerTokens + reasoningTokens
                                 if genTime > 0 && estimatedTokens > 0 {
                                     assistantTurn.generationTokenCount = estimatedTokens
                                     assistantTurn.generationTokensPerSecond = Double(estimatedTokens) / genTime
