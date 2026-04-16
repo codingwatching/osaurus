@@ -240,7 +240,9 @@ public actor RemoteProviderService: ToolCapableService {
                     return
                 }
 
-                if httpResponse.statusCode >= 400 {
+                let statusCode = httpResponse.statusCode
+
+                if statusCode >= 400 {
                     var errorData = Data()
                     for try await byte in bytes {
                         errorData.append(byte)
@@ -248,7 +250,7 @@ public actor RemoteProviderService: ToolCapableService {
                     let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
                     continuation.finish(
                         throwing: RemoteProviderServiceError.requestFailed(
-                            "HTTP \(httpResponse.statusCode): \(errorMessage)"
+                            "HTTP \(statusCode): \(errorMessage)"
                         )
                     )
                     return
