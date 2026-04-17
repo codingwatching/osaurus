@@ -221,6 +221,26 @@ actor ModelRuntime {
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
 
+        // Preflight: JANGTQ/TurboQuant variants need a `jangtq_runtime.safetensors`
+        // sidecar (signs + codebook arrays for the Metal kernels). vmlx's
+        // LLMModelFactory dispatches to the JANGTQ class strictly on
+        // `jang_config.json.weight_format == "mxtq"`, but the runtime cache is
+        // only populated when the sidecar file exists. If the config asks for
+        // JANGTQ and the sidecar is missing, vmlx reaches the first forward
+        // pass, hits a precondition in TurboQuantSwitchLinear, and abort()s
+        // the whole process — taking osaurus with it. Caught here so the user
+        // gets a clear error and the server stays up.
+        try Self.validateJANGTQSidecarIfRequired(at: localURL, name: name)
+
+        // Resolve the JANG capability stamp (if any) and log the detection
+        // source exactly once per cold load. The result is cached inside the
+        // resolver; `StreamingDeltaProcessor` picks it up per-session without
+        // this `actor` having to forward it down four call layers.
+        let resolution = JANGReasoningResolver.resolve(modelKey: name, directory: localURL)
+        genLog.info(
+            "loadContainer: parser detection_source_reasoning=\(resolution.reasoningSource.rawValue, privacy: .public) detection_source_tool=\(resolution.toolCallSource.rawValue, privacy: .public) hasReasoningParser=\(resolution.reasoningParser != nil, privacy: .public) toolFormat=\(resolution.toolCallFormat?.rawValue ?? "none", privacy: .public) model=\(name, privacy: .public)"
+        )
+
         let task = Task<SessionHolder, Error> {
             let tokenizerLoader = SwiftTransformersTokenizerLoader()
             let container = try await loadModelContainer(
@@ -720,17 +740,81 @@ actor ModelRuntime {
     }
 
     private static func findLocalDirectory(forModelId id: String) -> URL? {
+        return resolveLocalModelDirectory(forModelId: id, in: DirectoryPickerService.effectiveModelsDirectory())
+    }
+
+    /// Preflight check for JANGTQ-routed models. Reads `jang_config.json`
+    /// and, if `weight_format == "mxtq"`, verifies the `jangtq_runtime.safetensors`
+    /// sidecar is present in the model directory. Throws a clear error on
+    /// mismatch so callers see a message instead of waiting for vmlx to
+    /// report the same problem later.
+    ///
+    /// As of `vmlx-swift-lm 9e647a6`, vmlx itself fails-fast with an equivalent
+    /// NSError at weight-load time, so this osaurus-side check is primarily a
+    /// speed optimization: we refuse before the 60+ safetensors shards start
+    /// loading, giving users an instant error instead of a multi-second wait.
+    /// It also defends against older vmlx pins where the same mismatch would
+    /// instead reach `TurboQuantSwitchLinear.fatalError` and abort the process.
+    /// Exposed at module scope for unit testing (same pattern as
+    /// `resolveLocalModelDirectory`).
+    static func validateJANGTQSidecarIfRequired(at directory: URL, name: String) throws {
+        let jangConfigURL = directory.appendingPathComponent("jang_config.json")
+        // Non-JANG models have no jang_config.json — nothing to validate.
+        guard FileManager.default.fileExists(atPath: jangConfigURL.path) else { return }
+
+        // Only read the `weight_format` field; ignore anything else so format
+        // drift (new fields, missing optionals) doesn't break the preflight.
+        struct JangConfigProbe: Decodable {
+            let weight_format: String?
+        }
+        guard let data = try? Data(contentsOf: jangConfigURL),
+            let probe = try? JSONDecoder().decode(JangConfigProbe.self, from: data),
+            probe.weight_format == "mxtq"
+        else {
+            return
+        }
+
+        let sidecarURL = directory.appendingPathComponent("jangtq_runtime.safetensors")
+        guard !FileManager.default.fileExists(atPath: sidecarURL.path) else { return }
+
+        throw NSError(
+            domain: "ModelRuntime",
+            code: 2,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Model '\(name)' declares JANGTQ (weight_format: \"mxtq\") but is missing "
+                    + "required sidecar file 'jangtq_runtime.safetensors'. "
+                    + "Re-download the full model or obtain the sidecar from the original publisher."
+            ]
+        )
+    }
+
+    /// Pure, testable sibling of `findLocalDirectory` that takes the root
+    /// explicitly. Exposed at module scope so the symlink-resolution
+    /// behavior (the reason `findLocalDirectory` doesn't silently disagree
+    /// with `ModelManager.scanLocalModels` anymore) can be covered by a
+    /// unit test without standing up an `actor` or a bookmarked picker dir.
+    static func resolveLocalModelDirectory(forModelId id: String, in base: URL) -> URL? {
         let parts = id.split(separator: "/").map(String.init)
-        let base = DirectoryPickerService.effectiveModelsDirectory()
         let url = parts.reduce(base) { partial, component in
             partial.appendingPathComponent(component, isDirectory: true)
         }
         let fm = FileManager.default
-        let hasConfig = fm.fileExists(atPath: url.appendingPathComponent("config.json").path)
-        if let items = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil),
+        // Resolve symlinks before `contentsOfDirectory`: on macOS
+        // `contentsOfDirectory(at:)` returns POSIX ENOTDIR when the URL points
+        // at a symbolic link to a directory (even though the target itself is
+        // a directory and `fileExists` happily follows the link). Users who
+        // keep models outside the default root and symlink them into the
+        // picker directory would otherwise hit "Model not downloaded" on
+        // every load despite `scanLocalModels` discovering the same repo —
+        // that discovery path already resolves symlinks per-level, so keeping
+        // the two symmetric here closes the asymmetry.
+        let resolved = url.resolvingSymlinksInPath()
+        let hasConfig = fm.fileExists(atPath: resolved.appendingPathComponent("config.json").path)
+        if let items = try? fm.contentsOfDirectory(at: resolved, includingPropertiesForKeys: nil),
             hasConfig && items.contains(where: { $0.pathExtension == "safetensors" })
         {
-            return url
+            return resolved
         }
         return nil
     }
