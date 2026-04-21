@@ -133,6 +133,11 @@ private struct ClarifyPromptCard: View {
                 allowMultiple: mode.isMultiSelect,
                 onTap: handleOptionTap
             )
+            // Stretch the strip to the card's full width so chips
+            // anchor to the leading edge instead of centering as a
+            // self-sized cluster (PromptCard's outer VStack defaults
+            // to center alignment).
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
