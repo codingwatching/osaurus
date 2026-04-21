@@ -194,6 +194,16 @@ final class PluginHostContext: @unchecked Sendable {
                 )
             }
 
+            // Empty/whitespace prompts make `ChatSession.send` no-op (no Task,
+            // no `isStreaming` flip), which would leave the dispatched task
+            // hanging in `.running` until the awaitCompletion watchdog.
+            guard !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return (
+                    Self.jsonString(["error": "invalid_request", "message": "Prompt is empty"]),
+                    UUID?.none
+                )
+            }
+
             var requestId = UUID()
             if let idStr = json["id"] as? String, let parsed = UUID(uuidString: idStr) {
                 requestId = parsed
@@ -226,6 +236,10 @@ final class PluginHostContext: @unchecked Sendable {
                 folderBookmark = Data(base64Encoded: bookmarkStr)
             }
 
+            let externalSessionKey =
+                json["external_session_key"] as? String
+                ?? json["session_id"] as? String
+
             let request = DispatchRequest(
                 id: requestId,
                 prompt: prompt,
@@ -233,18 +247,16 @@ final class PluginHostContext: @unchecked Sendable {
                 title: title,
                 folderBookmark: folderBookmark,
                 showToast: true,
-                sourcePluginId: pluginId
+                sourcePluginId: pluginId,
+                source: .plugin,
+                externalSessionKey: externalSessionKey
             )
 
-            await MainActor.run {
-                BackgroundTaskManager.shared.holdEventsForDispatch(taskId: requestId)
-            }
-
+            // BackgroundTaskManager.dispatchChat now self-holds plugin
+            // events between registerTask and trampoline-return, since
+            // reattach can resolve a different task id than `requestId`.
             let handle = await TaskDispatcher.shared.dispatch(request)
-            guard handle != nil else {
-                await MainActor.run {
-                    BackgroundTaskManager.shared.releaseEventsForDispatch(taskId: requestId)
-                }
+            guard let handle else {
                 return (
                     Self.jsonString([
                         "error": "task_limit_reached", "message": "Maximum concurrent background tasks reached",
@@ -252,7 +264,11 @@ final class PluginHostContext: @unchecked Sendable {
                 )
             }
 
-            return (Self.jsonString(["id": requestId.uuidString, "status": "running"]), requestId)
+            // Use the resolved task id (may differ from `requestId` if the
+            // dispatcher reattached to an existing session via the
+            // `external_session_key` find-or-create path).
+            let resolvedId = handle.id
+            return (Self.jsonString(["id": resolvedId.uuidString, "status": "running"]), resolvedId)
         }
     }
 
@@ -919,8 +935,12 @@ final class PluginHostContext: @unchecked Sendable {
         let releaseSlot: @Sendable () -> Void = { [weak self] in
             self?.exitInflightInference()
         }
+        let activityId = Self.beginPluginActivity(pluginId: pid, kind: .complete)
         return Self.blockingAsync {
-            defer { releaseSlot() }
+            defer {
+                releaseSlot()
+                Self.endPluginActivity(activityId)
+            }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -980,6 +1000,18 @@ final class PluginHostContext: @unchecked Sendable {
                         continue
                     }
 
+                    // Persist the final assistant turn into the chat-history
+                    // SQLite so this conversation is browsable in the sidebar.
+                    var persistedMessages = messages
+                    persistedMessages.append(choice.message)
+                    Self.persistInference(
+                        pluginId: pid,
+                        agentId: prep.agentId,
+                        externalSessionKey: prep.enriched.request.session_id,
+                        finalMessages: persistedMessages,
+                        model: prep.enriched.request.model
+                    )
+
                     guard let encoded = try? JSONEncoder().encode(response),
                         var json = (try? JSONSerialization.jsonObject(with: encoded)) as? [String: Any]
                     else {
@@ -1018,8 +1050,12 @@ final class PluginHostContext: @unchecked Sendable {
         let releaseSlot: @Sendable () -> Void = { [weak self] in
             self?.exitInflightInference()
         }
+        let activityId = Self.beginPluginActivity(pluginId: pid, kind: .completeStream)
         return Self.blockingAsync {
-            defer { releaseSlot() }
+            defer {
+                releaseSlot()
+                Self.endPluginActivity(activityId)
+            }
             guard let (rawJSON, sanitized) = Self.parseRawRequest(requestJSON),
                 let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: sanitized)
             else {
@@ -1078,6 +1114,14 @@ final class PluginHostContext: @unchecked Sendable {
                         messages.append(ChatMessage(role: "assistant", content: iterContent))
                     }
                     emit(Self.chunkPayload(id: cid, delta: [:], finishReason: "stop"))
+                    Self.persistStreamingInference(
+                        pluginId: pid,
+                        agentId: prep.agentId,
+                        externalSessionKey: prep.enriched.request.session_id,
+                        priorMessages: messages,
+                        assistantContent: "",
+                        model: prep.enriched.request.model
+                    )
                     return Self.buildStreamResult(
                         id: cid,
                         model: prep.enriched.request.model,
@@ -1127,6 +1171,16 @@ final class PluginHostContext: @unchecked Sendable {
                 }
             }
 
+            // Persist whatever we have before returning, even on max-iterations
+            // exit, so the user can still see the partial conversation.
+            Self.persistStreamingInference(
+                pluginId: pid,
+                agentId: prep.agentId,
+                externalSessionKey: prep.enriched.request.session_id,
+                priorMessages: messages,
+                assistantContent: lastContent,
+                model: prep.enriched.request.model
+            )
             return Self.buildStreamResult(
                 id: cid,
                 model: prep.enriched.request.model,
@@ -1304,11 +1358,16 @@ final class PluginHostContext: @unchecked Sendable {
         guard tryEnterInflightInference() else {
             return Self.pluginBusyJSON(kind: "embed")
         }
+        let pid = self.pluginId
         let releaseSlot: @Sendable () -> Void = { [weak self] in
             self?.exitInflightInference()
         }
+        let activityId = Self.beginPluginActivity(pluginId: pid, kind: .embed)
         return Self.blockingAsync {
-            defer { releaseSlot() }
+            defer {
+                releaseSlot()
+                Self.endPluginActivity(activityId)
+            }
             let data = Data(requestJSON.utf8)
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 return Self.jsonString(["error": "invalid_request", "message": "Failed to parse embedding request"])
@@ -1690,14 +1749,17 @@ extension PluginHostContext {
 
         if let draft = state.draftText, let parsed = parseJSON(draft) { result["draft"] = parsed }
 
+        // Last assistant content — partial during `.running`, final on
+        // `.completed`. Surfaced for both so HTTP pollers and `task_status`
+        // callers can read the transcript without loading the session.
+        if let output = state.chatSession?.turns.last?.content, !output.isEmpty {
+            result["output"] = output
+        }
+
         switch state.status {
         case .running:
             result["status"] = "running"
             if let step = state.currentStep { result["current_step"] = step }
-
-            if let output = state.chatSession?.turns.last?.content, !output.isEmpty {
-                result["output"] = output
-            }
 
             let activity: [[String: Any]] = state.activityFeed.suffix(20).map { item in
                 var entry: [String: Any] = [

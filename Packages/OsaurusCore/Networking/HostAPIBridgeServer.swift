@@ -367,10 +367,18 @@ private final class HostAPIBridgeHandler: ChannelInboundHandler, RemovableChanne
             return .error(400, "Body must contain agent_id and task")
         }
 
+        // Empty/whitespace prompts make `ChatSession.send` no-op, leaving
+        // the dispatched task hanging in `.running` until the watchdog.
+        guard !task.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .error(400, "task is empty")
+        }
+
         let request = DispatchRequest(
             prompt: task,
             agentId: UUID(uuidString: agentId),
-            sourcePluginId: "sandbox:\(callingUser)"
+            sourcePluginId: "sandbox:\(callingUser)",
+            source: .plugin,
+            externalSessionKey: parsed["external_session_key"] as? String
         )
 
         let manager = await MainActor.run { BackgroundTaskManager.shared }
