@@ -16,7 +16,13 @@ final class ChatSession: ObservableObject {
     @Published var turns: [ChatTurn] = []
     @Published var isStreaming: Bool = false
     @Published var lastStreamError: String?
-    @Published var pendingSecretPrompt: SecretPromptState?
+
+    /// Single-slot FIFO queue for in-chat prompt overlays (secrets,
+    /// clarify, …). Both prompt types share the same on-screen real
+    /// estate (bottom-pinned card above the input bar), so they MUST be
+    /// mutually exclusive — the queue ensures arrival order is honored
+    /// without two cards stacking. See `PromptQueue.swift`.
+    @Published var promptQueue: PromptQueue = PromptQueue()
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
@@ -79,13 +85,15 @@ final class ChatSession: ObservableObject {
     /// view renders it as a "Completed" banner inline.
     @Published var lastCompletionSummary: String?
 
-    /// Last `clarify(question)` payload from the agent. Populated when
-    /// the engine intercepts `clarify` and pauses for user input. The
-    /// chat view renders it as an inline question bubble.
-    @Published var lastClarifyQuestion: String?
-
     /// Notification observer for AgentTodoStore updates. Removed in deinit.
     nonisolated(unsafe) private var agentTodoObserver: NSObjectProtocol?
+
+    /// Bridges `PromptQueue.objectWillChange` (a nested `ObservableObject`)
+    /// up to `ChatSession.objectWillChange`. SwiftUI's `@ObservedObject`
+    /// only re-renders on the outer object's emissions, so without this
+    /// forward the prompt overlay wouldn't appear/disappear when the
+    /// inner queue mutates `current`.
+    nonisolated(unsafe) private var promptQueueCancellable: AnyCancellable?
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -117,6 +125,14 @@ final class ChatSession: ObservableObject {
             pickerItems = []
             hasAnyModel = false
         }
+
+        // Forward nested PromptQueue changes up so SwiftUI re-renders
+        // when the queue mounts or advances. See the property comment
+        // for why the explicit bridge is needed.
+        promptQueueCancellable = promptQueue.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
 
         remoteModelsObserver = NotificationCenter.default.addObserver(
             forName: .remoteProviderModelsChanged,
@@ -214,6 +230,7 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
+        promptQueueCancellable = nil
     }
 
     /// Stable session id used as the AgentTodoStore key. Falls back to a
@@ -235,14 +252,11 @@ final class ChatSession: ObservableObject {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    /// Pull `question` out of a `clarify(...)` tool call's JSON body.
-    static func parseClarifyQuestion(from json: String) -> String? {
-        guard let data = json.data(using: .utf8),
-            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let question = dict["question"] as? String
-        else { return nil }
-        let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+    /// Parse a `clarify(...)` tool call into a structured payload
+    /// (question + optional options + allowMultiple). Delegated to
+    /// `ClarifyTool.parse` so the schema lives in one place.
+    static func parseClarifyPayload(from json: String) -> ClarifyPayload? {
+        ClarifyTool.parse(argumentsJSON: json)
     }
 
     /// Apply initial model selection after agentId is set (for cached picker items)
@@ -498,7 +512,7 @@ final class ChatSession: ObservableObject {
         // Reset agent-loop UI state.
         currentTodo = nil
         lastCompletionSummary = nil
-        lastClarifyQuestion = nil
+        promptQueue.drainAll()
         let oldSid = expectedTodoSessionId
         Task { await AgentTodoStore.shared.clear(for: oldSid) }
         // Keep current agentId - don't reset when creating new chat within same agent
@@ -1122,11 +1136,18 @@ final class ChatSession: ObservableObject {
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
 
-        // Any new user input dismisses a pending clarify bubble (the user's
-        // text IS the clarification answer) and a prior completion banner
-        // (we're moving on to a follow-up).
-        lastClarifyQuestion = nil
+        // Any new user input clears a prior completion banner — we're
+        // moving on to a follow-up. Clarify prompts (when active) live
+        // in the bottom-pinned overlay with their own embedded input;
+        // the main input bar is dimmed while a prompt is mounted, so
+        // the user can't normally reach this path with a clarify
+        // pending. The `drainAll()` here is defensive: if a prompt is
+        // somehow still queued, dismiss it before sending so the new
+        // turn doesn't race a stale overlay resolution.
         lastCompletionSummary = nil
+        if promptQueue.current != nil {
+            promptQueue.drainAll()
+        }
 
         if hasContent {
             turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
@@ -1513,6 +1534,23 @@ final class ChatSession: ObservableObject {
                         if assistantTurn.toolCalls == nil { assistantTurn.toolCalls = [] }
                         assistantTurn.toolCalls!.append(call)
 
+                        // Build the matching tool-result turn for this call.
+                        // Every assistant `tool_use` MUST be paired with a
+                        // tool turn before the loop yields control —
+                        // Anthropic's Messages API rejects subsequent sends
+                        // otherwise ("tool_use ids were found without
+                        // tool_result blocks immediately after"). This helper
+                        // is shared by the agent-loop intercepts (`complete`,
+                        // `clarify`) and the normal post-execution path so
+                        // there's only one place that gets the pairing right.
+                        @discardableResult
+                        func recordToolTurn(_ result: String) -> ChatTurn {
+                            assistantTurn.toolResults[callId] = result
+                            let toolTurn = ChatTurn(role: .tool, content: result)
+                            toolTurn.toolCallId = callId
+                            return toolTurn
+                        }
+
                         // Execute tool and append hidden tool result turn
                         var resultText: String
                         do {
@@ -1565,7 +1603,12 @@ final class ChatSession: ObservableObject {
                                 if !ToolEnvelope.isError(resultText) {
                                     self.lastCompletionSummary =
                                         Self.parseCompleteSummary(from: inv.jsonArguments) ?? resultText
-                                    self.lastClarifyQuestion = nil
+                                    // Drain any pending prompts so a stale
+                                    // clarify card doesn't sit on top of the
+                                    // completion banner.
+                                    self.promptQueue.drainAll()
+                                    turns.append(recordToolTurn(resultText))
+                                    rebuildVisibleBlocks()
                                     break outer
                                 }
                                 // Fall through — let the model see the
@@ -1574,9 +1617,26 @@ final class ChatSession: ObservableObject {
                             }
                             if inv.toolName == "clarify" {
                                 if !ToolEnvelope.isError(resultText),
-                                    let question = Self.parseClarifyQuestion(from: inv.jsonArguments)
+                                    let payload = Self.parseClarifyPayload(from: inv.jsonArguments)
                                 {
-                                    self.lastClarifyQuestion = question
+                                    // Build a ClarifyPromptState bound to
+                                    // `self.send(...)` so the user's answer
+                                    // dispatches as the next user turn
+                                    // through the existing chat send path.
+                                    // The agent loop ends here; the model
+                                    // resumes on the next send with the
+                                    // answer in history.
+                                    turns.append(recordToolTurn(resultText))
+                                    rebuildVisibleBlocks()
+                                    let clarifyState = ClarifyPromptState(
+                                        question: payload.question,
+                                        options: payload.options,
+                                        allowMultiple: payload.allowMultiple,
+                                        onSubmit: { [weak self] answer in
+                                            self?.send(answer)
+                                        }
+                                    )
+                                    self.promptQueue.enqueue(.clarify(clarifyState))
                                     self.lastCompletionSummary = nil
                                     break outer
                                 }
@@ -1633,9 +1693,15 @@ final class ChatSession: ObservableObject {
                                     ) { value in
                                         continuation.resume(returning: value != nil)
                                     }
-                                    self.pendingSecretPrompt = promptState
+                                    // Route through the shared queue so
+                                    // a clarify can't pop on top of a
+                                    // pending secret (and vice versa).
+                                    self.promptQueue.enqueue(.secret(promptState))
                                 }
-                                self.pendingSecretPrompt = nil
+                                // The overlay's dismiss closure already
+                                // called `promptQueue.advance()` once
+                                // the user resolved; nothing to clean
+                                // up here.
                                 resultText =
                                     stored
                                     ? SecretToolResult.stored(key: prompt.key)
@@ -1656,17 +1722,12 @@ final class ChatSession: ObservableObject {
                             // so user denials, missing files, and bad arguments don't all get the
                             // same opaque `executionError` treatment.
                             let rejectionMessage = ToolEnvelope.fromError(error, tool: inv.toolName)
-                            assistantTurn.toolResults[callId] = rejectionMessage
-                            let toolTurn = ChatTurn(role: .tool, content: rejectionMessage)
-                            toolTurn.toolCallId = callId
-                            turns.append(toolTurn)
+                            turns.append(recordToolTurn(rejectionMessage))
                             rejectedDuringBatch = true
                             break invocations  // Stop processing remaining tools in batch
                         }
                         guard isRunActive(runId) else { break outer }
-                        assistantTurn.toolResults[callId] = resultText
-                        let toolTurn = ChatTurn(role: .tool, content: resultText)
-                        toolTurn.toolCallId = callId
+                        let toolTurn = recordToolTurn(resultText)
 
                         // Create a new assistant turn for subsequent content
                         // This ensures tool calls and text are rendered sequentially
@@ -1766,6 +1827,14 @@ struct ChatView: View {
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
 
+    /// True while any prompt overlay (secret, clarify) is mounted.
+    /// Drives the dim/blur on the message thread + main input bar so
+    /// the prompt visibly takes the foreground. Single source of truth
+    /// is `session.promptQueue.current`.
+    private var isPromptOverlayActive: Bool {
+        session.promptQueue.current != nil
+    }
+
     /// Picker items filtered to the active Bonjour provider's models when a
     /// remote agent is selected, or ALL models (local + user-configured
     /// remote providers) when no remote agent is active.
@@ -1823,14 +1892,46 @@ struct ChatView: View {
         chatModeContent
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
-            .overlay {
-                if let promptState = session.pendingSecretPrompt {
-                    SecretPromptOverlay(state: promptState) {
-                        promptState.cancel()
-                        session.pendingSecretPrompt = nil
+            .overlay { promptOverlayLayer }
+    }
+
+    /// Shared overlay layer for in-chat prompts (secrets + clarify).
+    /// Renders a subtle backdrop scrim behind the prompt card and
+    /// switches between concrete overlays based on the current item in
+    /// `session.promptQueue`. Keyed off `current?.id` so consecutive
+    /// prompts crossfade in place rather than the new card snapping in.
+    /// The scrim is intentionally non-dismissive (these are deliberate
+    /// pauses, not modals); ESC still cancels via the card.
+    @ViewBuilder
+    private var promptOverlayLayer: some View {
+        let current = session.promptQueue.current
+        ZStack {
+            if current != nil {
+                Color.black
+                    .opacity(theme.isDark ? 0.28 : 0.18)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+                    .allowsHitTesting(true)
+            }
+
+            Group {
+                switch current {
+                case .secret(let s):
+                    SecretPromptOverlay(state: s) {
+                        session.promptQueue.advance()
                     }
+                case .clarify(let c):
+                    ClarifyPromptOverlay(state: c) {
+                        session.promptQueue.advance()
+                    }
+                case .none:
+                    EmptyView()
                 }
             }
+            .id(current?.id)
+            .transition(.opacity)
+        }
+        .animation(theme.springAnimation(), value: current?.id)
     }
 
     /// Chat mode content - the original ChatView implementation
@@ -1926,12 +2027,24 @@ struct ChatView: View {
                                 )
                                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             } else {
-                                // Message thread
+                                // Message thread. While a prompt
+                                // overlay is mounted, blur the thread
+                                // and stop hit-testing so the prompt
+                                // visibly takes the foreground without
+                                // letting taps leak through.
                                 messageThread(effectiveContentWidth)
+                                    .blur(radius: isPromptOverlayActive ? 1.5 : 0)
+                                    .allowsHitTesting(!isPromptOverlayActive)
                                     .transition(.opacity.combined(with: .move(edge: .bottom)))
+                                    .animation(theme.springAnimation(), value: isPromptOverlayActive)
                             }
 
-                            // Floating input card
+                            // Floating input card. Dimmed and
+                            // hit-test-disabled while a prompt overlay
+                            // is mounted so the prompt's embedded
+                            // input is the obvious place to type, and
+                            // accidental sends here can't race the
+                            // prompt resolution.
                             FloatingInputCard(
                                 text: $observedSession.input,
                                 selectedModel: $observedSession.selectedModel,
@@ -1964,6 +2077,9 @@ struct ChatView: View {
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
+                            .opacity(isPromptOverlayActive ? 0.55 : 1.0)
+                            .allowsHitTesting(!isPromptOverlayActive)
+                            .animation(theme.springAnimation(), value: isPromptOverlayActive)
                         } else {
                             // No models empty state
                             ChatEmptyState(
@@ -2259,19 +2375,18 @@ struct ChatView: View {
 
     /// Inline agent-loop blocks rendered above the message thread. Each
     /// is gated on the corresponding `@Published` state on
-    /// `ChatWindowState`; nothing renders when the state is nil/empty.
+    /// `ChatSession`; nothing renders when the state is nil/empty.
     /// Order: completion banner first (most recent terminal event),
-    /// then clarify question (waiting on user), then todo (ongoing
-    /// state).
+    /// then todo (ongoing state).
+    ///
+    /// `clarify` used to live here too but has been promoted to a
+    /// bottom-pinned overlay (see `promptOverlayLayer`) so the question
+    /// stays anchored above the input bar instead of floating above the
+    /// thread.
     @ViewBuilder
     private var agentInlineBlocks: some View {
         if let summary = session.lastCompletionSummary {
             InlineCompleteBlock(summary: summary)
-                .padding(.top, 8)
-                .transition(.opacity.combined(with: .move(edge: .top)))
-        }
-        if let question = session.lastClarifyQuestion {
-            InlineClarifyBlock(question: question)
                 .padding(.top, 8)
                 .transition(.opacity.combined(with: .move(edge: .top)))
         }
