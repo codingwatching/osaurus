@@ -627,6 +627,7 @@ Example response:
       "name": "Osaurus",
       "description": "Default assistant",
       "default_model": null,
+      "supports_vision": false,
       "is_built_in": true,
       "memory_entry_count": 42,
       "created_at": "2025-01-01T00:00:00Z",
@@ -635,6 +636,8 @@ Example response:
   ]
 }
 ```
+
+`supports_vision` reflects whether the agent's effective model is a VLM, so clients can show or hide image-attach UI without round-tripping the model registry.
 
 ---
 

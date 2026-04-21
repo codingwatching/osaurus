@@ -270,7 +270,7 @@ Agents can check for and store secrets (API keys, tokens) using `sandbox_secret_
 | Path | When | How |
 |------|------|-----|
 | **Direct** | Agent already has the value (e.g., received via Host API or Telegram bot) | Pass `value` parameter to `sandbox_secret_set` |
-| **Prompt** | Agent needs the user to provide the value (Chat or Work UI) | Omit `value` — a secure overlay appears with `SecureField` input |
+| **Prompt** | Agent needs the user to provide the value (Chat) | Omit `value` — a secure overlay appears with `SecureField` input |
 
 The prompt path keeps secret values out of the conversation history and LLM context entirely. The execution loop pauses via `withCheckedContinuation` until the user submits or cancels.
 
@@ -278,7 +278,7 @@ The prompt path keeps secret values out of the conversation history and LLM cont
 
 1. Agent calls `sandbox_secret_set` without `value`
 2. Tool returns a `secret_prompt` marker (JSON with key, description, instructions)
-3. The execution loop (Chat or Work) intercepts the marker and shows `SecretPromptOverlay`
+3. The chat execution loop intercepts the marker and shows `SecretPromptOverlay`
 4. User enters the secret value in a `SecureField` and submits (or cancels via button/ESC)
 5. The value is stored in Keychain and the tool result is rewritten to `{"stored": true, "key": "..."}` (or cancelled)
 6. Execution resumes with the sanitized result — the LLM never sees the secret
