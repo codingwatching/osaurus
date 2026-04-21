@@ -88,10 +88,12 @@ enum ChatSessionStore {
         }
     }
 
-    /// Delete a session by ID, including any shared artifacts
+    /// Delete a session by ID. Also removes the session's artifacts dir
+    /// on disk (best-effort) so old shared artifacts don't accumulate.
     static func delete(id: UUID) {
         try? FileManager.default.removeItem(at: sessionFileURL(for: id))
-        try? IssueStore.deleteSharedArtifacts(contextId: id.uuidString)
+        let artifactsDir = OsaurusPaths.contextArtifactsDir(contextId: id.uuidString)
+        try? FileManager.default.removeItem(at: artifactsDir)
     }
 
     // MARK: - Private

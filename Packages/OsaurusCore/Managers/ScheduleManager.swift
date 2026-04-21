@@ -88,7 +88,6 @@ public final class ScheduleManager {
         name: String,
         instructions: String,
         agentId: UUID? = nil,
-        mode: ChatMode = .chat,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
         folderBookmark: Data? = nil,
@@ -100,7 +99,6 @@ public final class ScheduleManager {
             name: name,
             instructions: instructions,
             agentId: agentId,
-            mode: mode,
             parameters: parameters,
             folderPath: folderPath,
             folderBookmark: folderBookmark,
@@ -318,7 +316,6 @@ public final class ScheduleManager {
     /// Execute a schedule by dispatching to TaskDispatcher
     private func executeSchedule(_ schedule: Schedule) {
         let request = DispatchRequest(
-            mode: schedule.mode,
             prompt: schedule.instructions,
             agentId: schedule.agentId,
             title: schedule.name,
@@ -327,7 +324,7 @@ public final class ScheduleManager {
             folderBookmark: schedule.folderBookmark
         )
 
-        print("[Osaurus] Executing schedule: \(schedule.name) (\(schedule.mode.displayName) mode)")
+        print("[Osaurus] Executing schedule: \(schedule.name)")
 
         let task = Task { @MainActor in
             guard let handle = await TaskDispatcher.shared.dispatch(request) else {
@@ -352,7 +349,7 @@ public final class ScheduleManager {
     // MARK: - Result Handling
 
     /// Update schedule metadata after task completion.
-    /// Result UI is handled by the NotchView for both chat and work modes.
+    /// Result UI is handled by the NotchView.
     private func handleResult(_ result: DispatchResult, schedule: Schedule, request: DispatchRequest) {
         defer {
             executionTasks.removeValue(forKey: schedule.id)
