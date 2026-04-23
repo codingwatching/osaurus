@@ -12,6 +12,14 @@ xcuserdata/
 ## compatibility with Xcode 3 and earlier (ignoring not required starting Xcode 4)
 build/
 DerivedData/
+
+# `build/` above matches any directory named "build" anywhere in the tree,
+# which silently swallows our release-pipeline scripts under scripts/build/.
+# Existing scripts there were tracked before this rule existed; new files
+# (e.g. scripts/build/package_dsyms.sh) need the negations below or `git add`
+# drops them with no warning.
+!scripts/build/
+!scripts/build/**
 *.moved-aside
 *.pbxuser
 !default.pbxuser
