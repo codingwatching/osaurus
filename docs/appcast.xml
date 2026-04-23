@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.17.4</title>
+            <pubDate>Thu, 23 Apr 2026 14:19:11 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.17.4</sparkle:version>
+            <sparkle:shortVersionString>0.17.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.17.4/Osaurus-0.17.4.dmg" length="34793963" type="application/octet-stream" sparkle:edSignature="awHxk1fRron++sM85TlvJ5MG6h7Cy5XbdYtNFptmWNri0vYtsGbKnC6JtttBx3rqNU4YGZ10rPfzGP4PTHlHAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- fix(server): route API Reference self-tests through loopback (#924) by @mimeding
+- fix(models): refuse model download when disk lacks space to finish (#923) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed cjk input (#922) by @tpae
+
+## 🧰 Maintenance
+
+- attach dsyms for better crash debugging (#920) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.17.3...0.17.4
+]]></description>
+        </item>
+        <item>
             <title>0.17.3</title>
             <pubDate>Thu, 23 Apr 2026 11:08:38 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
