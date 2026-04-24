@@ -1,5 +1,5 @@
 {
-  "originHash" : "296736b807a5598b54c06ee08a44b2ae494ab97f2481e87e9d8c3319126ba8bf",
+  "originHash" : "3bd0752487d6868354c4fa2219e34395596d9d9bb544fccf61c28230b222e53b",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -42,8 +42,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/FluidInference/FluidAudio.git",
       "state" : {
-        "revision" : "57551cd90e0bbec342766244358bcf08afb05290",
-        "version" : "0.13.6"
+        "revision" : "d302273d49ef4d8914b27f20d342be482e8810f1",
+        "version" : "0.14.1"
       }
     },
     {
@@ -403,7 +403,7 @@
       "location" : "https://github.com/osaurus-ai/vmlx-swift-lm",
       "state" : {
         "branch" : "main",
-        "revision" : "5b84387a1f4a05a8cf3801e6a525fcbe41c82142"
+        "revision" : "eda0c81fbee8259b70168bee8006ba7b541b580c"
       }
     },
     {
