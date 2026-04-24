@@ -3,6 +3,34 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.17.6</title>
+            <pubDate>Fri, 24 Apr 2026 22:12:11 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.17.6</sparkle:version>
+            <sparkle:shortVersionString>0.17.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.17.6/Osaurus-0.17.6.dmg" length="34972114" type="application/octet-stream" sparkle:edSignature="uK2JpMVubTNDv6ByXfBwQS2c/u7fPPtUfoL9i3Li5yL9PvoirgoVQ16h+yihKO/Rarc1PCjuCR0N7u/+DeQ5BQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- feat(model-picker): add Performance filter for 'Runs Well' / 'Hide Too Large' (#946) by @jjang-ai
+- fix(speech): adopt FluidAudio 0.14 decoderState parameter (#945) by @mimeding
+- fix(security): harden import/export trust boundaries for attachments and shared artifacts (#925) by @mimeding
+- fix(provider): send max\_tokens to non-OpenAI-reasoning endpoints (#928) by @mimeding
+
+## 🚀 Features
+
+- added OpenAI log in with Codex (subscription) (#947) by @tpae
+
+## 🧰 Maintenance
+
+- reinforced with more unit tests, fixed kv caching calls, tighten up code. Enabled TurboQuant by default (#938) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.17.5...0.17.6
+]]></description>
+        </item>
+        <item>
             <title>0.17.5</title>
             <pubDate>Fri, 24 Apr 2026 14:53:12 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
