@@ -1997,24 +1997,27 @@ private struct OpenResponsesSSEEvent: Decodable {
 // MARK: - Request/Response Models for Remote Provider
 
 /// Reasoning configuration for OpenAI reasoning models (o-series, gpt-5+).
-private struct ReasoningConfig: Encodable {
+struct ReasoningConfig: Encodable {
     let effort: String
 }
 
 /// Venice-specific parameters injected into the request body for Venice AI providers.
 /// See https://docs.venice.ai/api-reference/api-spec
-private struct VeniceParameters: Encodable {
+struct VeniceParameters: Encodable {
     var enable_web_search: String?
     var disable_thinking: Bool?
     var include_venice_system_prompt: Bool?
 }
 
 /// Chat request structure for remote providers (matches OpenAI format)
-private struct RemoteChatRequest: Encodable {
+struct RemoteChatRequest: Encodable {
     let model: String
     let messages: [ChatMessage]
     let temperature: Float?
-    let max_completion_tokens: Int?  // OpenAI's newer parameter name
+    /// Canonical token-cap field. Named after OpenAI's newer parameter; the
+    /// on-the-wire key is chosen in `encode(to:)` based on the model — see
+    /// the block below for the Mistral / OpenAI-compat rationale.
+    let max_completion_tokens: Int?
     let stream: Bool
     let top_p: Float?
     let frequency_penalty: Float?
@@ -2027,12 +2030,52 @@ private struct RemoteChatRequest: Encodable {
     let modelOptions: [String: ModelOptionValue]
     let veniceParameters: VeniceParameters?
 
-    private enum CodingKeys: String, CodingKey {
-        case model, messages, temperature, max_completion_tokens, stream
+    enum CodingKeys: String, CodingKey {
+        case model, messages, temperature, max_completion_tokens, max_tokens, stream
         case top_p, frequency_penalty, presence_penalty, stop, tools, tool_choice
         case reasoning_effort
         case reasoning
         case veniceParameters = "venice_parameters"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(model, forKey: .model)
+        try container.encode(messages, forKey: .messages)
+        try container.encodeIfPresent(temperature, forKey: .temperature)
+
+        // OpenAI-compatible endpoints disagree on the token-cap key:
+        //   - OpenAI's o1/o3/o4/gpt-5 reasoning models REQUIRE
+        //     `max_completion_tokens` and reject `max_tokens`.
+        //   - Mistral, OpenRouter, DeepSeek, Groq, Azure, and most other
+        //     "OpenAI-compatible" schemas are strict and reject
+        //     `max_completion_tokens` with a 422 (issue #556).
+        //   - OpenAI's own non-reasoning models accept BOTH names.
+        // Emit the widely-accepted `max_tokens` by default and only switch
+        // to `max_completion_tokens` for reasoning-model IDs, which are
+        // identified by prefix and don't collide with third-party
+        // provider naming.
+        if OpenAIReasoningProfile.matches(modelId: model) {
+            try container.encodeIfPresent(
+                max_completion_tokens,
+                forKey: .max_completion_tokens
+            )
+        } else {
+            try container.encodeIfPresent(max_completion_tokens, forKey: .max_tokens)
+        }
+
+        try container.encode(stream, forKey: .stream)
+        try container.encodeIfPresent(top_p, forKey: .top_p)
+        try container.encodeIfPresent(frequency_penalty, forKey: .frequency_penalty)
+        try container.encodeIfPresent(presence_penalty, forKey: .presence_penalty)
+        try container.encodeIfPresent(stop, forKey: .stop)
+        try container.encodeIfPresent(tools, forKey: .tools)
+        try container.encodeIfPresent(tool_choice, forKey: .tool_choice)
+        try container.encodeIfPresent(reasoning_effort, forKey: .reasoning_effort)
+        try container.encodeIfPresent(reasoning, forKey: .reasoning)
+        try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
+        // `modelOptions` is intentionally not in `CodingKeys` — it stays
+        // in-process for model-specific feature flags.
     }
 
     /// Convert to Anthropic Messages API request format
