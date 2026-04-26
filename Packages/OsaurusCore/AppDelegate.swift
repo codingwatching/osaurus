@@ -29,6 +29,24 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 
+        // CRITICAL SEQUENCING: run the at-rest encryption migrator
+        // BEFORE any database opens. Without this gate
+        // `MemoryDatabase.shared.open()` below would try SQLCipher
+        // against still-plaintext files and fail key verification,
+        // leaving the app in a degraded state on first launch after
+        // upgrade. We block the launch flow synchronously while the
+        // overlay shows progress; the run loop is pumped so SwiftUI
+        // updates keep painting.
+        StorageMigrationCoordinator.blockingAwaitReady()
+
+        // Wire up the periodic SQLite maintenance ticker (PRAGMA
+        // optimize / wal_checkpoint / VACUUM at sensible intervals).
+        // Idempotent — safe even if some DBs aren't open yet, the
+        // ticker only touches handles that are currently registered.
+        Task.detached(priority: .background) {
+            await StorageMaintenance.shared.start()
+        }
+
         // vmlx-swift-lm DSV4 cache-mode default. Process-wide env var read
         // by `LLMModelFactory.dispatchDeepseekV4` at model-load time.
         //
@@ -181,6 +199,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
         // for startup sequencing of orphan recovery + activity tracking below.
+        //
+        // The `blockingAwaitReady()` call above already gated the
+        // launch flow on the storage migrator, so by the time this
+        // Task runs the migrator is guaranteed done. Each
+        // `*Database.shared.open()` also calls the gate
+        // defensively (no-op fast path) for the plugin/HTTP entry
+        // points that don't go through this Task.
         let embeddingInitTask = Task {
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
@@ -280,7 +305,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
 
                 // Ensure app is unhidden and active
                 NSApp.unhide(nil)
-                _ = NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+                if #available(macOS 14.0, *) {
+                    _ = NSRunningApplication.current.activate(options: .activateAllWindows)
+                } else {
+                    _ = NSRunningApplication.current.activate(options: [
+                        .activateAllWindows, .activateIgnoringOtherApps,
+                    ])
+                }
 
                 if ChatWindowManager.shared.windowCount > 0 {
                     ChatWindowManager.shared.focusAllWindows()
