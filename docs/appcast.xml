@@ -3,6 +3,33 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.2</title>
+            <pubDate>Wed, 29 Apr 2026 16:47:41 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.2</sparkle:version>
+            <sparkle:shortVersionString>0.18.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.2/Osaurus-0.18.2.dmg" length="35723084" type="application/octet-stream" sparkle:edSignature="4uLMMe59cpkFYOn6Lh5prGiMnlowf0N3F6fS91AMJRvnVSuE69JDZtr0GFjHTDdYcBNW05uuq7NNdsj1YHNfAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Gate local thinking controls and SQLCipher import (#954) by @mimeding
+- improved model manager (#961) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- prevent cold loading large core MLX models on launch for memory distillation (#970) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- minor changes (#972) by @RaajeevChandran
+- added core model fallback if missing (#971) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.1...0.18.2
+]]></description>
+        </item>
+        <item>
             <title>0.18.1</title>
             <pubDate>Tue, 28 Apr 2026 22:59:51 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
