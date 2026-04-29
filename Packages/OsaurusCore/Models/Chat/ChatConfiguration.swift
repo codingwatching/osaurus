@@ -90,7 +90,7 @@ public struct ChatConfiguration: Codable, Equatable, Sendable {
     // MARK: - Tool Settings
     /// When true, no tools or preflight context are passed to the model. The raw message is sent
     /// directly, keeping the prompt stable across turns for maximum KV-cache reuse. Recommended
-    /// when osaurus is acting as a plain LLM backend for an external agent (e.g. Claude via API).
+    /// when osaurus is acting as a plain LLM backend for an external agent.
     public var disableTools: Bool
 
     /// Default tool selection mode for the built-in Default agent (nil => .auto).
