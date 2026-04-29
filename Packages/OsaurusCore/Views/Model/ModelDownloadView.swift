@@ -247,83 +247,6 @@ struct ModelDownloadView: View {
                 .buttonStyle(PlainButtonStyle())
                 .help(L("Import an MLX model from Hugging Face"))
 
-                // Sort button
-                Button {
-                    showSortPopover.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.up.arrow.down")
-                            .font(.system(size: 13))
-                        if sortOption == .recommended {
-                            Text("Sort", bundle: .module)
-                                .font(.system(size: 13, weight: .medium))
-                        } else {
-                            Text("Sort: ", bundle: .module)
-                                .font(.system(size: 13, weight: .medium))
-                                + Text(sortOption.displayName)
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                    }
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(
-                                sortOption != .recommended
-                                    ? theme.accentColor.opacity(0.12)
-                                    : theme.tertiaryBackground.opacity(0.5)
-                            )
-                    )
-                    .foregroundColor(
-                        sortOption != .recommended ? theme.accentColor : theme.secondaryText
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .popover(isPresented: $showSortPopover, arrowEdge: .top) {
-                    sortPopoverView
-                }
-                .help(L("Sort models"))
-
-                // Filter button
-                Button {
-                    showFilterPopover.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(
-                            systemName: filterState.isActive
-                                ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
-                        )
-                        .font(.system(size: 13))
-                        if let active = activeFilterSummary {
-                            Text("Filter: ", bundle: .module)
-                                .font(.system(size: 13, weight: .medium))
-                                + Text(active)
-                                .font(.system(size: 13, weight: .semibold))
-                        } else {
-                            Text("Filter", bundle: .module)
-                                .font(.system(size: 13, weight: .medium))
-                        }
-                    }
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(
-                                filterState.isActive
-                                    ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5)
-                            )
-                    )
-                    .foregroundColor(filterState.isActive ? theme.accentColor : theme.secondaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .popover(isPresented: $showFilterPopover, arrowEdge: .top) {
-                    filterPopoverView
-                }
-
                 // Download status indicator (shown when downloads are active)
                 if modelManager.activeDownloadsCount > 0 {
                     DownloadStatusIndicator(
@@ -667,7 +590,13 @@ struct ModelDownloadView: View {
             if modelManager.isLoadingModels && lists.displayed.isEmpty {
                 loadingState
             } else {
-                ScrollView {
+                VStack(spacing: 0) {
+                    sortFilterBar
+                        .padding(.horizontal, 24)
+                        .padding(.top, 12)
+                        .padding(.bottom, 4)
+
+                    ScrollView {
                     VStack(spacing: 12) {
                         if !modelManager.deprecationNotices.isEmpty {
                             deprecationBanner
@@ -697,8 +626,113 @@ struct ModelDownloadView: View {
                             }
                         }
                     }
-                    .padding(24)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .padding(.top, 12)
+                    }
+                    .mask(
+                        VStack(spacing: 0) {
+                            LinearGradient(
+                                gradient: Gradient(colors: [.clear, .black]),
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 16)
+                            Color.black
+                            LinearGradient(
+                                gradient: Gradient(colors: [.black, .clear]),
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 24)
+                        }
+                    )
                 }
+            }
+        }
+    }
+
+    // MARK: - Sort / Filter Bar
+
+    private var sortFilterBar: some View {
+        HStack(spacing: 12) {
+            Spacer()
+
+            // Sort button
+            Button {
+                showSortPopover.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.arrow.down")
+                        .font(.system(size: 13))
+                    if sortOption == .recommended {
+                        Text("Sort", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    } else {
+                        Text("Sort: ", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                        + Text(sortOption.displayName)
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            sortOption != .recommended
+                                ? theme.accentColor.opacity(0.12)
+                                : theme.tertiaryBackground.opacity(0.5)
+                        )
+                )
+                .foregroundColor(
+                    sortOption != .recommended ? theme.accentColor : theme.secondaryText
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showSortPopover, arrowEdge: .top) {
+                sortPopoverView
+            }
+            .help(L("Sort models"))
+
+            // Filter button
+            Button {
+                showFilterPopover.toggle()
+            } label: {
+                HStack(spacing: 6) {
+                    Image(
+                        systemName: filterState.isActive
+                            ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
+                    )
+                    .font(.system(size: 13))
+                    if let active = activeFilterSummary {
+                        Text("Filter: ", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                        + Text(active)
+                            .font(.system(size: 13, weight: .semibold))
+                    } else {
+                        Text("Filter", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                }
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(
+                            filterState.isActive
+                                ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground.opacity(0.5)
+                        )
+                )
+                .foregroundColor(filterState.isActive ? theme.accentColor : theme.secondaryText)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .popover(isPresented: $showFilterPopover, arrowEdge: .top) {
+                filterPopoverView
             }
         }
     }
@@ -1410,7 +1444,7 @@ private struct HuggingFaceImportSheet: View {
                 .foregroundColor(theme.accentColor)
                 .padding(.top, 1)
             Text(
-                "Osaurus only runs MLX models. Try a repo from `mlx-community` or any MLX converted model.",
+                "Osaurus only runs MLX models. Try a repo from `OsaurusAI` or `mlx-community`.",
                 bundle: .module
             )
             .font(.system(size: 12))
@@ -1433,7 +1467,7 @@ private struct HuggingFaceImportSheet: View {
                 .textCase(.uppercase)
 
             TextField(
-                "mlx-community/Llama-3.2-1B-Instruct-4bit",
+                "OsaurusAI/gemma-4-E2B-it-8bit",
                 text: $inputText,
                 onCommit: submit
             )
