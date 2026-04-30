@@ -33,6 +33,7 @@ struct CellRenderingContext {
     var onRegenerate: ((UUID) -> Void)? = nil
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
+    var onSpeak: ((UUID) -> Void)? = nil
     /// attachment or shared-artifact id string → full screen preview from ChatView
     var onUserImagePreview: ((String) -> Void)? = nil
 }
@@ -255,7 +256,6 @@ final class HeaderCircleActionControl: NSView {
 
     override func layout() {
         super.layout()
-        layer?.frame = bounds
         let side = min(bounds.width, bounds.height)
         layer?.cornerRadius = side > 0 ? side / 2 : 0
     }
@@ -301,23 +301,35 @@ final class NativeAssistantActionsView: NSView {
 
     private let copyButton: HeaderCircleActionControl
     private let regenerateButton: HeaderCircleActionControl
+    let speakButton: HeaderCircleActionControl
 
     private var turnId: UUID = UUID()
     private var onCopy: ((UUID) -> Void)?
     private var onRegenerate: ((UUID) -> Void)?
+    var onSpeak: ((UUID) -> Void)?
+
+    nonisolated(unsafe) private var ttsObservation: NSObjectProtocol?
+    nonisolated(unsafe) private var ttsConfigObservation: NSObjectProtocol?
+    private var currentTheme: (any ThemeProtocol)?
+    private var speakWidthConstraint: NSLayoutConstraint?
+    private var speakLeadingConstraint: NSLayoutConstraint?
 
     override init(frame: NSRect) {
         let copyControl = HeaderCircleActionControl(action: {})
         let regenControl = HeaderCircleActionControl(action: {})
+        let speakControl = HeaderCircleActionControl(action: {})
         self.copyButton = copyControl
         self.regenerateButton = regenControl
+        self.speakButton = speakControl
         super.init(frame: frame)
         translatesAutoresizingMaskIntoConstraints = false
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         regenerateButton.translatesAutoresizingMaskIntoConstraints = false
+        speakButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(copyButton)
         addSubview(regenerateButton)
+        addSubview(speakButton)
 
         copyButton.setAction { [weak self] in
             guard let self else { return }
@@ -327,8 +339,18 @@ final class NativeAssistantActionsView: NSView {
             guard let self else { return }
             self.onRegenerate?(self.turnId)
         }
+        speakButton.setAction { [weak self] in
+            guard let self else { return }
+            self.onSpeak?(self.turnId)
+        }
 
         let size: CGFloat = 28
+        let speakLeading = speakButton.leadingAnchor.constraint(
+            equalTo: regenerateButton.trailingAnchor, constant: 4)
+        let speakWidth = speakButton.widthAnchor.constraint(equalToConstant: size)
+        self.speakLeadingConstraint = speakLeading
+        self.speakWidthConstraint = speakWidth
+
         NSLayoutConstraint.activate([
             copyButton.leadingAnchor.constraint(equalTo: leadingAnchor),
             copyButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -339,21 +361,58 @@ final class NativeAssistantActionsView: NSView {
             regenerateButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             regenerateButton.widthAnchor.constraint(equalToConstant: size),
             regenerateButton.heightAnchor.constraint(equalToConstant: size),
-            regenerateButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+
+            speakLeading,
+            speakButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            speakWidth,
+            speakButton.heightAnchor.constraint(equalToConstant: size),
+            speakButton.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
         ])
+
+        ttsObservation = NotificationCenter.default.addObserver(
+            forName: .ttsPlaybackStateChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyTTSVisibility()
+                self?.refreshSpeakIcon()
+            }
+        }
+        ttsConfigObservation = NotificationCenter.default.addObserver(
+            forName: .ttsConfigurationChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.applyTTSVisibility()
+            }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        if let observation = ttsObservation {
+            NotificationCenter.default.removeObserver(observation)
+        }
+        if let observation = ttsConfigObservation {
+            NotificationCenter.default.removeObserver(observation)
+        }
+    }
 
     func configure(
         turnId: UUID,
         theme: any ThemeProtocol,
         onCopy: ((UUID) -> Void)?,
-        onRegenerate: ((UUID) -> Void)?
+        onRegenerate: ((UUID) -> Void)?,
+        onSpeak: ((UUID) -> Void)?
     ) {
         self.turnId = turnId
         self.onCopy = onCopy
         self.onRegenerate = onRegenerate
+        self.onSpeak = onSpeak
+        self.currentTheme = theme
 
         let pointSize = CGFloat(theme.captionSize) - 1
         let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
@@ -371,6 +430,37 @@ final class NativeAssistantActionsView: NSView {
             theme: theme,
             iconTint: nil
         )
+        applyTTSVisibility()
+        refreshSpeakIcon()
+    }
+
+    private func refreshSpeakIcon() {
+        guard let theme = currentTheme else { return }
+        let pointSize = CGFloat(theme.captionSize) - 1
+        let cfg = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        let isThisTurnPlaying = TTSService.shared.playingMessageId == turnId
+        let symbolName = isThisTurnPlaying ? "stop.fill" : "speaker.wave.2"
+        let tooltip = isThisTurnPlaying ? L("Stop") : L("Read aloud")
+        speakButton.setSymbol(
+            NSImage(systemSymbolName: symbolName, accessibilityDescription: tooltip)?
+                .withSymbolConfiguration(cfg),
+            toolTip: tooltip,
+            theme: theme,
+            iconTint: nil
+        )
+    }
+
+    private func applyTTSVisibility() {
+        let enabled = TTSConfigurationStore.load().enabled
+        // Hide only when the `speak` tool drove playback. manual
+        // taps keep the button so the stop swap stays available.
+        let toolDriven =
+            TTSService.shared.playingMessageId == turnId
+            && TTSService.shared.activeSpeakCallId != nil
+        let visible = enabled && !toolDriven
+        speakButton.isHidden = !visible
+        speakWidthConstraint?.constant = visible ? 28 : 0
+        speakLeadingConstraint?.constant = visible ? 4 : 0
     }
 }
 
@@ -1613,7 +1703,8 @@ final class NativeMessageCellView: NSTableCellView {
             turnId: turnId,
             theme: context.theme,
             onCopy: context.onCopy,
-            onRegenerate: context.onRegenerate
+            onRegenerate: context.onRegenerate,
+            onSpeak: context.onSpeak
         )
     }
 

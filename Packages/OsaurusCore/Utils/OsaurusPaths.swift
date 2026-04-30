@@ -280,6 +280,7 @@ public enum OsaurusPaths {
     public static func toastConfigFile() -> URL { config().appendingPathComponent("toast.json") }
     public static func sandboxConfigFile() -> URL { config().appendingPathComponent("sandbox.json") }
     public static func speechConfigFile() -> URL { voiceConfig().appendingPathComponent("speech.json") }
+    public static func ttsConfigFile() -> URL { voiceConfig().appendingPathComponent("tts.json") }
     public static func vadConfigFile() -> URL { voiceConfig().appendingPathComponent("vad.json") }
     public static func transcriptionConfigFile() -> URL { voiceConfig().appendingPathComponent("transcription.json") }
     public static func remoteProviderConfigFile() -> URL { providers().appendingPathComponent("remote.json") }
