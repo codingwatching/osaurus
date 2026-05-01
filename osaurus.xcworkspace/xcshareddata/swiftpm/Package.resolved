@@ -1,5 +1,5 @@
 {
-  "originHash" : "4a89d897f41c4f74654ffe94fa799bd0e7affa3dfbf684c83efc03532c357abe",
+  "originHash" : "d6f762ef71416fc51095ad4fba855d50588d36c2a3180e8ebc5b4a7c91b67207",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -78,8 +78,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/mlx-swift",
       "state" : {
-        "branch" : "osaurus-0.31.3",
-        "revision" : "02b01f07e8c5cae22cd7fd1187e673d8d5de0db6"
+        "revision" : "0a56f9041d56b4b8161f67a6cbd540ae66efc9fd"
       }
     },
     {
@@ -401,7 +400,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/osaurus-ai/vmlx-swift-lm",
       "state" : {
-        "revision" : "a7db6e5fdde525c43f72ba48df8ba12a07451ee9"
+        "revision" : "a196800715302e3903283aeaf6ec978eb1b1ac92"
       }
     },
     {
