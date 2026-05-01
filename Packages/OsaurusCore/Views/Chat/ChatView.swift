@@ -294,7 +294,7 @@ final class ChatSession: ObservableObject {
             selectedModel = pickerItems.firstChatCapable?.id
         }
         isLoadingModel = false
-        Task { [weak self] in await self?.refreshMemoryTokens() }
+        Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
     func refreshPickerItems() async {
@@ -453,24 +453,20 @@ final class ChatSession: ObservableObject {
             )
         }
 
-        let manifest = buildPreviewManifest(agentId: effectiveId, executionMode: executionMode)
-        // Estimate via `resolveTools` so the preview matches what the next
-        // send actually produces (manual filter, frozen snapshot). Preflight
-        // specs are not plumbed in (preview is sync) so the auto-mode
-        // estimate can under-count by the preflight delta on turn 1.
-        let toolTokens: Int
-        if AgentManager.shared.effectiveToolsDisabled(for: effectiveId) {
-            toolTokens = 0
-        } else {
-            let resolvedTools = SystemPromptComposer.resolveTools(
-                agentId: effectiveId,
-                executionMode: executionMode
-            )
-            toolTokens = ToolRegistry.shared.totalEstimatedTokens(for: resolvedTools)
-        }
+        // Mirror what `composeChatContext` will emit on the next send so
+        // the welcome-screen popover lists the same sections (Agent Loop,
+        // Capability Discovery, Skills, model family, …) instead of the
+        // base+sandbox-only stub. Preflight tool delta and Plugin
+        // Companions are query-dependent and stay deferred — the
+        // auto-mode `Tools` row can under-count by that delta on turn 1.
+        let preview = SystemPromptComposer.composePreviewContext(
+            agentId: effectiveId,
+            executionMode: executionMode,
+            model: selectedModel
+        )
         return .from(
-            manifest: manifest,
-            toolTokens: toolTokens,
+            manifest: preview.manifest,
+            toolTokens: preview.toolTokens,
             memoryTokens: cachedMemoryTokens,
             conversationTokens: conversationTokens,
             inputTokens: inputTokens,
@@ -602,7 +598,7 @@ final class ChatSession: ObservableObject {
     func reset(for newAgentId: UUID?) {
         agentId = newAgentId
         reset()
-        Task { [weak self] in await self?.refreshMemoryTokens() }
+        Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
     /// Invalidate the token cache (called when tools/skills change)
@@ -705,7 +701,7 @@ final class ChatSession: ObservableObject {
         cachedContext = nil
         rebuildVisibleBlocks()
 
-        Task { [weak self] in await self?.refreshMemoryTokens() }
+        Task { [weak self] in await self?.refreshContextEstimates() }
     }
 
     private func refreshMemoryTokens() async {
@@ -725,6 +721,15 @@ final class ChatSession: ObservableObject {
         guard newTokens != cachedMemoryTokens else { return }
         cachedMemoryTokens = newTokens
         objectWillChange.send()
+    }
+
+    /// Re-resolve every async input the welcome-screen preview composer
+    /// needs. Currently only memory tokens, but kept as a single entry
+    /// point so future async preview inputs land in one place instead of
+    /// being scattered across the trigger sites (agent change, session
+    /// reset, session load, capability config update).
+    private func refreshContextEstimates() async {
+        await refreshMemoryTokens()
     }
 
     /// Edit a user message and regenerate from that point
@@ -1012,21 +1017,6 @@ final class ChatSession: ObservableObject {
             folderContext: FolderContextService.shared.currentContext,
             autonomousEnabled: autonomous
         )
-    }
-
-    /// Synchronous manifest for offline token estimation (UI popover).
-    private func buildPreviewManifest(
-        agentId: UUID,
-        executionMode: ExecutionMode,
-        memoryContext: String = ""
-    ) -> PromptManifest {
-        var composer = SystemPromptComposer.forChat(
-            agentId: agentId,
-            executionMode: executionMode,
-            model: selectedModel
-        )
-        composer.append(.dynamic(id: "memory", label: "Memory", content: memoryContext))
-        return composer.manifest()
     }
 
     // MARK: - Private Helpers
