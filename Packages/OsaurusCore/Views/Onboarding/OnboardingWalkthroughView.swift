@@ -2,1040 +2,282 @@
 //  OnboardingWalkthroughView.swift
 //  osaurus
 //
-//  6-step walkthrough tutorial showcasing Osaurus features with rich illustrations.
+//  Onboarding step 5 — a 4-page tour rendered as an internal carousel.
+//
+//  Unlike the rest of the flow (which is a navigation stack), the
+//  walkthrough is a free-form carousel. Pages can be advanced with the
+//  Next button, swiped via mouse drag, or jumped to by clicking a page
+//  dot. The global Back button always exits the walkthrough — it never
+//  drills internally between pages. The global step indicator is hidden
+//  on this step so the carousel's own indicator is the only one shown.
 //
 
 import SwiftUI
 
-// MARK: - Navigation Direction
+// MARK: - Walkthrough Page
 
-private enum NavigationDirection {
-    case forward
-    case backward
-}
+enum WalkthroughPage: Int, CaseIterable, Identifiable {
+    case loop = 0
+    case sandbox = 1
+    case personal = 2
+    case privacy = 3
 
-// MARK: - Walkthrough Step
+    var id: Int { rawValue }
 
-private enum WalkthroughStepType: Int, CaseIterable {
-    case modes = 0
-    case tools = 1
-    case sandbox = 2
-    case personalization = 3
-    case memory = 4
-    case privacy = 5
-
-    var title: String {
+    var illustrationAsset: String {
         switch self {
-        case .modes: return L("Chat that runs anywhere")
-        case .tools: return L("Tools, skills, and plugins")
-        case .sandbox: return L("Safe, isolated execution")
-        case .personalization: return L("Agents, voice, and themes")
-        case .memory: return L("Gets smarter over time")
-        case .privacy: return L("Private by default")
+        case .loop: return "osaurus-tool"
+        case .sandbox: return "osaurus-sandbox"
+        case .personal: return "osaurus-built"
+        case .privacy: return "osaurus-data"
         }
     }
 
-    var body: String {
+    var headline: LocalizedStringKey {
         switch self {
-        case .modes:
-            return L(
-                "Chat back and forth, or hand off long tasks. Schedules, webhooks, and plugins can dispatch a chat session that runs in the background while you keep working."
-            )
-        case .tools:
-            return L(
-                "20+ built-in plugins for Mail, Calendar, Browser, Files, and more. Import skills from GitHub. Connect MCP servers. All with your permission."
-            )
+        case .loop: return "Every chat is an agent loop"
+        case .sandbox: return "Safe sandbox"
+        case .personal: return "Built around you"
+        case .privacy: return "Your data stays yours"
+        }
+    }
+
+    var subtitle: LocalizedStringKey {
+        switch self {
+        case .loop:
+            return
+                "Ask anything. Osaurus plans with todos, calls tools, pauses for clarification when it matters, and ends with a verified summary — no mode switching."
         case .sandbox:
-            return L(
-                "The Sandbox runs code in a Linux container on your Mac. Agents can execute commands, install packages, and work with files — fully isolated from your system."
-            )
-        case .personalization:
-            return L(
-                "Create different agents for different tasks. Talk hands-free with voice. Customize how everything looks."
-            )
-        case .memory:
-            return L(
-                "Osaurus distills each conversation into your identity, salience-scored facts, and per-session episodes. Agents pull only what your next question needs. Your memory stays with you, not a provider."
-            )
+            return
+                "Toggle the sandbox to give your agent shell access — install packages, run scripts, and work with files inside a Linux container, isolated from your Mac."
+        case .personal:
+            return
+                "Specialized agents, voice control, and your own theme. Memory belongs to you, surfaced exactly when the next question needs it."
         case .privacy:
-            return L("Conversations stay on your Mac. Switch providers anytime — your history comes with you.")
-        }
-    }
-
-    var color: Color {
-        switch self {
-        case .modes: return .blue
-        case .tools: return .green
-        case .sandbox: return .orange
-        case .personalization: return .purple
-        case .memory: return .cyan
-        case .privacy: return .teal
+            return "Conversations live on your Mac. Switch models or providers any time without losing your history."
         }
     }
 }
 
-// MARK: - Walkthrough View
+// MARK: - State
 
-struct OnboardingWalkthroughView: View {
-    let onComplete: () -> Void
+@MainActor
+final class WalkthroughState: ObservableObject {
+    @Published var currentPage: WalkthroughPage = .loop
+
+    var pages: [WalkthroughPage] { WalkthroughPage.allCases }
+    var pageIndex: Int { pages.firstIndex(of: currentPage) ?? 0 }
+    var isLastPage: Bool { pageIndex == pages.count - 1 }
+
+    /// Move forward (positive) or backward (negative). Bounded to the
+    /// available pages — drag/click overflow at the edges is a no-op.
+    /// Direction is implicit in the index delta — the carousel filmstrip
+    /// reads off the index to compute its offset, so direction never
+    /// needs to be stored.
+    func advance(by step: Int) {
+        let next = pageIndex + step
+        guard next >= 0, next < pages.count else { return }
+        currentPage = pages[next]
+    }
+
+    /// Jump directly to a page (used by the clickable page dots).
+    func jump(to page: WalkthroughPage) {
+        guard page != currentPage else { return }
+        currentPage = page
+    }
+
+    /// Walkthrough is a carousel, not a navigation stack — Back always exits.
+    func handleBack(parentBack: () -> Void) {
+        parentBack()
+    }
+}
+
+// MARK: - Body
+
+struct WalkthroughBody: View {
+    @ObservedObject var state: WalkthroughState
 
     @Environment(\.theme) private var theme
-    @State private var currentStep = 0
-    @State private var hasAppeared = false
-    @State private var navigationDirection: NavigationDirection = .forward
-    @State private var isCardHovered = false
 
-    private var totalSteps: Int {
-        WalkthroughStepType.allCases.count
-    }
+    /// Drag offset accumulated during an in-progress swipe. Resets to 0
+    /// when the gesture ends (either committed by `advance(by:)` or
+    /// snapped back by the spring animation).
+    @State private var dragOffset: CGFloat = 0
 
-    private var isLastStep: Bool {
-        currentStep == totalSteps - 1
-    }
-
-    private var step: WalkthroughStepType {
-        WalkthroughStepType(rawValue: currentStep) ?? .modes
-    }
-
-    private var stepColor: Color {
-        step.color
-    }
+    /// Minimum horizontal travel (in points) before a drag commits to a
+    /// page change. Smaller drags spring back to the current page.
+    private let dragCommitThreshold: CGFloat = 60
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top bar: Back (if any) on the left, step indicator centered
-            ZStack {
-                HStack {
-                    if currentStep > 0 {
-                        OnboardingBackButton {
-                            navigateTo(currentStep - 1)
-                        }
-                        .transition(.opacity)
-                    }
-                    Spacer()
+        VStack(spacing: 18) {
+            carousel
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            paginationControls
+                .padding(.bottom, 4)
+        }
+    }
+
+    /// Chevron arrows flanking the page-dot row. Mirror the swipe + click
+    /// affordances already on the carousel so users with trackpads or
+    /// keyboards have a third path to advance pages.
+    private var paginationControls: some View {
+        HStack(spacing: 14) {
+            arrowButton(
+                systemImage: "chevron.left",
+                disabled: state.pageIndex == 0,
+                action: { state.advance(by: -1) }
+            )
+            pageDots
+            arrowButton(
+                systemImage: "chevron.right",
+                disabled: state.isLastPage,
+                action: { state.advance(by: 1) }
+            )
+        }
+    }
+
+    private func arrowButton(
+        systemImage: String,
+        disabled: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(disabled ? theme.tertiaryText.opacity(0.4) : theme.secondaryText)
+                .frame(width: 22, height: 22)
+                .background(
+                    Circle()
+                        .fill(theme.tertiaryBackground.opacity(disabled ? 0.0 : 0.5))
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(
+                            theme.primaryBorder.opacity(disabled ? 0.0 : 0.4),
+                            lineWidth: 1
+                        )
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .opacity(disabled ? 0.5 : 1.0)
+        .animation(.easeOut(duration: 0.15), value: disabled)
+    }
+
+    // MARK: - Carousel (filmstrip)
+
+    /// Filmstrip carousel: all four pages live in a horizontal HStack,
+    /// each sized to the carousel's exact width. The strip offsets to show
+    /// the current page (`-index * width`). Direction is naturally encoded
+    /// in the index delta — no captured-state ambiguity (the prior
+    /// `.transition(pageTransition)` setup baked `state.direction` into
+    /// each view's transition value at construction time, which produced
+    /// asymmetric animations when the user reversed direction). Drag is an
+    /// additive offset on top of the index-driven offset.
+    private var carousel: some View {
+        GeometryReader { geo in
+            let pageWidth = geo.size.width
+            HStack(spacing: 0) {
+                ForEach(state.pages) { page in
+                    pageHero(page)
+                        .frame(width: pageWidth, height: geo.size.height)
                 }
-
-                stepIndicator
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
             }
-            .frame(height: OnboardingMetrics.topBarHeight)
-
-            contentCard
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.15), value: hasAppeared)
-
-            Spacer()
-                .frame(minHeight: OnboardingMetrics.footerToCTA)
-
-            navigationButton
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.35), value: hasAppeared)
-
-            Spacer().frame(height: OnboardingMetrics.bottomInset)
-        }
-        .padding(.horizontal, OnboardingMetrics.contentHorizontal)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppearAfter(OnboardingMetrics.appearDelay) {
-            withAnimation { hasAppeared = true }
-        }
-    }
-
-    // MARK: - Content Card
-
-    private var contentCard: some View {
-        VStack(spacing: 0) {
-            // Tinted illustration band
-            ZStack {
-                // Background tint
-                LinearGradient(
-                    colors: [
-                        stepColor.opacity(theme.isDark ? 0.1 : 0.08),
-                        stepColor.opacity(theme.isDark ? 0.03 : 0.02),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                illustrationView
-                    .frame(height: 200)
-                    .id("illustration-\(currentStep)")
-                    .transition(slideTransition)
-            }
-            .frame(height: 200)
-            .clipped()
-
-            // Subtle separator
-            Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            stepColor.opacity(0.15),
-                            stepColor.opacity(0.05),
-                            Color.clear,
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(height: 1)
-
-            Spacer().frame(height: 20)
-
-            Text(step.title)
-                .font(theme.font(size: 22, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .id("title-\(currentStep)")
-                .transition(slideTransition)
-
-            Spacer().frame(height: 10)
-
-            Text(step.body)
-                .font(theme.font(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .lineSpacing(5)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 24)
-                .id("body-\(currentStep)")
-                .transition(slideTransition)
-
-            Spacer().frame(height: 20)
-        }
-        .frame(maxWidth: .infinity)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous))
-        .overlay(cardBorder)
-        .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity * (isCardHovered ? 1.2 : 0.8)),
-            radius: isCardHovered ? 20 : 12,
-            x: 0,
-            y: isCardHovered ? 8 : 4
-        )
-        .scaleEffect(isCardHovered ? 1.005 : 1.0)
-        .animation(theme.animationQuick(), value: isCardHovered)
-        .animation(theme.springAnimation(), value: currentStep)
-        .onHover { hovering in
-            isCardHovered = hovering
-        }
-    }
-
-    // MARK: - Card Background
-
-    private var cardBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                Rectangle().fill(.ultraThinMaterial)
-            }
-
-            theme.cardBackground.opacity(
-                theme.glassEnabled
-                    ? (theme.isDark ? 0.78 : 0.88)
-                    : 1.0
-            )
-
-            LinearGradient(
-                colors: [
-                    stepColor.opacity(theme.isDark ? 0.04 : 0.03),
-                    Color.clear,
-                    theme.primaryBackground.opacity(theme.isDark ? 0.06 : 0.03),
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
+            .frame(width: pageWidth, height: geo.size.height, alignment: .leading)
+            .offset(x: -CGFloat(state.pageIndex) * pageWidth + dragOffset)
+            .animation(
+                .spring(response: 0.55, dampingFraction: 0.88),
+                value: state.pageIndex
             )
         }
-    }
-
-    // MARK: - Card Border
-
-    private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(theme.isDark ? 0.22 : 0.35),
-                        theme.primaryBorder.opacity(theme.isDark ? 0.15 : 0.25),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-            .overlay(accentEdge)
-    }
-
-    private var accentEdge: some View {
-        RoundedRectangle(cornerRadius: OnboardingMetrics.cardCornerRadius, style: .continuous)
-            .strokeBorder(
-                stepColor.opacity(isCardHovered ? 0.22 : 0.10),
-                lineWidth: 1
-            )
-            .mask(
-                LinearGradient(
-                    colors: [Color.white, Color.white.opacity(0)],
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-            )
-    }
-
-    // MARK: - Slide Transition
-
-    private var slideTransition: AnyTransition {
-        let offset: CGFloat = 30
-        let insertionOffset = navigationDirection == .forward ? offset : -offset
-        let removalOffset = navigationDirection == .forward ? -offset : offset
-
-        return .asymmetric(
-            insertion: .opacity.combined(with: .offset(x: insertionOffset)),
-            removal: .opacity.combined(with: .offset(x: removalOffset))
+        .clipped()
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    // Soft-clamp at the edges so dragging past the first/last
+                    // page feels rubbery rather than free.
+                    let raw = value.translation.width
+                    if (state.pageIndex == 0 && raw > 0)
+                        || (state.isLastPage && raw < 0)
+                    {
+                        dragOffset = raw / 3
+                    } else {
+                        dragOffset = raw
+                    }
+                }
+                .onEnded { value in
+                    let predicted = value.predictedEndTranslation.width
+                    let committed = abs(predicted) > dragCommitThreshold
+                    let direction = predicted < 0 ? 1 : -1
+                    if committed {
+                        state.advance(by: direction)
+                    }
+                    withAnimation(.interactiveSpring(response: 0.35, dampingFraction: 0.85)) {
+                        dragOffset = 0
+                    }
+                }
         )
     }
-
-    // MARK: - Step Indicator
-
-    private var stepIndicator: some View {
-        OnboardingStepIndicator(current: currentStep + 1, total: totalSteps)
-    }
-
-    // MARK: - Illustration View
 
     @ViewBuilder
-    private var illustrationView: some View {
-        switch step {
-        case .modes:
-            WalkthroughModesIllustration()
-        case .tools:
-            WalkthroughToolsIllustration()
-        case .sandbox:
-            WalkthroughSandboxIllustration()
-        case .personalization:
-            WalkthroughPersonalizationIllustration()
-        case .memory:
-            WalkthroughMemoryIllustration()
-        case .privacy:
-            WalkthroughPrivacyIllustration()
-        }
-    }
-
-    // MARK: - Navigation Button
-
-    private var navigationButton: some View {
-        Group {
-            if isLastStep {
-                OnboardingShimmerButton(title: "Start using Osaurus") {
-                    onComplete()
-                }
-            } else {
-                OnboardingPrimaryButton(title: "Next") {
-                    navigateTo(currentStep + 1)
-                }
-            }
-        }
-        .frame(width: OnboardingMetrics.ctaWidth)
-    }
-
-    // MARK: - Navigation
-
-    private func navigateTo(_ stepIndex: Int) {
-        guard stepIndex >= 0, stepIndex < totalSteps, stepIndex != currentStep else { return }
-
-        navigationDirection = stepIndex > currentStep ? .forward : .backward
-
-        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
-            currentStep = stepIndex
-        }
-    }
-}
-
-// MARK: - Modes Illustration (Overlapping Window Cards)
-
-private struct WalkthroughModesIllustration: View {
-    @Environment(\.theme) private var theme
-    @State private var hasAppeared = false
-    @State private var floatOffset: CGFloat = 0
-    @State private var hoveredCard: String? = nil
-
-    private let stepColor = Color.blue
-
-    var body: some View {
-        ZStack {
-            // Chat card (behind, offset left and rotated)
-            windowCard(
-                id: "chat",
-                icon: "bubble.left.and.bubble.right",
-                label: L("Chat"),
-                sublabel: L("Conversation"),
-                rotation: -6,
-                offsetX: -40,
-                offsetY: 8,
-                delay: 0
-            )
-
-            // Work card (front, offset right and rotated)
-            windowCard(
-                id: "work",
-                icon: "bolt.fill",
-                label: L("Work"),
-                sublabel: L("Background"),
-                rotation: 5,
-                offsetX: 40,
-                offsetY: -4,
-                delay: 0.1
-            )
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 3.0).repeatForever(autoreverses: true)) {
-                floatOffset = -5
-            }
-        }
-        .onAppearAfter(0.1) { hasAppeared = true }
-    }
-
-    private func windowCard(
-        id: String,
-        icon: String,
-        label: String,
-        sublabel: String,
-        rotation: Double,
-        offsetX: CGFloat,
-        offsetY: CGFloat,
-        delay: Double
-    ) -> some View {
-        let isHovered = hoveredCard == id
-
-        return VStack(spacing: 0) {
-            // Title bar
-            HStack(spacing: 5) {
-                Circle().fill(Color.red.opacity(0.7)).frame(width: 7, height: 7)
-                Circle().fill(Color.yellow.opacity(0.7)).frame(width: 7, height: 7)
-                Circle().fill(Color.green.opacity(0.7)).frame(width: 7, height: 7)
-                Spacer()
-                Text(label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                Spacer()
-                Spacer().frame(width: 26)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-
-            Divider().opacity(0.3)
-
-            // Content area
-            VStack(spacing: 6) {
-                Image(systemName: icon)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundColor(stepColor)
-
-                Text(sublabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-        }
-        .frame(width: 130, height: 100)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.cardBackground)
-                .shadow(color: stepColor.opacity(isHovered ? 0.2 : 0.1), radius: isHovered ? 16 : 8, y: 4)
+    private func pageHero(_ page: WalkthroughPage) -> some View {
+        OnboardingHeroBody(
+            illustrationAsset: page.illustrationAsset,
+            headline: page.headline,
+            subtitle: page.subtitle
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            isHovered ? stepColor.opacity(0.5) : theme.glassEdgeLight.opacity(0.3),
-                            theme.primaryBorder.opacity(0.15),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: isHovered ? 1.5 : 1
-                )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .rotationEffect(.degrees(isHovered ? 0 : rotation))
-        .offset(x: offsetX, y: offsetY + floatOffset)
-        .scaleEffect(isHovered ? 1.08 : 1.0)
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(delay), value: hasAppeared)
-        .animation(.easeOut(duration: 0.25), value: isHovered)
-        .onHover { hovering in
-            hoveredCard = hovering ? id : nil
-        }
-        .zIndex(isHovered ? 1 : 0)
-    }
-}
-
-// MARK: - Tools Illustration (Hub with Orbiting Icons)
-
-private struct WalkthroughToolsIllustration: View {
-    @Environment(\.theme) private var theme
-    @State private var hasAppeared = false
-    @State private var orbitRotation: Double = 0
-    @State private var hoveredIndex: Int? = nil
-
-    private let stepColor = Color.green
-    private let tools: [(icon: String, angle: Double)] = [
-        ("calendar", 0),
-        ("message.fill", 90),
-        ("note.text", 180),
-        ("folder.fill", 270),
-    ]
-
-    var body: some View {
-        ZStack {
-            // Orbit ring
-            Circle()
-                .strokeBorder(
-                    stepColor.opacity(hasAppeared ? 0.12 : 0),
-                    style: StrokeStyle(lineWidth: 1, dash: [4, 4])
-                )
-                .frame(width: 150, height: 150)
-                .animation(.easeOut(duration: 0.8).delay(0.2), value: hasAppeared)
-
-            // Central hub
-            ZStack {
-                Circle()
-                    .fill(stepColor.opacity(0.15))
-                    .frame(width: 70, height: 70)
-                    .blur(radius: 15)
-
-                Circle()
-                    .fill(theme.cardBackground)
-                    .frame(width: 52, height: 52)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(stepColor.opacity(0.3), lineWidth: 1)
-                    )
-
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(stepColor)
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.5)
-            .animation(.spring(response: 0.6, dampingFraction: 0.7), value: hasAppeared)
-
-            // Orbiting tool icons
-            ForEach(Array(tools.enumerated()), id: \.offset) { index, skill in
-                let isHovered = hoveredIndex == index
-                let baseAngle = skill.angle + orbitRotation
-                let radians = baseAngle * .pi / 180
-                let radius: CGFloat = 75
-
-                ZStack {
-                    Circle()
-                        .fill(stepColor.opacity(isHovered ? 0.25 : 0.1))
-                        .frame(width: 44, height: 44)
-                        .blur(radius: 8)
-
-                    Circle()
-                        .fill(theme.cardBackground)
-                        .frame(width: 36, height: 36)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(
-                                    isHovered ? stepColor.opacity(0.5) : theme.primaryBorder.opacity(0.2),
-                                    lineWidth: isHovered ? 1.5 : 1
-                                )
-                        )
-
-                    Image(systemName: skill.icon)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(stepColor)
-                }
-                .scaleEffect(isHovered ? 1.15 : 1.0)
-                .offset(
-                    x: cos(radians) * radius,
-                    y: sin(radians) * radius
-                )
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(
-                    .spring(response: 0.5, dampingFraction: 0.7).delay(0.15 + Double(index) * 0.08),
-                    value: hasAppeared
-                )
-                .animation(.easeOut(duration: 0.2), value: isHovered)
-                .onHover { hovering in
-                    hoveredIndex = hovering ? index : nil
-                }
-            }
-        }
-        .onAppear {
-            withAnimation(.linear(duration: 60).repeatForever(autoreverses: false)) {
-                orbitRotation = 360
-            }
-        }
-        .onAppearAfter(0.1) { hasAppeared = true }
-    }
-}
-
-// MARK: - Sandbox Illustration (Terminal in Container)
-
-private struct WalkthroughSandboxIllustration: View {
-    @Environment(\.theme) private var theme
-    @State private var hasAppeared = false
-    @State private var floatOffset: CGFloat = 0
-    @State private var cursorVisible = false
-    @State private var isHovered = false
-
-    private let stepColor = Color.orange
-
-    var body: some View {
-        ZStack {
-            // Container outline
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(
-                    stepColor.opacity(hasAppeared ? 0.25 : 0),
-                    style: StrokeStyle(lineWidth: 1.5, dash: [8, 6])
-                )
-                .frame(width: 180, height: 130)
-                .animation(.easeOut(duration: 0.6).delay(0.1), value: hasAppeared)
-
-            // Ambient glow
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(stepColor.opacity(isHovered ? 0.12 : 0.06))
-                .frame(width: 160, height: 110)
-                .blur(radius: 20)
-
-            // Terminal window
-            VStack(spacing: 0) {
-                // Title bar
-                HStack(spacing: 5) {
-                    Circle().fill(Color.red.opacity(0.7)).frame(width: 6, height: 6)
-                    Circle().fill(Color.yellow.opacity(0.7)).frame(width: 6, height: 6)
-                    Circle().fill(Color.green.opacity(0.7)).frame(width: 6, height: 6)
-                    Spacer()
-                    Text("sandbox", bundle: .module)
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                    Spacer()
-                    Spacer().frame(width: 22)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(theme.secondaryBackground.opacity(0.6))
-
-                // Terminal content
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 4) {
-                        Text("$")
-                            .foregroundColor(stepColor)
-                        Text("pip install numpy", bundle: .module)
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .font(.system(size: 10, design: .monospaced))
-
-                    HStack(spacing: 4) {
-                        Text("$")
-                            .foregroundColor(stepColor)
-                        Text("python run.py", bundle: .module)
-                            .foregroundColor(theme.secondaryText)
-
-                        Rectangle()
-                            .fill(stepColor)
-                            .frame(width: 6, height: 12)
-                            .opacity(cursorVisible ? 1 : 0)
-                    }
-                    .font(.system(size: 10, design: .monospaced))
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(width: 150, height: 90)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(theme.isDark ? Color.black.opacity(0.6) : theme.cardBackground)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        isHovered ? stepColor.opacity(0.4) : theme.primaryBorder.opacity(0.2),
-                        lineWidth: isHovered ? 1.5 : 1
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .shadow(color: stepColor.opacity(isHovered ? 0.2 : 0.1), radius: isHovered ? 16 : 8, y: 4)
-            .offset(y: floatOffset)
-            .scaleEffect(isHovered ? 1.05 : 1.0)
-
-            // Floating icons
-            floatingIcon("shippingbox.fill", offset: CGPoint(x: -80, y: -40), delay: 0.2)
-            floatingIcon("gearshape.fill", offset: CGPoint(x: 80, y: -35), delay: 0.3)
-            floatingIcon("doc.text.fill", offset: CGPoint(x: 75, y: 40), delay: 0.35)
-        }
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.8)
-        .animation(.spring(response: 0.6, dampingFraction: 0.75).delay(0.05), value: hasAppeared)
-        .animation(.easeOut(duration: 0.2), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
-                floatOffset = -4
-            }
-            withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true).delay(0.5)) {
-                cursorVisible = true
-            }
-        }
-        .onAppearAfter(0.1) { hasAppeared = true }
     }
 
-    private func floatingIcon(_ name: String, offset: CGPoint, delay: Double) -> some View {
-        ZStack {
-            Circle()
-                .fill(stepColor.opacity(0.1))
-                .frame(width: 30, height: 30)
-                .blur(radius: 6)
+    // MARK: - Page dots (clickable)
 
-            Image(systemName: name)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(stepColor.opacity(0.6))
-        }
-        .offset(x: offset.x, y: offset.y + floatOffset * 0.6)
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.3)
-        .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(delay), value: hasAppeared)
-    }
-}
-
-// MARK: - Personalization Illustration (Colored Orbs + Icons)
-
-private struct WalkthroughPersonalizationIllustration: View {
-    @Environment(\.theme) private var theme
-    @State private var hasAppeared = false
-    @State private var floatOffset: CGFloat = 0
-    @State private var hoveredItem: String? = nil
-
-    private let stepColor = Color.purple
-    private let orbColors: [Color] = [.blue, .purple, .pink]
-
-    var body: some View {
-        HStack(spacing: 24) {
-            // Agents: three colored orbs
-            agentsOrbs
-                .onHover { hovering in
-                    hoveredItem = hovering ? "agents" : nil
-                }
-
-            // Voice
-            iconCard(id: "voice", icon: "mic.fill", color: .indigo, delay: 0.2)
-
-            // Themes
-            iconCard(id: "themes", icon: "paintpalette.fill", color: .pink, delay: 0.25)
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
-                floatOffset = -4
+    private var pageDots: some View {
+        HStack(spacing: 8) {
+            ForEach(state.pages) { page in
+                pageDot(for: page)
             }
         }
-        .onAppearAfter(0.1) { hasAppeared = true }
     }
 
-    private var agentsOrbs: some View {
-        let isHovered = hoveredItem == "agents"
-
-        return ZStack {
-            Circle()
-                .fill(stepColor.opacity(isHovered ? 0.25 : 0.15))
-                .frame(width: 80, height: 80)
-                .blur(radius: isHovered ? 20 : 16)
-
-            HStack(spacing: -10) {
-                ForEach(Array(orbColors.enumerated()), id: \.offset) { index, color in
-                    miniOrb(color: color, scale: index == 1 ? 1.0 : 0.85, delay: Double(index) * 0.05)
-                }
-            }
-        }
-        .offset(y: floatOffset)
-        .scaleEffect(isHovered ? 1.1 : 1.0)
-        .animation(.easeOut(duration: 0.2), value: isHovered)
-    }
-
-    private func miniOrb(color: Color, scale: CGFloat, delay: Double) -> some View {
-        ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [
-                            color.opacity(0.95),
-                            color,
-                        ],
-                        center: .topLeading,
-                        startRadius: 0,
-                        endRadius: 18 * scale
-                    )
-                )
-                .frame(width: 28 * scale, height: 28 * scale)
+    private func pageDot(for page: WalkthroughPage) -> some View {
+        let isCurrent = page == state.currentPage
+        return Button {
+            state.jump(to: page)
+        } label: {
+            Capsule()
+                .fill(isCurrent ? theme.accentColor : theme.primaryBorder.opacity(0.45))
+                .frame(width: isCurrent ? 24 : 8, height: 8)
                 .overlay(
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.5), Color.clear],
-                                startPoint: .topLeading,
-                                endPoint: .center
-                            )
-                        )
-                        .frame(width: 10 * scale, height: 10 * scale)
-                        .offset(x: -4 * scale, y: -4 * scale)
-                        .blur(radius: 2)
-                )
-                .shadow(color: color.opacity(0.4), radius: 6, y: 2)
-        }
-        .zIndex(scale >= 1.0 ? 1 : 0)
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.5)
-        .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(delay), value: hasAppeared)
-    }
-
-    private func iconCard(id: String, icon: String, color: Color, delay: Double) -> some View {
-        let isHovered = hoveredItem == id
-
-        return ZStack {
-            Circle()
-                .fill(color.opacity(isHovered ? 0.25 : 0.15))
-                .frame(width: 64, height: 64)
-                .blur(radius: isHovered ? 16 : 12)
-
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(theme.cardBackground)
-                .frame(width: 56, height: 56)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    Capsule()
                         .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    isHovered ? color.opacity(0.5) : theme.glassEdgeLight.opacity(0.25),
-                                    theme.primaryBorder.opacity(0.15),
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: isHovered ? 1.5 : 1
+                            isCurrent ? Color.clear : theme.primaryBorder.opacity(0.25),
+                            lineWidth: 1
                         )
                 )
-
-            Image(systemName: icon)
-                .font(.system(size: 22, weight: .medium))
-                .foregroundColor(color)
+                .contentShape(Capsule().inset(by: -6))
+                .animation(.spring(response: 0.4, dampingFraction: 0.85), value: state.currentPage)
         }
-        .offset(y: floatOffset * (id == "voice" ? 0.7 : 1.3))
-        .scaleEffect(isHovered ? 1.12 : 1.0)
-        .opacity(hasAppeared ? 1 : 0)
-        .scaleEffect(hasAppeared ? 1 : 0.6)
-        .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(delay), value: hasAppeared)
-        .animation(.easeOut(duration: 0.2), value: isHovered)
-        .onHover { hovering in
-            hoveredItem = hovering ? id : nil
-        }
+        .buttonStyle(.plain)
+        .help(Text(page.headline, bundle: .module))
     }
 }
 
-// MARK: - Memory Illustration
+// MARK: - CTA
 
-private struct WalkthroughMemoryIllustration: View {
-    @Environment(\.theme) private var theme
-    @State private var hasAppeared = false
-    @State private var pulseScale: CGFloat = 1.0
-    @State private var isHovered = false
-
-    private let stepColor = Color.cyan
-
-    private struct GraphNode {
-        let icon: String
-        let angle: Double
-        let radius: CGFloat
-        let delay: Double
-    }
-
-    private let nodes: [GraphNode] = [
-        GraphNode(icon: "person.fill", angle: 30, radius: 72, delay: 0.15),
-        GraphNode(icon: "doc.text.fill", angle: 100, radius: 78, delay: 0.25),
-        GraphNode(icon: "bubble.left.fill", angle: 170, radius: 70, delay: 0.35),
-        GraphNode(icon: "lightbulb.fill", angle: 240, radius: 76, delay: 0.45),
-        GraphNode(icon: "link", angle: 310, radius: 74, delay: 0.55),
-    ]
+struct WalkthroughCTA: View {
+    @ObservedObject var state: WalkthroughState
+    let onFinish: () -> Void
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(stepColor.opacity(isHovered ? 0.18 : 0.1))
-                .frame(width: 160, height: 160)
-                .blur(radius: isHovered ? 50 : 40)
-                .scaleEffect(pulseScale)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.8), value: hasAppeared)
-
-            ForEach(Array(nodes.enumerated()), id: \.offset) { _, node in
-                let radians = node.angle * .pi / 180
-                let x = cos(radians) * node.radius
-                let y = sin(radians) * node.radius
-
-                Path { path in
-                    path.move(to: CGPoint(x: 100, y: 100))
-                    path.addLine(to: CGPoint(x: 100 + x, y: 100 + y))
-                }
-                .stroke(stepColor.opacity(0.15), lineWidth: 1)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.6).delay(node.delay), value: hasAppeared)
-            }
-            .frame(width: 200, height: 200)
-
-            ForEach(Array(nodes.enumerated()), id: \.offset) { _, node in
-                let radians = node.angle * .pi / 180
-
-                ZStack {
-                    Circle()
-                        .fill(stepColor.opacity(isHovered ? 0.2 : 0.08))
-                        .frame(width: 38, height: 38)
-                        .blur(radius: 6)
-
-                    Circle()
-                        .fill(theme.cardBackground)
-                        .frame(width: 30, height: 30)
-                        .overlay(
-                            Circle()
-                                .strokeBorder(stepColor.opacity(0.25), lineWidth: 1)
-                        )
-
-                    Image(systemName: node.icon)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(stepColor)
-                }
-                .offset(
-                    x: cos(radians) * node.radius,
-                    y: sin(radians) * node.radius
-                )
-                .opacity(hasAppeared ? 1 : 0)
-                .scaleEffect(hasAppeared ? 1 : 0.3)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(node.delay), value: hasAppeared)
-            }
-
-            ZStack {
-                Circle()
-                    .fill(stepColor.opacity(0.2))
-                    .frame(width: 74, height: 74)
-                    .blur(radius: 18)
-                    .scaleEffect(pulseScale)
-
-                Circle()
-                    .fill(theme.cardBackground)
-                    .frame(width: 56, height: 56)
-                    .overlay(
-                        Circle()
-                            .strokeBorder(stepColor.opacity(0.35), lineWidth: 1.5)
-                    )
-
-                Image(systemName: "brain")
-                    .font(.system(size: 26, weight: .medium))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [stepColor, stepColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .opacity(hasAppeared ? 1 : 0)
-            .scaleEffect(hasAppeared ? 1 : 0.5)
-            .scaleEffect(isHovered ? 1.08 : 1.0)
-            .animation(.spring(response: 0.6, dampingFraction: 0.7), value: hasAppeared)
-            .animation(.easeOut(duration: 0.2), value: isHovered)
+        if state.isLastPage {
+            OnboardingBrandButton(title: "Start using Osaurus", action: onFinish)
+                .frame(width: OnboardingMetrics.ctaWidthCompact)
+        } else {
+            OnboardingBrandButton(title: "Next", action: { state.advance(by: 1) })
+                .frame(width: OnboardingMetrics.ctaWidthCompact)
         }
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: true)) {
-                pulseScale = 1.12
-            }
-        }
-        .onAppearAfter(0.1) { hasAppeared = true }
-    }
-}
-
-// MARK: - Privacy Illustration (Shield with Orbiting Data)
-
-private struct WalkthroughPrivacyIllustration: View {
-    @Environment(\.theme) private var theme
-    @State private var hasAppeared = false
-    @State private var glowPulse: CGFloat = 1.0
-    @State private var floatOffset: CGFloat = 0
-    @State private var orbitAngle: Double = 0
-    @State private var isHovered = false
-
-    private let stepColor = Color.teal
-    private let dataIcons = ["bubble.left.fill", "doc.fill", "photo.fill"]
-
-    var body: some View {
-        ZStack {
-            // Ambient glow (pulsing)
-            Circle()
-                .fill(stepColor.opacity(isHovered ? 0.2 : 0.12))
-                .frame(width: 150, height: 150)
-                .blur(radius: isHovered ? 50 : 40)
-                .scaleEffect(isHovered ? 1.2 : glowPulse)
-                .opacity(hasAppeared ? 1 : 0)
-                .animation(.easeOut(duration: 0.8), value: hasAppeared)
-
-            // Orbiting data icons (stay within shield boundary)
-            ForEach(Array(dataIcons.enumerated()), id: \.offset) { index, icon in
-                let angle = (Double(index) * 120 + orbitAngle)
-                let radians = angle * .pi / 180
-                let radius: CGFloat = 58
-
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(stepColor.opacity(0.5))
-                    .offset(
-                        x: cos(radians) * radius,
-                        y: sin(radians) * radius
-                    )
-                    .opacity(hasAppeared ? 1 : 0)
-                    .animation(.easeOut(duration: 0.5).delay(0.3 + Double(index) * 0.1), value: hasAppeared)
-            }
-
-            // Shield with lock
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 80, weight: .medium))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [
-                            stepColor,
-                            stepColor.opacity(0.8),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .shadow(color: stepColor.opacity(0.4), radius: isHovered ? 20 : 12, y: 4)
-                .offset(y: floatOffset)
-                .scaleEffect(isHovered ? 1.08 : 1.0)
-                .opacity(hasAppeared ? 1 : 0)
-                .scaleEffect(hasAppeared ? 1 : 0.7)
-                .animation(.spring(response: 0.7, dampingFraction: 0.7).delay(0.1), value: hasAppeared)
-                .animation(.easeOut(duration: 0.2), value: isHovered)
-        }
-        .onHover { hovering in
-            isHovered = hovering
-        }
-        .onAppear {
-            withAnimation(.easeInOut(duration: 2.5).repeatForever(autoreverses: true)) {
-                floatOffset = -5
-            }
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                glowPulse = 1.15
-            }
-            withAnimation(.linear(duration: 40).repeatForever(autoreverses: false)) {
-                orbitAngle = 360
-            }
-        }
-        .onAppearAfter(0.1) { hasAppeared = true }
     }
 }
 
@@ -1044,8 +286,12 @@ private struct WalkthroughPrivacyIllustration: View {
 #if DEBUG
     struct OnboardingWalkthroughView_Previews: PreviewProvider {
         static var previews: some View {
-            OnboardingWalkthroughView(onComplete: {})
-                .frame(width: OnboardingMetrics.windowWidth, height: 700)
+            let state = WalkthroughState()
+            return VStack {
+                WalkthroughBody(state: state).frame(height: 460)
+                WalkthroughCTA(state: state, onFinish: {})
+            }
+            .frame(width: OnboardingMetrics.windowWidth, height: 620)
         }
     }
 #endif

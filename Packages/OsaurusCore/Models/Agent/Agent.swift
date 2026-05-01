@@ -104,6 +104,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var disableTools: Bool?
     /// When true, memory is neither injected into prompts nor recorded for this agent
     public var disableMemory: Bool?
+    /// Optional mascot avatar identifier. nil falls back
+    /// to the agent name's first letter monogram in the UI
+    public var avatar: String?
 
     public init(
         id: UUID = UUID(),
@@ -128,7 +131,8 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         manualToolNames: [String]? = nil,
         manualSkillNames: [String]? = nil,
         disableTools: Bool? = nil,
-        disableMemory: Bool? = nil
+        disableMemory: Bool? = nil,
+        avatar: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -153,6 +157,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.manualSkillNames = manualSkillNames
         self.disableTools = disableTools
         self.disableMemory = disableMemory
+        self.avatar = avatar
     }
 
     // MARK: - Localized Display Helpers
@@ -235,6 +240,7 @@ extension Agent {
         manualSkillNames = try c.decodeIfPresent([String].self, forKey: .manualSkillNames)
         disableTools = try c.decodeIfPresent(Bool.self, forKey: .disableTools)
         disableMemory = try c.decodeIfPresent(Bool.self, forKey: .disableMemory)
+        avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
     }
 }
 

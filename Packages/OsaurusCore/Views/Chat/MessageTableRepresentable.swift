@@ -65,6 +65,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
     let groupHeaderMap: [UUID: UUID]
     let width: CGFloat
     let agentName: String
+    let agentAvatar: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let autoScrollEnabled: Bool
@@ -186,6 +187,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         CellRenderingContext(
             width: max(100, width),
             agentName: agentName,
+            agentAvatar: agentAvatar,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             theme: theme,
@@ -215,6 +217,7 @@ struct MessageTableRepresentable: NSViewRepresentable {
         CellRenderingContext(
             width: max(100, width),
             agentName: agentName,
+            agentAvatar: agentAvatar,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             theme: theme,
@@ -315,6 +318,7 @@ extension MessageTableRepresentable {
         private var ctx = CellRenderingContext(
             width: 400,
             agentName: "",
+            agentAvatar: nil,
             isStreaming: false,
             lastAssistantTurnId: nil,
             theme: LightTheme(),

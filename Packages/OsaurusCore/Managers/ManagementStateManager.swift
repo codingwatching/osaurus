@@ -20,5 +20,9 @@ public final class ManagementStateManager: ObservableObject {
     /// VoiceView observes this and resets it to nil after applying.
     @Published public var voiceSubTabRequest: String?
 
+    /// One-shot request to open the detail page for a specific plugin id from a deeplink.
+    /// `PluginsView` observes this and resets it to nil after applying.
+    @Published public var pendingPluginDetailId: String?
+
     private init() {}
 }

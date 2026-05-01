@@ -179,7 +179,7 @@ struct ModelRowView: View {
         }
         .foregroundColor(.white)
         .padding(.horizontal, 8)
-        .padding(.vertical, 4)
+        .frame(height: 22)
         .background(
             Capsule().fill(.black.opacity(0.28))
         )
@@ -187,9 +187,9 @@ struct ModelRowView: View {
 
     private var downloadedBadge: some View {
         Image(systemName: "checkmark.circle.fill")
-            .font(.system(size: 15, weight: .semibold))
+            .font(.system(size: 12, weight: .bold))
             .foregroundColor(.white)
-            .padding(3)
+            .frame(width: 22, height: 22)
             .background(
                 Circle().fill(.black.opacity(0.28))
             )

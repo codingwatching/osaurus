@@ -15,6 +15,7 @@ import QuartzCore
 struct CellRenderingContext {
     var width: CGFloat
     let agentName: String
+    let agentAvatar: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     let theme: any ThemeProtocol
@@ -45,9 +46,14 @@ struct CellRenderingContext {
 /// Pure AppKit header row: name label + hover-revealed action buttons.
 final class NativeHeaderView: NSView {
 
+    private let avatarImageView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let actionStack = NSStackView()
     private var isEditing = false
+    private var avatarLeadingConstraint: NSLayoutConstraint?
+    private var nameLeadingToAvatar: NSLayoutConstraint?
+    private var nameLeadingToSelf: NSLayoutConstraint?
+    private static let avatarSize: CGFloat = 24
 
     private var turnId: UUID = UUID()
     private var onCopy: ((UUID) -> Void)?
@@ -68,6 +74,15 @@ final class NativeHeaderView: NSView {
     private func setupViews() {
         translatesAutoresizingMaskIntoConstraints = false
 
+        avatarImageView.translatesAutoresizingMaskIntoConstraints = false
+        avatarImageView.imageScaling = .scaleProportionallyUpOrDown
+        avatarImageView.isHidden = true
+        avatarImageView.wantsLayer = true
+        avatarImageView.layer?.cornerRadius = Self.avatarSize / 2
+        avatarImageView.layer?.masksToBounds = true
+        avatarImageView.layer?.borderWidth = 1
+        addSubview(avatarImageView)
+
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.isSelectable = true
         nameLabel.maximumNumberOfLines = 1
@@ -83,8 +98,22 @@ final class NativeHeaderView: NSView {
         actionStack.alphaValue = 0
         addSubview(actionStack)
 
+        let avatarLeading = avatarImageView.leadingAnchor.constraint(equalTo: leadingAnchor)
+        let nameToAvatar = nameLabel.leadingAnchor.constraint(
+            equalTo: avatarImageView.trailingAnchor,
+            constant: 6
+        )
+        let nameToSelf = nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor)
+        nameToSelf.isActive = true
+        avatarLeadingConstraint = avatarLeading
+        nameLeadingToAvatar = nameToAvatar
+        nameLeadingToSelf = nameToSelf
+
         NSLayoutConstraint.activate([
-            nameLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            avatarLeading,
+            avatarImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            avatarImageView.widthAnchor.constraint(equalToConstant: Self.avatarSize),
+            avatarImageView.heightAnchor.constraint(equalToConstant: Self.avatarSize),
             nameLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             actionStack.trailingAnchor.constraint(equalTo: trailingAnchor),
             actionStack.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -95,6 +124,7 @@ final class NativeHeaderView: NSView {
         turnId: UUID,
         role: MessageRole,
         name: String,
+        avatar: String?,
         isEditing: Bool,
         isHovered: Bool,
         theme: any ThemeProtocol,
@@ -114,6 +144,20 @@ final class NativeHeaderView: NSView {
         self.currentRole = role
         self.currentTheme = theme
 
+        // Show the mascot only on assistant messages and only when a known
+        // mascot is set; monogram fallback intentionally renders nothing here.
+        let mascotImage: NSImage? = {
+            guard role == .assistant, let avatar, !avatar.isEmpty else { return nil }
+            return Bundle.module.image(forResource: "osaurus-avatar-\(avatar)")
+        }()
+        avatarImageView.image = mascotImage
+        let showAvatar = mascotImage != nil
+        avatarImageView.isHidden = !showAvatar
+        avatarImageView.layer?.borderColor =
+            NSColor(theme.secondaryText).withAlphaComponent(0.35).cgColor
+        nameLeadingToSelf?.isActive = !showAvatar
+        nameLeadingToAvatar?.isActive = showAvatar
+
         nameLabel.stringValue = name
         nameLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) + 1, weight: .semibold)
         nameLabel.textColor = role == .user ? NSColor(theme.accentColor) : NSColor(theme.secondaryText)
@@ -128,7 +172,8 @@ final class NativeHeaderView: NSView {
         guard count > 0 else { return NSSize(width: NSView.noIntrinsicMetric, height: 28) }
         let stackW = count * Self.actionButtonSize + max(0, count - 1) * actionStack.spacing
         let labelW = nameLabel.intrinsicContentSize.width
-        let total = stackW + (labelW > 0 ? labelW + 8 : 0)
+        let avatarW: CGFloat = avatarImageView.isHidden ? 0 : (Self.avatarSize + 6)
+        let total = stackW + avatarW + (labelW > 0 ? labelW + 8 : 0)
         return NSSize(width: total, height: 28)
     }
 
@@ -1141,6 +1186,7 @@ final class NativeMessageCellView: NSTableCellView {
             turnId: block.turnId,
             role: role,
             name: displayName,
+            avatar: context.agentAvatar,
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
             theme: context.theme,
@@ -1587,6 +1633,7 @@ final class NativeMessageCellView: NSTableCellView {
             turnId: block.turnId,
             role: .user,
             name: "",
+            avatar: nil,
             isEditing: context.editingTurnId == block.turnId,
             isHovered: context.isTurnHovered,
             theme: context.theme,

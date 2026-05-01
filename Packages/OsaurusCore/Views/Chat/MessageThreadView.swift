@@ -15,6 +15,7 @@ struct MessageThreadView: View {
     var groupHeaderMap: [UUID: UUID]? = nil
     let width: CGFloat
     let agentName: String
+    let agentAvatar: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
     var autoScrollEnabled: Bool = true
@@ -77,6 +78,7 @@ struct MessageThreadView: View {
             groupHeaderMap: resolvedGroupHeaderMap,
             width: width,
             agentName: agentName,
+            agentAvatar: agentAvatar,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
             autoScrollEnabled: autoScrollEnabled,

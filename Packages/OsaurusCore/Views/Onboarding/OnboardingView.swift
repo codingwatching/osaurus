@@ -4,25 +4,30 @@
 //
 //  Main container view managing the onboarding flow state and navigation.
 //
+//  Architecture: a single `OnboardingChromeShell` is rendered at this level
+//  with structural chrome (back button position, title slot, close button,
+//  footer layout) that stays pixel-stable across step transitions. The six
+//  animated slots — title, body, progress dots, footer caption, secondary
+//  text, primary CTA — slide together as a single visual unit when the step
+//  changes. Each step's mutable state lives in a `@StateObject` here so
+//  values survive the slide-out / slide-in.
+//
 
 import SwiftUI
 
 // MARK: - Onboarding Step
 
-/// Steps in the onboarding flow
 public enum OnboardingStep: Int, CaseIterable {
     case welcome
-    case choosePath
-    case localDownload
-    case apiSetup
-    case complete
+    case createAgent
+    case configureAI
     case identitySetup
     case walkthrough
 }
 
 // MARK: - Navigation Direction
 
-private enum NavigationDirection {
+enum OnboardingDirection {
     case forward
     case backward
 }
@@ -30,159 +35,273 @@ private enum NavigationDirection {
 // MARK: - Onboarding View
 
 public struct OnboardingView: View {
-    /// Callback when onboarding is complete
     let onComplete: () -> Void
-    /// Optional callback fired when the preferred window height for the current step changes.
-    /// The host (AppDelegate) uses this to animate `NSWindow.setFrame`.
-    let onPreferredHeightChange: ((CGFloat) -> Void)?
+    let onPreferredSizeChange: ((CGSize) -> Void)?
     let forceShowIdentity: Bool
 
     @Environment(\.theme) private var theme
-    @State private var currentStep: OnboardingStep = .welcome
-    @State private var selectedPath: OnboardingSetupPath? = nil
-    @State private var navigationDirection: NavigationDirection = .forward
-    @State private var wantsWalkthrough = false
+    @State private var currentStep: OnboardingStep
+    @State private var direction: OnboardingDirection = .forward
+
+    @StateObject private var createAgentState = CreateAgentState()
+    @StateObject private var configureAIState = ConfigureAIState()
+    @StateObject private var identityState = IdentityState()
+    @StateObject private var walkthroughState = WalkthroughState()
+
+    private static let progressSteps: [OnboardingStep] = [
+        .createAgent, .configureAI, .identitySetup, .walkthrough,
+    ]
 
     public init(
         forceShowIdentity: Bool = false,
-        onPreferredHeightChange: ((CGFloat) -> Void)? = nil,
+        onPreferredSizeChange: ((CGSize) -> Void)? = nil,
         onComplete: @escaping () -> Void
     ) {
         self.forceShowIdentity = forceShowIdentity
-        self.onPreferredHeightChange = onPreferredHeightChange
+        self.onPreferredSizeChange = onPreferredSizeChange
         self.onComplete = onComplete
+        _currentStep = State(initialValue: forceShowIdentity ? .identitySetup : .welcome)
     }
 
     public var body: some View {
         ZStack {
-            // Glass background layers
             glassBackground
 
-            // Content with staggered transitions
-            contentView
-                .transition(slideTransition)
-                .id(currentStep)
-
-            // Close button (top-right corner)
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    Spacer()
-                    OnboardingCloseButton(action: finishOnboarding)
-                        .padding(.top, 14)
-                        .padding(.trailing, 14)
-                }
-                Spacer()
-            }
-            .ignoresSafeArea()
+            OnboardingChromeShell(
+                onBack: chromeOnBack,
+                onClose: finishOnboarding,
+                title: { titleSlot },
+                progressIndicator: { progressSlot },
+                footerCaption: { footerCaptionSlot },
+                secondary: { secondarySlot },
+                body: { bodySlot },
+                cta: { ctaSlot }
+            )
         }
-        .frame(
-            width: OnboardingMetrics.windowWidth,
-            height: onboardingPreferredHeight(for: currentStep)
-        )
-        .preference(
-            key: OnboardingHeightPreferenceKey.self,
-            value: onboardingPreferredHeight(for: currentStep)
-        )
-        .onPreferenceChange(OnboardingHeightPreferenceKey.self) { newHeight in
-            onPreferredHeightChange?(newHeight)
+        .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
+        .onAppear {
+            onPreferredSizeChange?(
+                CGSize(
+                    width: OnboardingMetrics.windowWidth,
+                    height: OnboardingMetrics.windowHeight
+                )
+            )
         }
     }
 
-    // MARK: - Content View
+    // MARK: - Animated slots
 
     @ViewBuilder
-    private var contentView: some View {
+    private var titleSlot: some View {
+        ZStack {
+            stepTitleText
+                .id(currentStep)
+                .transition(slideTransition)
+        }
+    }
+
+    @ViewBuilder
+    private var stepTitleText: some View {
+        if let title = chromeTitle {
+            Text(title, bundle: .module)
+                .font(theme.font(size: OnboardingMetrics.titleSize, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(1)
+        }
+    }
+
+    @ViewBuilder
+    private var progressSlot: some View {
+        ZStack {
+            stepProgressDots
+                .id(currentStep)
+                .transition(slideTransition)
+        }
+    }
+
+    @ViewBuilder
+    private var stepProgressDots: some View {
+        if let index = progressIndex(for: currentStep) {
+            OnboardingStepIndicator(current: index, total: Self.progressSteps.count)
+        }
+    }
+
+    @ViewBuilder
+    private var footerCaptionSlot: some View {
+        ZStack {
+            stepFooterCaptionText
+                .id(currentStep)
+                .transition(slideTransition)
+        }
+    }
+
+    @ViewBuilder
+    private var stepFooterCaptionText: some View {
+        Text(chromeFooterCaption ?? " ")
+            .font(theme.font(size: OnboardingMetrics.captionSize))
+            .foregroundColor(theme.tertiaryText)
+            .multilineTextAlignment(.center)
+            .lineLimit(1)
+            .opacity(chromeFooterCaption == nil ? 0 : 1)
+    }
+
+    @ViewBuilder
+    private var secondarySlot: some View {
+        ZStack {
+            stepSecondary
+                .id(currentStep)
+                .transition(slideTransition)
+        }
+    }
+
+    @ViewBuilder
+    private var bodySlot: some View {
+        ZStack {
+            stepBody
+                .id(currentStep)
+                .transition(slideTransition)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var ctaSlot: some View {
+        ZStack {
+            stepCTA
+                .id(currentStep)
+                .transition(slideTransition)
+        }
+    }
+
+    // MARK: - Step content dispatch
+
+    @ViewBuilder
+    private var stepBody: some View {
         switch currentStep {
         case .welcome:
-            OnboardingWelcomeView {
-                navigateTo(.choosePath, direction: .forward)
-            }
-
-        case .choosePath:
-            OnboardingChoosePathView(
-                onSelectLocal: {
-                    selectedPath = .local
-                    navigateTo(.localDownload, direction: .forward)
-                },
-                onSelectAPI: {
-                    selectedPath = .apiProvider
-                    navigateTo(.apiSetup, direction: .forward)
-                },
-                onSelectFoundation: {
-                    selectedPath = .appleFoundation
-                    navigateTo(.complete, direction: .forward)
-                }
-            )
-
-        case .localDownload:
-            OnboardingLocalDownloadView(
-                onComplete: {
-                    navigateTo(.complete, direction: .forward)
-                },
-                onSkip: {
-                    navigateTo(.complete, direction: .forward)
-                },
-                onBack: {
-                    navigateTo(.choosePath, direction: .backward)
-                }
-            )
-
-        case .apiSetup:
-            OnboardingAPISetupView(
-                onComplete: {
-                    navigateTo(.complete, direction: .forward)
-                },
-                onBack: {
-                    navigateTo(.choosePath, direction: .backward)
-                }
-            )
-
-        case .complete:
-            OnboardingCompleteView(
-                onWalkthrough: {
-                    wantsWalkthrough = true
-                    navigateToIdentityOrNext()
-                },
-                onSkip: {
-                    wantsWalkthrough = false
-                    navigateToIdentityOrNext()
-                },
-                onSettings: {
-                    finishOnboarding()
-                    NotificationCenter.default.post(name: NSNotification.Name("ShowManagement"), object: nil)
-                }
-            )
-
+            WelcomeBody()
+        case .createAgent:
+            CreateAgentBody(state: createAgentState)
+        case .configureAI:
+            ConfigureAIBody(state: configureAIState)
         case .identitySetup:
-            OnboardingIdentitySetupView(
-                onComplete: proceedAfterIdentity,
-                onSkip: proceedAfterIdentity,
-                onBack: {
-                    navigateTo(.complete, direction: .backward)
-                }
-            )
-
+            IdentityBody(state: identityState)
         case .walkthrough:
-            OnboardingWalkthroughView {
-                finishOnboarding()
+            WalkthroughBody(state: walkthroughState)
+        }
+    }
+
+    @ViewBuilder
+    private var stepCTA: some View {
+        switch currentStep {
+        case .welcome:
+            // Welcome doesn't fit the wizard pattern — center the CTA in
+            // the action row by stretching it to fill the available width.
+            HStack {
+                Spacer(minLength: 0)
+                WelcomeCTA(onContinue: { advance(to: .createAgent) })
+                Spacer(minLength: 0)
+            }
+        case .createAgent:
+            CreateAgentCTA(
+                state: createAgentState,
+                onContinue: { advance(to: .configureAI) }
+            )
+        case .configureAI:
+            ConfigureAICTA(
+                state: configureAIState,
+                onComplete: { advance(to: .identitySetup) }
+            )
+        case .identitySetup:
+            IdentityCTA(
+                state: identityState,
+                onComplete: { advance(to: .walkthrough) }
+            )
+        case .walkthrough:
+            WalkthroughCTA(
+                state: walkthroughState,
+                onFinish: finishOnboarding
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var stepSecondary: some View {
+        switch currentStep {
+        case .welcome:
+            EmptyView()
+        case .createAgent:
+            CreateAgentSecondary(onSkip: { advance(to: .configureAI) })
+        case .configureAI:
+            ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .identitySetup) })
+        case .identitySetup:
+            IdentitySecondary(state: identityState, onSkip: { advance(to: .walkthrough) })
+        case .walkthrough:
+            EmptyView()
+        }
+    }
+
+    // MARK: - Chrome content (reads from per-step state)
+
+    private var chromeTitle: LocalizedStringKey? {
+        switch currentStep {
+        case .welcome: return nil
+        case .createAgent: return "Create your agent"
+        case .configureAI: return "Configure your AI"
+        case .identitySetup: return "Set up identity"
+        case .walkthrough: return "How it works"
+        }
+    }
+
+    private var chromeFooterCaption: LocalizedStringKey? {
+        switch currentStep {
+        case .welcome: return nil
+        case .createAgent: return nil
+        case .configureAI: return configureAIState.footerCaption
+        case .identitySetup: return identityState.footerCaption
+        case .walkthrough: return nil
+        }
+    }
+
+    private var chromeOnBack: (() -> Void)? {
+        switch currentStep {
+        case .welcome:
+            return nil
+        case .createAgent:
+            return { advance(to: .welcome, direction: .backward) }
+        case .configureAI:
+            return { configureAIState.handleBack { advance(to: .createAgent, direction: .backward) } }
+        case .identitySetup:
+            return { advance(to: .configureAI, direction: .backward) }
+        case .walkthrough:
+            return {
+                walkthroughState.handleBack { advance(to: .identitySetup, direction: .backward) }
             }
         }
     }
 
-    // MARK: - Slide Transition
+    // MARK: - Step indicator
+
+    /// 1-indexed position in the global progress dots, or `nil` to hide the
+    /// indicator. Welcome has no progress (it's the title screen) and the
+    /// Walkthrough has its own internal page indicator inside the body —
+    /// showing both at once (global "4 of 4" plus internal "1 of 4") just
+    /// reads as duplicated dots.
+    private func progressIndex(for step: OnboardingStep) -> Int? {
+        if step == .walkthrough { return nil }
+        guard let idx = Self.progressSteps.firstIndex(of: step) else { return nil }
+        return idx + 1
+    }
+
+    // MARK: - Slide Transition (pure horizontal)
 
     private var slideTransition: AnyTransition {
-        let offset: CGFloat = 40
-        let insertionOffset = navigationDirection == .forward ? offset : -offset
-        let removalOffset = navigationDirection == .forward ? -offset : offset
-
+        let dx = OnboardingMetrics.slideOffset
+        let inOffset = direction == .forward ? dx : -dx
+        let outOffset = direction == .forward ? -dx : dx
         return .asymmetric(
-            insertion: .opacity
-                .combined(with: .offset(x: insertionOffset))
-                .combined(with: .scale(scale: 0.98)),
-            removal: .opacity
-                .combined(with: .offset(x: removalOffset))
-                .combined(with: .scale(scale: 0.98))
+            insertion: .offset(x: inOffset),
+            removal: .offset(x: outOffset)
         )
     }
 
@@ -190,17 +309,11 @@ public struct OnboardingView: View {
 
     private var glassBackground: some View {
         ZStack {
-            // Base material layer
             if theme.glassEnabled {
-                Rectangle()
-                    .fill(.ultraThinMaterial)
+                Rectangle().fill(.ultraThinMaterial)
             }
+            theme.primaryBackground.opacity(theme.glassEnabled ? 0.85 : 1.0)
 
-            // Semi-transparent background
-            theme.primaryBackground
-                .opacity(theme.glassEnabled ? 0.85 : 1.0)
-
-            // Gradient overlay for depth
             LinearGradient(
                 colors: [
                     theme.accentColor.opacity(theme.isDark ? 0.08 : 0.04),
@@ -211,12 +324,8 @@ public struct OnboardingView: View {
                 endPoint: .bottomTrailing
             )
 
-            // Subtle radial gradient for ambient glow
             RadialGradient(
-                colors: [
-                    theme.accentColor.opacity(0.06),
-                    Color.clear,
-                ],
+                colors: [theme.accentColor.opacity(0.06), Color.clear],
                 center: .top,
                 startRadius: 0,
                 endRadius: 400
@@ -227,26 +336,10 @@ public struct OnboardingView: View {
 
     // MARK: - Navigation
 
-    private func navigateTo(_ step: OnboardingStep, direction: NavigationDirection) {
-        navigationDirection = direction
-        withAnimation(theme.springAnimation(responseMultiplier: 0.8)) {
+    private func advance(to step: OnboardingStep, direction: OnboardingDirection = .forward) {
+        self.direction = direction
+        withAnimation(.spring(response: 0.5, dampingFraction: 0.85)) {
             currentStep = step
-        }
-    }
-
-    private func navigateToIdentityOrNext() {
-        if !forceShowIdentity && OsaurusIdentity.exists() {
-            proceedAfterIdentity()
-        } else {
-            navigateTo(.identitySetup, direction: .forward)
-        }
-    }
-
-    private func proceedAfterIdentity() {
-        if wantsWalkthrough {
-            navigateTo(.walkthrough, direction: .forward)
-        } else {
-            finishOnboarding()
         }
     }
 
@@ -256,77 +349,13 @@ public struct OnboardingView: View {
     }
 }
 
-// MARK: - Onboarding Close Button
-
-private struct OnboardingCloseButton: View {
-    let action: () -> Void
-
-    @State private var isHovered = false
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(theme.secondaryBackground.opacity(isHovered ? 0.9 : 0.5))
-
-                if isHovered {
-                    Circle()
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.red.opacity(0.15),
-                                    Color.clear,
-                                ],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                }
-
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(isHovered ? Color.red.opacity(0.9) : theme.secondaryText)
-            }
-            .frame(width: 26, height: 26)
-            .overlay(
-                Circle()
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [
-                                theme.glassEdgeLight.opacity(isHovered ? 0.3 : 0.15),
-                                (isHovered ? Color.red : theme.primaryBorder).opacity(isHovered ? 0.2 : 0.1),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        lineWidth: 1
-                    )
-            )
-            .shadow(
-                color: isHovered ? Color.red.opacity(0.2) : .clear,
-                radius: 6,
-                x: 0,
-                y: 2
-            )
-            .scaleEffect(isHovered ? 1.05 : 1.0)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
-    }
-}
-
 // MARK: - Preview
 
 #if DEBUG
     struct OnboardingView_Previews: PreviewProvider {
         static var previews: some View {
             OnboardingView(onComplete: {})
-                .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.defaultHeight)
+                .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
         }
     }
 #endif

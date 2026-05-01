@@ -475,15 +475,14 @@ private struct SessionRow: View {
 
     @ViewBuilder
     private func agentIndicatorView(_ agent: Agent) -> some View {
-        ZStack {
-            Circle()
-                .fill(agentColor.opacity(theme.isDark ? 0.14 : 0.10))
-                .frame(width: 24, height: 24)
-
-            Text(agent.name.prefix(1).uppercased())
-                .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundColor(agentColor)
-        }
+        AgentAvatarView(
+            mascotId: agent.avatar,
+            name: agent.name,
+            tint: agentColor,
+            diameter: 24,
+            monogramFontSize: 10,
+            borderWidth: 1
+        )
         .help(agent.name)
     }
 

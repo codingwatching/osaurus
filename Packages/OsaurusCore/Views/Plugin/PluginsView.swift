@@ -38,6 +38,8 @@ struct PluginsView: View {
     // Detail navigation
     @State private var selectedPlugin: PluginState?
 
+    @ObservedObject private var managementState = ManagementStateManager.shared
+
     // Success toast
     @State private var successMessage: String?
 
@@ -89,11 +91,16 @@ struct PluginsView: View {
                 Task {
                     try? await Task.sleep(nanoseconds: 100_000_000)
                     await repoService.refresh()
+                    applyPendingPluginDetailRequest()
                 }
             }
             withAnimation(.easeOut(duration: 0.25).delay(0.1)) {
                 hasAppeared = true
             }
+            applyPendingPluginDetailRequest()
+        }
+        .onReceive(managementState.$pendingPluginDetailId) { _ in
+            applyPendingPluginDetailRequest()
         }
         .task(id: searchText) {
             try? await Task.sleep(nanoseconds: 150_000_000)
@@ -107,6 +114,7 @@ struct PluginsView: View {
                 selectedPlugin = updated
             }
             Task { await updateFilteredLists() }
+            applyPendingPluginDetailRequest(in: newPlugins)
         }
         .onReceive(PluginRepositoryService.shared.$isRefreshing) { isRepoRefreshing = $0 }
         .onReceive(PluginRepositoryService.shared.$updatesAvailableCount) { updatesAvailableCount = $0 }
@@ -132,6 +140,28 @@ struct PluginsView: View {
                 )
             }
         }
+    }
+
+    /// Honor a pending `osaurus://plugins-install?tool=<id>` deeplink request.
+    /// switch to the right tab, open the plugin's detail view, then clear the request.
+    /// called both on appear and whenever the repo's plugin list updates so the
+    /// request can resolve as soon as the plugin becomes known
+    private func applyPendingPluginDetailRequest(in plugins: [PluginState]? = nil) {
+        guard let pluginId = managementState.pendingPluginDetailId, !pluginId.isEmpty else { return }
+        let source = plugins ?? repoService.plugins
+        guard let plugin = source.first(where: { $0.pluginId == pluginId }) else {
+            // repo not loaded yet so leave the request in place and let the
+            // `$plugins` receiver retry once it arrives
+            return
+        }
+
+        if !installedPlugins.contains(where: { $0.pluginId == pluginId }) {
+            selectedTab = .browse
+        }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            selectedPlugin = plugin
+        }
+        managementState.pendingPluginDetailId = nil
     }
 
     private func showSecretsSheetForPlugin(pluginId: String) {

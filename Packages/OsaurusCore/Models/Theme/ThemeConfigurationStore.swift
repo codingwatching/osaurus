@@ -11,6 +11,10 @@ import Foundation
 @MainActor
 public enum ThemeConfigurationStore {
     private static let activeThemeKey = "activeThemeId"
+    private static let builtInThemeSchemaKey = "builtInThemeSchemaVersion"
+    /// Increment this whenever the built-in Dark/Light palette changes so existing
+    /// installations receive the updated colors on next launch.
+    private static let currentBuiltInThemeSchema = 2
     private static var builtInThemesInstalled = false
 
     // MARK: - Active Theme
@@ -123,10 +127,19 @@ public enum ThemeConfigurationStore {
     static func installBuiltInThemesIfNeeded() {
         guard (try? OsaurusPaths.ensureExists(themesDirectoryURL())) != nil else { return }
 
-        for theme in CustomTheme.allBuiltInPresets {
-            let url = themeFileURL(for: theme.metadata.id)
-            if !FileManager.default.fileExists(atPath: url.path) {
+        let storedSchema = UserDefaults.standard.integer(forKey: builtInThemeSchemaKey)
+        if storedSchema < currentBuiltInThemeSchema {
+            // Schema bumped — force-reinstall so existing users get updated palettes
+            for theme in CustomTheme.allBuiltInPresets {
                 saveTheme(theme)
+            }
+            UserDefaults.standard.set(currentBuiltInThemeSchema, forKey: builtInThemeSchemaKey)
+        } else {
+            for theme in CustomTheme.allBuiltInPresets {
+                let url = themeFileURL(for: theme.metadata.id)
+                if !FileManager.default.fileExists(atPath: url.path) {
+                    saveTheme(theme)
+                }
             }
         }
         builtInThemesInstalled = true

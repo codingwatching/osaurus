@@ -3,66 +3,109 @@
 //  osaurus
 //
 //  Single source of truth for onboarding layout tokens, visual constants,
-//  per-step preferred heights and the height preference key used to drive
-//  adaptive window sizing from the host (`AppDelegate`).
+//  and per-step preferred sizing. The flow uses ONE fixed window size for
+//  every step — internal scrolling absorbs any overflow — so the host
+//  (`AppDelegate`) never resizes the window between steps.
 //
 
 import SwiftUI
 
 // MARK: - Layout Tokens
 
-/// Layout, sizing and typography constants shared by every onboarding screen.
 enum OnboardingMetrics {
-    // Window
-    static let windowWidth: CGFloat = 520
-    static let minHeight: CGFloat = 520
-    static let maxHeight: CGFloat = 760
-    static let defaultHeight: CGFloat = 580
+    // Window — fixed for every step
+    static let windowWidth: CGFloat = 820
+    static let windowHeight: CGFloat = 640
+    static let minHeight: CGFloat = 540
+    static let maxHeight: CGFloat = 780
 
-    // Layout
-    /// Single horizontal inset used for content (back row, header, body, footer, CTA).
-    static let contentHorizontal: CGFloat = 28
-    /// Height of the top bar that hosts the back button (also used as top inset when no back).
-    static let topBarHeight: CGFloat = 48
-    /// Spacing between header (title + subtitle) and body content.
-    static let headerToBody: CGFloat = 20
-    /// Minimum spacing between body and footer caption (the surrounding flex spacer absorbs slack).
-    static let bodyToFooter: CGFloat = 14
-    /// Spacing between footer and CTA.
-    static let footerToCTA: CGFloat = 18
-    /// Bottom inset under the CTA.
-    static let bottomInset: CGFloat = 28
-    /// Spacing between title and subtitle.
-    static let titleToSubtitle: CGFloat = 8
+    // Header
+    /// Total height of the full-width header bar (back + title + close).
+    /// The step indicator lives in its own strip above the footer, so the
+    /// header is shorter than the title-only height suggests.
+    static let headerHeight: CGFloat = 52
+    /// Horizontal padding for header content (back/close hug the edges via this).
+    static let headerHorizontal: CGFloat = 20
+
+    // Step indicator
+    /// Height the progress-dots row occupies inside the footer column.
+    static let progressStripHeight: CGFloat = 8
+
+    // Footer
+    /// Vertical padding above the footer's caption / action row.
+    static let footerTopPadding: CGFloat = 18
+    /// Vertical padding below the footer's action row — generous so the
+    /// CTA never hugs the window's bottom edge.
+    static let footerBottomPadding: CGFloat = 48
+    /// Horizontal padding inside the footer.
+    static let footerHorizontal: CGFloat = 28
+    /// Spacing between the footer caption row and the action row.
+    static let footerCaptionToCTA: CGFloat = 12
+
+    // Body — shared
+    /// Width of the left column in the two-column body layout.
+    static let leftColumnWidth: CGFloat = 340
+    /// Padding inside the left column.
+    static let leftColumnPadding: CGFloat = 28
+    /// Horizontal padding for right-column scroll content.
+    static let rightColumnHorizontalPadding: CGFloat = 28
+    /// Vertical padding shared by both columns of the two-column body so
+    /// that the illustration and the form scroll content start at the
+    /// same vertical position.
+    static let bodyVerticalPadding: CGFloat = 16
+
+    // Left column rhythm
+    static let illustrationMaxHeight: CGFloat = 220
+    static let illustrationToHeadline: CGFloat = 22
+    static let leftHeadlineToBody: CGFloat = 8
+
+    // Hero body
+    static let heroIllustrationMaxHeight: CGFloat = 200
+    static let heroIllustrationToHeadline: CGFloat = 24
+    static let heroHeadlineToSubtitle: CGFloat = 12
+    static let heroMaxTextWidth: CGFloat = 460
 
     // Typography
-    static let titleSize: CGFloat = 22
+    static let titleSize: CGFloat = 16
     static let subtitleSize: CGFloat = 13
     static let captionSize: CGFloat = 12
-    static let heroTitleSize: CGFloat = 28
+    static let leftHeadlineSize: CGFloat = 18
+    static let leftBodySize: CGFloat = 12
+    static let heroHeadlineSize: CGFloat = 30
+    static let heroSubtitleSize: CGFloat = 14
+    static let sectionLabelSize: CGFloat = 10
 
     // Cards & shapes
     static let cardCornerRadius: CGFloat = 12
-    static let cardPaddingH: CGFloat = 16
-    static let cardPaddingV: CGFloat = 14
-    static let cardIcon: CGFloat = 44
-    static let cardSpacing: CGFloat = 10
+    static let cardPaddingH: CGFloat = 14
+    static let cardPaddingV: CGFloat = 12
+    static let cardIcon: CGFloat = 40
+    static let cardSpacing: CGFloat = 8
+    /// Spacing between distinct form sections (label group → next label group).
+    static let sectionSpacing: CGFloat = 18
+    /// Spacing between a section label and its first input.
+    static let labelToInput: CGFloat = 6
 
     // Buttons
     static let buttonCornerRadius: CGFloat = 10
-    static let buttonHeight: CGFloat = 44
-    /// Default CTA width (single-action screens).
-    static let ctaWidth: CGFloat = 200
-    /// Compact CTA width (used by the hero Welcome shimmer button).
-    static let ctaWidthCompact: CGFloat = 180
+    static let buttonHeight: CGFloat = 42
+    /// Standard CTA width used by every primary footer button.
+    static let ctaWidthCompact: CGFloat = 200
 
-    // Animation
-    static let appearDelay: Double = 0.1
+    /// Horizontal offset used by step slide transitions. Sized to the full
+    /// window width so views slide cleanly off-screen instead of overlapping.
+    static let slideOffset: CGFloat = windowWidth
+
+    /// Horizontal offset used by substate slide transitions inside a step
+    /// (e.g. ConfigureAI's segmented-path body). Sized to the right column
+    /// (window − left column) so substates slide off the column edge.
+    static let substateSlideOffset: CGFloat = windowWidth - leftColumnWidth
 }
 
 // MARK: - Visual Style Tokens
 
-/// Opacity and glow tokens for the glass background, borders and button glow.
+/// Glass / accent tokens consumed by `OnboardingCards`. Centralised so
+/// dark/light treatments stay paired.
 enum OnboardingStyle {
     // Glass background
     static let glassOpacityDark: Double = 0.78
@@ -81,44 +124,22 @@ enum OnboardingStyle {
     // Accent edge highlight
     static let accentEdgeHoverOpacity: Double = 0.18
     static let accentEdgeNormalOpacity: Double = 0.10
-
-    // Button glow
-    static let buttonGlowRadiusNormal: CGFloat = 12
-    static let buttonGlowRadiusHover: CGFloat = 16
-    static let buttonGlowOpacityNormal: Double = 0.25
-    static let buttonGlowOpacityHover: Double = 0.4
 }
 
-// MARK: - Per-Step Preferred Height
+// MARK: - Per-Step Preferred Size (constant)
 
-/// Preferred window height for a given onboarding step, clamped to
-/// `[OnboardingMetrics.minHeight, OnboardingMetrics.maxHeight]`. Heights are
-/// tuned so the scaffold's flexible spacer leaves a natural amount of breathing
-/// room — not so much that the screen looks empty.
+/// Preferred window width for a given onboarding step. Always returns the
+/// uniform `OnboardingMetrics.windowWidth` — every step shares the same
+/// window so the chrome never resizes between transitions.
+func onboardingPreferredWidth(for step: OnboardingStep) -> CGFloat {
+    OnboardingMetrics.windowWidth
+}
+
+/// Preferred window height for a given onboarding step. Always returns the
+/// uniform `OnboardingMetrics.windowHeight`. Per-step content overflow is
+/// handled by internal scrolling rather than window resizing.
 func onboardingPreferredHeight(for step: OnboardingStep) -> CGFloat {
-    let raw: CGFloat = {
-        switch step {
-        case .welcome: return 540
-        case .choosePath: return 560
-        case .localDownload: return 640
-        case .apiSetup: return 660
-        case .complete: return 580
-        case .identitySetup: return 600
-        case .walkthrough: return 620
-        }
-    }()
-    return min(max(raw, OnboardingMetrics.minHeight), OnboardingMetrics.maxHeight)
-}
-
-// MARK: - Height Preference Key
-
-/// Communicates the active step's preferred window height from `OnboardingView`
-/// up to the host (`AppDelegate`), which animates the NSWindow accordingly.
-struct OnboardingHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = OnboardingMetrics.defaultHeight
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
-    }
+    OnboardingMetrics.windowHeight
 }
 
 // MARK: - Delayed Appear Helper

@@ -594,9 +594,6 @@ private final class ModelRowCellView: NSTableCellView {
         CATransaction.commit()
 
         let checkVisible = !checkmarkView.isHidden
-        if checkVisible {
-            checkmarkView.frame = CGRect(x: w - pad - 14, y: (h - 14) / 2, width: 14, height: 14)
-        }
         let contentW = (checkVisible ? w - pad - 22 : w - pad) - pad
         var y = topPad
 
@@ -611,6 +608,17 @@ private final class ModelRowCellView: NSTableCellView {
             )
         } else {
             nameLabel.frame = CGRect(x: pad, y: y, width: max(0, contentW), height: nameH)
+        }
+        if checkVisible {
+            // Align the checkmark with the name line so it sits next to the
+            // inline Vision badge instead of drifting to the row's vertical
+            // center, which looks broken when the row is tall.
+            checkmarkView.frame = CGRect(
+                x: w - pad - 14,
+                y: y + (nameH - 14) / 2,
+                width: 14,
+                height: 14
+            )
         }
         y += nameH
 

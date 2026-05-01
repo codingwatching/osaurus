@@ -95,7 +95,9 @@ struct OnboardingTextField: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            OnboardingFieldLabel(text: label)
+            if !label.isEmpty {
+                OnboardingFieldLabel(text: label)
+            }
 
             TextField(text: $text, prompt: Text(LocalizedStringKey(placeholder), bundle: .module)) {
                 Text(LocalizedStringKey(placeholder), bundle: .module)
@@ -105,6 +107,56 @@ struct OnboardingTextField: View {
             .foregroundColor(theme.primaryText)
             .padding(12)
             .focused($isFocused)
+            .onboardingFieldChrome(isFocused: isFocused)
+        }
+    }
+}
+
+// MARK: - Multi-line Text Editor
+
+/// Multi-line text editor with the same chrome as `OnboardingTextField`.
+/// Uses a placeholder overlay since `TextEditor` has no native one.
+///
+/// The editor renders at a **fixed** `height`; longer content scrolls
+/// inside the editor instead of growing the chrome and pushing surrounding
+/// form rows around.
+struct OnboardingTextEditor: View {
+    let label: String
+    let placeholder: String
+    @Binding var text: String
+    var isMonospaced: Bool = true
+    var height: CGFloat = 100
+
+    @Environment(\.theme) private var theme
+    @FocusState private var isFocused: Bool
+
+    private var font: Font {
+        isMonospaced ? .system(size: 13, design: .monospaced) : theme.font(size: 14)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if !label.isEmpty {
+                OnboardingFieldLabel(text: label)
+            }
+
+            ZStack(alignment: .topLeading) {
+                if text.isEmpty {
+                    Text(LocalizedStringKey(placeholder), bundle: .module)
+                        .font(font)
+                        .foregroundColor(theme.placeholderText)
+                        .padding(.top, 11)
+                        .padding(.leading, 15)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $text)
+                    .font(font)
+                    .foregroundColor(theme.primaryText)
+                    .scrollContentBackground(.hidden)
+                    .frame(height: height)
+                    .padding(10)
+                    .focused($isFocused)
+            }
             .onboardingFieldChrome(isFocused: isFocused)
         }
     }
