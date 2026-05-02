@@ -251,4 +251,11 @@ struct ValidateJANGTQUnsupportedFamilyTests {
             name: "Mistral-Medium-3.5-128B-mxfp4"
         )
     }
+
+    // Note: the prior `laguna_mxfp4_blocked` + `laguna_jangtq_passes` tests
+    // were removed when vmlx-swift-lm `4699d3a` made `LagunaMoE.experts`
+    // polymorphic — it now dispatches to `SwitchGLU` (affine, mxfp4) or
+    // `TurboQuantSwitchGLU` (codebook, mxtq) at construction time. The
+    // preflight code-5 gate they covered is gone; both Laguna variants
+    // load natively.
 }

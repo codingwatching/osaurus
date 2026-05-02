@@ -340,39 +340,72 @@ public actor ModelRuntime {
     //
     //   - `usePagedCache: true`            — content-addressed paged blocks
     //                                        (multi-turn cache reuse path)
-    //   - `defaultKVMode: .turboQuant(4, 4)` — 4-bit codebook KV by default.
-    //                                        The prior `.turboQuant(3, 3)`
-    //                                        setting was reverted to `.none`
-    //                                        in commit e202cbbe after the
-    //                                        3-bit-KV `!!!!!!!!!` repetition
-    //                                        spam reported in community
-    //                                        issue #995. The root cause was
-    //                                        not the bit width itself but
-    //                                        vmlx's `TurboQuantKVCache`
-    //                                        paged-restore path compounding
-    //                                        quantization across multi-turn
-    //                                        handoff (re-encoding an already-
-    //                                        decoded lossy float). That was
-    //                                        fixed in vmlx commit `1173822`
-    //                                        (`restoreFromDecodedKV` keeps
-    //                                        the prefix in `.compressed`
-    //                                        phase without round-tripping).
-    //                                        Per OSAURUS-INTEGRATION-2026-
-    //                                        05-01.md §"3-bit KV verdict",
-    //                                        4-bit is the recommended default
-    //                                        post-`1173822` — 3-bit is also
-    //                                        safe but more error-sensitive
-    //                                        and gains less compression
-    //                                        benefit. Per-request `kvMode`
-    //                                        still overrides; clients that
-    //                                        want fp16 can submit
-    //                                        `kvMode: .none` explicitly.
-    //   - `defaultMaxKVSize: 8192`         — 8K ring window for slots that
-    //                                        submit `maxKVSize: nil`
-    //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 16K
-    //                                        (8192 * 2.0) prompt tokens,
-    //                                        so short prompts keep full
-    //                                        attention.
+    //   - `defaultKVMode: .none`             — fp16 KV by default. Both
+    //                                        `.turboQuant(3, 3)` (committed
+    //                                        in #995, reverted in e202cbbe)
+    //                                        AND `.turboQuant(4, 4)` (per
+    //                                        the OSAURUS-INTEGRATION-2026-
+    //                                        05-01.md §"3-bit KV verdict"
+    //                                        recommendation, committed in
+    //                                        db3179fe) reproduce the same
+    //                                        degenerate-repetition failure
+    //                                        mode in real-bundle testing:
+    //                                        Qwen3.6 27B MXFP4 emitted
+    //                                        `!!!!!!!!!` in the thinking
+    //                                        channel with 3-bit; Gemma-4
+    //                                        31B JANG_4M emitted
+    //                                        `idea idea idea` and other
+    //                                        family bundles drifted into
+    //                                        looping after a few turns
+    //                                        with 4-bit. Vmlx's `1173822`
+    //                                        paged-cache fix closed the
+    //                                        cross-turn handoff
+    //                                        re-encoding bug, but the
+    //                                        underlying codebook
+    //                                        quantization error still
+    //                                        compounds across long
+    //                                        thinking-mode preambles
+    //                                        (longer prefix → more
+    //                                        compression rounds → more
+    //                                        accumulated error → attention
+    //                                        latches onto a high-prob low-
+    //                                        info token and loops).
+    //                                        The vmlx team's BENCH harness
+    //                                        didn't toggle thinking on
+    //                                        every family it verified, so
+    //                                        the integration guide's
+    //                                        4-bit recommendation under-
+    //                                        tested the failure mode.
+    //                                        Default to fp16; users who
+    //                                        need the memory savings can
+    //                                        submit `kvMode:
+    //                                        .turboQuant(...)` explicitly
+    //                                        per request.
+    //   - `defaultMaxKVSize: 65536`        — 64K ring window for slots that
+    //                                        submit `maxKVSize: nil`. Matches
+    //                                        the vmlx OSAURUS-PRODUCTION-
+    //                                        REFERENCE-2026-05-01.md §6
+    //                                        example. The prior 8192 value
+    //                                        silently truncated long-context
+    //                                        prompts (50K-token PDFs lost
+    //                                        ~84% of attention context) past
+    //                                        the 16K trigger. Worst-case
+    //                                        wired memory at 65K × 88 layers
+    //                                        × 8 KV-heads × 128 head_dim ×
+    //                                        2 bytes (fp16) × 2 (K+V) ≈
+    //                                        2.4 GB per slot on Mistral 3.5
+    //                                        (largest layer count we ship);
+    //                                        on .turboQuant(4,4) steady
+    //                                        state ~26× smaller (~95 MB).
+    //                                        With `defaultKVMode: .none` the
+    //                                        cold path is fp16 but the
+    //                                        rotating cap only kicks in for
+    //                                        prompts past 131K (65536 × 2.0)
+    //                                        — small chats unaffected.
+    //   - `longPromptMultiplier: 2.0`      — cap kicks in only past 131K
+    //                                        (65536 * 2.0) prompt tokens,
+    //                                        so short and medium prompts
+    //                                        keep full attention.
     //
     // Per-request explicit values still override these. We continue to
     // pass `modelKey` (per-model isolation) and `diskCacheDir` /
@@ -408,13 +441,36 @@ public actor ModelRuntime {
         // any future pin bump that touches the CacheCoordinator restore path.
         let enableDiskCache = diskDirUsable
 
+        // L2 disk-cache modelKey fingerprint includes the KV mode tag so a
+        // mid-session change to `defaultKVMode` (or to a per-request override
+        // via the OpenAI extension) cannot serve stale entries that were
+        // encoded under a different mode. Without this, a user who switches
+        // from `.none` (fp16) to `.turboQuant(4,4)` would hit a `.miss` on
+        // disk for fresh entries but a `.hit` on the OLD fp16 entries —
+        // attention would receive the wrong KV layout for the codebook
+        // encoder state and produce undefined behavior. The fingerprint is
+        // a string (stable across processes) and is appended to the model
+        // name so the L1 paged cache (per-model isolation) is unaffected.
+        let kvModeTag = "fp16"  // matches `defaultKVMode: .none` below
+        let scopedKey = "\(modelName)|kv=\(kvModeTag)"
+
         return CacheCoordinatorConfig(
             usePagedCache: true,
             enableDiskCache: enableDiskCache,
             diskCacheDir: diskCacheDir,
-            modelKey: modelName,
-            defaultKVMode: .turboQuant(keyBits: 4, valueBits: 4),
-            defaultMaxKVSize: 8192,
+            modelKey: scopedKey,
+            // `defaultKVMode: .none` (fp16) — see file-level comment for the
+            // 3-bit and 4-bit codebook KV degenerate-repetition trail.
+            // Vmlx's `OSAURUS-PRODUCTION-REFERENCE-2026-05-01.md` §6 shows a
+            // recommended `defaultKVMode: .turboQuant(3, 3)` example, but the
+            // bench coverage referenced (BENCH_STABILITY S8) does NOT include
+            // long thinking-mode preambles — the failure mode that drives
+            // `idea idea idea` repetition on Gemma 4 31B JANG_4M and the
+            // `!!!!!!!!!` spam on Qwen 3.6 27B MXFP4. Until vmlx's compile-
+            // path 7% per-step drift (`CompilableTurboQuantKVCache.swift`
+            // iter-10 measurement) is closed, fp16 is the only safe default.
+            defaultKVMode: .none,
+            defaultMaxKVSize: 65536,
             longPromptMultiplier: 2.0
         )
     }
@@ -1206,52 +1262,6 @@ public actor ModelRuntime {
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
         let isMxtq = normalizedStamp == "mxtq"
-
-        // Third check: JANGTQ-quantized bundles for model_type families
-        // where vmlx hasn't fully ported the JANGTQ Linear shim yet.
-        //
-        // Status (vmlx@cb829b6):
-        //   - Mistral 3 / ministral3 LLM-only (no vision_config) →
-        //     SUPPORTED via Mistral3TextJANGTQModel + JANGTQDenseLinear.
-        //     The host preflight does NOT fire for these.
-        //   - Mistral 3 / ministral3 VLM (vision_config present, e.g.
-        //     Mistral-Medium-3.5-128B with Pixtral) → IN-FLIGHT. Vmlx's
-        //     VLMModelFactory throws a clear error; we mirror it here.
-        //   - Laguna (laguna model_type) → IN-FLIGHT. No model class
-        //     ported yet on either LLM or VLM side.
-        //
-        // The check fires only for VLM-shaped Mistral 3 family bundles
-        // and for Laguna. Once the VLM JANGTQ port + Laguna model class
-        // land upstream, drop this check entirely.
-        if isMxtq {
-            let configURL = directory.appendingPathComponent("config.json")
-            if let configData = try? Data(contentsOf: configURL),
-                let configJSON = try? JSONSerialization.jsonObject(with: configData)
-                    as? [String: Any]
-            {
-                let modelType = (configJSON["model_type"] as? String)?.lowercased() ?? ""
-                let textInner: String?
-                if let textConfig = configJSON["text_config"] as? [String: Any] {
-                    textInner = (textConfig["model_type"] as? String)?.lowercased()
-                } else {
-                    textInner = nil
-                }
-                let hasVision = configJSON["vision_config"] != nil
-                _ = hasVision  // No remaining family-pending gates.
-                _ = modelType  // Mistral 3 (LLM + VLM) and Laguna are
-                _ = textInner  // both ported as of vmlx@344dda0.
-                // MXFP4 paths load via standard MLX
-                // dequant; JANGTQ Mistral 3 routes via
-                // Mistral3TextJANGTQModel /
-                // Mistral3VLMJANGTQ; Laguna MXFP4 via
-                // LagunaModel; Laguna JANGTQ port
-                // (LagunaJANGTQModel) is the next
-                // incremental piece — not blocking
-                // because the existing forward / inverse
-                // sidecar checks above still catch
-                // mislabeled bundles.
-            }
-        }
 
         // Forward mismatch: declared JANGTQ, sidecar missing.
         if isMxtq && !sidecarPresent {
