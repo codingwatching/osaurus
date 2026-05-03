@@ -3,6 +3,26 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.6</title>
+            <pubDate>Sun, 03 May 2026 00:01:06 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.6</sparkle:version>
+            <sparkle:shortVersionString>0.18.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.6/Osaurus-0.18.6.dmg" length="39635533" type="application/octet-stream" sparkle:edSignature="d9aqnfZh7pqQPdQZLfvb45XBlJlbUeFg8SoARkUBt4/8oMgeHn7XUk2A11HfK2DRIFP65JXzmeCmTnZSozSLBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- updated agent refresh (#1008) by @tpae
+- fix(quality): revert default KV mode .turboQuant(4,4) → .none — fixes degenerate-repetition looping (#998) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.5...0.18.6
+]]></description>
+        </item>
+        <item>
             <title>0.18.5</title>
             <pubDate>Sat, 02 May 2026 22:45:21 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
