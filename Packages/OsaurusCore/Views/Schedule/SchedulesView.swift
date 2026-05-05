@@ -624,6 +624,9 @@ private struct ScheduleTimePicker: View {
                     isFocused = focused || minuteFocused
                     if !focused { validateHour() }
                 }
+                .onChange(of: hourText) { _, _ in
+                    if hourFocused { commitHourLive() }
+                }
 
             Text(":")
                 .font(.system(size: 13, weight: .medium))
@@ -648,6 +651,9 @@ private struct ScheduleTimePicker: View {
                 .onChange(of: minuteFocused) { _, focused in
                     isFocused = hourFocused || focused
                     if !focused { validateMinute() }
+                }
+                .onChange(of: minuteText) { _, _ in
+                    if minuteFocused { commitMinuteLive() }
                 }
 
             Button(action: togglePeriod) {
@@ -692,11 +698,28 @@ private struct ScheduleTimePicker: View {
         hourText = "\(displayHour)"
     }
 
+    /// Same clamp/AM-PM math as `validateHour`, but never rewrites
+    /// `hourText` — leaves the user's in-progress edit alone.
+    private func commitHourLive() {
+        guard let value = Int(hourText), value >= 1, value <= 12 else { return }
+        let isPM = hour >= 12
+        if value == 12 {
+            hour = isPM ? 12 : 0
+        } else {
+            hour = isPM ? value + 12 : value
+        }
+    }
+
     private func validateMinute() {
         if let value = Int(minuteText), value >= 0, value <= 59 {
             minute = value
         }
         minuteText = String(format: "%02d", minute)
+    }
+
+    private func commitMinuteLive() {
+        guard let value = Int(minuteText), value >= 0, value <= 59 else { return }
+        minute = value
     }
 
     private func togglePeriod() {
@@ -749,6 +772,12 @@ private struct HourlyMinutePicker: View {
                     isFocused = focused
                     if !focused { validateMinute() }
                 }
+                // See `ScheduleTimePicker` — commit live so previews and
+                // an immediate Save reflect the typed value without
+                // requiring focus loss first.
+                .onChange(of: minuteText) { _, _ in
+                    if textFieldFocused { commitMinuteLive() }
+                }
 
             VStack(spacing: 0) {
                 Button(action: { incrementMinute() }) {
@@ -790,6 +819,11 @@ private struct HourlyMinutePicker: View {
             minute = value
         }
         minuteText = String(format: "%02d", minute)
+    }
+
+    private func commitMinuteLive() {
+        guard let value = Int(minuteText), value >= 0, value <= 59 else { return }
+        minute = value
     }
 
     private func incrementMinute() {
@@ -1001,6 +1035,9 @@ private struct OnceTimePicker: View {
                     isFocused = focused || minuteFocused
                     if !focused { validateHour() }
                 }
+                .onChange(of: hourText) { _, _ in
+                    if hourFocused { commitHourLive() }
+                }
 
             Text(":")
                 .font(.system(size: 13, weight: .medium))
@@ -1025,6 +1062,9 @@ private struct OnceTimePicker: View {
                 .onChange(of: minuteFocused) { _, focused in
                     isFocused = hourFocused || focused
                     if !focused { validateMinute() }
+                }
+                .onChange(of: minuteText) { _, _ in
+                    if minuteFocused { commitMinuteLive() }
                 }
 
             Button(action: togglePeriod) {
@@ -1069,11 +1109,26 @@ private struct OnceTimePicker: View {
         hourText = "\(displayHour)"
     }
 
+    private func commitHourLive() {
+        guard let value = Int(hourText), value >= 1, value <= 12 else { return }
+        let isPM = hour >= 12
+        if value == 12 {
+            updateHour(isPM ? 12 : 0)
+        } else {
+            updateHour(isPM ? value + 12 : value)
+        }
+    }
+
     private func validateMinute() {
         if let value = Int(minuteText), value >= 0, value <= 59 {
             updateMinute(value)
         }
         minuteText = String(format: "%02d", minute)
+    }
+
+    private func commitMinuteLive() {
+        guard let value = Int(minuteText), value >= 0, value <= 59 else { return }
+        updateMinute(value)
     }
 
     private func togglePeriod() {
@@ -1517,6 +1572,18 @@ struct ScheduleEditorSheet: View {
     @State private var selectedDate = Date()
     @State private var cronExpression = "0 9 * * *"
     @State private var hasAppeared = false
+    @State private var attemptedSave = false
+
+    private var trimmedName: String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var trimmedInstructions: String {
+        instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var nameInvalid: Bool { attemptedSave && trimmedName.isEmpty }
+    private var instructionsInvalid: Bool { attemptedSave && trimmedInstructions.isEmpty }
 
     private var isEditing: Bool {
         if case .edit = mode { return true }
@@ -1668,8 +1735,15 @@ struct ScheduleEditorSheet: View {
                     ScheduleTextField(
                         placeholder: "e.g., Daily Summary",
                         text: $name,
-                        icon: "textformat"
+                        icon: "textformat",
+                        isInvalid: nameInvalid
                     )
+
+                    if nameInvalid {
+                        Text("Name is required", bundle: .module)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.errorColor)
+                    }
                 }
 
                 HStack {
@@ -1850,13 +1924,22 @@ struct ScheduleEditorSheet: View {
                         .fill(theme.inputBackground)
                         .overlay(
                             RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
+                                .stroke(
+                                    instructionsInvalid ? theme.errorColor : theme.inputBorder,
+                                    lineWidth: instructionsInvalid ? 1.5 : 1
+                                )
                         )
                 )
 
-                Text("These instructions will be sent to the AI when the schedule runs.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                if instructionsInvalid {
+                    Text("Instructions are required", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.errorColor)
+                } else {
+                    Text("These instructions will be sent to the AI when the schedule runs.", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                }
             }
         }
     }
@@ -2324,15 +2407,11 @@ struct ScheduleEditorSheet: View {
 
             Button(action: onCancel) { Text("Cancel", bundle: .module) }
                 .buttonStyle(ScheduleSecondaryButtonStyle())
-
+            
             Button(isEditing ? "Save Changes" : "Create Schedule") {
                 saveSchedule()
             }
             .buttonStyle(SchedulePrimaryButtonStyle())
-            .disabled(
-                name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    || instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            )
             .keyboardShortcut(.return, modifiers: .command)
         }
         .padding(.horizontal, 24)
@@ -2409,9 +2488,13 @@ struct ScheduleEditorSheet: View {
     }
 
     private func saveSchedule() {
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedInstructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedName.isEmpty, !trimmedInstructions.isEmpty else { return }
+        guard !trimmedName.isEmpty, !trimmedInstructions.isEmpty else {
+            // surface the validation errors instead of doing nothing
+            withAnimation(.easeOut(duration: 0.15)) {
+                attemptedSave = true
+            }
+            return
+        }
 
         let schedule = Schedule(
             id: existingId ?? UUID(),
@@ -2476,6 +2559,7 @@ private struct ScheduleTextField: View {
     let placeholder: String
     @Binding var text: String
     let icon: String?
+    var isInvalid: Bool = false
 
     @State private var isFocused = false
 
@@ -2519,14 +2603,15 @@ private struct ScheduleTextField: View {
                 .fill(theme.inputBackground)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            isFocused
-                                ? theme.accentColor.opacity(0.5)
-                                : theme.inputBorder,
-                            lineWidth: isFocused ? 1.5 : 1
-                        )
+                        .stroke(borderColor, lineWidth: isFocused || isInvalid ? 1.5 : 1)
                 )
         )
+    }
+
+    private var borderColor: Color {
+        if isInvalid { return theme.errorColor }
+        if isFocused { return theme.accentColor.opacity(0.5) }
+        return theme.inputBorder
     }
 }
 
