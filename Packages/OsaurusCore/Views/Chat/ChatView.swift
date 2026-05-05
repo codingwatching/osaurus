@@ -125,6 +125,15 @@ final class ChatSession: ObservableObject {
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
 
+    /// When true, every assistant turn that finishes streaming in this session
+    /// is auto-spoken via TTS. Per-session only — resets for new chats.
+    @Published var autoSpeakAssistant: Bool = false
+    /// Whether we've already shown the first-tap auto-speak prompt in this session.
+    @Published var hasAskedAutoSpeak: Bool = false
+    /// Set to the assistant turn id when a streaming run finalizes successfully.
+    /// `ChatView` observes this to drive auto-speak. Not set on stop/error.
+    @Published var lastCompletedAssistantTurnId: UUID?
+
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
 
@@ -1027,6 +1036,12 @@ final class ChatSession: ObservableObject {
         completeRunCleanup()
 
         guard persistConversationArtifacts, let context else { return }
+
+        if let lastAssistant = turns.last(where: { $0.role == .assistant }),
+            !lastAssistant.contentIsEmpty
+        {
+            lastCompletedAssistantTurnId = lastAssistant.id
+        }
 
         let assistantContent = turns.last(where: { $0.role == .assistant })?.content
 
@@ -2051,6 +2066,7 @@ struct ChatView: View {
     @State private var scrollToTurnTrigger: Int = 0
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
+    @State private var showAutoSpeakPrompt: Bool = false
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
@@ -2122,9 +2138,19 @@ struct ChatView: View {
     var body: some View {
         let _ = ChatPerfTrace.shared.count("body.ChatView")
         chatModeContent
+            .themedAlert(
+                "Do you want Osaurus to auto speak every reply in this chat?",
+                isPresented: $showAutoSpeakPrompt,
+                message: "This only applies to this chat.",
+                primaryButton: .primary("Yes") { session.autoSpeakAssistant = true },
+                secondaryButton: .cancel("No")
+            )
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }
+            .onChange(of: session.lastCompletedAssistantTurnId) { _, newValue in
+                handleAssistantTurnCompleted(turnId: newValue)
+            }
     }
 
     /// Shared overlay layer for in-chat prompts (secrets + clarify).
@@ -2308,7 +2334,8 @@ struct ChatView: View {
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
                                 },
-                                pendingSkillId: $observedSession.pendingOneOffSkillId
+                                pendingSkillId: $observedSession.pendingOneOffSkillId,
+                                autoSpeakAssistant: $observedSession.autoSpeakAssistant
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)
@@ -2870,6 +2897,26 @@ extension ChatView {
     private func speakTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
         guard !turn.contentIsEmpty else { return }
+        let isStartingPlayback = TTSService.shared.playingMessageId != turnId
+        if isStartingPlayback && !session.hasAskedAutoSpeak {
+            session.hasAskedAutoSpeak = true
+            showAutoSpeakPrompt = true
+        }
+        TTSService.shared.toggleSpeak(text: turn.visibleContent, messageId: turnId)
+    }
+
+    /// Auto-speak the just-finished assistant turn when the per-session
+    /// preference is on. Skips if TTS is disabled, the model isn't loaded,
+    /// or another message is already playing (don't interrupt).
+    private func handleAssistantTurnCompleted(turnId: UUID?) {
+        guard let turnId else { return }
+        guard session.autoSpeakAssistant else { return }
+        guard TTSConfigurationStore.load().enabled else { return }
+        guard TTSService.shared.isModelReady else { return }
+        guard TTSService.shared.playingMessageId == nil else { return }
+        guard let turn = session.turns.first(where: { $0.id == turnId }),
+            !turn.contentIsEmpty
+        else { return }
         TTSService.shared.toggleSpeak(text: turn.visibleContent, messageId: turnId)
     }
 
