@@ -32,6 +32,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // the specific crash class this prevents.
         MLXErrorRecovery.installGlobalHandler()
 
+        // Register in-tree document format adapters before any file-ingress
+        // path can run. Idempotent; safe if a future migration moves this.
+        DocumentAdaptersBootstrap.registerBuiltIns()
+
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 
@@ -175,7 +179,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         #endif
 
         // Initialize directory access early so security-scoped bookmark is active
-        let _ = DirectoryPickerService.shared
+        _ = DirectoryPickerService.shared
 
         if LaunchGuard.isSafeMode {
             NotificationService.shared.postSafeModeActive()
@@ -876,7 +880,7 @@ extension AppDelegate {
     }
 
     @objc private func handleServeCommand(_ note: Notification) {
-        var desiredPort: Int? = nil
+        var desiredPort: Int?
         var exposeFlag: Bool = false
         if let ui = note.userInfo {
             if let p = ui["port"] as? Int {

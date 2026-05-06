@@ -57,6 +57,14 @@ enum DocumentParser {
         let ext = url.pathExtension.lowercased()
         let filename = url.lastPathComponent
 
+        // Registry-routed path. Returns nil when no adapter claims the file
+        // OR when the claiming adapter surfaces `.emptyContent` /
+        // `.unsupportedFormat`, so the legacy switch below still handles
+        // e.g. image-only PDFs and any format an adapter hasn't taken over.
+        if let attachments = try routeThroughRegistry(url: url, fileSize: fileSize) {
+            return attachments
+        }
+
         // PDF may fall back to image rendering if text extraction yields nothing
         if ext == "pdf" {
             return try parsePDFWithFallback(url: url, filename: filename, fileSize: fileSize)
@@ -147,10 +155,10 @@ enum DocumentParser {
             return try String(contentsOf: url, encoding: .utf8)
         } catch {
             // Retry with latin1 for binary-ish text files
-            if let data = try? Data(contentsOf: url),
-                let str = String(data: data, encoding: .isoLatin1)
-            {
-                return str
+            if let data = try? Data(contentsOf: url) {
+                if let str = String(data: data, encoding: .isoLatin1) {
+                    return str
+                }
             }
             throw ParseError.readFailed(error.localizedDescription)
         }
@@ -189,10 +197,10 @@ enum DocumentParser {
     private static func extractPDFText(from document: PDFDocument) -> String {
         var pages: [String] = []
         for i in 0 ..< document.pageCount {
-            if let page = document.page(at: i), let text = page.string,
-                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            {
-                pages.append(text)
+            if let page = document.page(at: i), let text = page.string {
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pages.append(text)
+                }
             }
         }
         return pages.joined(separator: "\n\n")
@@ -261,4 +269,86 @@ enum DocumentParser {
             throw ParseError.readFailed(error.localizedDescription)
         }
     }
+
+    // MARK: - Registry shim
+
+    /// Tries the document format registry before the legacy switch. The
+    /// registry runs async; we block on a dedicated dispatch queue so the
+    /// synchronous `parseAll` contract is preserved during the migration
+    /// window. Once every caller is async (stage-4 PR 10), this shim goes
+    /// away.
+    ///
+    /// Return value conventions:
+    /// - `nil` — no adapter is registered, or an adapter declined the file
+    ///   via `.emptyContent` / `.unsupportedFormat`; legacy path handles it.
+    /// - non-nil — the adapter produced a text view; convert to
+    ///   `[Attachment]` by wrapping `textFallback`.
+    /// - throws — adapter produced a non-recoverable error (size / read /
+    ///   write); surface as `ParseError`.
+    private static func routeThroughRegistry(url: URL, fileSize: Int) throws -> [Attachment]? {
+        let registry = DocumentFormatRegistry.shared
+        guard let adapter = registry.adapter(for: url) else { return nil }
+
+        let sizeLimit = DocumentLimits.limit(forFormatId: adapter.formatId)
+        do {
+            let document = try runBlocking {
+                try await adapter.parse(url: url, sizeLimit: sizeLimit)
+            }
+            return [
+                .document(
+                    filename: document.filename,
+                    content: document.textFallback,
+                    fileSize: Int(document.fileSize)
+                )
+            ]
+        } catch DocumentAdapterError.emptyContent, DocumentAdapterError.unsupportedFormat {
+            // Fall through so the legacy switch (image-only PDFs, formats
+            // without an adapter yet) still gets a shot.
+            return nil
+        } catch DocumentAdapterError.sizeLimitExceeded {
+            throw ParseError.fileTooLarge
+        } catch let DocumentAdapterError.readFailed(reason) {
+            throw ParseError.readFailed(reason)
+        } catch DocumentAdapterError.writeFailed, DocumentAdapterError.cancelled {
+            throw ParseError.readFailed("Adapter emitted non-read error for ingress")
+        } catch {
+            throw ParseError.readFailed(error.localizedDescription)
+        }
+    }
+
+    /// Synchronously awaits an async body. The shim is called from
+    /// `parseAll` which is itself invoked from UI callbacks that are still
+    /// synchronous — see `FloatingInputCard`. Dropping the semaphore means
+    /// reworking every ingress call site, which isn't in scope for PR 3.
+    private static func runBlocking<T: Sendable>(_ body: @escaping @Sendable () async throws -> T) throws -> T {
+        let semaphore = DispatchSemaphore(value: 0)
+        let resultBox = UnfairLockedBox<Result<T, Error>?>(nil)
+
+        Task.detached {
+            let result: Result<T, Error>
+            do {
+                result = .success(try await body())
+            } catch {
+                result = .failure(error)
+            }
+            resultBox.set(result)
+            semaphore.signal()
+        }
+
+        semaphore.wait()
+        switch resultBox.get()! {
+        case .success(let value): return value
+        case .failure(let error): throw error
+        }
+    }
+}
+
+/// Tiny lock-box so the blocking-await shim above can hand a value back
+/// across the actor/thread boundary without tripping Swift 6 sendability.
+private final class UnfairLockedBox<Value>: @unchecked Sendable {
+    private var value: Value
+    private let lock = NSLock()
+    init(_ value: Value) { self.value = value }
+    func get() -> Value { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ newValue: Value) { lock.lock(); defer { lock.unlock() }; value = newValue }
 }
