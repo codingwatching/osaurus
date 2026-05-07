@@ -182,7 +182,102 @@ unused fields, and rejecting that as `invalid_args` was a footgun.
 ### `sandbox_exec` background flag
 
 Foreground (default): returns `{stdout, stderr, exit_code, cwd}` when the
-command finishes (capped by `timeout`, max 300s). Pass `background:true`
-to spawn a detached process — the tool returns `{pid, log_file, cwd,
-background:true}` as soon as the spawn shim returns. Manage the resulting
-job through `sandbox_process` (poll/wait/kill).
+command finishes. **No built-in wall-clock timeout** — long-running
+commands run to completion. Pass `timeout: <seconds>` to set a hard
+idle ceiling (kill if no output for N seconds). The user's
+`[Terminate]` button on the chat tool-call card is the primary control;
+when pressed, the result envelope additionally carries
+`killed_by: "user"` so the model can branch on it.
+
+Pass `background:true` to spawn a detached process — the tool returns
+`{pid, log_file, cwd, background:true}` as soon as the spawn shim
+returns. The chat card still streams the live tail of the log file, and
+the `[Terminate]` button still works (signals SIGTERM via
+`execAsRoot kill -TERM <pid>`). Manage the resulting job through
+`sandbox_process` (poll/wait/kill).
+
+### Streaming-aware tools
+
+Tools that drive long-running shell commands (`sandbox_exec`,
+`shell_run`) opt out of the registry's 120 s wall-clock race via
+`var bypassRegistryTimeout: Bool { true }` on `OsaurusTool`. They have
+no usable wall-clock budget — a `cargo build` legitimately runs for
+30+ minutes — and rely on:
+
+1. The user's `[Terminate]` button (sends SIGTERM, then SIGKILL after a
+   3 s grace; surfaces `killed_by: "user"` in the result envelope).
+2. The optional `timeout` arg (idle ceiling; resets on every byte of
+   output).
+3. Container CPU / memory limits + per-turn command count.
+
+Other tools keep the 120 s safety net unchanged.
+
+### Pipefail by default
+
+`sandbox_exec` and `shell_run` wrap the model's command in
+`set -o pipefail; ...` so a real upstream pipeline failure surfaces as
+the rightmost non-zero exit instead of being masked by `head` / `tee`.
+SIGPIPE (exit 141) is treated as a benign soft warning — common and
+expected for `cmd | head -n N` patterns.
+
+The same path adds an empty-output warning when
+`exit_code == 0 && stdout.isEmpty && stderr.isEmpty` AND the command
+contained `|` or `2>/dev/null`. Tool authors writing wrappers around
+shell exec should follow the same pattern (see
+`diagnosticWarnings(...)` in `BuiltinSandboxTools.swift`) so the model
+sees the same vocabulary regardless of which tool ran the pipeline.
+
+---
+
+## Resilience checklist for tool authors
+
+Quantized models routinely emit slightly off shapes — string-encoded
+integers (`"timeout": "15"`), JSON-encoded arrays
+(`"packages": "[\"a\",\"b\"]"`), empty-string fillers for unused
+optional fields (`"description": ""`), and mixed-case enums
+(`"scope": "Pinned"`). The platform handles every one of these at the
+preflight layer ([`SchemaValidator.coerceArguments`](../Packages/OsaurusCore/Tools/SchemaValidator.swift)
++ `validate`) before your tool body sees the arguments. To stay
+inside that contract:
+
+- Use the `requireXxx` helpers — `requireArgumentsDictionary`,
+  `requireString`, `requireStringArray`, `requireInt`, `optionalString`
+  — instead of `args["x"] as? String`. They produce the standard
+  `invalid_args` envelope with `field` and `expected` populated, which
+  the model uses to self-correct on the next turn.
+- Set `"additionalProperties": .bool(false)` on every top-level (and
+  nested object) schema so the central preflight rejects unknown keys
+  with a pointed envelope. The matrix test
+  [`BuiltinToolResilienceTests.allBuiltInsRejectUnknownProperties`](../Packages/OsaurusCore/Tests/Tool/BuiltinToolResilienceTests.swift)
+  pins this for every built-in.
+- Declare `enum` for closed-set string values. The preflight
+  case-normalises to the canonical declared form, so the body's
+  equality check stays strict without per-tool case-folding.
+- Declare `default` for optional values; the schema's `default` is
+  visible to the model.
+- Return `ToolEnvelope.success(...)` / `ToolEnvelope.failure(...)`
+  envelopes — never raw `{stdout, stderr, exit_code}` blobs. The chat
+  UI's `ToolEnvelope.isSuccess` / `isError` detectors drive grouping,
+  retry classification, and the failure card; tools that bypass the
+  envelope land in a "neither success nor failure" gap and render
+  generically.
+- Cap large stdout/stderr (or any model-bound text) with
+  `truncateForModel(_:maxChars:)` (head + tail strategy, defaults to
+  ~50KB). The function lives next to the sandbox built-ins and is
+  internal-scope so plugin tools can share it.
+
+What you can rely on the preflight to handle for you:
+
+- `"15"` ↔ `15`, `"true"` ↔ `true`, `"3.14"` ↔ `3.14` for typed
+  scalars (mirrors `ArgumentCoercion`).
+- `"[\"a\",\"b\"]"` ↔ `["a","b"]` for typed arrays.
+- `"{\"a\":1}"` ↔ `{"a":1}` for typed objects.
+- `"description": ""` (empty / whitespace-only) → key is dropped
+  before the body runs, when the field is optional. Required fields
+  keep their empty value so your `requireString` can surface a pointed
+  `must not be empty` envelope.
+- `"Pinned"` → canonical `"pinned"` for declared string enums.
+- `{"properties": {chartType: "bar", ...}}` → unwrapped to the
+  top-level shape when the model accidentally wraps its args in a
+  `properties` envelope (only when `properties` isn't itself a declared
+  field of the schema and at least one inner key matches).

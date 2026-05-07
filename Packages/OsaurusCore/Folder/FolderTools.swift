@@ -7,6 +7,7 @@
 //  is selected; agents use them to operate directly on the host folder.
 //
 
+import Darwin
 import Foundation
 
 // MARK: - Tool Errors
@@ -193,8 +194,13 @@ struct FileTreeTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
-        let relativePath = args["path"] as? String ?? "."
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        // `path` is optional (defaults to root). Coercion already drops
+        // empty-string fillers, so a missing or absent value cleanly
+        // falls back to ".".
+        let relativePath = (args["path"] as? String) ?? "."
         let maxDepth = coerceInt(args["max_depth"]) ?? 3
 
         let targetURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -304,10 +310,17 @@ struct FileReadTool: OsaurusTool {
     private static let maxOutputChars = 15_000
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "relative path under the working folder (e.g. `src/app.py`)",
+            tool: name
+        )
+        guard case .value(let relativePath) = pathReq else {
+            return pathReq.failureEnvelope ?? ""
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -389,13 +402,29 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "relative path under the working folder (e.g. `src/app.py`)",
+            tool: name
+        )
+        guard case .value(let relativePath) = pathReq else {
+            return pathReq.failureEnvelope ?? ""
         }
-        guard let content = args["content"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: content")
+
+        // `content: ""` is legitimate (truncate-to-zero), so allow empty.
+        let contentReq = requireString(
+            args,
+            "content",
+            expected: "string of file contents (use `\"\"` for an empty file)",
+            tool: name,
+            allowEmpty: true
+        )
+        guard case .value(let content) = contentReq else {
+            return contentReq.failureEnvelope ?? ""
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -487,23 +516,42 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let relativePath = args["path"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: path")
+        let pathReq = requireString(
+            args,
+            "path",
+            expected: "relative path under the working folder (e.g. `src/app.py`)",
+            tool: name
+        )
+        guard case .value(let relativePath) = pathReq else {
+            return pathReq.failureEnvelope ?? ""
         }
-        guard let oldString = args["old_string"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: old_string")
+
+        // Empty `old_string` is ambiguous — `requireString` (default
+        // `allowEmpty: false`) rejects it with a pointed envelope that
+        // matches `sandbox_edit_file`.
+        let oldReq = requireString(
+            args,
+            "old_string",
+            expected: "non-empty exact text that uniquely matches one location in the file",
+            tool: name
+        )
+        guard case .value(let oldString) = oldReq else {
+            return oldReq.failureEnvelope ?? ""
         }
-        // Empty `old_string` is ambiguous — reject explicitly (matches
-        // `sandbox_edit_file`).
-        guard !oldString.isEmpty else {
-            throw FolderToolError.invalidArguments(
-                "old_string must not be empty. Pass the exact text you want to replace."
-            )
-        }
-        guard let newString = args["new_string"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: new_string")
+
+        // Empty `new_string` is the supported delete-the-match form.
+        let newReq = requireString(
+            args,
+            "new_string",
+            expected: "replacement text (use `\"\"` to delete the match)",
+            tool: name,
+            allowEmpty: true
+        )
+        guard case .value(let newString) = newReq else {
+            return newReq.failureEnvelope ?? ""
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
@@ -595,13 +643,20 @@ struct FileSearchTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let pattern = args["pattern"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: pattern")
+        let patternReq = requireString(
+            args,
+            "pattern",
+            expected: "search text (case-insensitive substring, e.g. `TODO`)",
+            tool: name
+        )
+        guard case .value(let pattern) = patternReq else {
+            return patternReq.failureEnvelope ?? ""
         }
 
-        let searchPath = args["path"] as? String ?? "."
+        let searchPath = (args["path"] as? String) ?? "."
         let filePattern = args["file_pattern"] as? String
         let maxResults = coerceInt(args["max_results"]) ?? 50
 
@@ -709,8 +764,12 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         + "git, processes, network calls, and filesystem mutations (`mv`/`cp`/`rm`/`mkdir`).** "
         + "For file IO, search, edit, write, and directory listing, prefer the dedicated "
         + "`file_*` tools — each one's description states the `shell_run` pattern it "
-        + "replaces. This action requires approval. Output is truncated to 10,000 characters. "
-        + "Default timeout 30s, max 300s."
+        + "replaces. This action requires approval. Long-running commands stream their "
+        + "output live to the chat — the user sees it as it happens and can press [Terminate] "
+        + "at any time. Final stdout truncated to 10,000 characters. No built-in timeout: "
+        + "pass `timeout: <seconds>` ONLY if you want a hard idle ceiling (kill the process "
+        + "if no output for N seconds). Avoid `2>/dev/null` in pipelines — pipefail is on "
+        + "and suppressing stderr will trigger an empty-output warning."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -721,7 +780,11 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             ]),
             "timeout": .object([
                 "type": .string("integer"),
-                "description": .string("Timeout in seconds (default: 30, max: 300)"),
+                "description": .string(
+                    "Optional idle timeout in seconds. Kills the process if it produces no "
+                        + "output for this many seconds. Omit to run to completion (the user "
+                        + "terminates from the chat card if needed)."
+                ),
             ]),
         ]),
         "required": .array([.string("command")]),
@@ -730,6 +793,11 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     var requirements: [String] { ["permission:shell"] }
     var defaultPermissionPolicy: ToolPermissionPolicy { .ask }
 
+    /// Streaming exec opts out of the registry's wall-clock cap. Long
+    /// commands rely on the user's [Terminate] button + the optional
+    /// `timeout` (idle ceiling) as the safety net.
+    var bypassRegistryTimeout: Bool { true }
+
     private let rootPath: URL
 
     init(rootPath: URL) {
@@ -737,17 +805,31 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let command = args["command"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: command")
+        let cmdReq = requireString(
+            args,
+            "command",
+            expected: "shell command string (e.g. `ls -la`)",
+            tool: name
+        )
+        guard case .value(let command) = cmdReq else {
+            return cmdReq.failureEnvelope ?? ""
         }
 
-        let timeout = min(coerceInt(args["timeout"]) ?? 30, 300)
+        // Optional idle ceiling; nil = run forever (user terminates).
+        let idleTimeout: TimeInterval? = coerceInt(args["timeout"]).map(TimeInterval.init)
+
+        // `set -o pipefail` wrapping so a real upstream pipeline
+        // failure surfaces as the rightmost non-zero exit instead of
+        // being masked by `head` / `tee` / `cat`. zsh honours pipefail
+        // identically to bash.
+        let prefixedCommand = "set -o pipefail; \(command)"
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
+        process.arguments = ["-c", prefixedCommand]
         process.currentDirectoryURL = rootPath
 
         let stdoutPipe = Pipe()
@@ -755,44 +837,151 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        // Set up timeout
-        let timeoutTask = Task {
-            try await Task.sleep(nanoseconds: UInt64(timeout) * 1_000_000_000)
-            if process.isRunning {
-                process.terminate()
+        // Live streaming wiring: incrementally read from both pipes,
+        // appending to a per-stream buffer (for the model's final
+        // result) AND broadcasting to a LiveExecSink (for the chat UI).
+        // `lastActivity` powers the optional idle-timeout watchdog.
+        let collector = ShellRunOutputCollector()
+        let sink = LiveExecSink()
+
+        installPipeReader(
+            pipe: stdoutPipe,
+            collector: collector,
+            isStderr: false,
+            sink: sink
+        )
+        installPipeReader(
+            pipe: stderrPipe,
+            collector: collector,
+            isStderr: true,
+            sink: sink
+        )
+
+        // Register the live entry BEFORE starting the process so the
+        // chat card can mount its viewer immediately.
+        let toolCallId = ChatExecutionContext.currentToolCallId ?? UUID().uuidString
+        let processBox = ShellRunProcessBox(process: process)
+        let terminate: @Sendable (Int) async -> Void = { graceSeconds in
+            sink.requestTerminate()
+            await processBox.terminateWithGrace(graceSeconds: graceSeconds)
+        }
+
+        await LiveExecRegistry.shared.register(
+            LiveExecRegistry.Entry(
+                toolCallId: toolCallId,
+                pid: "",
+                command: command,
+                startedAt: Date(),
+                outputPublisher: sink.outputPublisher,
+                statusPublisher: sink.statusPublisher,
+                currentStatus: { sink.currentStatus },
+                seed: { await sink.bufferedSnapshot() },
+                terminate: terminate
+            )
+        )
+
+        // Idle-timeout watchdog. Only runs when `idleTimeout` is set;
+        // resets implicitly on every chunk via `collector.lastActivity`.
+        let idleWatcher: Task<Void, Never>?
+        if let idleTimeout {
+            idleWatcher = Task.detached { @Sendable in
+                let pollNanos: UInt64 = 1_000_000_000
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: pollNanos)
+                    if Task.isCancelled { return }
+                    let last = collector.lastActivity
+                    if Date().timeIntervalSince(last) >= idleTimeout {
+                        await processBox.terminate()
+                        return
+                    }
+                }
             }
+        } else {
+            idleWatcher = nil
         }
 
         defer {
-            timeoutTask.cancel()
+            idleWatcher?.cancel()
         }
 
         do {
             try await FolderToolHelpers.runProcessAsync(process)
         } catch {
+            sink.markExited(code: -1)
+            await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
             throw FolderToolError.operationFailed("Failed to execute command: \(error)")
         }
 
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        // Drain anything buffered in the pipes after exit (the
+        // readabilityHandlers stop firing once the process closes its
+        // end). `availableData` returns the residual bytes.
+        collector.appendDrain(
+            stdoutData: stdoutPipe.fileHandleForReading.availableData,
+            stderrData: stderrPipe.fileHandleForReading.availableData,
+            sink: sink
+        )
 
-        let stdout =
-            String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? ""
-        let stderr =
-            String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-            ?? ""
+        // Stop the readabilityHandlers — Foundation leaves them wired
+        // even after the process exits, which keeps the FileHandle
+        // alive.
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
 
         let exitCode = process.terminationStatus
+        sink.markExited(code: exitCode)
+        await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
 
+        let (stdoutText, stderrText) = collector.snapshot()
+        let trimmedStdout = stdoutText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedStderr = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var payload: [String: Any] = [
+            "stdout": truncateOutput(trimmedStdout),
+            "stderr": truncateOutput(trimmedStderr),
+            "exit_code": Int(exitCode),
+        ]
+        if sink.terminationReason == .user {
+            payload["killed_by"] = "user"
+        }
+        let warnings = diagnosticWarnings(
+            command: command,
+            exitCode: exitCode,
+            stdout: trimmedStdout,
+            stderr: trimmedStderr
+        )
         return ToolEnvelope.success(
             tool: name,
-            result: [
-                "stdout": truncateOutput(stdout),
-                "stderr": truncateOutput(stderr),
-                "exit_code": Int(exitCode),
-            ]
+            result: payload,
+            warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    /// Install a `readabilityHandler` that streams every chunk into
+    /// the collector AND the sink. Closes both sides cleanly on EOF
+    /// so the FileHandle isn't leaked.
+    ///
+    /// Both sinks here are non-blocking and synchronous: `sink.write`
+    /// just hits a PassthroughSubject; `collector.append` is a single
+    /// lock-guarded Data append. We deliberately AVOID `Task { … }`
+    /// per chunk — on a chatty pipe that fires the handler thousands
+    /// of times a second the per-Task overhead dominates the actual
+    /// work, swamping the cooperative thread pool and starving the
+    /// process drain that actually frees the pipe.
+    private func installPipeReader(
+        pipe: Pipe,
+        collector: ShellRunOutputCollector,
+        isStderr: Bool,
+        sink: LiveExecSink
+    ) {
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            try? sink.write(chunk)
+            collector.append(chunk, isStderr: isStderr)
+        }
     }
 
     private func truncateOutput(_ output: String, maxLength: Int = 10000) -> String {
@@ -800,6 +989,98 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
             return String(output.prefix(maxLength)) + "\n... (truncated)"
         }
         return output
+    }
+}
+
+/// Per-call output collector for `ShellRunTool`. Splits the streaming
+/// chunks back into stdout / stderr (the underlying `Pipe`s feed two
+/// separate `readabilityHandler`s on Foundation's IO queue).
+///
+/// Was an `actor` originally, which serialised updates cleanly but
+/// forced every `installPipeReader` callback to spawn a `Task` per
+/// chunk. On a chatty pipe (think `cargo build` or `npm install`)
+/// that's hundreds of Tasks per second — enough to swamp the
+/// cooperative thread pool and starve the process drain. A plain
+/// `NSLock` guards the same data with no scheduling overhead, and
+/// every callsite is already short and non-blocking.
+final class ShellRunOutputCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stdoutBuf = Data()
+    private var stderrBuf = Data()
+    private var _lastActivity = Date()
+
+    var lastActivity: Date {
+        lock.withLock { _lastActivity }
+    }
+
+    func append(_ chunk: Data, isStderr: Bool) {
+        lock.withLock {
+            if isStderr {
+                stderrBuf.append(chunk)
+            } else {
+                stdoutBuf.append(chunk)
+            }
+            _lastActivity = Date()
+        }
+    }
+
+    /// Append the residual bytes drained from the pipes after process
+    /// exit, also pushing them through the live sink so the chat card
+    /// sees the final flush. `availableData` may return empty data on
+    /// each pipe; we no-op in that case.
+    func appendDrain(stdoutData: Data, stderrData: Data, sink: LiveExecSink) {
+        lock.withLock {
+            if !stdoutData.isEmpty {
+                stdoutBuf.append(stdoutData)
+                try? sink.write(stdoutData)
+            }
+            if !stderrData.isEmpty {
+                stderrBuf.append(stderrData)
+                try? sink.write(stderrData)
+            }
+        }
+    }
+
+    func snapshot() -> (stdout: String, stderr: String) {
+        lock.withLock {
+            (
+                String(data: stdoutBuf, encoding: .utf8) ?? "",
+                String(data: stderrBuf, encoding: .utf8) ?? ""
+            )
+        }
+    }
+}
+
+/// Lightweight Sendable wrapper around the host `Process` so the
+/// terminate closure (which crosses task boundaries) can signal it
+/// without tripping strict-concurrency on `Process` itself.
+private actor ShellRunProcessBox {
+    private let process: Process
+
+    init(process: Process) {
+        self.process = process
+    }
+
+    /// Send SIGTERM only — used by the idle-timeout watchdog where the
+    /// "graceful then kill" escalation is overkill.
+    func terminate() {
+        guard process.isRunning else { return }
+        process.terminate()  // SIGTERM
+    }
+
+    /// SIGTERM → grace → SIGKILL. Mirrors `ProcessHandleBox` for
+    /// `sandbox_exec` so terminate-from-the-chat-card behaves the
+    /// same across both tools.
+    func terminateWithGrace(graceSeconds: Int) async {
+        guard process.isRunning else { return }
+        process.terminate()  // SIGTERM
+        if graceSeconds > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(graceSeconds) * 1_000_000_000)
+        }
+        guard process.isRunning else { return }
+        // Foundation has no SIGKILL helper; fall back to the POSIX
+        // syscall via the process identifier.
+        Darwin.kill(process.processIdentifier, SIGKILL)
     }
 }
 
@@ -873,8 +1154,12 @@ struct GitDiffTool: OsaurusTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
+        // All three are optional; the preflight already drops empty-string
+        // fillers (`path: ""`, `commit: ""`) so a plain `as? String` cleanly
+        // yields nil when the model didn't intend to specify them.
         let filePath = args["path"] as? String
         let staged = coerceBool(args["staged"]) ?? false
         let commit = args["commit"] as? String
@@ -951,10 +1236,17 @@ struct GitCommitTool: OsaurusTool, PermissionedTool {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
-        let args = try FolderToolHelpers.parseArguments(argumentsJSON)
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
 
-        guard let message = args["message"] as? String else {
-            throw FolderToolError.invalidArguments("Missing required parameter: message")
+        let messageReq = requireString(
+            args,
+            "message",
+            expected: "non-empty commit message",
+            tool: name
+        )
+        guard case .value(let message) = messageReq else {
+            return messageReq.failureEnvelope ?? ""
         }
 
         let files = coerceStringArray(args["files"])
