@@ -60,6 +60,7 @@ struct GlassListRow<Content: View>: View {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     VStack(spacing: 12) {
         ForEach(0 ..< 3) { index in
@@ -75,3 +76,4 @@ struct GlassListRow<Content: View>: View {
     .padding(24)
     .background(Color(hex: "f9fafb"))
 }
+#endif

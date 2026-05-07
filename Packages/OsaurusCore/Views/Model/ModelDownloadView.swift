@@ -1569,6 +1569,8 @@ private struct HuggingFaceImportSheet: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     ModelDownloadView()
 }
+#endif

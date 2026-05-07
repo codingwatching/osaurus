@@ -454,7 +454,9 @@ private struct ProviderCardView: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     RemoteProvidersView()
         .environment(\.theme, DarkTheme())
 }
+#endif

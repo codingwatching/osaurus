@@ -45,6 +45,7 @@ struct SectionHeader<Trailing: View>: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     VStack(spacing: 24) {
         SectionHeader(
@@ -78,3 +79,4 @@ struct SectionHeader<Trailing: View>: View {
     .background(Color.black.opacity(0.9))
     .environment(\.theme, DarkTheme())
 }
+#endif

@@ -711,9 +711,11 @@ private extension View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     GitHubImportSheet(
         onImport: { _ in },
         onCancel: {}
     )
 }
+#endif

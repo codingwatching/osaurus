@@ -65,14 +65,40 @@ struct ModelRuntimeIsHybridTests {
         }
     }
 
-    @Test("MiniMax M2 / M2.7 family")
-    func minimaxM2_isHybrid() {
+    @Test("Bailing / Ling Linear-Attn hybrid family")
+    func bailingLing_isHybrid() {
         for id in [
-            "OsaurusAI/MiniMax-M2.7-JANGTQ",
-            "OsaurusAI/MiniMax-M2.7-JANGTQ4",
-            "minimax-m2.7-small-jangtq",
+            "OsaurusAI/Ling-2.6-flash-MXFP4",
+            "OsaurusAI/Ling-2.6-flash-JANGTQ",
+            "bailing_hybrid",
+            "bailing_moe_v2_5",
         ] {
-            #expect(ModelRuntime.isKnownHybridModel(name: id))
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Bailing/Ling hybrid family must flip setHybrid eagerly: \(id)"
+            )
+        }
+    }
+
+    /// Zyphra ZAYA1 CCA-attention hybrid: per-layer cache list contains
+    /// `ZayaCCACache` (KV + path-dependent `conv_state` + `prev_hs`).
+    /// vmlx's `extractSSMStates` / `restoreSSMStates` round-trips the
+    /// CCA state through the `SSMStateCache` companion, so eager
+    /// `setHybrid(true)` parallels the Mamba families above.
+    @Test("Zyphra ZAYA1 CCA hybrid family — eager setHybrid")
+    func zaya_isHybrid() {
+        for id in [
+            "Zyphra/Zaya1-8B-JANGTQ4",
+            "Zyphra/Zaya1-8B-MXFP4",
+            "OsaurusAI/Zaya1-8B-JANGTQ2",
+            "Zaya1-8B-JANGTQ4",  // bare picker
+            "zaya1-8b-mxfp4",  // case-folded
+            "Zyphra/Zaya-S-7B-Future",  // dash-boundary, forward-compat
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "ZAYA CCA hybrid must flip setHybrid eagerly: \(id)"
+            )
         }
     }
 
@@ -101,13 +127,35 @@ struct ModelRuntimeIsHybridTests {
         }
     }
 
+    /// MiniMax M2 / M2.7 was historically in the eager-flip list with a
+    /// "gated SSM in some layers" comment, but vmlx's `MiniMaxModel` and
+    /// `MiniMaxJANGTQModel` use only standard `KVCache` — no `MambaCache`
+    /// / `ArraysCache` / `ZayaCCACache`. Removed in the 2026-05-07
+    /// vmlx bump cleanup. Locked here so a future regression doesn't
+    /// silently re-add the misclassification.
+    @Test("MiniMax M2 / M2.7 — dense MoE, NOT Mamba/SSM hybrid")
+    func minimaxM2_isNotMambaHybrid() {
+        for id in [
+            "OsaurusAI/MiniMax-M2.7-JANGTQ",
+            "OsaurusAI/MiniMax-M2.7-JANGTQ4",
+            "minimax-m2.7-small-jangtq",
+            "minimax_m2-mxfp4",
+            "MiniMax_M2-3-future",
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "MiniMax has no MambaCache layers — must NOT eager-flip setHybrid: \(id)"
+            )
+        }
+    }
+
     /// DSV4-Flash JANGTQ uses Compressor/Indexer hybrid attention, but its
     /// per-layer cache list does NOT contain `MambaCache` / `ArraysCache`
     /// (it's a custom `DeepseekV4Cache`). vmlx's auto-flip only matches on
-    /// Mamba-style cache types, so neither path treats DSV4 as hybrid in
-    /// this sense — and DSV4 has its own `DSV4_KV_MODE` env var to control
-    /// cache topology. Lock that in: DSV4 must NOT match this family list.
-    @Test("DSV4-Flash JANGTQ does NOT match (uses DeepseekV4Cache, controlled via DSV4_KV_MODE)")
+    /// Mamba-style cache types, while DSV4's `HybridPoolCache` flips the
+    /// paged-incompatible disk-serializer path in vmlx. Lock that in:
+    /// DSV4 must NOT match this SSM-family list.
+    @Test("DSV4-Flash JANGTQ does NOT match (uses DeepseekV4Cache, not SSM companion)")
     func dsv4Flash_isNotMambaHybrid() {
         for id in [
             "JANGQ-AI/DeepSeekV4-Flash-JANGTQ",
@@ -157,6 +205,185 @@ struct ModelRuntimeIsHybridTests {
             #expect(
                 !ModelRuntime.isKnownHybridModel(name: id),
                 "Mistral 3.5 dense GQA + Pixtral has no Mamba layers — must NOT eager-flip setHybrid: \(id)"
+            )
+        }
+    }
+
+    // MARK: - Extended hybrid coverage (2026-05-07)
+
+    /// Qwen3-Next (`model_type=qwen3_next`) — newer hybrid MoE that vmlx
+    /// dispatches via `Models/Qwen3Next.swift`, with `ArraysCache` companion
+    /// slots in the linear-attention path. Same eager-flip rationale as the
+    /// 3.5 / 3.6 family — locked here so a registry rename can't drop it.
+    @Test("Qwen3-Next hybrid family — eager setHybrid")
+    func qwen3Next_isHybrid() {
+        for id in [
+            "Qwen/Qwen3-Next-80B-MXFP4",
+            "qwen3-next-80b-mxfp4",
+            "qwen3_next-80b-jangtq",
+            "qwen3next-future",
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Qwen3-Next must flip setHybrid eagerly: \(id)"
+            )
+        }
+    }
+
+    /// IBM Granite-MoE-Hybrid (`model_type=granitemoehybrid`) — Mamba+Attn
+    /// MoE; vmlx `Models/GraniteMoeHybrid.swift` allocates `MambaCache`
+    /// for the SSM layers. The matcher accepts the collapsed model_type
+    /// AND the conventional bundle-id form (`granite-3.0-moe-hybrid-7b`)
+    /// gated by `granite` + `moe-hybrid` so dense Granite-MoE
+    /// (`granitemoe`, no `hybrid`) stays negative.
+    @Test("Granite-MoE-Hybrid family — eager setHybrid")
+    func graniteMoeHybrid_isHybrid() {
+        for id in [
+            "ibm-granite/granite-3.0-moe-hybrid-7b",  // canonical HF id form
+            "ibm-granite/granite-4.0-moe-hybrid-13b",  // forward-compat
+            "granite-3.0-moe-hybrid-7b",
+            "granite-moe-hybrid-7b",
+            "granite_moe_hybrid_7b",
+            "granitemoehybrid",  // collapsed model_type form
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Granite-MoE-Hybrid must flip setHybrid eagerly: \(id)"
+            )
+        }
+        // Boundary regression: dense Granite (`granitemoe`, no `hybrid`)
+        // and adversarial substrings without the `granite` prefix must
+        // NOT trip the matcher.
+        for id in [
+            "ibm-granite/granite-3.0-moe-3b",  // granitemoe (dense), not hybrid
+            "ibm-granite/granite-3.0-3b-instruct",  // dense Granite
+            "moe-hybridge",  // contains "moe-hybrid" but no "granite"
+            "data/some-moe-hybrid-llm",  // unrelated family
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "Granite matcher must require both `granite` and `moe-hybrid`: \(id)"
+            )
+        }
+    }
+
+    /// Falcon-H1 (`model_type=falcon_h1`) — TII hybrid Mamba+Attn. Locked
+    /// boundary regex `(^|/)falcon[-_]?h1([-_].*)?$` rejects adjacent
+    /// numerals (`falcon-h11`, `falcon-h12`) and `falconh10` etc.
+    @Test("Falcon-H1 hybrid family — eager setHybrid + boundary guard")
+    func falconH1_isHybrid() {
+        for id in [
+            "tiiuae/Falcon-H1-7B",
+            "falcon-h1-7b",
+            "falcon_h1-7b",
+            "falconh1",
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Falcon-H1 must flip setHybrid eagerly: \(id)"
+            )
+        }
+        // Boundary regression: `falcon-h11` / `falcon-h2` etc. must NOT
+        // match — they are different families (or future renames) and
+        // the eager-flip would be wrong for the wrong cache topology.
+        for id in [
+            "falcon-h11",  // adjacent numeral, not Falcon-H1
+            "falcon-h10",
+            "falcon-h2",  // future Falcon-H2 family — would need its own entry
+            "tiiuae/falcon-h11-7b",
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "Falcon-H1 boundary regex must reject adjacent-numeral / sibling families: \(id)"
+            )
+        }
+    }
+
+    /// Baichuan-M1 (`model_type=baichuan_m1`) — Baichuan hybrid (linear +
+    /// SWA + Mamba mix). Same boundary regex pattern as Falcon-H1.
+    @Test("Baichuan-M1 hybrid family — eager setHybrid + boundary guard")
+    func baichuanM1_isHybrid() {
+        for id in [
+            "baichuan-inc/Baichuan-M1-7B",
+            "baichuan-m1-7b",
+            "baichuan_m1-7b",
+            "baichuanm1",
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Baichuan-M1 must flip setHybrid eagerly: \(id)"
+            )
+        }
+        for id in [
+            "baichuan-m12",  // adjacent numeral
+            "baichuan-m10",
+            "baichuan-m2",  // future variant — would need its own entry
+            "baichuan",  // bare base name
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "Baichuan-M1 boundary regex must reject adjacent-numeral / sibling families: \(id)"
+            )
+        }
+    }
+
+    /// Jamba (`model_type=jamba_3b`) — AI21 hybrid Mamba+Attn-MoE.
+    /// Boundary regex `(^|/)jamba[\-_\.0-9]` requires a separator OR digit
+    /// after `jamba` so adversarial names like `jambalaya` don't trip.
+    @Test("Jamba hybrid family — eager setHybrid + boundary guard")
+    func jamba_isHybrid() {
+        for id in [
+            "ai21/Jamba-3B-Instruct",
+            "jamba-3b",
+            "jamba_3b",
+            "jamba.3b",
+            "jamba1.6-7b",
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "Jamba must flip setHybrid eagerly: \(id)"
+            )
+        }
+        for id in [
+            "data/jambalaya",
+            "jambasaurus",  // letter-after-jamba boundary
+            "jamba",  // bare base name with no separator
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "Jamba boundary regex must reject adjacent-letter names: \(id)"
+            )
+        }
+    }
+
+    /// LFM2 / LFM2-MoE (`model_type=lfm2` / `lfm2_moe`) — Liquid Foundation
+    /// Mamba hybrid. Boundary regex `(^|/)lfm2([\-_].*)?$` matches both the
+    /// bare model id `lfm2` and any `lfm2-*` / `lfm2_*` variant, but
+    /// rejects `lfm21` / `lfm22` (next-gen would need its own entry) and
+    /// `lfm2x` (no separator).
+    @Test("LFM2 hybrid family — eager setHybrid + boundary guard")
+    func lfm2_isHybrid() {
+        for id in [
+            "LiquidAI/LFM2-7B",
+            "lfm2-7b",
+            "lfm2_moe",
+            "lfm2-moe-7b",
+            "lfm2",  // bare base name
+        ] {
+            #expect(
+                ModelRuntime.isKnownHybridModel(name: id),
+                "LFM2 must flip setHybrid eagerly: \(id)"
+            )
+        }
+        for id in [
+            "lfm21",  // next-gen, would need own entry
+            "lfm22",
+            "lfm2x",  // adjacent letter, not a separator
+            "data/lfm22-foo",
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "LFM2 boundary regex must reject adjacent-numeral / sibling families: \(id)"
             )
         }
     }

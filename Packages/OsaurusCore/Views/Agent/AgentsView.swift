@@ -3916,6 +3916,8 @@ private struct ThemeOptionCard: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     AgentsView()
 }
+#endif

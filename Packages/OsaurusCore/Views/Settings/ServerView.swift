@@ -2164,8 +2164,10 @@ private struct TranscriptionTestRow: View {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     ServerView()
         .environmentObject(ServerController())
         .frame(width: 900, height: 700)
 }
+#endif

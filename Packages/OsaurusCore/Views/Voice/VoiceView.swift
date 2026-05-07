@@ -515,6 +515,8 @@ private struct SpeechModelRow: View {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     VoiceView()
 }
+#endif

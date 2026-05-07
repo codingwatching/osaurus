@@ -339,6 +339,7 @@ private struct AlwaysAllowButton: View {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview("Tool Permission - Dark") {
     ToolPermissionView(
         toolName: "execute_code",
@@ -393,3 +394,4 @@ private struct AlwaysAllowButton: View {
     .padding(40)
     .background(Color.black.opacity(0.8))
 }
+#endif

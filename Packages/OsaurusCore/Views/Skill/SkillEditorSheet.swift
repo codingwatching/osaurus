@@ -772,6 +772,7 @@ private struct ThemedNSTextView: NSViewRepresentable {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     SkillEditorSheet(
         mode: .create,
@@ -779,3 +780,4 @@ private struct ThemedNSTextView: NSViewRepresentable {
         onCancel: {}
     )
 }
+#endif

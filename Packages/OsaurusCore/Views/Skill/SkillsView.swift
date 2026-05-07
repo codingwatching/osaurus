@@ -759,6 +759,8 @@ private struct SkillRow: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     SkillsView()
 }
+#endif

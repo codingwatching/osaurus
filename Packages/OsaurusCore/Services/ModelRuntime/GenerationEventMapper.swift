@@ -28,12 +28,36 @@ private let mapperLog = Logger(subsystem: "ai.osaurus", category: "Generation")
 
 enum GenerationEventMapper {
 
+    /// True when the model family is configured as non-reasoning in osaurus
+    /// (Ling, ZAYA1). For these families, vmlx's `ReasoningParser` may still
+    /// switch into reasoning mode if the model emits a `<think>` token despite
+    /// `enable_thinking=false` — it has to, because the parser has no idea
+    /// whether the host has clamped thinking off. The 2026-05-07 production
+    /// repro showed Ling 2.6 Flash emitting a runaway hidden reasoning block
+    /// after a tiny visible greeting, surfacing in the chat UI as
+    /// "greeting → 30s freeze → end" because reasoning deltas land on a
+    /// channel the visible-text view doesn't render. For non-reasoning
+    /// families we therefore promote `.reasoning` deltas (markers already
+    /// stripped by the parser) to visible `.tokens` so the user always sees
+    /// streaming text and the EOS doesn't gate the entire answer.
+    static func treatReasoningAsContent(modelName: String) -> Bool {
+        ModelFamilyNames.isLingFamily(modelName)
+            || ModelFamilyNames.isZayaFamily(modelName)
+    }
+
     /// Map a `Generation` stream into the typed `ModelRuntimeEvent` stream
     /// callers (HTTP handlers, ChatView, plugin runners) consume.
+    ///
+    /// - Parameter modelName: The resolved model id; used solely to decide
+    ///   the reasoning-merge policy (see `treatReasoningAsContent`). Empty
+    ///   string is safe — the family matchers default to `false` and the
+    ///   stream behaves identically to the historical pass-through.
     static func map(
-        events: AsyncStream<Generation>
+        events: AsyncStream<Generation>,
+        modelName: String = ""
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        AsyncThrowingStream<ModelRuntimeEvent, Error> { continuation in
+        let mergeReasoning = treatReasoningAsContent(modelName: modelName)
+        return AsyncThrowingStream<ModelRuntimeEvent, Error> { continuation in
             let task = Task {
                 let interval = mapperSignposter.beginInterval(
                     "generation",
@@ -56,7 +80,27 @@ enum GenerationEventMapper {
 
                     case .reasoning(let text):
                         guard !text.isEmpty else { continue }
-                        continuation.yield(.reasoning(text))
+                        // Reasoning-capable families (DSV4-Flash thinking,
+                        // Qwen 3.5 / 3.6 thinking-on, etc.) can stream
+                        // `.reasoning` deltas for many seconds before the
+                        // first `.chunk`. Marking prefill done on the
+                        // first non-empty event of either kind keeps the
+                        // "loading model" / spinner UI honest — the model
+                        // IS producing output, just on a different
+                        // channel.
+                        if firstChunk {
+                            firstChunk = false
+                            InferenceProgressManager.shared.prefillDidFinishAsync()
+                        }
+                        if mergeReasoning {
+                            // Ling / ZAYA — non-reasoning families. vmlx
+                            // already stripped the `<think>` / `</think>`
+                            // markers; the inner text is plain content the
+                            // user should see in real time.
+                            continuation.yield(.tokens(text))
+                        } else {
+                            continuation.yield(.reasoning(text))
+                        }
 
                     case .toolCall(let call):
                         let argsJSON = serializeArguments(

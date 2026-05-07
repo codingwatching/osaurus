@@ -172,6 +172,7 @@ enum SandboxTab: String, CaseIterable, AnimatedTabItem {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     struct PreviewWrapper: View {
         @State private var modelTab: ModelListTab = .all
@@ -209,3 +210,4 @@ enum SandboxTab: String, CaseIterable, AnimatedTabItem {
 
     return PreviewWrapper()
 }
+#endif

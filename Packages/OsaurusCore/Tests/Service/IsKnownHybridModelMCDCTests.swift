@@ -1,25 +1,43 @@
 // Copyright © 2026 osaurus.
 //
-// MC/DC tests for `ModelRuntime.isKnownHybridModel(name:)`
-// (ModelRuntime.swift:462). Substring-match against the families whose
-// per-layer cache lists vmlx populates with `MambaCache` / `ArraysCache`
-// slots — drives the eager `setHybrid(true)` flip in
-// `installCacheCoordinator`.
+// MC/DC tests for `ModelRuntime.isKnownHybridModel(name:)`. Substring-match
+// against the families whose per-layer cache lists vmlx populates with
+// `MambaCache` / `ArraysCache` / `ZayaCCACache` / `HybridPoolCache` slots —
+// drives the eager `setHybrid(true)` flip in `installCacheCoordinator`.
 //
-// Decision tree (3 OR-blocks separated by early returns):
+// Decision tree (10 OR-blocks separated by early returns; the matcher
+// short-circuits on the first true block):
 //
-//   Block 1: contains("nemotron-3") ∨ contains("nemotron-cascade")
-//                                   ∨ contains("nemotron_h")    → return true
-//   Block 2: contains("qwen3.5")  ∨ contains("qwen3.6")
-//                                  ∨ contains("holo3") ∨ contains("holo-3") → return true
-//   Block 3: contains("minimax-m2") ∨ contains("minimax_m2")    → return true
+//   Block 1:  contains("nemotron-3") ∨ contains("nemotron-cascade")
+//                                    ∨ contains("nemotron_h")        → true
+//   Block 2:  contains("qwen3.5") ∨ contains("qwen3.6")
+//                                 ∨ contains("holo3") ∨ contains("holo-3") → true
+//   Block 3:  contains("qwen3-next") ∨ contains("qwen3_next")
+//                                    ∨ contains("qwen3next")         → true
+//   Block 4:  contains("bailing") ∨ Ling family component             → true
+//   Block 5:  ZAYA family component (`(^|/)zaya[\-0-9]`)              → true
+//   Block 6:  contains("granitemoehybrid")                            → true
+//   Block 7:  contains("granite") ∧ (contains("moe-hybrid")
+//                                  ∨ contains("moe_hybrid"))          → true
+//   Block 8:  regex `(^|/)falcon[\-_]?h1([\-_].*)?$`                  → true
+//   Block 9:  regex `(^|/)baichuan[\-_]?m1([\-_].*)?$`                → true
+//   Block 10: regex `(^|/)jamba[\-_\.0-9]`                            → true
+//   Block 11: regex `(^|/)lfm2([\-_].*)?$`                            → true
 //   else: return false
 //
 // MC/DC requirements per OR block: every condition must independently
 // flip the OR's truth value. For an OR of N conditions, that's N+1
-// cases per block (1 all-false + N single-true).
+// cases per block (1 all-false + N single-true). Single-condition blocks
+// (5, 6, 8, 9, 10, 11) get coverage from one positive + the master-false
+// sweep. Block 7 is an AND — both conjuncts get independent positive +
+// negative coverage.
 //
-// Total minimum cases: (3+1) + (4+1) + (2+1) + 1 master-false = 13.
+// MiniMax M2 / M2.7 was historically in this matcher with a "gated SSM in
+// some layers" comment, but vmlx's `MiniMaxModel` and `MiniMaxJANGTQModel`
+// use only standard `KVCache` slots — no `MambaCache` / `ArraysCache` /
+// `ZayaCCACache`. The eager set was therefore a no-op (vmlx's BatchEngine
+// auto-flip would never have triggered either) and was removed for matcher
+// precision. Negative MiniMax cases below lock that decision.
 
 import Foundation
 import Testing
@@ -96,26 +114,74 @@ struct IsKnownHybridModelMCDCTests {
         #expect(!ModelRuntime.isKnownHybridModel(name: "qwen3.7-future-variant"))
     }
 
-    // MARK: - Block 3: MiniMax M2 family (2 conditions)
+    // MARK: - MiniMax — historically matched, now a negative regression guard
 
-    @Test("B3.minimax-m2 substring independently flips Block 3")
-    func b3_minimaxDashM2() {
-        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/MiniMax-M2.7-JANGTQ"))
-        #expect(ModelRuntime.isKnownHybridModel(name: "minimax-m2.7-small-jangtq"))
+    /// MiniMax M2 / M2.7 used to flip this matcher because of a "gated SSM
+    /// in some layers" comment, but vmlx's `MiniMaxModel` and
+    /// `MiniMaxJANGTQModel` use only standard `KVCache`. The eager
+    /// `setHybrid(true)` was therefore a no-op (BatchEngine's auto-flip
+    /// keys off `MambaCache` / `ArraysCache` / `ZayaCCACache`, none of
+    /// which MiniMax populates). Locking the negative side here so a
+    /// future re-add doesn't quietly land.
+    @Test("MiniMax M2 / M2.7 is dense KV — must NOT eager-flip setHybrid")
+    func minimaxM2_isNotHybrid() {
+        for id in [
+            "OsaurusAI/MiniMax-M2.7-JANGTQ",
+            "OsaurusAI/MiniMax-M2.7-JANGTQ4",
+            "minimax-m2.7-small-jangtq",
+            "minimax_m2-mxfp4",
+            "MiniMax_M2-3-future",
+            "minimax/MiniMax-Text-01",
+            "minimax-m1-pro",
+        ] {
+            #expect(
+                !ModelRuntime.isKnownHybridModel(name: id),
+                "MiniMax has no MambaCache/ArraysCache layers — must NOT match: \(id)"
+            )
+        }
     }
 
-    @Test("B3.minimax_m2 underscore variant independently flips Block 3")
-    func b3_minimaxUnderscoreM2() {
-        // Underscore form (rare but seen in some HF repos).
-        #expect(ModelRuntime.isKnownHybridModel(name: "minimax_m2-mxfp4"))
-        #expect(ModelRuntime.isKnownHybridModel(name: "MiniMax_M2-3-future"))
+    // MARK: - Block 3: Bailing / Ling family (2 conditions)
+
+    @Test("B3.bailing substring independently flips Block 3")
+    func b3_bailing() {
+        #expect(ModelRuntime.isKnownHybridModel(name: "bailing_hybrid"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "bailing_moe_v2_5"))
     }
 
-    @Test("B3 all-false: minimax-m1 / minimax-text-01 do NOT flip Block 3")
+    @Test("B3.Ling family component independently flips Block 3")
+    func b3_ling() {
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Ling-2.6-flash-MXFP4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "ling-2.6-flash-jangtq"))
+    }
+
+    @Test("B3 all-false: bare ling without dash does NOT flip Block 3")
     func b3_allFalse() {
-        // MiniMax-Text-01 is dense, not hybrid — must NOT match.
-        #expect(!ModelRuntime.isKnownHybridModel(name: "minimax/MiniMax-Text-01"))
-        #expect(!ModelRuntime.isKnownHybridModel(name: "minimax-m1-pro"))
+        #expect(!ModelRuntime.isKnownHybridModel(name: "linguistics-model-7b"))
+        #expect(!ModelRuntime.isKnownHybridModel(name: "darling-llm"))
+    }
+
+    // MARK: - Block 4: Zyphra ZAYA family (1 condition: digit/dash boundary)
+
+    @Test("B4.zaya prefix + slash forms independently flip Block 4")
+    func b4_zaya() {
+        // ZAYA1 / ZAYA2 / ZAYA-S naming: digit or dash boundary after `zaya`.
+        #expect(ModelRuntime.isKnownHybridModel(name: "Zyphra/Zaya1-8B-JANGTQ4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "Zyphra/Zaya1-8B-MXFP4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "OsaurusAI/Zaya1-8B-JANGTQ2"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "Zaya1-8B-JANGTQ4"))  // bare picker
+        #expect(ModelRuntime.isKnownHybridModel(name: "zaya1-8b-mxfp4"))  // case-folded
+        #expect(ModelRuntime.isKnownHybridModel(name: "Zyphra/Zaya-S-7B-Future"))  // dash-boundary
+    }
+
+    @Test("B4 all-false: zaya without digit/dash boundary does NOT flip Block 4")
+    func b4_zaya_allFalse() {
+        // Boundary-regression guards: substring `zaya` without a
+        // digit-or-dash terminator is NOT a ZAYA bundle.
+        #expect(!ModelRuntime.isKnownHybridModel(name: "dataset/zayasaurus"))
+        #expect(!ModelRuntime.isKnownHybridModel(name: "zayasaurus-7b"))
+        #expect(!ModelRuntime.isKnownHybridModel(name: "lazyaardvark"))
+        #expect(!ModelRuntime.isKnownHybridModel(name: "dazaya-llm"))
     }
 
     // MARK: - Master FALSE: no block matches
@@ -135,6 +201,8 @@ struct IsKnownHybridModelMCDCTests {
             "dealignai/Mistral-Small-4-119B-JANG_2L-CRACK",
             "OsaurusAI/Laguna-XS.2-mxfp4",  // SWA hybrid, NOT Mamba
             "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",  // dense GQA
+            "OsaurusAI/MiniMax-M2.7-JANGTQ",  // dense MoE, no SSM layers
+            "minimax-m2.7-small-jangtq",
             "foundation",  // Apple's built-in
             "deepseekv4-flash-jangtq",  // DSV4 has its own cache topology
             "",  // empty string edge case
@@ -159,7 +227,12 @@ struct IsKnownHybridModelMCDCTests {
         #expect(ModelRuntime.isKnownHybridModel(name: "QWEN3.5-35B"))
         #expect(ModelRuntime.isKnownHybridModel(name: "HOLO3-mxfp4"))
 
-        // Block 3: caps in minimax
-        #expect(ModelRuntime.isKnownHybridModel(name: "MINIMAX-M2-mxfp4"))
+        // Block 3: caps in bailing / ling
+        #expect(ModelRuntime.isKnownHybridModel(name: "BAILING_HYBRID"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "LING-2.6-FLASH-MXFP4"))
+
+        // Block 4: caps in zaya
+        #expect(ModelRuntime.isKnownHybridModel(name: "ZYPHRA/ZAYA1-8B-JANGTQ4"))
+        #expect(ModelRuntime.isKnownHybridModel(name: "ZAYA1-8B-MXFP4"))
     }
 }

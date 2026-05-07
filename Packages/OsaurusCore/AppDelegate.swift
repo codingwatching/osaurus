@@ -26,6 +26,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     public func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
 
+        // Pin the process against macOS automatic termination. We're an
+        // `LSUIElement=YES` agent (no Dock window) that exposes a local HTTP
+        // server, so the AppKit defaults can decide we're "idle" once the
+        // chat overlay closes and quietly suspend or kill us — which on a
+        // 2026-05-07 repro silently terminated the app mid-Ling decode after
+        // ~12 minutes of UI idleness, surfacing in the chat UI as
+        // "greeting → freeze → end" (the streamed connection drops with the
+        // process). The reason string is held for app lifetime; we never
+        // re-enable, since the inference path is always potentially active.
+        ProcessInfo.processInfo.disableAutomaticTermination(
+            "Osaurus local LLM HTTP server (long-running)"
+        )
+
         // Make MLX C++ errors recoverable instead of process-fatal. Must run
         // before any model load can call into MLX so the first forward pass
         // is already protected. See `MLXErrorRecovery` for the rationale and
@@ -57,34 +70,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await StorageMaintenance.shared.start()
         }
 
-        // vmlx-swift-lm DSV4 cache-mode default. Process-wide env var read
-        // by `LLMModelFactory.dispatchDeepseekV4` at model-load time.
-        //
-        // DSV4-Flash's stock default is `RotatingKVCache(maxSize: 128)` per
-        // layer — fine for FIM / short Q&A but loses prompt visibility on
-        // any decode > 128 tokens, which means any chat conversation /
-        // reasoning-mode trace / multi-turn response drifts off-topic
-        // (live-confirmed 2026-04-25 on DSV4-Flash JANGTQ: thinking traces
-        // produced random SQL queries because the original prompt scrolled
-        // out of attention).
-        //
-        // Setting `DSV4_KV_MODE=full` switches new caches to `KVCacheSimple`
-        // — full attention across the entire prompt + decode. Memory cost
-        // ~360 MB at 8K output (vs. ~6 MB rotating), which is a non-issue
-        // on any machine that can load DSV4 in the first place (79.5 GB+
-        // bundles).
-        //
-        // No effect on non-DSV4 models — vmlx ignores the var unless the
-        // factory dispatch hits the `deepseek_v4` model_type. Setting this
-        // unconditionally at launch is the recommended osaurus-side
-        // operating point per vmlx
-        // `Libraries/MLXLMCommon/BatchEngine/OSAURUS-INTEGRATION.md`
-        // §"DeepSeek-V4 — runtime knobs" (2026-04-25 update). Users who
-        // want the rotating-window memory savings can override by exporting
-        // a different value before launching osaurus.
-        if ProcessInfo.processInfo.environment["DSV4_KV_MODE"] == nil {
-            setenv("DSV4_KV_MODE", "full", 1)
-        }
+        // DSV4 cache topology is owned by vmlx-swift-lm. Leave
+        // `DSV4_KV_MODE` unset here so the library default uses its
+        // production SWA+CSA+HSA hybrid cache; explicit operator env vars
+        // remain honored by vmlx for diagnostics.
 
         // Configure as regular app (show Dock icon) by default, or accessory if hidden
         let hideDockIcon = ServerConfigurationStore.load()?.hideDockIcon ?? false

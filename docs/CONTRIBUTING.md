@@ -127,6 +127,16 @@ is the single source of truth for pinned dependency versions. Xcode updates
 this file automatically when you add, remove, or update a package. Commit
 the changed `Package.resolved` alongside your other changes.
 
+SwiftPM mirrors live in both `osaurus.xcworkspace/xcshareddata/swiftpm/configuration/`
+and `App/osaurus.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/`.
+They keep transitive `swift-transformers` and `swift-jinja` identities on the
+Osaurus-owned `swift-transformers` / `Jinja` chain that matches vmlx-swift-lm.
+The root package also pins the Jinja parser fix at `58d21aa` so clean resolves
+keep support for for-loop iterable expressions such as
+`loop_messages + [{'role': '__sentinel__'}]`. Keep the two mirror files in sync
+until upstream transitive packages no longer refer to the Hugging Face package
+identities.
+
 CI resolves dependencies from this committed lockfile and builds with
 `-disableAutomaticPackageResolution`, so it uses the exact same versions
 you tested locally. If the resolved file is stale relative to

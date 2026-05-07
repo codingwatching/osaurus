@@ -607,7 +607,9 @@ private struct AskAIButton: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     StatusPanelView()
         .environmentObject(ServerController())
 }
+#endif

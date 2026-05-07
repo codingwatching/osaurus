@@ -30,6 +30,12 @@ struct ModelManagerSuggestedTests {
         #expect(ids.contains("osaurusai/minimax-m2.7-jangtq"))
     }
 
+    @Test func curatedSuggestedIds_includesLingEntries() {
+        let ids = ModelManager.curatedSuggestedIds
+        #expect(ids.contains("osaurusai/ling-2.6-flash-mxfp4"))
+        #expect(ids.contains("osaurusai/ling-2.6-flash-jangtq"))
+    }
+
     @Test func curatedSuggestedIds_matchInitialSuggestedModels() async {
         let suggested = await MainActor.run { ModelManager().suggestedModels }
         let curatedIds = ModelManager.curatedSuggestedIds
@@ -73,6 +79,19 @@ struct ModelManagerSuggestedTests {
         #expect(jangtq?.modelType == "minimax_m2")
 
         #expect(jangtq4?.releasedAt != nil)
+        #expect(jangtq?.releasedAt != nil)
+    }
+
+    @Test func lingEntries_haveExpectedMetadata() async {
+        let suggested = await MainActor.run { ModelManager().suggestedModels }
+        let mxfp4 = suggested.first { $0.id == "OsaurusAI/Ling-2.6-flash-MXFP4" }
+        let jangtq = suggested.first { $0.id == "OsaurusAI/Ling-2.6-flash-JANGTQ" }
+
+        #expect(mxfp4 != nil)
+        #expect(jangtq != nil)
+        #expect(mxfp4?.modelType == "bailing_hybrid")
+        #expect(jangtq?.modelType == "bailing_hybrid")
+        #expect(mxfp4?.releasedAt != nil)
         #expect(jangtq?.releasedAt != nil)
     }
 

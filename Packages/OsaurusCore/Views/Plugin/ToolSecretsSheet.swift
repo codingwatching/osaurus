@@ -531,6 +531,7 @@ private struct DescriptionText: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     ToolSecretsSheet(
         pluginId: "dev.example.weather",
@@ -556,3 +557,4 @@ private struct DescriptionText: View {
         onSave: {}
     )
 }
+#endif

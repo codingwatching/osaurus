@@ -416,6 +416,7 @@ extension HeaderTabsRow {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     VStack(spacing: 0) {
         ManagerHeader(title: "Server", subtitle: "Developer tools and API reference")
@@ -436,3 +437,4 @@ extension HeaderTabsRow {
     .background(Color.black)
     .environment(\.theme, DarkTheme())
 }
+#endif

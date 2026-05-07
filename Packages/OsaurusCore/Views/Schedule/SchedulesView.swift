@@ -2655,6 +2655,8 @@ private struct ScheduleSecondaryButtonStyle: ButtonStyle {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     SchedulesView()
 }
+#endif

@@ -211,12 +211,7 @@ final class ChatSession: ObservableObject {
                 let pid = self.agentId ?? Agent.defaultId
                 AgentManager.shared.updateDefaultModel(for: pid, model: model)
 
-                // Load persisted options or use defaults
-                if let persisted = ModelOptionsStore.shared.loadOptions(for: model) {
-                    self.activeModelOptions = persisted
-                } else {
-                    self.activeModelOptions = ModelProfileRegistry.defaults(for: model)
-                }
+                self.loadActiveModelOptions(for: model)
 
                 // Clear pending image attachments when switching to a non-VLM model
                 let newModelSupportsImages: Bool = {
@@ -266,6 +261,22 @@ final class ChatSession: ObservableObject {
         promptQueueCancellable = nil
     }
 
+    private func loadActiveModelOptions(for model: String?) {
+        guard let model else {
+            activeModelOptions = [:]
+            return
+        }
+
+        // Load persisted options through the active profile so stale
+        // per-model toggles do not leak into families whose option surface
+        // changed. This runs for both user-picked and programmatic model
+        // selection paths.
+        activeModelOptions = ModelProfileRegistry.normalizedOptions(
+            for: model,
+            persisted: ModelOptionsStore.shared.loadOptions(for: model)
+        )
+    }
+
     /// Stable session id used as the AgentTodoStore key. Falls back to a
     /// per-window sentinel when no session has been created yet so brand-new
     /// chats still have a place to write their todo.
@@ -312,6 +323,7 @@ final class ChatSession: ObservableObject {
         } else {
             selectedModel = pickerItems.firstChatCapable?.id
         }
+        loadActiveModelOptions(for: selectedModel)
         isLoadingModel = false
     }
 
@@ -340,6 +352,7 @@ final class ChatSession: ObservableObject {
         pickerItems = newOptions
         isLoadingModel = true
         selectedModel = newSelected
+        loadActiveModelOptions(for: selectedModel)
         isLoadingModel = false
         hasAnyModel = !newOptions.isEmpty
     }
@@ -696,6 +709,7 @@ final class ChatSession: ObservableObject {
         {
             isLoadingModel = true
             selectedModel = savedModel
+            loadActiveModelOptions(for: selectedModel)
             isLoadingModel = false
         } else {
             applyEffectiveModel(for: data.agentId)

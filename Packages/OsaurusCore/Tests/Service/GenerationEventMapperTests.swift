@@ -24,9 +24,12 @@ struct GenerationEventMapperTests {
         }
     }
 
-    private func collect(events: [Generation]) async throws -> [ModelRuntimeEvent] {
+    private func collect(
+        events: [Generation],
+        modelName: String = ""
+    ) async throws -> [ModelRuntimeEvent] {
         let stream = makeStream(events)
-        let mapped = GenerationEventMapper.map(events: stream)
+        let mapped = GenerationEventMapper.map(events: stream, modelName: modelName)
         var out: [ModelRuntimeEvent] = []
         for try await ev in mapped { out.append(ev) }
         return out
@@ -160,6 +163,96 @@ struct GenerationEventMapperTests {
             if case .reasoning(let s) = $0 { return s } else { return nil }
         }
         #expect(reasoning == ["kept"])
+    }
+
+    /// Production repro on 2026-05-07: Ling 2.6 Flash, despite
+    /// `enable_thinking=false` clamped at three layers (host profile +
+    /// MLXBatchAdapter short-circuit + vmlx Bailing template "thinking off"),
+    /// occasionally emits a `<think>` token mid-stream after a tiny visible
+    /// greeting. vmlx's parser then routes the long inner reasoning chain to
+    /// `.reasoning` deltas — chat UIs that don't render reasoning see
+    /// "greeting → 30s freeze → end". The mapper now promotes `.reasoning` to
+    /// `.tokens` for Ling so the visible stream never goes silent.
+    @Test func reasoning_merges_to_tokens_for_ling_family() async throws {
+        let events: [Generation] = [
+            .chunk("Hi! "),
+            .reasoning("(silent thinking that would otherwise hang the UI)"),
+            .chunk(" 7×6=42."),
+        ]
+        for modelName in [
+            "OsaurusAI/Ling-2.6-flash-MXFP4",
+            "ling-2.6-flash-mxfp4",
+            "JANGQ-AI/Ling-2.6-flash-JANGTQ2-CRACK",
+        ] {
+            let out = try await collect(events: events, modelName: modelName)
+            // Reasoning must NOT appear as a separate channel for Ling.
+            #expect(
+                !out.contains(where: { if case .reasoning = $0 { true } else { false } }),
+                "Ling should never emit .reasoning runtime events: \(modelName)"
+            )
+            let assembled = out.compactMap {
+                if case .tokens(let s) = $0 { s } else { nil }
+            }.joined()
+            #expect(
+                assembled
+                    == "Hi! (silent thinking that would otherwise hang the UI) 7×6=42.",
+                "Ling stream must surface inner reasoning text as visible tokens: \(modelName) — got \(assembled)"
+            )
+        }
+    }
+
+    /// ZAYA1 (Zyphra; `model_type=zaya`) is also served as non-reasoning;
+    /// same rationale as Ling above. Locked here so a future hybrid-model
+    /// addition can't silently regress the merge policy.
+    @Test func reasoning_merges_to_tokens_for_zaya_family() async throws {
+        let events: [Generation] = [
+            .chunk("Hello! "),
+            .reasoning("(zaya hidden reasoning)"),
+        ]
+        for modelName in [
+            "Zyphra/Zaya1-8B-JANGTQ4",
+            "zaya1-8b-mxfp4",
+            "Zyphra/Zaya-S-7B-Future",
+        ] {
+            let out = try await collect(events: events, modelName: modelName)
+            #expect(
+                !out.contains(where: { if case .reasoning = $0 { true } else { false } }),
+                "ZAYA should never emit .reasoning runtime events: \(modelName)"
+            )
+            let assembled = out.compactMap {
+                if case .tokens(let s) = $0 { s } else { nil }
+            }.joined()
+            #expect(assembled == "Hello! (zaya hidden reasoning)")
+        }
+    }
+
+    /// Reasoning-capable families (Qwen3, Nemotron, OpenAI o-series, Auto)
+    /// must keep the channel split so the UI can render thinking panels.
+    /// Adversarial-name guard: `lazyaardvark` and `dataset/zayasaurus` look
+    /// like ZAYA but must NOT trip the merge.
+    @Test func reasoning_stays_separate_for_other_families() async throws {
+        let events: [Generation] = [
+            .chunk("answer "),
+            .reasoning("alpha"),
+            .reasoning("beta"),
+        ]
+        for modelName in [
+            "OsaurusAI/Qwen3.6-35B-A3B-mxfp4",
+            "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
+            "lmstudio-community/gpt-oss-20b-MLX-8bit",
+            "dataset/zayasaurus",  // ZAYA boundary regression
+            "lazyaardvark",  // ZAYA boundary regression
+            "",  // empty — default branch
+        ] {
+            let out = try await collect(events: events, modelName: modelName)
+            let reasoning = out.compactMap {
+                if case .reasoning(let s) = $0 { s } else { nil }
+            }
+            #expect(
+                reasoning == ["alpha", "beta"],
+                "non-Ling/non-ZAYA must keep reasoning channel split: \(modelName)"
+            )
+        }
     }
 
     @Test func toolCall_serialization_failure_emits_error_envelope() async throws {

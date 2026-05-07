@@ -172,6 +172,113 @@ struct ModelProfileRegistryTests {
         }
     }
 
+    /// Ling-2.6 Flash is served as a non-reasoning chat model. The explicit
+    /// profile reserves Ling IDs ahead of `AutoThinkingProfile`, but exposes
+    /// no Thinking toggle.
+    @Test("Ling bundles match non-reasoning runtime profile")
+    func ling_matchesRuntimeProfileWithoutThinkingToggle() {
+        for id in [
+            "OsaurusAI/Ling-2.6-flash-MXFP4",
+            "OsaurusAI/Ling-2.6-flash-JANGTQ",
+            "ling-2.6-flash-jangtq",  // case-folded picker form
+            "JANGQ-AI/Ling-2.6-flash-JANGTQ",  // forward-compat source org
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName == LingRuntimeProfile.displayName,
+                "expected LingRuntimeProfile for \(id), got \(profile?.displayName ?? "nil")"
+            )
+            #expect(profile?.options.isEmpty == true)
+            #expect(profile?.defaults.isEmpty == true)
+            #expect(profile?.thinkingOption?.id == nil)
+        }
+
+        for id in ["linguistics-model-7b", "darling-llm"] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName != LingRuntimeProfile.displayName,
+                "must not classify \(id) as Ling"
+            )
+        }
+    }
+
+    @Test("Profile option normalization drops stale Ling thinking preference")
+    func normalizedOptions_dropsStaleLingThinkingPreference() {
+        let staleLing = ModelProfileRegistry.normalizedOptions(
+            for: "OsaurusAI/Ling-2.6-flash-JANGTQ",
+            persisted: ["disableThinking": .bool(false)]
+        )
+        #expect(staleLing.isEmpty)
+
+        let qwen = ModelProfileRegistry.normalizedOptions(
+            for: "OsaurusAI/Qwen3.5-30B-A3B-JANGTQ",
+            persisted: [
+                "disableThinking": .bool(false),
+                "unrelated": .bool(true),
+            ]
+        )
+        #expect(qwen["disableThinking"]?.boolValue == false)
+        #expect(qwen["unrelated"] == nil)
+
+        let qwenDefaults = ModelProfileRegistry.normalizedOptions(
+            for: "OsaurusAI/Qwen3.5-30B-A3B-JANGTQ",
+            persisted: nil
+        )
+        #expect(qwenDefaults["disableThinking"]?.boolValue == true)
+    }
+
+    /// ZAYA1 (Zyphra; `model_type=zaya`) is served as non-reasoning. The
+    /// runtime profile must reserve every canonical bundle name ahead of
+    /// `AutoThinkingProfile` (whose template-driven match would otherwise
+    /// fire because ZAYA's chat template ships standard `<think>` markers
+    /// + an `enable_thinking` Jinja kwarg). The profile carries no options
+    /// — there is no UI Thinking toggle to expose. Negative cases lock the
+    /// matcher boundary so adjacent names like `zayasaurus-7b` or
+    /// `dataset/zayasaurus` do NOT shortcut into the runtime profile.
+    @Test("Zaya bundles match non-reasoning runtime profile, boundary-safe")
+    func zaya_matchesRuntimeProfileWithoutThinkingToggle() {
+        for id in [
+            "Zyphra/Zaya1-8B-JANGTQ4",
+            "Zyphra/Zaya1-8B-MXFP4",
+            "OsaurusAI/Zaya1-8B-JANGTQ2",
+            "Zaya1-8B-JANGTQ4",  // bare picker form
+            "zaya1-8b-mxfp4",  // case-folded
+            "Zyphra/Zaya-S-7B-Future",  // dash-boundary, forward-compat
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName == ZayaRuntimeProfile.displayName,
+                "expected ZayaRuntimeProfile for \(id), got \(profile?.displayName ?? "nil")"
+            )
+            #expect(profile?.options.isEmpty == true)
+            #expect(profile?.defaults.isEmpty == true)
+            #expect(profile?.thinkingOption?.id == nil)
+        }
+
+        // Boundary-regression negatives: must NOT classify as ZAYA.
+        for id in [
+            "dataset/zayasaurus",
+            "zayasaurus-7b",
+            "lazyaardvark",
+            "dazaya-llm",
+        ] {
+            let profile = ModelProfileRegistry.profile(for: id)
+            #expect(
+                profile?.displayName != ZayaRuntimeProfile.displayName,
+                "must not classify \(id) as Zaya"
+            )
+        }
+    }
+
+    @Test("Profile option normalization drops stale Zaya thinking preference")
+    func normalizedOptions_dropsStaleZayaThinkingPreference() {
+        let staleZaya = ModelProfileRegistry.normalizedOptions(
+            for: "Zyphra/Zaya1-8B-JANGTQ4",
+            persisted: ["disableThinking": .bool(false)]
+        )
+        #expect(staleZaya.isEmpty)
+    }
+
     /// Mistral Medium 3.5 has no thinking toggle today (no `<think>` block
     /// in its chat template). Match must NOT shortcut into a thinking
     /// profile; if it falls through to `AutoThinkingProfile` that's fine

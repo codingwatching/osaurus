@@ -742,9 +742,11 @@ private struct SandboxPluginToolCard: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     ToolsManagerView()
 }
+#endif
 
 // MARK: - Permission Status Banner (shared with PluginsView)
 

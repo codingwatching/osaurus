@@ -80,6 +80,8 @@ enum ModelProfileRegistry {
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
+        LingRuntimeProfile.self,
+        ZayaRuntimeProfile.self,
         Gemini31FlashImageProfile.self,
         GeminiProImageProfile.self,
         GeminiFlashImageProfile.self,
@@ -96,6 +98,21 @@ enum ModelProfileRegistry {
 
     static func options(for modelId: String) -> [ModelOptionDefinition] {
         profile(for: modelId)?.options ?? []
+    }
+
+    static func normalizedOptions(
+        for modelId: String,
+        persisted: [String: ModelOptionValue]?
+    ) -> [String: ModelOptionValue] {
+        let definitions = options(for: modelId)
+        guard !definitions.isEmpty else { return [:] }
+
+        let allowedIds = Set(definitions.map(\.id))
+        var values = defaults(for: modelId)
+        for (id, value) in persisted ?? [:] where allowedIds.contains(id) {
+            values[id] = value
+        }
+        return values
     }
 }
 
@@ -236,6 +253,47 @@ struct LagunaThinkingProfile: ModelProfile {
     ]
 
     static let thinkingOption: (id: String, inverted: Bool)? = ("disableThinking", true)
+}
+
+// MARK: - Ling Runtime Profile
+
+/// Ling-2.6 Flash (`model_type=bailing_hybrid`) is served as a non-reasoning
+/// chat model in osaurus. The explicit profile reserves Ling IDs ahead of
+/// `AutoThinkingProfile`, so a locally installed template cannot accidentally
+/// expose the generic Thinking toggle. `MLXBatchAdapter` separately forces
+/// `enable_thinking=false` for Ling requests at tokenization time.
+struct LingRuntimeProfile: ModelProfile {
+    static let displayName = "Ling"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isLingFamily(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = []
+    static let defaults: [String: ModelOptionValue] = [:]
+}
+
+// MARK: - Zaya Runtime Profile
+
+/// ZAYA1 (Zyphra; `model_type=zaya`) — hybrid CCA-attention bundles
+/// (BF16 base + JANGTQ2 / JANGTQ4 / MXFP4 routed-expert variants). Per the
+/// 2026-05-06 vmlx Osaurus runtime handoff, ZAYA is served as non-reasoning
+/// in osaurus until the JANGTQ thinking-on path is verified to close
+/// reasoning and emit visible content. The chat template ships standard
+/// `<think>` markers and an `enable_thinking` Jinja kwarg, so without this
+/// reservation `AutoThinkingProfile` would expose a misleading Thinking
+/// toggle. `MLXBatchAdapter` separately forces `enable_thinking=false` for
+/// ZAYA at tokenization, and vmlx's `LLMUserInputProcessor.defaultContext`
+/// clamps the same value for `model_type=zaya`/`zyphra` as defense in depth.
+struct ZayaRuntimeProfile: ModelProfile {
+    static let displayName = "Zaya"
+
+    static func matches(modelId: String) -> Bool {
+        ModelFamilyNames.isZayaFamily(modelId)
+    }
+
+    static let options: [ModelOptionDefinition] = []
+    static let defaults: [String: ModelOptionValue] = [:]
 }
 
 // MARK: - Auto Thinking Profile (chat-template driven)

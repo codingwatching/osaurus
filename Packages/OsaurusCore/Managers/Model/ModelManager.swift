@@ -762,6 +762,42 @@ extension ModelManager {
             releasedAt: date("2026-04-30")
         ),
 
+        // MARK: Ling-2.6 Flash (BailingHybrid)
+        //
+        // Alibaba Ling-2.6 Flash ships as BailingHybrid (`model_type=
+        // bailing_hybrid`) with Linear-Attn + MLA + routed MoE. vmlx routes
+        // both MXFP4 and JANGTQ bundles through the same BailingHybrid
+        // factory based on config / jang_config metadata; osaurus only needs
+        // to surface the curated entries and pass the model_type hint early.
+        //
+        // The chat template does not consume the generic `enable_thinking`
+        // kwarg used by Qwen/Nemotron/Laguna directly. The vmlx pin maps
+        // the shared Disable Thinking option to the template's required
+        // "detailed thinking on/off" system directive inside the Bailing
+        // input processor, before tokenizer rendering.
+
+        MLXModel(
+            id: "OsaurusAI/Ling-2.6-flash-MXFP4",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Ling-2.6-flash-MXFP4"),
+            description:
+                "Ling-2.6 Flash BailingHybrid MoE. MXFP4 quantization for the highest quality Ling local path.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Ling-2.6-flash-MXFP4",
+            modelType: "bailing_hybrid",
+            releasedAt: date("2026-05-06")
+        ),
+
+        MLXModel(
+            id: "OsaurusAI/Ling-2.6-flash-JANGTQ",
+            name: ModelMetadataParser.friendlyName(from: "OsaurusAI/Ling-2.6-flash-JANGTQ"),
+            description:
+                "Ling-2.6 Flash BailingHybrid MoE with TurboQuant routed experts. Smaller local footprint for Mac inference.",
+            downloadURL:
+                "https://huggingface.co/OsaurusAI/Ling-2.6-flash-JANGTQ",
+            modelType: "bailing_hybrid",
+            releasedAt: date("2026-05-06")
+        ),
+
         // MARK: Mistral-Medium-3.5-128B (preview — architecturally supported, end-to-end load unverified)
         //
         // `model_type=mistral3` outer wrapper with `text_config.model_type=

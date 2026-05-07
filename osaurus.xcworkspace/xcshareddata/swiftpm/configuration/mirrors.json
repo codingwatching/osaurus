@@ -1,0 +1,29 @@
+{
+  "object" : [
+    {
+      "mirror" : "https://github.com/osaurus-ai/swift-transformers",
+      "original" : "https://github.com/huggingface/swift-transformers"
+    },
+    {
+      "mirror" : "https://github.com/osaurus-ai/swift-transformers",
+      "original" : "https://github.com/huggingface/swift-transformers.git"
+    },
+    {
+      "mirror" : "https://github.com/osaurus-ai/Jinja.git",
+      "original" : "https://github.com/huggingface/swift-jinja"
+    },
+    {
+      "mirror" : "https://github.com/osaurus-ai/Jinja.git",
+      "original" : "https://github.com/huggingface/swift-jinja.git"
+    },
+    {
+      "mirror" : "https://github.com/osaurus-ai/Jinja.git",
+      "original" : "https://github.com/osaurus-ai/swift-jinja"
+    },
+    {
+      "mirror" : "https://github.com/osaurus-ai/Jinja.git",
+      "original" : "https://github.com/osaurus-ai/swift-jinja.git"
+    }
+  ],
+  "version" : 1
+}

@@ -1753,6 +1753,8 @@ private struct SecretEntryRow: View {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     SandboxView()
 }
+#endif

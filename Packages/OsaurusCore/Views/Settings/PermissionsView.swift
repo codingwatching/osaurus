@@ -373,6 +373,8 @@ private struct SystemPermissionRow: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     PermissionsView()
 }
+#endif

@@ -55,47 +55,152 @@ struct MLXBatchAdapter {
     actor Registry {
         static let shared = Registry()
 
-        private var engines: [String: BatchEngine] = [:]
+        /// Single-flight cache for the per-model `BatchEngine` instance.
+        /// Coalesces concurrent first-fetch callers onto the same
+        /// creation `Task` so the registry never returns two `BatchEngine`
+        /// objects bound to the same MLX `ModelContainer`. Two engines
+        /// on one container would put concurrent producers on the shared
+        /// GPU command queue, which surfaces as a Metal completion-queue
+        /// abort. See `TaskCoalescer` for the construction-order
+        /// invariant the coalescer enforces.
+        private let coalescer = TaskCoalescer<BatchEngine>()
 
         /// Returns the cached engine for `modelName`, creating it on first
         /// use from the supplied `ModelContainer`. The container's existing
         /// cache coordinator is captured automatically by `makeBatchEngine`.
+        ///
+        /// `BatchEngine.maxBatchSize` is mutable at runtime as of vmlx
+        /// `b9da180` via `BatchEngine.updateMaxBatchSize(_:)`. When a later
+        /// request asks for a different `maxBatchSize` than the cached
+        /// engine's, we hot-resize the existing engine instead of rebuilding
+        /// (which would have raced in-flight callers holding the cached
+        /// handle). vmlx's `updateMaxBatchSize` is fail-closed: an
+        /// `engineShutdown` throw means the engine has been torn down and
+        /// the next caller will create a fresh one through the coalescer.
+        ///
+        /// Submitting to a shut-down engine returns a `.cancelled` info
+        /// event from vmlx (`b9da180`), so even if a stale handle leaks
+        /// past this gate the upstream stream finishes cleanly instead of
+        /// restarting GPU work.
         func engine(
             for modelName: String,
             container: ModelContainer,
             maxBatchSize: Int
         ) async -> BatchEngine {
-            if let existing = engines[modelName] { return existing }
-            let engine = await container.makeBatchEngine(maxBatchSize: maxBatchSize)
-            engines[modelName] = engine
+            let engine = await makeAndRegister(
+                modelName: modelName,
+                maxBatchSize: maxBatchSize
+            ) {
+                await container.makeBatchEngine(maxBatchSize: maxBatchSize)
+            }
+            // `BatchEngine.maxBatchSize` is actor-isolated; the await
+            // suspends the registry actor while we read it. Subsequent
+            // callers see the engine in `coalescer` already and won't
+            // race the read.
+            let cached = await engine.maxBatchSize
+            if cached != maxBatchSize {
+                do {
+                    try await engine.updateMaxBatchSize(maxBatchSize)
+                    batchAdapterLog.info(
+                        "registry: hot-resized BatchEngine for \(modelName, privacy: .public) maxBatchSize=\(cached, privacy: .public) → \(maxBatchSize, privacy: .public)"
+                    )
+                } catch BatchEngineConfigurationError.engineShutdown {
+                    // The cached engine was torn down between calls. Leaving
+                    // it in `values` would loop here forever (every future
+                    // call would resize-fail-and-return the same dead
+                    // handle). Evict it so the coalescer's next first-fetch
+                    // builds a fresh engine. The dispose step is a defensive
+                    // shutdown — vmlx makes shutdown idempotent, and
+                    // tombstoning across the dispose blocks racers from
+                    // building a fresh BatchEngine on the same
+                    // `ModelContainer` while teardown completes.
+                    batchAdapterLog.notice(
+                        "registry: cached BatchEngine for \(modelName, privacy: .public) is shut down; evicting and rebuilding at maxBatchSize=\(maxBatchSize, privacy: .public)"
+                    )
+                    await coalescer.remove(modelName) { engine in
+                        await engine.shutdown()
+                    }
+                    // Rebuild via the same path. The new engine is
+                    // constructed with `maxBatchSize` directly, so the
+                    // resize check on the recursive call sees a match and
+                    // skips `updateMaxBatchSize`.
+                    return await self.engine(
+                        for: modelName,
+                        container: container,
+                        maxBatchSize: maxBatchSize
+                    )
+                } catch {
+                    // Other errors (e.g. `invalidMaxBatchSize` from a
+                    // caller bug) leave the cached engine intact — it's
+                    // still serving requests at its construction value, and
+                    // the next valid resize call will succeed.
+                    batchAdapterLog.notice(
+                        "registry: BatchEngine for \(modelName, privacy: .public) rejected updateMaxBatchSize(\(maxBatchSize, privacy: .public)) — \(String(describing: error), privacy: .public). Engine continues at cached \(cached, privacy: .public)."
+                    )
+                }
+            }
+            return engine
+        }
+
+        /// Test seam. Coalesces a concurrent first-fetch using a custom
+        /// `factory`, returning whatever the factory produces. Production
+        /// callers go through `engine(for:container:maxBatchSize:)`. The
+        /// `maxBatchSize` argument is only used in the log line.
+        internal func makeAndRegister(
+            modelName: String,
+            maxBatchSize: Int,
+            factory: @Sendable @escaping () async -> BatchEngine
+        ) async -> BatchEngine {
+            let engine = await coalescer.value(for: modelName, factory: factory)
             batchAdapterLog.info(
-                "registry: created BatchEngine for \(modelName, privacy: .public) maxBatchSize=\(maxBatchSize, privacy: .public)"
+                "registry: ready BatchEngine for \(modelName, privacy: .public) maxBatchSize=\(maxBatchSize, privacy: .public)"
             )
             return engine
+        }
+
+        /// Diagnostic accessor. Test-only; production callers do not need
+        /// to inspect the coalescer's internal state. `draining` reports
+        /// engines whose in-flight creation has been claimed by a
+        /// concurrent `shutdownEngine` / `shutdownAll` but whose factory
+        /// has not yet completed.
+        internal func registrySnapshot() async -> (resolved: Int, inFlight: Int, draining: Int) {
+            await coalescer.snapshot()
         }
 
         /// Shut down and remove the engine for `modelName`. Safe to call
         /// when no engine exists. Pending requests on the engine receive a
         /// `.cancelled` info event before the actor exits.
+        ///
+        /// Uses the coalescer's `dispose:` variant so the
+        /// `engine.shutdown()` call runs INSIDE the `draining[key]`
+        /// tombstone window. A racing `value(for:)` for the same model
+        /// waits for the shutdown to complete before its post-drain fresh
+        /// factory builds a new `BatchEngine` — preventing two engines on
+        /// one `ModelContainer` (the Metal-abort scenario the registry
+        /// exists to prevent).
         func shutdownEngine(for modelName: String) async {
-            guard let engine = engines.removeValue(forKey: modelName) else { return }
-            await engine.shutdown()
-            batchAdapterLog.info(
-                "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
-            )
-        }
-
-        /// Shut down every cached engine. Used by `ModelRuntime.clearAll()`.
-        func shutdownAll() async {
-            let snapshot = engines
-            engines.removeAll()
-            for (name, engine) in snapshot {
+            await coalescer.remove(modelName) { engine in
                 await engine.shutdown()
                 batchAdapterLog.info(
-                    "registry: shutdown BatchEngine for \(name, privacy: .public)"
+                    "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
                 )
             }
         }
+
+        /// Shut down every cached engine. Used by `ModelRuntime.clearAll()`.
+        /// Drains in-flight creations and resolved entries through the
+        /// coalescer's `dispose:` variant so per-key tombstones stay set
+        /// across the per-engine `shutdown()` — same race protection as
+        /// `shutdownEngine(for:)`, applied to every cached entry.
+        func shutdownAll() async {
+            await coalescer.removeAll { modelName, engine in
+                await engine.shutdown()
+                batchAdapterLog.info(
+                    "registry: shutdown BatchEngine for \(modelName, privacy: .public)"
+                )
+            }
+        }
+
     }
 
     // MARK: - Image preprocessing
@@ -137,6 +242,23 @@ struct MLXBatchAdapter {
         }
     }
 
+    // MARK: - Thinking template context
+
+    static func additionalContext(
+        for generation: GenerationParameters,
+        modelName: String
+    ) -> [String: any Sendable] {
+        if ModelFamilyNames.isLingFamily(modelName)
+            || ModelFamilyNames.isZayaFamily(modelName)
+        {
+            return ["enable_thinking": false]
+        }
+        if let disableThinking = generation.modelOptions["disableThinking"]?.boolValue {
+            return ["enable_thinking": !disableThinking]
+        }
+        return ["enable_thinking": true]
+    }
+
     // MARK: - Submission
 
     /// Tokenize the chat + tools, fetch (or create) the per-model
@@ -156,6 +278,7 @@ struct MLXBatchAdapter {
         trace?.mark("batch_prepare_start")
 
         let prepared = try await prepareInput(
+            modelName: modelName,
             container: container,
             buildChat: buildChat,
             buildToolsSpec: buildToolsSpec,
@@ -241,6 +364,7 @@ struct MLXBatchAdapter {
     }
 
     private static func prepareInput(
+        modelName: String,
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
@@ -257,25 +381,14 @@ struct MLXBatchAdapter {
             let chat = preprocessImages(in: buildChat())
             let toolsSpec = buildToolsSpec()
 
-            // `enable_thinking` handling. If the user set `disableThinking`
-            // explicitly, honor it. Otherwise default to `true` — templates
-            // that don't reference `enable_thinking` silently ignore the
-            // kwarg, but templates that do reference it (Gemma-4 / Qwen-3
-            // thinking / AutoThinkingProfile targets) rely on the flag to
-            // activate reasoning. The previous behavior (send `nil` here
-            // and let the template default win) meant Gemma-4's
-            // `{%- if not enable_thinking | default(false) -%}` branch
-            // fired and suppressed CoT even when the profile said the
-            // model supports thinking — which was invisible to us when
-            // profile detection itself failed (e.g. model stored outside
-            // `~/MLXModels` so `LocalReasoningCapability.analyze` never
-            // got to read the template).
-            let additionalContext: [String: any Sendable]
-            if let disableThinking = generation.modelOptions["disableThinking"]?.boolValue {
-                additionalContext = ["enable_thinking": !disableThinking]
-            } else {
-                additionalContext = ["enable_thinking": true]
-            }
+            // `enable_thinking` handling. Ling-2.6 Flash is served as a
+            // non-reasoning model, so force it off even when a caller omits
+            // model options or an older saved preference says otherwise.
+            // Other families still honor explicit `disableThinking`; when
+            // unspecified, default to `true` because thinking-capable Gemma,
+            // Qwen, and auto-detected templates rely on a present truthy
+            // kwarg to activate reasoning.
+            let additionalContext = additionalContext(for: generation, modelName: modelName)
             let userInput = MLXLMCommon.UserInput(
                 chat: chat,
                 processing: .init(),

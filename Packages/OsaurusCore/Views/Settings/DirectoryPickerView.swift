@@ -125,6 +125,8 @@ struct DirectoryPickerView: View {
     }
 }
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     DirectoryPickerView()
 }
+#endif

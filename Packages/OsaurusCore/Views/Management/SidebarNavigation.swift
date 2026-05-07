@@ -540,6 +540,7 @@ struct SidebarUpdateButton: View {
 
 // MARK: - Preview
 
+#if DEBUG && canImport(PreviewsMacros)
 #Preview {
     struct PreviewWrapper: View {
         @State private var selection = "models"
@@ -564,3 +565,4 @@ struct SidebarUpdateButton: View {
 
     return PreviewWrapper()
 }
+#endif

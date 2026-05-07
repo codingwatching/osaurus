@@ -458,6 +458,33 @@ public actor ModelRuntime {
             usePagedCache: true,
             enableDiskCache: enableDiskCache,
             diskCacheDir: diskCacheDir,
+            // Disable the post-generation SSM re-derive pass for hybrid
+            // models. vmlx's default (`enableSSMReDerive: true`) runs a
+            // FULL second prefill at end-of-generation
+            // (`reDeriveAndStoreSSMStatesForPromptBoundaries`) so the
+            // next turn can land an SSM-state cache hit at the new
+            // prompt boundary.
+            //
+            // vmlx pin `b9da180` reordered this pass to run AFTER the
+            // generation yields completion `.info`, so the SSE stream
+            // no longer stays open while the re-derive runs (the old
+            // "greeting → freeze → end" UX symptom is gone upstream).
+            // The work is still serialized on the generation task —
+            // detached re-derive raced Metal command encoders, so vmlx
+            // kept it serial — which means the actor stays busy for the
+            // re-derive duration before the next request lands.
+            //
+            // We KEEP `enableSSMReDerive: false` regardless because the
+            // cost still doesn't amortize on osaurus's chat workload:
+            // the system prefix mutates every turn (memory injection,
+            // preflight capability search, dynamic skills) so the SSM
+            // cache rarely lands a boundary-matching hit on the next
+            // turn. Re-derive cost is paid without warm-cache payoff.
+            // Re-evaluate if osaurus ever exposes a chat surface with a
+            // stable system prefix across turns (or the SSM companion
+            // cache becomes prefix-keyed instead of boundary-keyed).
+            ssmMaxEntries: 50,
+            enableSSMReDerive: false,
             modelKey: scopedKey,
             // `defaultKVMode: .none` (fp16) — see file-level comment for the
             // 3-bit and 4-bit codebook KV degenerate-repetition trail.
@@ -528,27 +555,101 @@ public actor ModelRuntime {
     ///
     /// The list intentionally tracks model_type _families_, not exact ids,
     /// so new bundles in the same architecture (e.g. another Holo3 / Qwen
-    /// 3.x MoE quant tier, a future Nemotron-4 hybrid) flip the flag
-    /// without a registry edit. Worst case a non-hybrid match would still
-    /// be safe: vmlx's `setHybrid(true)` only enables the SSM-state
-    /// companion-cache lookup; the lookup is keyed and just misses on a
-    /// non-hybrid model — no incorrect routing.
+    /// 3.x MoE quant tier) flip the flag without a registry edit.
     nonisolated static func isKnownHybridModel(name: String) -> Bool {
         let lower = name.lowercased()
-        // Mamba+Attn+MoE — Nemotron-3 / Cascade-2 / Hyper.
+        // Mamba+Attn+MoE — Nemotron-3 / Cascade-2 / Hyper. vmlx
+        // `Models/NemotronH.swift` allocates `MambaCache` slots for the
+        // Mamba layers and standard KV for the attention layers; the
+        // `SSMStateCache` companion covers the Mamba state.
         if lower.contains("nemotron-3") || lower.contains("nemotron-cascade")
             || lower.contains("nemotron_h")
         {
             return true
         }
         // Qwen 3.5 / 3.6 MoE family (qwen3_5_moe model_type) covers Holo3 too.
+        // vmlx `Models/Qwen35.swift` + `Qwen35JANGTQ.swift` allocate
+        // `ArraysCache` for the linear-attention slots.
         if lower.contains("qwen3.5") || lower.contains("qwen3.6") || lower.contains("holo3")
             || lower.contains("holo-3")
         {
             return true
         }
-        // MiniMax M2 / M2.7 — gated SSM in some layers.
-        if lower.contains("minimax-m2") || lower.contains("minimax_m2") {
+        // Qwen3-Next (qwen3_next model_type) — newer hybrid MoE that vmlx
+        // dispatches via `Qwen3Next.swift`. Same `ArraysCache` companion
+        // pattern as the 3.5 / 3.6 family.
+        if lower.contains("qwen3-next") || lower.contains("qwen3_next")
+            || lower.contains("qwen3next")
+        {
+            return true
+        }
+        // Bailing / Ling hybrid: Linear-Attn companion ArraysCache + MLA
+        // cache. Covers `bailing_hybrid`, `bailing_moe_v2_5`, and the
+        // explicit Ling-2.6 Flash bundles via `isLingFamily`.
+        if lower.contains("bailing") || ModelFamilyNames.isLingFamily(name) {
+            return true
+        }
+        // Zyphra ZAYA1 CCA-attention hybrid: per-layer caches contain
+        // `ZayaCCACache` (KV + path-dependent conv_state + prev_hs). vmlx's
+        // `extractSSMStates` / `restoreSSMStates` round-trips the CCA state
+        // through the `SSMStateCache` companion, so eager `setHybrid(true)`
+        // mirrors the Mamba families above. vmlx's BatchEngine auto-flips
+        // on first ZayaCCACache slot admission; this is the parity flip
+        // for the single-slot `Evaluate` path.
+        if ModelFamilyNames.isZayaFamily(name) {
+            return true
+        }
+        // Granite-MoE-Hybrid (granitemoehybrid model_type) — IBM Granite
+        // hybrid Mamba+Attn-MoE. vmlx `Models/GraniteMoeHybrid.swift`
+        // allocates `MambaCache` for the SSM layers. Match the collapsed
+        // model_type AND the conventional bundle-id form
+        // (`granite-3.0-moe-hybrid-7b` etc.) by looking for "granite"
+        // alongside "moe-hybrid" / "moe_hybrid" — the conjunction guards
+        // against false positives like `moe-hybridge` lacking the family
+        // prefix.
+        if lower.contains("granitemoehybrid") {
+            return true
+        }
+        if lower.contains("granite")
+            && (lower.contains("moe-hybrid") || lower.contains("moe_hybrid"))
+        {
+            return true
+        }
+        // Falcon-H1 (falcon_h1 model_type) — TII hybrid Mamba+Attn. vmlx
+        // `Models/FalconH1.swift`. Match dash, underscore, AND collapsed
+        // forms; reject `falcon-h11` / `falcon_h10` etc. with the
+        // boundary regex below.
+        if lower.range(
+            of: #"(^|/)falcon[\-_]?h1([\-_].*)?$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+        // Baichuan-M1 (baichuan_m1 model_type) — Baichuan hybrid (linear +
+        // sliding-window attention with Mamba mix). vmlx
+        // `Models/BaichuanM1.swift`.
+        if lower.range(
+            of: #"(^|/)baichuan[\-_]?m1([\-_].*)?$"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+        // Jamba (jamba_3b model_type) — AI21 hybrid Mamba+Attn-MoE. vmlx
+        // `Models/Jamba.swift` allocates `MambaCache` slots. Match
+        // `jamba-`, `jamba_`, and dot/digit forms; reject `jamba` alone
+        // with the boundary regex.
+        if lower.range(
+            of: #"(^|/)jamba[\-_\.0-9]"#,
+            options: .regularExpression
+        ) != nil {
+            return true
+        }
+        // LFM2 / LFM2-MoE (lfm2 / lfm2_moe model_types) — Liquid Foundation
+        // Mamba hybrids. vmlx `Models/LFM2.swift` + `LFM2MoE.swift`.
+        if lower.range(
+            of: #"(^|/)lfm2([\-_].*)?$"#,
+            options: .regularExpression
+        ) != nil {
             return true
         }
         return false
@@ -579,8 +680,19 @@ public actor ModelRuntime {
         let trace = parameters.ttftTrace
         trace?.mark("runtime_start")
 
-        trace?.mark("await_active_gen")
-        _ = await activeGenerationTask?.value
+        // No serialization gate against `activeGenerationTask` here:
+        // `ModelLease` is the authoritative "is anyone still using the model"
+        // signal (per the field's own doc on line 82-87 — "tracks at most one
+        // task even when many are active — the lease drains the rest"), and
+        // the lease + container-load discipline already block model-swap
+        // teardown. Awaiting the previous generation here serialized
+        // same-model overlapping requests *before* `MLXBatchAdapter.generate`
+        // could submit them to vmlx's `BatchEngine`, defeating the
+        // continuous-batching path that osaurus advertises as a feature.
+        // Removed 2026-05-07 (vmlx pin b9da180 also adds engine-side
+        // `isShutdown` defense in depth, so a stale handle landing during
+        // unload now returns a `.cancelled` info instead of restarting GPU
+        // work).
         if Task.isCancelled { throw CancellationError() }
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
@@ -657,7 +769,7 @@ public actor ModelRuntime {
             await ModelLease.shared.release(modelName)
         }
 
-        return GenerationEventMapper.map(events: prepared.stream)
+        return GenerationEventMapper.map(events: prepared.stream, modelName: modelName)
     }
 
     // MARK: - New message-based (OpenAI ChatMessage) APIs
