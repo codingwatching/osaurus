@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.12</title>
+            <pubDate>Fri, 08 May 2026 00:22:09 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.12</sparkle:version>
+            <sparkle:shortVersionString>0.18.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.12/Osaurus-0.18.12.dmg" length="40388049" type="application/octet-stream" sparkle:edSignature="IIMQ1ZlSIGaqDNMwUTGspys0AtuEb96wxU5r3/r3r9xImTR6kDVWeB60cW7SEQSZOGLoxWfgu6DajgBs9wQSCw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Bump vmlx-swift-lm to b9da180 (Ling/ZAYA hardening + BatchEngine lifecycle) (#1037) by @jjang-ai
+- glass background in chat view (#1044) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- force chat window to foreground on VAD invocation (#1046) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- shell exec terminal ux improvements (#1047) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.11...0.18.12
+]]></description>
+        </item>
+        <item>
             <title>0.18.11</title>
             <pubDate>Thu, 07 May 2026 13:54:56 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
