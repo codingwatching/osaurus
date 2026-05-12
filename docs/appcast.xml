@@ -3,6 +3,40 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.14</title>
+            <pubDate>Tue, 12 May 2026 23:31:59 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.14</sparkle:version>
+            <sparkle:shortVersionString>0.18.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.14/Osaurus-0.18.14.dmg" length="40777273" type="application/octet-stream" sparkle:edSignature="L1CduDwbh7EXKL5iaDMf2vsuoTQMxRy2xPtEyiXV4TyUVp/0yOuMunuSqFtztHWXziIrPtk9qWzCouu8gKk4Bg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- chore(runtime): pin DSV4 vmlx update (#1066) by @jjang-ai
+- feat(runtime): bump vmlx-swift-lm to cb8b3df + MiniMax speed fix (#1057) by @jjang-ai
+- fix: the openai\_compat\_report in openai\_compat\_report.sh (#1055) by @orbisai0security
+
+## 🐛 Bug Fixes
+
+- fix onboarding downloads (#1072) by @tpae
+- fix failing tests (#1070) by @tpae
+- align tools tab badge with rendered rows (#1062) by @RaajeevChandran
+- fixed bugs with plugin lifecycle and tightened security loop (#1060) by @tpae
+
+## 🧰 Maintenance
+
+- agent avatar in chat (#1068) by @RaajeevChandran
+- improve plugin configuration loading and added clarification steps (#1067) by @tpae
+- improve plugin security (#1061) by @tpae
+- added memory diagnostics and hardened pipeline (#1056) by @tpae
+- updated plugins architecture (#1054) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.13...0.18.14
+]]></description>
+        </item>
+        <item>
             <title>0.18.13</title>
             <pubDate>Fri, 08 May 2026 16:11:49 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
