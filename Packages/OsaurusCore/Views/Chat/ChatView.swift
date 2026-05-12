@@ -88,6 +88,16 @@ final class ChatSession: ObservableObject {
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
     private var cachedContext: ComposedContext?
+
+    private var thinkingEnabledForCurrentModel: Bool {
+        guard let selectedModel else {
+            return activeModelOptions["disableThinking"]?.boolValue == false
+        }
+        return ModelProfileRegistry.thinkingEnabled(
+            for: selectedModel,
+            values: activeModelOptions
+        ) ?? false
+    }
     /// Estimated memory-section token cost for the next send. Populated by
     /// `refreshMemoryTokens` and surfaced through `estimatedContextBreakdown`
     /// so the Context Budget popover shows a "Memory" line even before the
@@ -423,7 +433,7 @@ final class ChatSession: ObservableObject {
                 from: mockTurns,
                 streamingTurnId: nil,
                 agentName: displayName,
-                thinkingEnabled: activeModelOptions["disableThinking"]?.boolValue == false
+                thinkingEnabled: thinkingEnabledForCurrentModel
             )
             let newHeaderMap = blockMemoizer.groupHeaderMap
             withAnimation(.none) {
@@ -437,7 +447,7 @@ final class ChatSession: ObservableObject {
             from: turns,
             streamingTurnId: streamingTurnId,
             agentName: displayName,
-            thinkingEnabled: activeModelOptions["disableThinking"]?.boolValue == false
+            thinkingEnabled: thinkingEnabledForCurrentModel
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
 
@@ -1000,9 +1010,11 @@ final class ChatSession: ObservableObject {
     private func trimTrailingEmptyAssistantTurn() {
         if let lastTurn = turns.last,
             lastTurn.role == .assistant,
-            lastTurn.contentIsEmpty,
+            lastTurn.contentIsBlank,
             lastTurn.toolCalls == nil,
-            !lastTurn.hasThinking
+            !lastTurn.hasRenderableThinking,
+            lastTurn.generationTokenCount == nil,
+            lastTurn.generationTokensPerSecond == nil
         {
             turns.removeLast()
         }
@@ -1054,7 +1066,12 @@ final class ChatSession: ObservableObject {
     }
 
     private func finalizeRun(runId: UUID?, persistConversationArtifacts: Bool) {
-        guard let runId, activeRunId == runId else { return }
+        guard let runId, activeRunId == runId else {
+            if activeRunId == nil, isStreaming {
+                completeRunCleanup()
+            }
+            return
+        }
 
         let context = activeRunContext
         activeRunId = nil
@@ -1064,7 +1081,7 @@ final class ChatSession: ObservableObject {
         guard persistConversationArtifacts, let context else { return }
 
         if let lastAssistant = turns.last(where: { $0.role == .assistant }),
-            !lastAssistant.contentIsEmpty
+            !lastAssistant.contentIsBlank || lastAssistant.hasRenderableThinking
         {
             lastCompletedAssistantTurnId = lastAssistant.id
         }
@@ -1396,6 +1413,7 @@ final class ChatSession: ObservableObject {
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
+        guard activeRunId == nil, !isStreaming else { return }
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -1587,20 +1605,20 @@ final class ChatSession: ObservableObject {
                     switch t.role {
                     case .assistant:
                         // Skip the last assistant turn if it's empty (it's the streaming placeholder)
-                        if isLastTurn && t.contentIsEmpty && t.toolCalls == nil {
+                        if isLastTurn && t.contentIsBlank && t.thinkingIsBlank && t.toolCalls == nil {
                             return nil
                         }
 
-                        if t.contentIsEmpty && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
+                        if t.contentIsBlank && t.thinkingIsBlank && (t.toolCalls == nil || t.toolCalls!.isEmpty) {
                             return nil
                         }
 
-                        let content: String? = t.contentIsEmpty ? nil : t.content
+                        let content: String? = t.contentIsBlank ? nil : t.content
                         // DeepSeek's thinking mode requires echoing the
                         // previous `reasoning_content` on follow-ups
                         // (issue #959). `RemoteProviderService` strips it
                         // again for providers that don't need it.
-                        let reasoning: String? = t.thinkingIsEmpty ? nil : t.thinking
+                        let reasoning: String? = t.thinkingIsBlank ? nil : t.thinking
 
                         return ChatMessage(
                             role: "assistant",
@@ -2972,14 +2990,14 @@ extension ChatView {
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
         var textToCopy = ""
-        if turn.hasThinking {
+        if turn.hasRenderableThinking {
             textToCopy += turn.thinking
         }
-        if !turn.contentIsEmpty {
+        if !turn.contentIsBlank {
             if !textToCopy.isEmpty { textToCopy += "\n\n" }
             textToCopy += turn.visibleContent
         }
-        guard !textToCopy.isEmpty else { return }
+        guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
     }
@@ -2993,7 +3011,7 @@ extension ChatView {
     /// TTSService posts a notification that opens the TTS settings tab.
     private func speakTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
-        guard !turn.contentIsEmpty else { return }
+        guard !turn.contentIsBlank else { return }
         let isStartingPlayback = TTSService.shared.playingMessageId != turnId
         if isStartingPlayback && !session.hasAskedAutoSpeak {
             session.hasAskedAutoSpeak = true
@@ -3012,7 +3030,7 @@ extension ChatView {
         guard TTSService.shared.isModelReady else { return }
         guard TTSService.shared.playingMessageId == nil else { return }
         guard let turn = session.turns.first(where: { $0.id == turnId }),
-            !turn.contentIsEmpty
+            !turn.contentIsBlank
         else { return }
         TTSService.shared.toggleSpeak(text: turn.visibleContent, messageId: turnId)
     }
