@@ -170,7 +170,7 @@ struct AgentPill: View {
                 diameter: size,
                 customImageURL: agent.customAvatarURL,
                 monogramFontSize: size * 0.45,
-                borderWidth: 1.5
+                borderWidth: 0
             )
         }
     }
@@ -190,11 +190,11 @@ struct AgentPill: View {
     @ViewBuilder
     private var activeAvatar: some View {
         if activeDiscoveredAgent != nil {
-            remoteAvatar(systemImage: "network", size: 22)
+            remoteAvatar(systemImage: "network", size: 20)
         } else if activeRelayAgent != nil {
-            remoteAvatar(systemImage: "antenna.radiowaves.left.and.right", size: 22)
+            remoteAvatar(systemImage: "antenna.radiowaves.left.and.right", size: 20)
         } else {
-            monogramAvatar(for: activeAgent, size: 22)
+            monogramAvatar(for: activeAgent, size: 20)
         }
     }
 
@@ -214,7 +214,7 @@ struct AgentPill: View {
                     .foregroundColor(isHovered ? theme.secondaryText : theme.tertiaryText)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .background(
                 ZStack {
                     Capsule()

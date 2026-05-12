@@ -655,6 +655,9 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.frame = NSRect(origin: .zero, size: hostingView.fittingSize)
         item.view = hostingView
+        if #available(macOS 13.0, *) {
+            item.isBordered = false
+        }
         return item
     }
 }

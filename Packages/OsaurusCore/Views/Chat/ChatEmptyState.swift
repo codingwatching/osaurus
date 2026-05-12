@@ -118,7 +118,7 @@ struct ChatEmptyState: View {
                 diameter: 88,
                 customImageURL: activeAgent.customAvatarURL,
                 monogramFontSize: 40,
-                borderWidth: 2
+                borderWidth: 0
             )
         }
     }
@@ -255,7 +255,7 @@ private struct ChatEmptyStateNoModels: View {
                 diameter: 88,
                 customImageURL: agent.customAvatarURL,
                 monogramFontSize: 40,
-                borderWidth: 2
+                borderWidth: 0
             )
         }
     }
