@@ -504,6 +504,51 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["reasoning_effort"] as? String == "high")
     }
 
+    @Test func geminiRequest_stripsAdditionalPropertiesFromToolSchemas() throws {
+        let request = Self.makeRequest(
+            model: "gemini-2.5-pro",
+            maxTokens: 1024,
+            tools: [Self.strictNestedTool]
+        )
+        let payload = try Self.encodeAsDictionary(request.toGeminiRequest())
+        let tools = try #require(payload["tools"] as? [[String: Any]])
+        let functionDeclarations = try #require(tools.first?["functionDeclarations"] as? [[String: Any]])
+        let parameters = try #require(functionDeclarations.first?["parameters"] as? [String: Any])
+
+        #expect(parameters["additionalProperties"] == nil)
+        let properties = try #require(parameters["properties"] as? [String: Any])
+        let location = try #require(properties["location"] as? [String: Any])
+        #expect(location["additionalProperties"] == nil)
+
+        let locationProperties = try #require(location["properties"] as? [String: Any])
+        let city = try #require(locationProperties["city"] as? [String: Any])
+        #expect(city["type"] as? String == "string")
+
+        let tags = try #require(properties["tags"] as? [String: Any])
+        let items = try #require(tags["items"] as? [String: Any])
+        #expect(items["additionalProperties"] == nil)
+
+        let itemProperties = try #require(items["properties"] as? [String: Any])
+        #expect(itemProperties["name"] != nil)
+    }
+
+    @Test func openAIRequest_preservesAdditionalPropertiesInToolSchemas() throws {
+        let request = Self.makeRequest(
+            model: "gpt-4.1",
+            maxTokens: 1024,
+            tools: [Self.strictNestedTool]
+        )
+        let payload = try Self.encodeAsDictionary(request)
+        let tools = try #require(payload["tools"] as? [[String: Any]])
+        let function = try #require(tools.first?["function"] as? [String: Any])
+        let parameters = try #require(function["parameters"] as? [String: Any])
+
+        #expect(parameters["additionalProperties"] as? Bool == false)
+        let properties = try #require(parameters["properties"] as? [String: Any])
+        let location = try #require(properties["location"] as? [String: Any])
+        #expect(location["additionalProperties"] as? Bool == false)
+    }
+
     // MARK: - Fixtures
 
     private static func makeRequest(
@@ -547,7 +592,52 @@ struct RemoteChatRequestEncodingTests {
         )
     )
 
+    private static let strictNestedTool = Tool(
+        type: "function",
+        function: ToolFunction(
+            name: "plan_site",
+            description: "Plan a site",
+            parameters: .object([
+                "type": .string("object"),
+                "additionalProperties": .bool(false),
+                "required": .array([.string("location")]),
+                "properties": .object([
+                    "location": .object([
+                        "type": .string("object"),
+                        "additionalProperties": .bool(false),
+                        "properties": .object([
+                            "city": .object([
+                                "type": .string("string"),
+                                "description": .string("City name"),
+                            ])
+                        ]),
+                    ]),
+                    "tags": .object([
+                        "type": .string("array"),
+                        "items": .object([
+                            "type": .string("object"),
+                            "additionalProperties": .bool(false),
+                            "properties": .object([
+                                "name": .object([
+                                    "type": .string("string")
+                                ])
+                            ]),
+                        ]),
+                    ]),
+                ]),
+            ])
+        )
+    )
+
     private static func encodeAsDictionary(_ request: RemoteChatRequest) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(request)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw DecodeAsDictionaryError.notAnObject
+        }
+        return obj
+    }
+
+    private static func encodeAsDictionary(_ request: GeminiGenerateContentRequest) throws -> [String: Any] {
         let data = try JSONEncoder().encode(request)
         guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw DecodeAsDictionaryError.notAnObject

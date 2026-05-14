@@ -2663,7 +2663,7 @@ struct RemoteChatRequest: Encodable {
                 GeminiFunctionDeclaration(
                     name: tool.function.name,
                     description: tool.function.description,
-                    parameters: tool.function.parameters
+                    parameters: Self.geminiCompatibleToolParameters(tool.function.parameters)
                 )
             }
             geminiTools = [GeminiTool(functionDeclarations: declarations)]
@@ -2729,6 +2729,25 @@ struct RemoteChatRequest: Encodable {
             generationConfig: generationConfig,
             safetySettings: nil
         )
+    }
+
+    private static func geminiCompatibleToolParameters(_ parameters: JSONValue?) -> JSONValue? {
+        parameters.map(geminiCompatibleSchema)
+    }
+
+    private static func geminiCompatibleSchema(_ value: JSONValue) -> JSONValue {
+        switch value {
+        case .object(let object):
+            var sanitized: [String: JSONValue] = [:]
+            for (key, child) in object where key != "additionalProperties" {
+                sanitized[key] = geminiCompatibleSchema(child)
+            }
+            return .object(sanitized)
+        case .array(let array):
+            return .array(array.map(geminiCompatibleSchema))
+        case .string, .number, .bool, .null:
+            return value
+        }
     }
 
     /// Convert to Open Responses API request format
