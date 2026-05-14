@@ -3,6 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.18</title>
+            <pubDate>Thu, 14 May 2026 20:12:35 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.18</sparkle:version>
+            <sparkle:shortVersionString>0.18.18</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.18/Osaurus-0.18.18.dmg" length="41642853" type="application/octet-stream" sparkle:edSignature="loUNbNiO3zNl5vgW+YbuTdJMGEmIFa/NLV0Sxi8jf0YCuj8OL3Za1ml+pJDT/64BfzP3qprg7RRqhxSbANnHCg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix /api/chat tool call NDJSON (#1086) by @mimeding
+- Fix local release Containerization pin (#1082) by @mimeding
+
+## 🚀 Features
+
+- added agent database feature (#1087) by @tpae
+
+## 🐛 Bug Fixes
+
+- replaced stale SDK allowlist with org aware MLX gate (#1083) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- agent avatar customization in theme editor (#1084) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.17...0.18.18
+]]></description>
+        </item>
+        <item>
             <title>0.18.17</title>
             <pubDate>Thu, 14 May 2026 03:15:01 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
