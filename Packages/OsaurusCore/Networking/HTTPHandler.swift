@@ -3965,6 +3965,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     maxTokens: logMaxTokens,
                     finishReason: .stop
                 )
+            } catch let invs as ServiceToolInvocations {
+                hop {
+                    writerBound.value.writeToolCalls(invs.invocations, model: req.model, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                let toolLogs = invs.invocations.map {
+                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: toolLogs,
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .toolCalls
+                )
+            } catch let inv as ServiceToolInvocation {
+                hop {
+                    writerBound.value.writeToolCalls([inv], model: req.model, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/chat",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    model: logModel,
+                    toolCalls: [toolLog],
+                    temperature: logTemperature,
+                    maxTokens: logMaxTokens,
+                    finishReason: .toolCalls
+                )
             } catch {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
