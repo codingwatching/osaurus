@@ -9,7 +9,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
-        .package(url: "https://github.com/apple/containerization.git", from: "0.26.0"),
+        // Keep package-local SwiftPM builds aligned with the workspace
+        // lockfiles. Containerization 0.32.x changed Process.kill's signal
+        // parameter type while the app CI graph is still pinned to 0.31.x.
+        .package(url: "https://github.com/apple/containerization.git", .upToNextMinor(from: "0.31.0")),
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
         .package(url: "https://github.com/orlandos-nl/IkigaJSON", from: "2.3.2"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.7.0"),
