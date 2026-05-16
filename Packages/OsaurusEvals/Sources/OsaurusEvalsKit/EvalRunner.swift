@@ -18,6 +18,11 @@ import OsaurusCore
 @MainActor
 public enum EvalRunner {
 
+    public enum BootstrapMode: Sendable, Equatable {
+        case loadInstalledPlugins
+        case alreadyLoaded
+    }
+
     /// Run every case in `suite`, one at a time, and produce a report.
     /// `filter` is a substring that must appear in `case.id` for the
     /// case to run — the CLI exposes it via `--filter` so a contributor
@@ -31,14 +36,17 @@ public enum EvalRunner {
         suite: EvalSuite,
         model: ModelSelection,
         filter: String? = nil,
-        thresholdOverride: Float? = nil
+        thresholdOverride: Float? = nil,
+        bootstrapMode: BootstrapMode = .loadInstalledPlugins
     ) async -> EvalReport {
-        // The CLI is its own process — it has to scan + dlopen every
-        // installed plugin manually before preflight can see plugin
-        // tools (the host app does this in AppDelegate). Without it
-        // every `requirePlugins` case skips with "missing plugins" no
-        // matter what's actually installed on disk.
-        await PreflightEvaluator.loadInstalledPlugins()
+        if bootstrapMode == .loadInstalledPlugins {
+            // The CLI is its own process — it has to scan + dlopen every
+            // installed plugin manually before preflight can see plugin
+            // tools (the host app does this in AppDelegate). Without it
+            // every `requirePlugins` case skips with "missing plugins" no
+            // matter what's actually installed on disk.
+            await PreflightEvaluator.loadInstalledPlugins()
+        }
 
         let modelLabel = ModelOverride.describe(model)
         let startedAt = isoNow()

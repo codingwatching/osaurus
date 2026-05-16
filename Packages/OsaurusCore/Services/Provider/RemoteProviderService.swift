@@ -2953,14 +2953,71 @@ extension RemoteProviderService {
             throw RemoteProviderServiceError.invalidResponse
         }
 
-        if httpResponse.statusCode >= 400 {
-            let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+        return try decodeOpenAICompatibleModelsResponse(
+            data: data,
+            statusCode: httpResponse.statusCode,
+            provider: provider
+        )
+    }
+
+    static func decodeOpenAICompatibleModelsResponse(
+        data: Data,
+        statusCode: Int,
+        provider: RemoteProvider
+    ) throws -> [String] {
+        if statusCode >= 400 {
+            let errorMessage = extractErrorMessage(from: data, statusCode: statusCode)
+            if canUseManualModelDiscoveryFallback(for: provider, statusCode: statusCode),
+                let fallbackModels = manualModelDiscoveryFallback(for: provider)
+            {
+                return fallbackModels
+            }
             throw RemoteProviderServiceError.requestFailed(errorMessage)
         }
 
-        // Parse models response
-        let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-        return modelsResponse.data.map { $0.id }
+        do {
+            let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
+            return modelsResponse.data.map { $0.id }
+        } catch {
+            if let fallbackModels = manualModelDiscoveryFallback(for: provider) {
+                return fallbackModels
+            }
+            throw error
+        }
+    }
+
+    private static func canUseManualModelDiscoveryFallback(
+        for provider: RemoteProvider,
+        statusCode: Int
+    ) -> Bool {
+        guard isOpenAICompatibleModelDiscoveryProvider(provider.providerType) else {
+            return false
+        }
+
+        switch statusCode {
+        case 400, 404, 405, 406, 410, 415, 422, 501:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func manualModelDiscoveryFallback(for provider: RemoteProvider) -> [String]? {
+        guard isOpenAICompatibleModelDiscoveryProvider(provider.providerType) else {
+            return nil
+        }
+
+        let manualModels = provider.mergedModelIds(discovered: [])
+        return manualModels.isEmpty ? nil : manualModels
+    }
+
+    private static func isOpenAICompatibleModelDiscoveryProvider(_ providerType: RemoteProviderType) -> Bool {
+        switch providerType {
+        case .openaiLegacy, .openResponses, .azureOpenAI:
+            return true
+        case .anthropic, .openAICodex, .gemini, .osaurus:
+            return false
+        }
     }
 
     /// Fetch models for a native Osaurus agent.

@@ -39,5 +39,12 @@ let package = Package(
             ],
             path: "Sources/OsaurusEvalsCLI"
         ),
+        .testTarget(
+            name: "OsaurusEvalsKitTests",
+            dependencies: [
+                "OsaurusEvalsKit"
+            ],
+            path: "Tests/OsaurusEvalsKitTests"
+        ),
     ]
 )

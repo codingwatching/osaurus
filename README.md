@@ -128,7 +128,7 @@ Connect to OpenAI, Anthropic, Gemini, xAI/Grok, [Venice AI](https://venice.ai), 
 
 ## MCP
 
-Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible client access to your tools:
+Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible client access to your tools with the command-based stdio bridge:
 
 ```json
 {
@@ -141,7 +141,7 @@ Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible c
 }
 ```
 
-Also an MCP client -- aggregate tools from remote MCP servers into Osaurus. One-tap connect to ~25 well-known providers (Linear, Notion, GitHub, Vercel, Supabase, Sentry, Stripe, Cloudflare, ...) with auto OAuth 2.1 + Dynamic Client Registration, or paste an API key. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
+`osaurus mcp` starts a stdio MCP server for the client and proxies tool discovery/calls to your local Osaurus HTTP server. In the other direction, Osaurus can also act as an MCP client and aggregate tools from URL-based remote MCP providers. One-tap connect to ~25 well-known providers (Linear, Notion, GitHub, Vercel, Supabase, Sentry, Stripe, Cloudflare, ...) with auto OAuth 2.1 + Dynamic Client Registration, or paste an API key. The Remote MCP Providers UI is for HTTP/SSE MCP endpoints; it does not launch third-party `command`/`args` stdio providers. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
 
 ## Tools & Plugins
 

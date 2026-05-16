@@ -3,6 +3,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct PreflightCapabilitySearchTests {
 
     // MARK: - Integration-style smoke tests
@@ -46,6 +47,43 @@ struct PreflightCapabilitySearchTests {
             Set(preflightNames).count == preflightNames.count,
             "Pre-flight specs should not contain internal duplicates"
         )
+    }
+
+    @Test @MainActor
+    func autoPreflightShowsGrantedSearchToolToSelectorAndExposesSpec() async throws {
+        await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-preflight-exposure-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let fixture = PreflightSearchExposureFixtureTool()
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            let fixtureName = fixture.name
+            let llm: PreflightCapabilitySearch.LLMGenerator = { _, systemPrompt in
+                #expect(systemPrompt.contains("tool: \(fixtureName)"))
+                #expect(systemPrompt.contains("params: query"))
+                return "\(fixtureName) | search the web for current results"
+            }
+
+            let result = await PreflightCapabilitySearch.search(
+                query: "search current headline news online",
+                mode: .balanced,
+                allowedNames: [fixtureName],
+                llm: llm,
+                embedder: nil
+            )
+
+            #expect(result.toolSpecs.map(\.function.name) == [fixtureName])
+            #expect(result.items.map(\.name) == [fixtureName])
+        }
     }
 
     // MARK: - PreflightSearchMode
@@ -442,5 +480,26 @@ struct PreflightCapabilitySearchTests {
             model: "test-chat-model"
         )
         _ = result
+    }
+}
+
+private struct PreflightSearchExposureFixtureTool: OsaurusTool {
+    static let nameStatic = "lane_b_preflight_search"
+
+    let name = Self.nameStatic
+    let description = "Search the web for current headline news and online results"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "query": .object([
+                "type": .string("string"),
+                "description": .string("Search query for current web results"),
+            ])
+        ]),
+        "required": .array([.string("query")]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        argumentsJSON
     }
 }

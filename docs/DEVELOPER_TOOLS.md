@@ -127,6 +127,8 @@ Browse all available endpoints, organized by category:
 | **Audio** | `/audio/transcriptions`                                |
 | **MCP**   | `/mcp/health`, `/mcp/tools`, `/mcp/call`               |
 
+The MCP endpoints are Osaurus's local HTTP MCP surface. Command-based stdio clients should launch `osaurus mcp`, which proxies to these endpoints.
+
 Each endpoint shows:
 
 - HTTP method (GET/POST)
@@ -225,6 +227,8 @@ Quick access to the full documentation at docs.osaurus.ai.
 3. Click **Send Request**
 4. Verify your expected tools are listed
 5. Test a specific tool with `POST /mcp/call`
+
+This verifies Osaurus's local MCP server surface, including tools discovered from connected URL-based Remote MCP Providers. It does not launch or inspect third-party stdio providers configured with `command` and `args`; those are outside the Remote MCP Providers transport supported by the current app.
 
 ---
 

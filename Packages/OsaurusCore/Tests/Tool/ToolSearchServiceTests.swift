@@ -11,6 +11,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct ToolSearchServiceTests {
 
     @Test func searchReturnsEmptyWhenUninitialized() async {
@@ -95,5 +96,95 @@ struct ToolSearchServiceTests {
         }
         // Contract 2: result name set matches embed-only.
         #expect(Set(results.map(\.entry.name)) == Set(embedOnly.map(\.entry.name)))
+    }
+
+    @Test @MainActor
+    func capabilitySearchAcceptsGrantedBM25OnlyToolWhenEmbeddingIndexUnavailable() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tool-exposure-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let dbWasOpen = ToolDatabase.shared.isOpen
+            if !dbWasOpen {
+                try ToolDatabase.shared.openInMemory()
+            }
+            defer {
+                try? ToolDatabase.shared.deleteEntry(id: SearchExposureFixtureTool.nameStatic)
+                if !dbWasOpen {
+                    ToolDatabase.shared.close()
+                }
+            }
+
+            let fixture = SearchExposureFixtureTool()
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            await ToolIndexService.shared.onToolRegistered(
+                name: fixture.name,
+                description: fixture.description,
+                runtime: .native,
+                tokenCount: fixture.description.count / 4,
+                parameters: fixture.parameters
+            )
+
+            let bm25 = try ToolDatabase.shared.searchBM25(
+                query: "current headline web search",
+                topK: 5
+            )
+            #expect(
+                bm25.contains { $0.id == fixture.name },
+                "Fixture must be present in the SQL/BM25 tool index before capability search runs"
+            )
+
+            let (hybrid, diagnostic) = await ToolSearchService.shared.searchHybridWithDiagnostic(
+                query: "current headline web search",
+                topK: 5,
+                minFusedScore: CapabilitySearch.minimumFusedScore
+            )
+
+            #expect(hybrid.contains { $0.entry.name == fixture.name })
+            #expect(diagnostic.requestedMinFusedScore == CapabilitySearch.minimumFusedScore)
+            #expect(diagnostic.minFusedScore < diagnostic.requestedMinFusedScore)
+            let fixtureHit = diagnostic.acceptedHits.first { $0.name == fixture.name }
+            #expect(fixtureHit?.bm25Score != nil)
+            #expect(fixtureHit?.embedScore == nil)
+
+            let results = await CapabilitySearch.search(
+                query: "current headline web search",
+                topK: (methods: 0, tools: 5, skills: 0)
+            )
+            #expect(
+                results.tools.contains { $0.entry.name == fixture.name },
+                "capabilities_search must expose an indexed, enabled tool even while the embedding index is unavailable"
+            )
+        }
+    }
+}
+
+private struct SearchExposureFixtureTool: OsaurusTool {
+    static let nameStatic = "lane_b_search_fixture"
+
+    let name = Self.nameStatic
+    let description = "Search the web for current headline news and online results"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "properties": .object([
+            "query": .object([
+                "type": .string("string"),
+                "description": .string("Search query for current web results"),
+            ])
+        ]),
+        "required": .array([.string("query")]),
+    ])
+
+    func execute(argumentsJSON: String) async throws -> String {
+        argumentsJSON
     }
 }

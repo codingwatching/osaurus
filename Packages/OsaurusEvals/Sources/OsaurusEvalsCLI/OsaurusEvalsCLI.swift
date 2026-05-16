@@ -15,8 +15,10 @@
 //    0  every non-skipped case passed (or no cases ran)
 //    1  at least one case failed or errored
 //    2  invalid arguments / suite path
+//  124  startup bootstrap timed out
 //
 
+import Darwin
 import Foundation
 import OsaurusCore
 import OsaurusEvalsKit
@@ -52,11 +54,16 @@ struct OsaurusEvalsCLI {
             exit(2)
         }
 
+        let startupWatchdog = makeStartupWatchdog(options: opts, suite: suite)
+        await PreflightEvaluator.loadInstalledPlugins()
+        startupWatchdog?.cancel()
+
         let report = await EvalRunner.run(
             suite: suite,
             model: opts.model,
             filter: opts.filter,
-            thresholdOverride: opts.threshold
+            thresholdOverride: opts.threshold,
+            bootstrapMode: .alreadyLoaded
         )
 
         print(report.formatHumanReadable(verbose: opts.verbose))
@@ -122,6 +129,33 @@ struct OsaurusEvalsCLI {
     }
 
     // MARK: - Floors
+
+    @MainActor
+    private static func makeStartupWatchdog(
+        options opts: Options,
+        suite: EvalSuite
+    ) -> EvalStartupWatchdog? {
+        guard let timeoutSeconds = opts.startupTimeoutSeconds else { return nil }
+
+        let modelLabel = ModelOverride.describe(opts.model)
+        let reportData = try? EvalTimeoutReport.makeReport(
+            suite: suite,
+            modelId: modelLabel,
+            filter: opts.filter,
+            timeoutSeconds: timeoutSeconds,
+            phase: "startup bootstrap"
+        ).toJSON(prettyPrinted: true)
+
+        return EvalStartupWatchdog(
+            timeoutSeconds: timeoutSeconds,
+            payload: EvalStartupWatchdog.Payload(
+                phase: "startup bootstrap",
+                timeoutLabel: EvalTimeoutReport.formatSeconds(timeoutSeconds),
+                reportData: reportData,
+                outPath: opts.out
+            )
+        )
+    }
 
     /// Default path used when `--fail-on-floor` is set without
     /// `--floors`. Resolved relative to the current working directory
@@ -391,6 +425,9 @@ struct OsaurusEvalsCLI {
         /// below the configured `minMatches`. Off by default — the
         /// Phase 5 wiring is scaffolding, not an active CI gate.
         let failOnFloor: Bool
+        /// Wall-clock guard for the Core/plugin/index bootstrap that
+        /// happens before the first case can run. `nil` disables it.
+        let startupTimeoutSeconds: Double?
 
         static func parse(_ args: [String]) throws -> Options {
             var suite: URL?
@@ -402,6 +439,7 @@ struct OsaurusEvalsCLI {
             var reportForensics = false
             var floorsPath: String?
             var failOnFloor = false
+            var startupTimeoutSeconds = EvalTimeoutReport.configuredStartupTimeoutSeconds()
 
             var i = 0
             while i < args.count {
@@ -436,6 +474,13 @@ struct OsaurusEvalsCLI {
                 case "--fail-on-floor":
                     failOnFloor = true
                     i += 1
+                case "--startup-timeout":
+                    let raw = try valueForArg(args, after: i, flag: arg)
+                    guard let value = EvalTimeoutReport.parseTimeoutSeconds(raw) else {
+                        throw CLIError.invalidValue(arg, raw)
+                    }
+                    startupTimeoutSeconds = value > 0 ? value : nil
+                    i += 2
                 case "--help", "-h":
                     printUsage()
                     exit(0)
@@ -454,7 +499,8 @@ struct OsaurusEvalsCLI {
                 threshold: threshold,
                 reportForensics: reportForensics,
                 floorsPath: floorsPath,
-                failOnFloor: failOnFloor
+                failOnFloor: failOnFloor,
+                startupTimeoutSeconds: startupTimeoutSeconds
             )
         }
     }
@@ -476,6 +522,7 @@ struct OsaurusEvalsCLI {
             USAGE:
                 osaurus-evals run --suite <dir> [--model <id>] [--filter <substr>] [--out <path>]
                                               [--threshold <float>] [--report-forensics]
+                                              [--startup-timeout <seconds>]
 
             FLAGS:
                 --suite <dir>         Required. Directory of *.json eval cases
@@ -525,6 +572,14 @@ struct OsaurusEvalsCLI {
                                       count is below `minMatches`. Off by
                                       default; CI wiring is deferred to the
                                       post-fix PR.
+                --startup-timeout <s> Wall-clock guard for startup bootstrap
+                                      (installed plugins + search indices)
+                                      before the first case runs. On timeout,
+                                      writes an errored JSON report when
+                                      --out is set and exits 124. Use 0 to
+                                      disable. Defaults: 120s locally, 30s
+                                      when CI=true. Env override:
+                                      OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS.
 
             EXAMPLES:
                 osaurus-evals run --suite Suites/Preflight --model foundation
@@ -533,6 +588,72 @@ struct OsaurusEvalsCLI {
                 osaurus-evals run --suite Suites/CapabilitySearch --fail-on-floor
             """
         print(usage)
+    }
+}
+
+final class EvalStartupWatchdog: @unchecked Sendable {
+    struct Payload: Sendable {
+        let phase: String
+        let timeoutLabel: String
+        let reportData: Data?
+        let outPath: String?
+    }
+
+    private let lock = NSLock()
+    private let timer: DispatchSourceTimer
+    private let payload: Payload
+    private var active = true
+
+    init(timeoutSeconds: Double, payload: Payload) {
+        self.payload = payload
+        self.timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        let milliseconds = max(1, Int((timeoutSeconds * 1_000).rounded(.up)))
+        timer.schedule(deadline: .now() + .milliseconds(milliseconds))
+        timer.setEventHandler { [weak self] in
+            self?.fire()
+        }
+        timer.resume()
+    }
+
+    func cancel() {
+        guard markInactive() else { return }
+        timer.cancel()
+    }
+
+    private func fire() {
+        guard markInactive() else { return }
+
+        writeStderr(
+            "eval timeout: \(payload.phase) exceeded \(payload.timeoutLabel); exiting 124\n"
+        )
+
+        if let reportData = payload.reportData, let outPath = payload.outPath {
+            do {
+                let url = URL(fileURLWithPath: outPath)
+                try FileManager.default.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try reportData.write(to: url)
+                writeStderr("wrote timeout report to \(url.path)\n")
+            } catch {
+                writeStderr("failed to write timeout report: \(error.localizedDescription)\n")
+            }
+        }
+
+        Darwin._exit(124)
+    }
+
+    private func markInactive() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active else { return false }
+        active = false
+        return true
+    }
+
+    private func writeStderr(_ message: String) {
+        FileHandle.standardError.write(Data(message.utf8))
     }
 }
 

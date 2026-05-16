@@ -4,6 +4,22 @@ Remote MCP Providers connect Osaurus to external MCP (Model Context Protocol) se
 
 This is different from [Remote Providers](REMOTE_PROVIDERS.md) (which provide _inference_ endpoints). Remote MCP Providers provide **tools**.
 
+Remote MCP Providers are URL-based client connections. The current app connects to HTTP/SSE MCP endpoints and does not launch local `command`/`args` stdio provider processes. Command-based stdio is supported in the opposite direction: external MCP clients can launch Osaurus with `osaurus mcp` to use Osaurus as their MCP server.
+
+---
+
+## Supported Transports
+
+| Direction | Transport | Status | How to configure |
+| --- | --- | --- | --- |
+| External MCP client -> Osaurus | Stdio command | Supported | Configure the client with `command: "osaurus"` and `args: ["mcp"]`. |
+| External MCP client -> Osaurus | HTTP endpoints | Supported | Use `GET /mcp/tools` and `POST /mcp/call` on the local Osaurus server. |
+| Osaurus -> remote MCP provider | HTTP endpoint | Supported | Add a provider URL in **Custom Server** or choose a catalog template. |
+| Osaurus -> remote MCP provider | HTTP streaming / SSE | Supported when the server supports it | Enable **Streaming Enabled** in Advanced. |
+| Osaurus -> third-party local MCP provider | Stdio command | Not supported in Remote MCP Providers | The provider config has no `command`, `args`, `env`, or working-directory fields. |
+
+If a vendor only publishes a stdio config such as `{"command": "npx", "args": [...]}`, it is not directly usable in Remote MCP Providers today. Use an HTTP/SSE deployment of that MCP server, a bridge that exposes it over HTTP, or implement the integration as an Osaurus plugin.
+
 ---
 
 ## Adding a Provider
@@ -14,7 +30,7 @@ The Add Provider sheet is a two-step flow.
 
 `⌘ Shift M` → **Providers** → **+ Add Provider**.
 
-You land on a catalog grid with a search bar at the top. Type to filter by name or tagline ("issues" finds Linear, "search" finds Exa). The first card is always **Custom Server** for any URL you want to point at; the rest are pre-vetted well-known providers (see [Provider Catalog](#provider-catalog) below).
+You land on a catalog grid with a search bar at the top. Type to filter by name or tagline ("issues" finds Linear, "search" finds Exa). The first card is always **Custom Server** for any HTTP(S) MCP endpoint you want to point at; the rest are pre-vetted well-known providers (see [Provider Catalog](#provider-catalog) below).
 
 ### Step 2 — Connect
 
@@ -55,7 +71,9 @@ Google Workspace doesn't ship a hosted remote MCP. Tapping the card opens the [c
 
 #### Custom Server
 
-The freeform editor — Name, URL, Auth picker (None / Bearer Token / OAuth), Custom Headers, Advanced (timeouts, streaming, auto-connect). Use this for any MCP server not in the catalog, or to override fine-grained settings on one that is.
+The freeform editor — Name, URL, Auth picker (None / Bearer Token / OAuth), Custom Headers, Advanced (timeouts, streaming, auto-connect). Use this for any URL-reachable MCP server not in the catalog, or to override fine-grained settings on one that is.
+
+Custom Server is still HTTP/SSE only. It does not accept stdio `command`, `args`, environment variables, or working-directory settings.
 
 ---
 
@@ -118,7 +136,7 @@ Click the row's edit menu. Edit-mode skips the catalog and opens the freeform ed
 | Setting     | Description                         |
 | ----------- | ----------------------------------- |
 | **Name**    | Display name for the provider       |
-| **URL**     | Full URL to the MCP server endpoint |
+| **URL**     | Full HTTP(S) URL to the MCP server endpoint |
 | **Enabled** | Whether the provider is active      |
 
 ### Authentication
@@ -138,7 +156,7 @@ Add arbitrary HTTP headers. Mark a header as a **secret** to store its value in 
 | Setting               | Description                               | Default |
 | --------------------- | ----------------------------------------- | ------- |
 | **Auto-connect**      | Connect automatically when Osaurus starts | true    |
-| **Streaming Enabled** | Use SSE streaming for tool discovery      | false   |
+| **Streaming Enabled** | Use the streaming/SSE HTTP transport when the server supports it | false   |
 | **Discovery Timeout** | Timeout for tool discovery (seconds)      | 20      |
 | **Tool Call Timeout** | Timeout for tool execution (seconds)      | 45      |
 
@@ -187,7 +205,7 @@ The implementation lives in [`Packages/OsaurusCore/Services/MCP/OAuth/`](../Pack
 
 When you connect to an MCP provider:
 
-1. Osaurus establishes a connection to the MCP server (with bearer / OAuth headers as appropriate).
+1. Osaurus establishes an HTTP/SSE connection to the MCP server (with bearer / OAuth headers as appropriate).
 2. Sends a `tools/list` request to discover available tools.
 3. Registers each tool with a namespaced name.
 4. Tools become available for model inference.
@@ -263,7 +281,7 @@ When connected, the provider card shows tool count, last connected timestamp, an
 
 ## Testing Connections
 
-The freeform Custom Server form has a **Test** button that runs `tools/list` against the configured URL and reports the tool count. The OAuth and API-key catalog screens skip this — saving and connecting is the test.
+The freeform Custom Server form has a **Test** button that runs `tools/list` against the configured URL and reports the tool count. The OAuth and API-key catalog screens skip this — saving and connecting is the test. The test path only validates HTTP/SSE providers; it does not start or validate stdio command providers.
 
 ---
 
@@ -274,6 +292,10 @@ The freeform Custom Server form has a **Test** button that runs `tools/list` aga
 - Verify the MCP server is running.
 - Check the URL is correct (including protocol and port).
 - Ensure no firewall is blocking the connection.
+
+### "My provider config has `command` and `args`"
+
+That is a stdio MCP provider config. Remote MCP Providers currently require a URL and do not spawn local commands. `command: "osaurus"` with `args: ["mcp"]` is for external MCP clients that want to use Osaurus as a server, not for adding third-party providers inside Osaurus.
 
 ### "Authentication failed" / `401 Unauthorized`
 
@@ -330,7 +352,7 @@ Non-secret configuration is stored at:
 ~/.osaurus/providers/mcp.json
 ```
 
-Each provider record carries its `name`, `url`, `enabled`, headers (non-secret only), timeouts, `authType` (`none` | `bearerToken` | `oauth`), and — for OAuth — non-secret discovery metadata (`oauth.clientId`, `oauth.scopes`, `oauth.authorizationEndpoint`, etc.).
+Each provider record carries its `name`, `url`, `enabled`, headers (non-secret only), timeouts, `authType` (`none` | `bearerToken` | `oauth`), and — for OAuth — non-secret discovery metadata (`oauth.clientId`, `oauth.scopes`, `oauth.authorizationEndpoint`, etc.). Provider records do not carry stdio `command`, `args`, `env`, or working-directory fields.
 
 Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields default to `bearerToken` for backwards compatibility.
 
@@ -352,7 +374,7 @@ Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields defau
 │  ┌─────────────────────────────────────────────│───────────┐    │
 │  │              MCPProviderManager              │           │    │
 │  │  ┌─────────────────────────────────────────┴────────┐   │    │
-│  │  │              Remote MCP Client                    │   │    │
+│  │  │       Remote MCP Client (HTTP/SSE only)           │   │    │
 │  │  │     ├── PRM/ASM Discovery                         │   │    │
 │  │  │     ├── DCR + PKCE OAuth flow                     │   │    │
 │  │  │     ├── Loopback callback server                  │   │    │
@@ -364,7 +386,7 @@ Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields defau
                                                   ▼
                                ┌─────────────────────────────┐
                                │   Remote MCP Server         │
-                               │   (external)                │
+                               │   (HTTP/SSE endpoint)       │
                                │   ├── tool1                 │
                                │   ├── tool2                 │
                                │   └── tool3                 │

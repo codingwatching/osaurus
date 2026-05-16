@@ -13,7 +13,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/Inference/MLXService.swift, Services/ModelRuntime/                                     |
 | Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift                       |
+| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift, CLI MCPCommand.swift |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
 | Claude Plugin Import             | Stable    | "Skills"           | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Views/Skill/GitHubImportSheet.swift, Views/Skill/InstalledPluginsSection.swift |
@@ -80,7 +80,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   └── RemoteProviderService (Per-provider connection handling)        │
 │  ├── MCP                                                                 │
 │  │   ├── MCPServerManager (Osaurus as MCP server)                        │
-│  │   └── MCPProviderManager (Remote MCP client connections)              │
+│  │   └── MCPProviderManager (HTTP/SSE remote MCP client connections)     │
 │  ├── Tools                                                               │
 │  │   ├── ToolRegistry                                                    │
 │  │   ├── PluginManager                                                   │
@@ -208,13 +208,13 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 
 ### Remote MCP Providers
 
-**Purpose:** Connect to external MCP servers and aggregate their tools, with one-tap setup for ~25 well-known vendors.
+**Purpose:** Connect to URL-reachable external MCP servers and aggregate their tools, with one-tap setup for ~25 well-known vendors.
 
 **Components:**
 
-- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model (none / bearer / OAuth)
+- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model (URL, none / bearer / OAuth)
 - `Models/Configuration/MCPProviderTemplate.swift` — Hardcoded catalog of well-known providers
-- `Managers/MCPProviderManager.swift` — Connection, tool discovery, OAuth refresh & 401 retry
+- `Managers/MCPProviderManager.swift` — HTTP/SSE connection, tool discovery, OAuth refresh & 401 retry
 - `Services/MCP/MCPProviderKeychain.swift` — Secure token, refresh-token, and client-secret storage
 - `Services/MCP/OAuth/MCPOAuthService.swift` — End-to-end OAuth sign-in orchestration
 - `Services/MCP/OAuth/MCPOAuthDiscovery.swift` — RFC 9728 PRM + RFC 8414 ASM discovery (with OIDC fallback)
@@ -234,6 +234,7 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 - API-key templates for vendors without DCR (GitHub, Atlassian, HubSpot, Zapier)
 - Self-hosting templates (Google Workspace) that deeplink to setup docs
 - Custom Server fallback for any URL not in the catalog
+- HTTP/SSE transport for remote providers; no third-party stdio command launching
 - Automatic tool discovery on connect, with namespaced tool names (`provider_toolname`)
 - Proactive OAuth token refresh + bounded 401-retry-with-refresh
 - Configurable discovery and execution timeouts
@@ -244,12 +245,13 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 
 ### MCP Server
 
-**Purpose:** Expose Osaurus tools to AI agents via Model Context Protocol.
+**Purpose:** Expose Osaurus tools to AI agents via Model Context Protocol, either through local HTTP endpoints or through the `osaurus mcp` stdio command bridge.
 
 **Components:**
 
 - `Services/MCP/MCPServerManager.swift` — MCP server lifecycle
 - `Networking/OsaurusServer.swift` — HTTP MCP endpoints
+- `Packages/OsaurusCLI/Sources/OsaurusCLICore/Commands/MCPCommand.swift` — stdio MCP bridge for command-based clients
 - `Tools/ToolRegistry.swift` — Tool registration and lookup
 - `Tools/ToolEnvelope.swift` — Canonical success/failure envelope every tool returns (see [Tool Contract](TOOL_CONTRACT.md))
 - `Tools/SchemaValidator.swift` — Argument validator with `additionalProperties` enforcement
@@ -260,6 +262,14 @@ See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architec
 | `/mcp/health` | GET | Health check |
 | `/mcp/tools` | GET | List available tools |
 | `/mcp/call` | POST | Execute a tool |
+
+**Command bridge:**
+
+```json
+{"command": "osaurus", "args": ["mcp"]}
+```
+
+This command bridge is for external clients connecting to Osaurus. It is separate from Remote MCP Providers, which only connect from Osaurus to URL-based HTTP/SSE MCP servers.
 
 ---
 
@@ -749,7 +759,7 @@ Read-only tools are always available. Write/exec/package/secret tools require `a
 - **v1 plugins** — Tools only, via `osaurus_plugin_entry`
 - **v2 plugins** — Tools + routes + storage + config, via `osaurus_plugin_entry_v2`
 - **System plugins** — Built-in tools (filesystem, browser, git, etc.)
-- **MCP provider tools** — Tools from remote MCP servers
+- **MCP provider tools** — Tools from URL-based remote MCP servers
 
 **Plugin Capabilities (v2):**
 
