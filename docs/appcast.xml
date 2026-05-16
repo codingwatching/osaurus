@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.21</title>
+            <pubDate>Sat, 16 May 2026 14:51:29 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.21</sparkle:version>
+            <sparkle:shortVersionString>0.18.21</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.21/Osaurus-0.18.21.dmg" length="41843643" type="application/octet-stream" sparkle:edSignature="Jv4iVz1ST3BeoXSoK4/Na3CRhkpeoEdHz7qZopYNiL6t2Q+K/W6p5EJy4D0XYq1Rza/sS9mbJCfiM4X0cA6iDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Stabilize bug lanes and update development plan (#1112) by @mimeding
+- edit pasted content (#1111) by @RaajeevChandran
+- Improved DX: Support installing development plugins to release Osaurus (#1109) by @petri
+
+## 🐛 Bug Fixes
+
+- resolve plugin registry 404 on fresh installs by trying master branch (#1114) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.20...0.18.21
+]]></description>
+        </item>
+        <item>
             <title>0.18.20</title>
             <pubDate>Fri, 15 May 2026 17:46:08 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
