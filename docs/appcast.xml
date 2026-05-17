@@ -3,6 +3,40 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.23</title>
+            <pubDate>Sun, 17 May 2026 14:11:08 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.23</sparkle:version>
+            <sparkle:shortVersionString>0.18.23</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.23/Osaurus-0.18.23.dmg" length="42157774" type="application/octet-stream" sparkle:edSignature="lK0nobZGZkJZJetMRWmYXioaE2xyCsKWNqANWnxOD8piJbgTHcepYFyG1vjBICI2zujOHJFJIPJBcUjGaTmGAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Add document IO foundation metadata (#1131) by @mimeding
+- [codex] Specify multimodal plugin IO lanes (#1132) by @mimeding
+- [codex] Tolerate provider model size metadata (#1127) by @mimeding
+- [codex] Persist custom agent ordering (#1128) by @mimeding
+- [codex] Harden MCP accessibility plugin calls (#1130) by @mimeding
+- Enforce agent-scoped capability tools (#1123) by @mimeding
+- [codex] Bound eval CLI startup bootstrap (#1122) by @mimeding
+- [codex] Add model idle residency policy (#1119) by @mimeding
+- [codex] Add global proxy foundation (#1117) by @mimeding
+- [codex] Refresh stale doc references (#1116) by @mimeding
+
+## 🚀 Features
+
+- Added MCP stdio support (#1126) by @tpae
+
+## 🧰 Maintenance
+
+- improved claude plugin import and claude plugin management interface (#1125) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.22...0.18.23
+]]></description>
+        </item>
+        <item>
             <title>0.18.22</title>
             <pubDate>Sat, 16 May 2026 19:51:36 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
