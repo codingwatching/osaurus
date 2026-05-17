@@ -108,8 +108,8 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let activeAgentId = await Self.resolveAgentId(explicit: agentId)
-        let allowedToolNames = await Self.allowedToolNames(for: activeAgentId)
+        let agentContextId = Self.resolveAgentContextId(explicit: agentId)
+        let allowedToolNames = await Self.allowedToolNames(for: agentContextId)
 
         // Run each query independently and merge by best score per item.
         // The previous implementation joined every query into one string
@@ -141,7 +141,8 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         if hits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
             let text: String
-            if await CapabilitySearch.canCreatePlugins(agentId: activeAgentId) {
+            let pluginCreationAgentId = await Self.resolvePluginCreationAgentId(explicit: agentId)
+            if await CapabilitySearch.canCreatePlugins(agentId: pluginCreationAgentId) {
                 text = """
                     No capabilities found matching \(queryList).
 
@@ -204,14 +205,20 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         return ToolEnvelope.success(tool: name, text: output)
     }
 
-    /// Resolve the agent whose capability picker scopes runtime search.
-    /// Tool calls usually carry `ChatExecutionContext.currentAgentId`;
-    /// tests and direct host-API invocations can pass `agentId`
-    /// explicitly. Falling back to the active agent preserves legacy
-    /// behavior for older paths that do not yet bind task-local context.
-    private static func resolveAgentId(explicit: UUID?) async -> UUID {
-        if let explicit { return explicit }
-        if let contextId = ChatExecutionContext.currentAgentId { return contextId }
+    /// Resolve the agent context whose capability picker scopes runtime
+    /// search. Only explicit tool instances and task-local chat execution
+    /// contexts carry the user's current grant boundary; direct utility
+    /// calls with neither value keep the historical global-enabled search.
+    private static func resolveAgentContextId(explicit: UUID?) -> UUID? {
+        explicit ?? ChatExecutionContext.currentAgentId
+    }
+
+    /// The no-match plugin-creator hint predates runtime allowlist
+    /// scoping and was based on the active agent when no task-local
+    /// context existed. Keep that behavior separate from search
+    /// filtering so direct/no-context search results stay unscoped.
+    private static func resolvePluginCreationAgentId(explicit: UUID?) async -> UUID {
+        if let id = resolveAgentContextId(explicit: explicit) { return id }
         return await MainActor.run { AgentManager.shared.activeAgent.id }
     }
 
@@ -219,8 +226,9 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
     /// which deliberately means "use the global enabled registry." A
     /// non-nil set is authoritative: `capabilities_search` must not
     /// return a dynamic tool the current agent has not been granted.
-    private static func allowedToolNames(for agentId: UUID) async -> Set<String>? {
-        await MainActor.run {
+    private static func allowedToolNames(for agentId: UUID?) async -> Set<String>? {
+        guard let agentId else { return nil }
+        return await MainActor.run {
             AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
         }
     }

@@ -161,6 +161,7 @@ struct CapabilitiesSearchToolTests {
                 )
                 #expect(rawResults.contains { $0.entry.name == allowed.name })
                 #expect(!rawResults.contains { $0.entry.name == denied.name })
+                #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
 
                 let tool = CapabilitiesSearchTool(agentId: agent.id)
@@ -169,6 +170,18 @@ struct CapabilitiesSearchToolTests {
                 )
                 #expect(result.contains(allowed.name))
                 #expect(!result.contains(denied.name))
+
+                AgentManager.shared.setActiveAgent(agent.id)
+                defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
+                let unscopedTool = CapabilitiesSearchTool()
+                let unscopedResult = try await unscopedTool.execute(
+                    argumentsJSON: "{\"queries\": [\"current headline web search\"]}"
+                )
+                #expect(unscopedResult.contains(allowed.name))
+                #expect(
+                    unscopedResult.contains(denied.name),
+                    "Direct capabilities_search calls without explicit/task-local agent context must keep global-enabled results"
+                )
 
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
