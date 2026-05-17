@@ -123,6 +123,44 @@ struct RemoteProviderModelDiscoveryTests {
         #expect(models == ["lemonade-chat"])
     }
 
+    @Test func lemonadeModelsResponse_ignoresFractionalSizeMetadata() throws {
+        let provider = makeProvider(basePath: "/api/v1")
+        let body = Data(
+            """
+            {
+              "object": "list",
+              "data": [
+                {
+                  "id": "Cogito-v2-llama-109B-MoE-GGUF",
+                  "object": "model",
+                  "created": 1234567890,
+                  "owned_by": "lemonade",
+                  "size": 65.3,
+                  "labels": ["vision"],
+                  "checkpoint": "unsloth/cogito-v2-preview-llama-109B-MoE-GGUF:Q4_K_M"
+                },
+                {
+                  "id": "Devstral-Small-2507-GGUF",
+                  "object": "model",
+                  "created": 1234567890,
+                  "owned_by": "lemonade",
+                  "size": 14.3,
+                  "suggested": true
+                }
+              ]
+            }
+            """.utf8
+        )
+
+        let models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(models == ["Cogito-v2-llama-109B-MoE-GGUF", "Devstral-Small-2507-GGUF"])
+    }
+
     private func makeProvider(
         providerProtocol: RemoteProviderProtocol = .https,
         port: Int? = nil,

@@ -78,7 +78,11 @@ struct OpenAIModel: Codable, Sendable {
         name = try container.decodeIfPresent(String.self, forKey: .name)
         model = try container.decodeIfPresent(String.self, forKey: .model)
         modified_at = try container.decodeIfPresent(String.self, forKey: .modified_at)
-        size = try container.decodeIfPresent(Int.self, forKey: .size)
+        // Some OpenAI-compatible servers expose provider-local metadata in
+        // `size` as a fractional value. That field is informational for
+        // Osaurus model discovery, so preserve the model row instead of
+        // rejecting the whole `/models` response.
+        size = try? container.decodeIfPresent(Int.self, forKey: .size)
         digest = try container.decodeIfPresent(String.self, forKey: .digest)
         details = try container.decodeIfPresent(ModelDetails.self, forKey: .details)
     }
