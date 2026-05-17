@@ -1541,7 +1541,6 @@ struct AgentDetailView: View {
     private var agentSwitcherPopover: some View {
         let switchableAgents = agentManager.agents
             .filter { !$0.isBuiltIn }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {

@@ -294,10 +294,29 @@ public final class AgentManager: ObservableObject {
     }
 
     /// Assign sequential `order` values (0...N-1) to custom agents in the
-    /// given sequence and refresh once. Built-ins must not be included.
+    /// given sequence and refresh once. Built-ins and duplicate IDs are ignored;
+    /// any omitted custom agents keep their current relative position after the
+    /// requested IDs so every persisted store ends up with one normalized order.
     public func reorder(orderedIds: [UUID]) {
-        for (index, id) in orderedIds.enumerated() {
-            guard var agent = AgentStore.load(id: id), !agent.isBuiltIn else { continue }
+        let customAgents = AgentStore.loadAll().filter { !$0.isBuiltIn }
+        var customById: [UUID: Agent] = [:]
+        for agent in customAgents where customById[agent.id] == nil {
+            customById[agent.id] = agent
+        }
+        var seen = Set<UUID>()
+        var normalizedAgents: [Agent] = []
+
+        for id in orderedIds {
+            guard let agent = customById[id], seen.insert(id).inserted else { continue }
+            normalizedAgents.append(agent)
+        }
+
+        for agent in customAgents where seen.insert(agent.id).inserted {
+            normalizedAgents.append(agent)
+        }
+
+        for (index, agent) in normalizedAgents.enumerated() {
+            guard var agent = AgentStore.load(id: agent.id), !agent.isBuiltIn else { continue }
             guard agent.order != index else { continue }
             agent.order = index
             AgentStore.save(agent)
