@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.24</title>
+            <pubDate>Sun, 17 May 2026 22:44:37 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.24</sparkle:version>
+            <sparkle:shortVersionString>0.18.24</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.24/Osaurus-0.18.24.dmg" length="42344935" type="application/octet-stream" sparkle:edSignature="0he7mZtga0MBm60YjXGDPcZb+32CUCu3r6IEvTcFyMpC+ZyHXBhEtxGlQbKot3fXQ1/48HVcqi1azOgxlnf+Aw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Anchor schedule execution on trigger time (#1140) by @mimeding
+- [codex] Refresh chat background image cache on edits (#1139) by @mimeding
+- [codex] Harden office runtime version probe stdin (#1138) by @mimeding
+- [codex] Add high-fidelity document format IO (#1136) by @mimeding
+- [codex] Preserve structured document attachment metadata (#1135) by @mimeding
+- [codex] Scope capability search to agent grants (#1134) by @mimeding
+- [codex] Document model compatibility research plan (#1124) by @mimeding
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.23...0.18.24
+]]></description>
+        </item>
+        <item>
             <title>0.18.23</title>
             <pubDate>Sun, 17 May 2026 14:11:08 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
