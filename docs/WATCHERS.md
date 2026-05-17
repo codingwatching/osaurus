@@ -268,7 +268,7 @@ Each file contains the watcher configuration encoded as JSON with ISO 8601 dates
 
 ## Related Documentation
 
-- [Schedules](../README.md#schedules) — Time-based automation (complements Watchers)
+- [Schedules](FEATURES.md#schedules) — Time-based automation (complements Watchers)
 - [Agent Loop Guide](AGENT_LOOP.md) — Autonomous task execution and folder context
 - [Skills Guide](SKILLS.md) — Reusable AI capabilities
 - [Features Overview](FEATURES.md) — Complete feature inventory

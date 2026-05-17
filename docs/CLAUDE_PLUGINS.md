@@ -206,5 +206,5 @@ The installer keeps going if any single file fails to download or parse. Failure
 
 - [Skills](SKILLS.md) — Skill format, RAG selection, and built-in skills
 - [Remote MCP Providers](REMOTE_MCP_PROVIDERS.md) — Manual MCP setup and HTTP/SSE transport details
-- [Schedules](../README.md#schedules) — Recurring agent runs
+- [Schedules](FEATURES.md#schedules) — Recurring agent runs
 - [Features Inventory](FEATURES.md#claude-plugin-import) — Canonical feature record
