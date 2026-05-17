@@ -14,6 +14,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
 | Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
 | MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/MCPServerManager.swift, CLI MCPCommand.swift |
+| Structured Document IO           | Foundation | "Tools & Plugins"  | (in README)                   | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |
 | Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
 | Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
 | Claude Plugin Import             | Stable    | "Skills"           | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Views/Skill/GitHubImportSheet.swift, Views/Skill/InstalledPluginsSection.swift |
@@ -81,6 +82,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  ├── MCP                                                                 │
 │  │   ├── MCPServerManager (Osaurus as MCP server)                        │
 │  │   └── MCPProviderManager (HTTP/SSE remote MCP client connections)     │
+│  ├── Documents                                                           │
+│  │   ├── DocumentAdaptersBootstrap (built-in adapter registration)        │
+│  │   ├── PDF/CSV/XLSX/PPTX/RichDocument adapters                         │
+│  │   └── ExternalOfficeRuntimeDetector (optional runtime discovery only)  │
 │  ├── Tools                                                               │
 │  │   ├── ToolRegistry                                                    │
 │  │   ├── PluginManager                                                   │
@@ -283,6 +288,34 @@ Research notes for the next local-runtime compatibility wave live in
 ```
 
 This command bridge is for external clients connecting to Osaurus. It is separate from Remote MCP Providers, which only connect from Osaurus to URL-based HTTP/SSE MCP servers.
+
+---
+
+### Structured Document IO
+
+**Purpose:** Preserve document structure for attachments before agent context assembly instead of flattening every business file into plain text.
+
+**Components:**
+
+- `Managers/Documents/DocumentAdaptersBootstrap.swift` — registers built-in document adapters.
+- `Models/Documents/Workbook.swift` — typed workbook, sheet, row, and cell representation.
+- `Models/Documents/PresentationDocument.swift` — typed deck, slide, note, and relationship representation.
+- `Models/Documents/RichDocumentRepresentation.swift` — sections, headings, links, and metadata for rich text sources.
+- `Services/Documents/CSVAdapter.swift` — CSV and TSV table parsing with bounded input handling.
+- `Services/Documents/XLSXAdapter.swift` — XLSX workbook parsing from Office Open XML packages.
+- `Services/Documents/XLSXEmitter.swift` — XLSX workbook emission for round-trip workflows.
+- `Services/Documents/PPTXAdapter.swift` — PPTX/POTX deck parsing from Office Open XML packages.
+- `Services/Documents/PDFAdapter.swift` — PDF extraction with page-level anchors.
+- `Services/Documents/RichDocumentAdapter.swift` — DOCX/RTF/HTML-style rich document structure extraction.
+- `Services/Documents/ExternalOfficeRuntimeDetector.swift` — optional LibreOffice/OpenOffice discovery for future conversion flows; detection reads version metadata only and does not send document bytes to a runtime.
+
+**Supported format surface:**
+
+- CSV and TSV tables preserve headers, rows, delimiters, and source metadata.
+- XLSX workbooks preserve sheets, cells, shared strings, relationships, and can emit a minimal valid `.xlsx` package.
+- PPTX/POTX decks preserve slide grouping, text runs, notes, and relationships.
+- PDFs preserve page boundaries and anchors so citations can point back to pages.
+- Rich documents preserve section boundaries, headings, links, and metadata.
 
 ---
 

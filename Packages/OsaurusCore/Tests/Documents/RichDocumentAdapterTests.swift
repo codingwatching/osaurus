@@ -26,12 +26,19 @@ struct RichDocumentAdapterTests {
         #expect(adapter.canHandle(url: URL(fileURLWithPath: "/tmp/a.txt"), uti: nil) == false)
     }
 
-    @Test func parse_readsHTMLBodyAsPlainText() async throws {
+    @Test func parse_readsHTMLBodyAsPlainTextAndSafeStructure() async throws {
         let url = try Self.write(
             """
             <html>
               <head><script src="https://example.com/app.js"></script></head>
-              <body><h1>Title</h1><p>Body text</p></body>
+              <body>
+                <h1>Title</h1>
+                <p>Body text</p>
+                <ul>
+                  <li>First</li>
+                  <li>Second</li>
+                </ul>
+              </body>
             </html>
             """,
             filename: "page.html"
@@ -39,24 +46,46 @@ struct RichDocumentAdapterTests {
         defer { try? FileManager.default.removeItem(at: url) }
 
         let doc = try await RichDocumentAdapter().parse(url: url, sizeLimit: 0)
+        let rich = try #require(doc.representation.underlying as? RichDocumentRepresentation)
+
         #expect(doc.formatId == "richdoc")
         #expect(doc.textFallback.contains("Title"))
         #expect(doc.textFallback.contains("Body text"))
         #expect(doc.textFallback.contains("<h1>") == false)
-        #expect(doc.structure.elements(kind: .paragraph).first?.text == doc.textFallback)
+        #expect(rich.text == doc.textFallback)
+        #expect(rich.sourceFormat == .html)
+        #expect(rich.sourceLabel == "HTML document")
+        #expect(rich.blocks.contains { $0.kind == .heading && $0.headingLevel == 1 })
+        #expect(rich.blocks.filter { $0.kind == .listItem }.count == 2)
+        #expect(doc.structure.root.attributes.metadata["sourceFormat"] == "html")
+        #expect(doc.structure.elements(kind: .heading).first?.text == "Title")
+        #expect(doc.structure.elements(kind: .listItem).count == 2)
+        #expect(doc.structure.textLengthUTF16 == doc.textFallback.utf16.count)
         #expect(doc.security.inspectionStatus == .inspected)
+        #expect(doc.security.sourceTrust == .userSelectedLocalFile)
+        #expect(doc.security.fileExtension == "html")
+        #expect(doc.security.sha256 != nil)
         #expect(doc.security.activeContentTypes.contains(.script))
         #expect(doc.security.externalReferences.contains { $0.kind == .script })
     }
 
-    @Test func parse_readsRTFAsPlainText() async throws {
+    @Test func parse_readsRTFAsPlainTextAndParagraphStructure() async throws {
         let rtf = "{\\rtf1\\ansi Hello {\\b bold} world}"
         let url = try Self.write(rtf, filename: "page.rtf")
         defer { try? FileManager.default.removeItem(at: url) }
 
         let doc = try await RichDocumentAdapter().parse(url: url, sizeLimit: 0)
+        let rich = try #require(doc.representation.underlying as? RichDocumentRepresentation)
+
         #expect(doc.textFallback.contains("Hello"))
         #expect(doc.textFallback.contains("bold"))
+        #expect(rich.text == doc.textFallback)
+        #expect(rich.sourceFormat == .rtf)
+        #expect(rich.blocks.first?.kind == .paragraph)
+        #expect(doc.structure.elements(kind: .paragraph).first?.text == rich.blocks.first?.text)
+        #expect(doc.structure.root.attributes.metadata["sourceLabel"] == "Rich Text Format")
+        #expect(doc.security.inspectionStatus == .partiallyInspected)
+        #expect(doc.security.findings.contains { $0.kind == .unsupportedFeature })
     }
 
     @Test func parse_throwsSizeLimitExceededAboveCap() async throws {

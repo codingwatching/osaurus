@@ -294,6 +294,21 @@ Currently env-gated:
 | ---------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------ |
 | `OSAURUS_RUN_SANDBOX_INTEGRATION_TESTS=1` | [`SandboxIntegrationTests`](../Packages/OsaurusCore/Tests/Sandbox/SandboxIntegrationTests.swift) | Boots a Linux VM; runs `pip`/`npm`/`go` workloads. |
 
+### Document runtime discovery
+
+Structured document parsing runs in-process for the built-in CSV/TSV, XLSX,
+PPTX/POTX, PDF, and rich-document adapters. The optional office runtime
+detector exists only to discover a local LibreOffice/OpenOffice-compatible
+`soffice` binary for future conversion flows; it probes version metadata and
+never sends document bytes to the runtime.
+
+Set either variable to point tests or local builds at a specific executable:
+
+| Env var | Purpose |
+| ------- | ------- |
+| `OSAURUS_OFFICE_RUNTIME_URL` | File URL for an explicit `soffice` executable. |
+| `OSAURUS_OFFICE_RUNTIME_PATH` | File-system path for an explicit `soffice` executable. |
+
 ### CI cache controls
 
 The `test-core` job caches `~/Library/Developer/Xcode/DerivedData` keyed on Swift sources, manifests, resources, the pinned Xcode version, and a manual `CACHE_SALT`. Two recovery levers when you suspect a bad cache:

@@ -1,0 +1,439 @@
+//
+//  CSVAdapter.swift
+//  osaurus
+//
+//  High-fidelity CSV/TSV reader for the document adapter stack. It keeps the
+//  legacy text attachment contract by emitting a normalized fallback while
+//  also preserving rows, cells, source offsets, and structure anchors.
+//
+
+import Foundation
+
+public struct CSVAdapter: DocumentFormatAdapter {
+    public let delimiter: CSVDelimiter
+    public var formatId: String { delimiter.formatId }
+
+    public init(delimiter: CSVDelimiter = .comma) {
+        self.delimiter = delimiter
+    }
+
+    public func canHandle(url: URL, uti: String?) -> Bool {
+        url.pathExtension.lowercased() == delimiter.fileExtension
+    }
+
+    public func parse(url: URL, sizeLimit: Int64) async throws -> StructuredDocument {
+        let fileSize = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        if sizeLimit > 0, fileSize > sizeLimit {
+            throw DocumentAdapterError.sizeLimitExceeded(actual: fileSize, limit: sizeLimit)
+        }
+
+        let source = try Self.readTextSource(url: url)
+        guard !source.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw DocumentAdapterError.emptyContent
+        }
+
+        let parsedRows = Self.parseRows(source: source, delimiter: delimiter)
+        guard !parsedRows.isEmpty else {
+            throw DocumentAdapterError.emptyContent
+        }
+
+        let built = Self.buildDocument(
+            filename: url.lastPathComponent,
+            delimiter: delimiter,
+            parsedRows: parsedRows,
+            sourceTextLengthUTF16: source.utf16.count
+        )
+        let security = DocumentFileInspector.localFileSecurityMetadata(
+            url: url,
+            formatId: formatId
+        )
+
+        return StructuredDocument(
+            formatId: formatId,
+            filename: url.lastPathComponent,
+            fileSize: fileSize,
+            representation: AnyStructuredRepresentation(
+                formatId: formatId,
+                underlying: built.document
+            ),
+            structure: built.structure,
+            security: security,
+            textFallback: built.document.textFallback
+        )
+    }
+
+    // MARK: - Reading
+
+    private static func readTextSource(url: URL) throws -> String {
+        do {
+            return try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            guard let data = try? Data(contentsOf: url),
+                let decoded = String(data: data, encoding: .isoLatin1)
+            else {
+                throw DocumentAdapterError.readFailed(underlying: error.localizedDescription)
+            }
+            return decoded
+        }
+    }
+
+    // MARK: - Parsing
+
+    private static func parseRows(source: String, delimiter: CSVDelimiter) -> [ParsedRow] {
+        let delimiterScalar = scalar(for: delimiter)
+        let quoteScalar = UnicodeScalar("\"")
+        let carriageReturn = UnicodeScalar("\r")
+        let lineFeed = UnicodeScalar("\n")
+        let scalars = source.unicodeScalars
+
+        var rows: [ParsedRow] = []
+        var cells: [ParsedCell] = []
+        var field = ""
+        var fieldStart = 0
+        var rowStart = 0
+        var offset = 0
+        var isQuoted = false
+        var wasQuoted = false
+        var index = scalars.startIndex
+
+        func finishCell(sourceEnd: Int) {
+            let sourceRange = DocumentTextRange(
+                startUTF16Offset: fieldStart,
+                length: sourceEnd - fieldStart
+            )
+            cells.append(
+                ParsedCell(
+                    text: field,
+                    wasQuoted: wasQuoted,
+                    sourceRange: sourceRange
+                )
+            )
+            field = ""
+            wasQuoted = false
+        }
+
+        func finishRow(sourceEnd: Int) {
+            finishCell(sourceEnd: sourceEnd)
+            let rowRange = DocumentTextRange(
+                startUTF16Offset: rowStart,
+                length: sourceEnd - rowStart
+            )
+            rows.append(ParsedRow(cells: cells, sourceRange: rowRange))
+            cells = []
+        }
+
+        while index != scalars.endIndex {
+            let scalar = scalars[index]
+            let scalarLength = utf16Length(of: scalar)
+
+            if isQuoted {
+                if scalar == quoteScalar {
+                    let nextIndex = scalars.index(after: index)
+                    if nextIndex != scalars.endIndex, scalars[nextIndex] == quoteScalar {
+                        field.unicodeScalars.append(quoteScalar)
+                        scalars.formIndex(after: &index)
+                        scalars.formIndex(after: &index)
+                        offset += 2
+                    } else {
+                        isQuoted = false
+                        scalars.formIndex(after: &index)
+                        offset += scalarLength
+                    }
+                } else {
+                    field.unicodeScalars.append(scalar)
+                    scalars.formIndex(after: &index)
+                    offset += scalarLength
+                }
+                continue
+            }
+
+            if scalar == quoteScalar, field.isEmpty, fieldStart == offset {
+                isQuoted = true
+                wasQuoted = true
+                scalars.formIndex(after: &index)
+                offset += scalarLength
+                continue
+            }
+
+            if scalar == delimiterScalar {
+                finishCell(sourceEnd: offset)
+                scalars.formIndex(after: &index)
+                offset += scalarLength
+                fieldStart = offset
+                continue
+            }
+
+            if scalar == carriageReturn || scalar == lineFeed {
+                finishRow(sourceEnd: offset)
+                let nextIndex = scalars.index(after: index)
+                if scalar == carriageReturn, nextIndex != scalars.endIndex, scalars[nextIndex] == lineFeed {
+                    scalars.formIndex(after: &index)
+                    scalars.formIndex(after: &index)
+                    offset += 2
+                } else {
+                    scalars.formIndex(after: &index)
+                    offset += scalarLength
+                }
+                rowStart = offset
+                fieldStart = offset
+                continue
+            }
+
+            field.unicodeScalars.append(scalar)
+            scalars.formIndex(after: &index)
+            offset += scalarLength
+        }
+
+        if !cells.isEmpty || !field.isEmpty || wasQuoted || fieldStart < offset {
+            finishRow(sourceEnd: offset)
+        }
+
+        return rows
+    }
+
+    private static func scalar(for delimiter: CSVDelimiter) -> UnicodeScalar {
+        switch delimiter {
+        case .comma: return UnicodeScalar(",")
+        case .tab: return UnicodeScalar("\t")
+        }
+    }
+
+    private static func utf16Length(of scalar: UnicodeScalar) -> Int {
+        scalar.value <= 0xFFFF ? 1 : 2
+    }
+
+    // MARK: - Structure
+
+    private static func buildDocument(
+        filename: String,
+        delimiter: CSVDelimiter,
+        parsedRows: [ParsedRow],
+        sourceTextLengthUTF16: Int
+    ) -> BuiltCSVDocument {
+        let rootAnchor = DocumentAnchor.root(label: filename)
+        let tableAnchor = DocumentAnchor(
+            id: "document/table",
+            kind: .table,
+            path: [
+                .init(kind: .document),
+                .init(kind: .table, identifier: delimiter.formatId),
+            ],
+            textRange: DocumentTextRange(startUTF16Offset: 0, length: 0),
+            sourceRange: .init(
+                start: DocumentSourceLocation(characterOffset: 0, namedRegion: "source"),
+                end: DocumentSourceLocation(characterOffset: sourceTextLengthUTF16, namedRegion: "source")
+            ),
+            label: filename,
+            metadata: ["delimiter": delimiter.rawValue, "formatId": delimiter.formatId]
+        )
+
+        var fallback = ""
+        var fallbackOffset = 0
+        var rows: [CSVRow] = []
+        var rowElements: [DocumentElement] = []
+
+        for parsedRowIndex in parsedRows.indices {
+            let parsedRow = parsedRows[parsedRowIndex]
+            let rowStart = fallbackOffset
+            var rowText = ""
+            var cells: [CSVCell] = []
+            var cellElements: [DocumentElement] = []
+
+            for parsedCellIndex in parsedRow.cells.indices {
+                let parsedCell = parsedRow.cells[parsedCellIndex]
+                if parsedCellIndex > 0 {
+                    fallback += "\t"
+                    rowText += "\t"
+                    fallbackOffset += 1
+                }
+
+                let cellStart = fallbackOffset
+                fallback += parsedCell.text
+                rowText += parsedCell.text
+                fallbackOffset += parsedCell.text.utf16.count
+
+                let cellTextRange = DocumentTextRange(
+                    startUTF16Offset: cellStart,
+                    length: parsedCell.text.utf16.count
+                )
+                let cellAnchor = makeCellAnchor(
+                    rowIndex: parsedRowIndex,
+                    columnIndex: parsedCellIndex,
+                    textRange: cellTextRange,
+                    sourceRange: parsedCell.sourceRange,
+                    wasQuoted: parsedCell.wasQuoted
+                )
+                cells.append(
+                    CSVCell(
+                        rowIndex: parsedRowIndex,
+                        columnIndex: parsedCellIndex,
+                        text: parsedCell.text,
+                        wasQuoted: parsedCell.wasQuoted,
+                        sourceRange: parsedCell.sourceRange,
+                        textRange: cellTextRange,
+                        anchorId: cellAnchor.id
+                    )
+                )
+                cellElements.append(
+                    DocumentElement(
+                        kind: .tableCell,
+                        anchor: cellAnchor,
+                        text: parsedCell.text,
+                        attributes: .init(metadata: cellAnchor.metadata)
+                    )
+                )
+            }
+
+            let rowTextRange = DocumentTextRange(
+                startUTF16Offset: rowStart,
+                length: fallbackOffset - rowStart
+            )
+            let rowAnchor = makeRowAnchor(
+                rowIndex: parsedRowIndex,
+                textRange: rowTextRange,
+                sourceRange: parsedRow.sourceRange
+            )
+            rows.append(
+                CSVRow(
+                    rowIndex: parsedRowIndex,
+                    cells: cells,
+                    sourceRange: parsedRow.sourceRange,
+                    textRange: rowTextRange,
+                    anchorId: rowAnchor.id
+                )
+            )
+            rowElements.append(
+                DocumentElement(
+                    kind: .tableRow,
+                    anchor: rowAnchor,
+                    text: rowText,
+                    attributes: .init(metadata: rowAnchor.metadata),
+                    children: cellElements
+                )
+            )
+
+            if parsedRowIndex < parsedRows.count - 1 {
+                fallback += "\n"
+                fallbackOffset += 1
+            }
+        }
+
+        let tableElement = DocumentElement(
+            kind: .table,
+            anchor: DocumentAnchor(
+                id: tableAnchor.id,
+                kind: tableAnchor.kind,
+                path: tableAnchor.path,
+                textRange: DocumentTextRange(startUTF16Offset: 0, length: fallbackOffset),
+                sourceRange: tableAnchor.sourceRange,
+                label: tableAnchor.label,
+                metadata: tableAnchor.metadata
+            ),
+            children: rowElements
+        )
+        let root = DocumentElement(
+            id: rootAnchor.id,
+            kind: .document,
+            anchor: rootAnchor,
+            children: [tableElement]
+        )
+        let structure = DocumentStructure(
+            root: root,
+            textLengthUTF16: fallbackOffset
+        )
+        let document = CSVDocument(
+            delimiter: delimiter,
+            rows: rows,
+            sourceTextLengthUTF16: sourceTextLengthUTF16,
+            textFallback: fallback
+        )
+        return BuiltCSVDocument(document: document, structure: structure)
+    }
+
+    private static func makeRowAnchor(
+        rowIndex: Int,
+        textRange: DocumentTextRange,
+        sourceRange: DocumentTextRange
+    ) -> DocumentAnchor {
+        DocumentAnchor(
+            id: "document/table/rows/\(rowIndex)",
+            kind: .row,
+            path: [
+                .init(kind: .document),
+                .init(kind: .table, identifier: "rows"),
+                .init(kind: .row, index: rowIndex),
+            ],
+            textRange: textRange,
+            sourceRange: makeSourceRange(sourceRange, rowIndex: rowIndex, columnIndex: nil),
+            label: "Row \(rowIndex + 1)",
+            metadata: [
+                "rowIndex": "\(rowIndex)",
+                "sourceStartUTF16": "\(sourceRange.startUTF16Offset)",
+                "sourceLengthUTF16": "\(sourceRange.length)",
+            ]
+        )
+    }
+
+    private static func makeCellAnchor(
+        rowIndex: Int,
+        columnIndex: Int,
+        textRange: DocumentTextRange,
+        sourceRange: DocumentTextRange,
+        wasQuoted: Bool
+    ) -> DocumentAnchor {
+        DocumentAnchor(
+            id: "document/table/rows/\(rowIndex)/cells/\(columnIndex)",
+            kind: .cell,
+            path: [
+                .init(kind: .document),
+                .init(kind: .table, identifier: "rows"),
+                .init(kind: .row, index: rowIndex),
+                .init(kind: .cell, index: columnIndex),
+            ],
+            textRange: textRange,
+            sourceRange: makeSourceRange(sourceRange, rowIndex: rowIndex, columnIndex: columnIndex),
+            label: "R\(rowIndex + 1)C\(columnIndex + 1)",
+            metadata: [
+                "rowIndex": "\(rowIndex)",
+                "columnIndex": "\(columnIndex)",
+                "sourceStartUTF16": "\(sourceRange.startUTF16Offset)",
+                "sourceLengthUTF16": "\(sourceRange.length)",
+                "wasQuoted": "\(wasQuoted)",
+            ]
+        )
+    }
+
+    private static func makeSourceRange(
+        _ range: DocumentTextRange,
+        rowIndex: Int,
+        columnIndex: Int?
+    ) -> DocumentSourceRange {
+        let start = DocumentSourceLocation(
+            rowIndex: rowIndex,
+            columnIndex: columnIndex,
+            characterOffset: range.startUTF16Offset
+        )
+        let end = DocumentSourceLocation(
+            rowIndex: rowIndex,
+            columnIndex: columnIndex,
+            characterOffset: range.endUTF16Offset
+        )
+        return DocumentSourceRange(start: start, end: end)
+    }
+
+    private struct ParsedCell {
+        let text: String
+        let wasQuoted: Bool
+        let sourceRange: DocumentTextRange
+    }
+
+    private struct ParsedRow {
+        let cells: [ParsedCell]
+        let sourceRange: DocumentTextRange
+    }
+
+    private struct BuiltCSVDocument {
+        let document: CSVDocument
+        let structure: DocumentStructure
+    }
+}

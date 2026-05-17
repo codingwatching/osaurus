@@ -21,6 +21,7 @@ public enum DocumentLimits {
     public static let xlsx: Int64 = 50 * 1024 * 1024
     public static let pdf: Int64 = 100 * 1024 * 1024
     public static let docx: Int64 = 50 * 1024 * 1024
+    public static let presentation: Int64 = 100 * 1024 * 1024
 
     /// Fallback for formats that haven't been assigned a tuned cap.
     public static let defaultLimit: Int64 = 10 * 1024 * 1024
@@ -32,6 +33,7 @@ public enum DocumentLimits {
         case "xlsx", "xls", "ods": return xlsx
         case "pdf": return pdf
         case "docx", "doc", "rtf": return docx
+        case "pptx", "potx": return presentation
         default: return defaultLimit
         }
     }

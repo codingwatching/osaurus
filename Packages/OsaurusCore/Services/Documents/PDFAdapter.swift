@@ -94,10 +94,143 @@ public struct PDFAdapter: DocumentFormatAdapter {
         extractedText: String,
         textFallback: String
     ) -> DocumentStructure {
-        guard extractedText == textFallback else {
+        guard !pages.isEmpty else {
             return DocumentStructure.plainText(filename: filename, text: textFallback)
         }
-        return DocumentStructure.paginatedText(filename: filename, pages: pages)
+        return Self.paginatedTextStructure(
+            filename: filename,
+            pages: pages,
+            extractedText: extractedText,
+            textFallback: textFallback
+        )
+    }
+
+    private static func paginatedTextStructure(
+        filename: String,
+        pages: [DocumentPageText],
+        extractedText: String,
+        textFallback: String
+    ) -> DocumentStructure {
+        let rootAnchor = DocumentAnchor.root(label: filename)
+        let visiblePrefixLength = Self.visibleExtractedPrefixUTF16Length(
+            extractedText: extractedText,
+            textFallback: textFallback
+        )
+        var extractedOffset = 0
+        var elements: [DocumentElement] = []
+
+        for (order, page) in pages.enumerated() {
+            if order > 0 {
+                extractedOffset += Self.pageSeparatorUTF16Length
+            }
+
+            let sourceLength = page.text.utf16.count
+            let visibleLength = min(sourceLength, max(0, visiblePrefixLength - extractedOffset))
+            let fallbackStart = min(extractedOffset, visiblePrefixLength)
+            let range = DocumentTextRange(startUTF16Offset: fallbackStart, length: visibleLength)
+            let clippedText = Self.prefix(page.text, maxUTF16Length: visibleLength)
+            let wasClipped = visibleLength < sourceLength
+            let metadata = Self.pageMetadata(
+                pageIndex: page.pageIndex,
+                order: order,
+                sourceLength: sourceLength,
+                visibleLength: visibleLength,
+                range: range,
+                wasClipped: wasClipped
+            )
+            let anchor = DocumentAnchor(
+                kind: .page,
+                path: [
+                    .init(kind: .document),
+                    .init(kind: .page, index: page.pageIndex),
+                ],
+                textRange: range,
+                sourceRange: .init(
+                    start: .init(pageIndex: page.pageIndex, characterOffset: 0),
+                    end: .init(pageIndex: page.pageIndex, characterOffset: visibleLength)
+                ),
+                label: "Page \(page.pageIndex + 1)",
+                metadata: metadata
+            )
+            elements.append(
+                DocumentElement(
+                    kind: .page,
+                    anchor: anchor,
+                    text: clippedText.isEmpty ? nil : clippedText,
+                    attributes: .init(metadata: metadata)
+                )
+            )
+            extractedOffset += sourceLength
+        }
+
+        let root = DocumentElement(
+            id: rootAnchor.id,
+            kind: .document,
+            anchor: rootAnchor,
+            children: elements
+        )
+        return DocumentStructure(root: root, textLengthUTF16: textFallback.utf16.count)
+    }
+
+    private static func visibleExtractedPrefixUTF16Length(
+        extractedText: String,
+        textFallback: String
+    ) -> Int {
+        if extractedText == textFallback {
+            return textFallback.utf16.count
+        }
+
+        // The fallback may contain the truncation marker, which is not source
+        // PDF text. Only the shared prefix can safely receive page anchors.
+        var extractedIndex = extractedText.startIndex
+        var fallbackIndex = textFallback.startIndex
+        var length = 0
+        while extractedIndex < extractedText.endIndex,
+            fallbackIndex < textFallback.endIndex,
+            extractedText[extractedIndex] == textFallback[fallbackIndex]
+        {
+            let nextExtractedIndex = extractedText.index(after: extractedIndex)
+            length += extractedText[extractedIndex ..< nextExtractedIndex].utf16.count
+            extractedIndex = nextExtractedIndex
+            fallbackIndex = textFallback.index(after: fallbackIndex)
+        }
+        return length
+    }
+
+    private static func prefix(_ text: String, maxUTF16Length: Int) -> String {
+        guard maxUTF16Length > 0 else { return "" }
+        guard text.utf16.count > maxUTF16Length else { return text }
+
+        var endIndex = text.startIndex
+        var length = 0
+        while endIndex < text.endIndex {
+            let nextIndex = text.index(after: endIndex)
+            let nextLength = text[endIndex ..< nextIndex].utf16.count
+            guard length + nextLength <= maxUTF16Length else { break }
+            length += nextLength
+            endIndex = nextIndex
+        }
+        return String(text[..<endIndex])
+    }
+
+    private static func pageMetadata(
+        pageIndex: Int,
+        order: Int,
+        sourceLength: Int,
+        visibleLength: Int,
+        range: DocumentTextRange,
+        wasClipped: Bool
+    ) -> [String: String] {
+        [
+            "pageIndex": "\(pageIndex)",
+            "pageNumber": "\(pageIndex + 1)",
+            "pageOrder": "\(order)",
+            "fallbackStartUTF16Offset": "\(range.startUTF16Offset)",
+            "fallbackEndUTF16Offset": "\(range.endUTF16Offset)",
+            "sourceTextUTF16Length": "\(sourceLength)",
+            "visibleTextUTF16Length": "\(visibleLength)",
+            "truncatedByFallbackCap": "\(wasClipped)",
+        ]
     }
 
     private static func securitySignals(
@@ -145,7 +278,7 @@ public struct PDFAdapter: DocumentFormatAdapter {
             DocumentSecurityFinding(
                 kind: .truncatedContent,
                 severity: .low,
-                message: "PDF text fallback was character-capped; page-level text ranges were not preserved.",
+                message: "PDF text fallback was character-capped; page anchors were clipped to visible fallback text.",
                 metadata: [
                     "extractedUTF16Length": "\(extractedText.utf16.count)",
                     "fallbackUTF16Length": "\(textFallback.utf16.count)",
@@ -158,4 +291,6 @@ public struct PDFAdapter: DocumentFormatAdapter {
         let pageIndex: Int
         let text: String
     }
+
+    private static let pageSeparatorUTF16Length = "\n\n".utf16.count
 }

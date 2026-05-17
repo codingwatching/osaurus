@@ -154,6 +154,8 @@ osaurus tools dev com.acme.my-plugin     # Dev with hot reload
 
 20+ native plugins: Mail, Calendar, Vision, macOS Use, XLSX, PPTX, Browser, Music, Git, Filesystem, Search, Fetch, and more. Plugins target the v3 host API surface — register HTTP routes, serve web apps, persist data in SQLite, dispatch agent tasks, and call inference through any model. Older v1/v2 plugins continue to load unchanged. See the [Plugin Authoring Guide](docs/plugins/README.md).
 
+Document attachments keep structure where the file format exposes it: CSV/TSV tables, XLSX workbooks, PPTX decks, PDF page anchors, and rich document sections are parsed through the document adapter registry before they reach the agent.
+
 ## More
 
 **Skills & Methods** -- Skills import reusable AI capabilities from GitHub repos or files, compatible with [Agent Skills](https://agentskills.io/). Full Claude plugins (skills, scheduled agents, slash commands, MCP providers, and `CLAUDE.md` context) can be imported from any GitHub repo and managed as a single bundle. Methods are learned workflows that agents save and reuse over time. All are automatically selected via RAG search -- no manual configuration needed. See [Skills Guide](docs/SKILLS.md) and [Claude Plugins](docs/CLAUDE_PLUGINS.md).
