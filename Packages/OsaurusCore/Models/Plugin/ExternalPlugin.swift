@@ -534,6 +534,11 @@ public struct PluginManifest: Decodable, Sendable {
 }
 
 final class ExternalPlugin: @unchecked Sendable {
+    enum InvocationIsolation: Sendable, Equatable {
+        case pluginQueue
+        case mainActor
+    }
+
     let id: String
     let manifest: PluginManifest
     let bundlePath: String
@@ -724,8 +729,18 @@ final class ExternalPlugin: @unchecked Sendable {
         agentId: UUID? = nil,
         errorCode: Int,
         errorMessage: String,
+        isolation: InvocationIsolation = .pluginQueue,
         _ call: @Sendable @escaping (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
     ) async throws -> String {
+        if isolation == .mainActor {
+            return try await dispatchPluginCallOnMainActor(
+                agentId: agentId,
+                errorCode: errorCode,
+                errorMessage: errorMessage,
+                call
+            )
+        }
+
         let freeString = api.free_string
         nonisolated(unsafe) let ctx = self.ctx
         let pluginId = self.id
@@ -764,7 +779,48 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    func invoke(type: String, id: String, payload: String, agentId: UUID? = nil) async throws -> String {
+    @MainActor
+    private func dispatchPluginCallOnMainActor(
+        agentId: UUID? = nil,
+        errorCode: Int,
+        errorMessage: String,
+        _ call: @Sendable (osr_plugin_ctx_t) -> UnsafePointer<CChar>?
+    ) throws -> String {
+        guard !isShutDown.withLock({ $0 }) else {
+            throw NSError(
+                domain: "ExternalPlugin",
+                code: errorCode,
+                userInfo: [NSLocalizedDescriptionKey: "Plugin has been shut down"]
+            )
+        }
+
+        let freeString = api.free_string
+        let ctx = self.ctx
+        let pluginId = self.id
+        let resPtr = PluginHostContext.withTLSScope(pluginId: pluginId, agentId: agentId) {
+            call(ctx)
+        }
+        guard let resPtr else {
+            throw NSError(
+                domain: "ExternalPlugin",
+                code: errorCode,
+                userInfo: [NSLocalizedDescriptionKey: errorMessage]
+            )
+        }
+
+        let result = String(cString: resPtr)
+        freeString?(resPtr)
+        withExtendedLifetime(self) {}
+        return result
+    }
+
+    func invoke(
+        type: String,
+        id: String,
+        payload: String,
+        agentId: UUID? = nil,
+        isolation: InvocationIsolation = .pluginQueue
+    ) async throws -> String {
         guard let invokeFn = api.invoke else {
             throw NSError(
                 domain: "ExternalPlugin",
@@ -776,7 +832,8 @@ final class ExternalPlugin: @unchecked Sendable {
         return try await dispatchPluginCall(
             agentId: agentId,
             errorCode: 2,
-            errorMessage: "Plugin returned NULL response"
+            errorMessage: "Plugin returned NULL response",
+            isolation: isolation
         ) { ctx in
             type.withCString { typePtr in
                 id.withCString { idPtr in

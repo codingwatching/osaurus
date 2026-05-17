@@ -19,6 +19,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
 
     private let plugin: ExternalPlugin
     private let toolId: String
+    private let invocationIsolation: ExternalPlugin.InvocationIsolation
 
     init(plugin: ExternalPlugin, spec: PluginManifest.ToolSpec) {
         self.plugin = plugin
@@ -29,6 +30,7 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         self.description = spec.description
         self.parameters = spec.parameters
         self.requirements = spec.requirements ?? []
+        self.invocationIsolation = Self.invocationIsolation(for: self.requirements)
 
         if let polStr = spec.permission_policy?.lowercased() {
             switch polStr {
@@ -45,7 +47,26 @@ final class ExternalTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
         let agentId = ChatExecutionContext.currentAgentId
         let payloadWithSecrets = injectSecrets(into: argumentsJSON, agentId: agentId)
         let payloadWithContext = injectFolderContext(into: payloadWithSecrets)
-        return try await plugin.invoke(type: "tool", id: toolId, payload: payloadWithContext, agentId: agentId)
+        return try await plugin.invoke(
+            type: "tool",
+            id: toolId,
+            payload: payloadWithContext,
+            agentId: agentId,
+            isolation: invocationIsolation
+        )
+    }
+
+    /// Native plugins that touch macOS automation APIs often hold
+    /// AppKit/Accessibility objects whose lifetime is tied to the main
+    /// thread. Dispatching those C ABI calls on the plugin's concurrent
+    /// queue can turn a valid UI element reference into a dangling ObjC
+    /// pointer during write actions such as click/type/press-key.
+    private static func invocationIsolation(for requirements: [String]) -> ExternalPlugin.InvocationIsolation {
+        let normalized = Set(requirements.map { $0.lowercased() })
+        if normalized.contains("accessibility") || normalized.contains("automation") {
+            return .mainActor
+        }
+        return .pluginQueue
     }
 
     /// Injects plugin secrets into the tool payload under the `_secrets` key
