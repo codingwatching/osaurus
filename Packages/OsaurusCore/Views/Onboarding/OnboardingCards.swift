@@ -136,6 +136,14 @@ struct OnboardingRowBadge {
     enum Style {
         case neutral
         case success
+        /// Yellow chip — used for the "Tight fit" capability hint.
+        case warning
+        /// Red chip — used for "Too large for this Mac" on disabled rows.
+        case error
+        /// Category chip whose color, icon, and label all come from the
+        /// `ModelUseCase`. The badge's `text` field is unused for this
+        /// style — `OnboardingBadgeChip` reads from the enum directly.
+        case useCase(ModelUseCase)
     }
 
     let text: String
@@ -144,6 +152,11 @@ struct OnboardingRowBadge {
     init(_ text: String, style: Style = .neutral) {
         self.text = text
         self.style = style
+    }
+
+    /// Convenience constructor for a use-case category badge.
+    static func useCase(_ useCase: ModelUseCase) -> OnboardingRowBadge {
+        OnboardingRowBadge(useCase.rawValue, style: .useCase(useCase))
     }
 }
 
@@ -159,16 +172,22 @@ enum OnboardingRowIcon {
 
 // MARK: - Row Card
 
-/// Single row card used across all onboarding lists (model picker, provider
-/// picker, choose-path, complete options). Replaces the four near-identical
-/// legacy cards with one component.
+/// Single row card used across all onboarding lists (model picker,
+/// provider picker, choose-path, complete options).
 struct OnboardingRowCard: View {
     let icon: OnboardingRowIcon
     let title: String
     let subtitle: String?
+    /// Muted third line rendered beneath `subtitle` (e.g. "Released Apr 2026").
+    let secondaryLine: String?
     let badges: [OnboardingRowBadge]
     let accessory: OnboardingRowAccessory
     let isSelected: Bool
+    /// When `true` the row is dimmed, the accessory is hidden, and the
+    /// underlying button is disabled — used by the onboarding picker to
+    /// keep too-large curated models visible (so the badge can explain
+    /// why) without letting the user select one that won't run.
+    let isDisabled: Bool
     let action: () -> Void
 
     @Environment(\.theme) private var theme
@@ -177,23 +196,27 @@ struct OnboardingRowCard: View {
         icon: OnboardingRowIcon,
         title: String,
         subtitle: String? = nil,
+        secondaryLine: String? = nil,
         badges: [OnboardingRowBadge] = [],
         accessory: OnboardingRowAccessory = .none,
         isSelected: Bool = false,
+        isDisabled: Bool = false,
         action: @escaping () -> Void
     ) {
         self.icon = icon
         self.title = title
         self.subtitle = subtitle
+        self.secondaryLine = secondaryLine
         self.badges = badges
         self.accessory = accessory
         self.isSelected = isSelected
+        self.isDisabled = isDisabled
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
-            OnboardingGlassCard(isSelected: isSelected) {
+            OnboardingGlassCard(isSelected: isSelected && !isDisabled) {
                 HStack(spacing: 14) {
                     iconView
 
@@ -222,6 +245,13 @@ struct OnboardingRowCard: View {
                                 .fixedSize(horizontal: false, vertical: true)
                                 .lineSpacing(2)
                         }
+
+                        if let secondaryLine = secondaryLine, !secondaryLine.isEmpty {
+                            Text(secondaryLine)
+                                .font(theme.font(size: 11))
+                                .foregroundColor(theme.tertiaryText)
+                                .lineLimit(1)
+                        }
                     }
 
                     Spacer(minLength: 8)
@@ -230,9 +260,11 @@ struct OnboardingRowCard: View {
                 }
                 .padding(.horizontal, OnboardingMetrics.cardPaddingH)
                 .padding(.vertical, OnboardingMetrics.cardPaddingV)
+                .opacity(isDisabled ? 0.55 : 1.0)
             }
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 
     @ViewBuilder
@@ -265,25 +297,219 @@ struct OnboardingRowCard: View {
 
     @ViewBuilder
     private var accessoryView: some View {
-        switch accessory {
-        case .none:
+        // A radio circle on a grayed row would read as "selectable but
+        // unselected", so disabled rows drop the accessory entirely.
+        if isDisabled {
             EmptyView()
-        case .radio(let selected):
-            ZStack {
-                Circle()
-                    .strokeBorder(
-                        selected ? theme.accentColor : theme.primaryBorder,
-                        lineWidth: selected ? 6 : 1.5
-                    )
-                    .frame(width: 20, height: 20)
-                if selected {
-                    Circle().fill(Color.white).frame(width: 7, height: 7)
+        } else {
+            switch accessory {
+            case .none:
+                EmptyView()
+            case .radio(let selected):
+                ZStack {
+                    Circle()
+                        .strokeBorder(
+                            selected ? theme.accentColor : theme.primaryBorder,
+                            lineWidth: selected ? 6 : 1.5
+                        )
+                        .frame(width: 20, height: 20)
+                    if selected {
+                        Circle().fill(Color.white).frame(width: 7, height: 7)
+                    }
                 }
+            case .chevron:
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(theme.tertiaryText)
             }
-        case .chevron:
-            Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+        }
+    }
+}
+
+// MARK: - Selectable Row
+
+/// A single bordered radio-row used *inside* an `OnboardingGlassCard`'s
+/// content (e.g. the OpenAI auth choices). Distinct from
+/// `OnboardingRowCard` — that variant is a stand-alone glass card; this
+/// one is a flat bordered selection row meant to live in a list within
+/// another card.
+struct OnboardingSelectableRow: View {
+    let icon: String
+    let title: LocalizedStringKey
+    let subtitle: LocalizedStringKey
+    let isSelected: Bool
+    let action: () -> Void
+
+    @Environment(\.theme) private var theme
+
+    init(
+        icon: String,
+        title: LocalizedStringKey,
+        subtitle: LocalizedStringKey,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) {
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.isSelected = isSelected
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(
+                            isSelected
+                                ? theme.accentColor.opacity(0.12)
+                                : theme.tertiaryBackground
+                        )
+                        .frame(width: 26, height: 26)
+                    Image(systemName: icon)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(isSelected ? theme.accentColor : theme.secondaryText)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title, bundle: .module)
+                        .font(theme.font(size: 12, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(subtitle, bundle: .module)
+                        .font(theme.font(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+            }
+            .padding(OnboardingMetrics.selectableRowPadding)
+            .background(
+                RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
+                    .fill(
+                        isSelected
+                            ? theme.accentColor.opacity(0.08)
+                            : theme.cardBackground.opacity(0.4)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: OnboardingMetrics.selectableRowRadius, style: .continuous)
+                            .stroke(
+                                isSelected ? theme.accentColor.opacity(0.55) : theme.cardBorder,
+                                lineWidth: 1
+                            )
+                    )
+                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isSelected)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Callout Banner
+
+/// Tone of an `OnboardingCalloutBanner` — drives the icon, accent color,
+/// and tinted background fill.
+enum OnboardingCalloutTone {
+    case info
+    case success
+    case warning
+    case error
+
+    fileprivate var icon: String {
+        switch self {
+        case .info: return "info.circle.fill"
+        case .success: return "checkmark.seal.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "exclamationmark.triangle.fill"
+        }
+    }
+}
+
+/// Inline bordered banner used for in-step warnings, errors, and
+/// notices. Pinned to `OnboardingMetrics.bannerCornerRadius` and
+/// tinted from `tone`.
+///
+/// Two message overloads are provided:
+///  - `LocalizedStringKey`: for static UI copy that should be localized.
+///  - `String` (runtime): for messages that come from non-localized
+///    sources (network error descriptions, etc.).
+struct OnboardingCalloutBanner: View {
+    private enum Message {
+        case localized(LocalizedStringKey)
+        case raw(String)
+    }
+
+    let tone: OnboardingCalloutTone
+    private let message: Message
+    /// Whether the message should grow vertically to fit (e.g. error
+    /// messages from networking layers can be long). Defaults to a
+    /// single-line title-style banner.
+    let multiline: Bool
+
+    @Environment(\.theme) private var theme
+
+    init(
+        tone: OnboardingCalloutTone,
+        message: LocalizedStringKey,
+        multiline: Bool = false
+    ) {
+        self.tone = tone
+        self.message = .localized(message)
+        self.multiline = multiline
+    }
+
+    init(
+        tone: OnboardingCalloutTone,
+        rawMessage: String,
+        multiline: Bool = true
+    ) {
+        self.tone = tone
+        self.message = .raw(rawMessage)
+        self.multiline = multiline
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: tone.icon)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(toneColor)
+            messageText
+                .font(theme.font(size: 12, weight: multiline ? .medium : .semibold))
+                .foregroundColor(toneColor)
+                .lineLimit(multiline ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, OnboardingMetrics.bannerPaddingH)
+        .padding(.vertical, OnboardingMetrics.bannerPaddingV)
+        .background(
+            RoundedRectangle(cornerRadius: OnboardingMetrics.bannerCornerRadius, style: .continuous)
+                .fill(toneColor.opacity(0.10))
+        )
+    }
+
+    @ViewBuilder
+    private var messageText: some View {
+        switch message {
+        case .localized(let key):
+            Text(key, bundle: .module)
+        case .raw(let raw):
+            Text(raw)
+        }
+    }
+
+    private var toneColor: Color {
+        switch tone {
+        case .info: return theme.infoColor
+        case .success: return theme.successColor
+        case .warning: return theme.warningColor
+        case .error: return theme.errorColor
         }
     }
 }
@@ -312,18 +538,53 @@ private struct OnboardingBadgeChip: View {
                 .padding(.vertical, 2)
                 .background(shape.fill(theme.secondaryBackground))
         case .success:
+            iconChip(
+                text: badge.text,
+                icon: "checkmark.circle.fill",
+                color: .green
+            )
+        case .warning:
+            iconChip(
+                text: badge.text,
+                icon: "exclamationmark.triangle.fill",
+                color: theme.warningColor
+            )
+        case .error:
+            iconChip(
+                text: badge.text,
+                icon: "xmark.octagon.fill",
+                color: theme.errorColor
+            )
+        case .useCase(let useCase):
             HStack(spacing: 3) {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 9, weight: .medium))
-                Text(badge.text)
-                    .font(theme.font(size: 10, weight: .medium))
+                Image(systemName: useCase.iconName)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(useCase.displayName, bundle: .module)
+                    .font(theme.font(size: 10, weight: .semibold))
                     .lineLimit(1)
             }
             .fixedSize(horizontal: true, vertical: false)
-            .foregroundColor(.green)
+            .foregroundColor(useCase.tintColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(shape.fill(Color.green.opacity(0.15)))
+            .background(shape.fill(useCase.tintColor.opacity(0.15)))
         }
+    }
+
+    /// Shared layout for the icon-prefixed chip styles
+    /// (success / warning / error).
+    private func iconChip(text: String, icon: String, color: Color) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .medium))
+            Text(text)
+                .font(theme.font(size: 10, weight: .medium))
+                .lineLimit(1)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .foregroundColor(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(shape.fill(color.opacity(0.15)))
     }
 }

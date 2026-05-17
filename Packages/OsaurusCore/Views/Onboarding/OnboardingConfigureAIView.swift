@@ -216,11 +216,17 @@ final class ConfigureAIState: ObservableObject {
         }
     }
 
-    func ensureLocalSelection() {
-        if selectedModel == nil {
-            let topModels = ModelManager.shared.suggestedModels.filter { $0.isTopSuggestion }
-            selectedModel = topModels.first
-        }
+    /// Picks the first `isTopSuggestion` model that this Mac can run, so
+    /// onboarding never auto-selects a disabled row that would dead-end
+    /// the CTA. When every candidate is `.tooLarge` `selectedModel`
+    /// stays nil and the picker shows the empty-state redirect instead.
+    /// `.unknown` (no param info / monitor not yet populated) falls
+    /// through as eligible.
+    func ensureLocalSelection(totalMemoryGB: Double) {
+        guard selectedModel == nil else { return }
+        selectedModel = ModelManager.shared.suggestedModels.first(where: {
+            $0.isTopSuggestion && $0.compatibility(totalMemoryGB: totalMemoryGB) != .tooLarge
+        })
     }
 
     func startLocalDownloadOrContinue(onComplete: () -> Void) {
@@ -413,6 +419,11 @@ struct ConfigureAIBody: View {
 
     @Environment(\.theme) private var theme
     @ObservedObject private var modelManager = ModelManager.shared
+    /// Drives the capability filter on the local picker. `totalMemoryGB`
+    /// is populated synchronously in `SystemMonitorService.init`, so the
+    /// first onboarding frame already has a real value to classify
+    /// curated top suggestions against.
+    @ObservedObject private var systemMonitor = SystemMonitorService.shared
 
     var body: some View {
         OnboardingTwoColumnBody(
@@ -428,22 +439,23 @@ struct ConfigureAIBody: View {
             VStack(alignment: .leading, spacing: 14) {
                 pathSegmentedControl
 
-                // Clipped container holds the substate during its slide
-                // animation so the outgoing/incoming views never bleed
-                // outside the right column (e.g. into the left column's
-                // illustration).
+                // Substate envelope. Clipped horizontally so the slide
+                // transition never bleeds into the left column, but
+                // vertically scaled (`y: 4`) so card hover shadows can
+                // escape the substate region without being trimmed at
+                // the scroll-area edges.
                 ZStack(alignment: .topLeading) {
                     substateContainer
                         .id(substateID)
                         .transition(substateTransition)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .clipped()
+                .clipShape(Rectangle().scale(x: 1, y: 4))
                 .animation(.spring(response: 0.5, dampingFraction: 0.85), value: substateID)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
-        .onAppear { state.ensureLocalSelection() }
+        .onAppear { state.ensureLocalSelection(totalMemoryGB: systemMonitor.totalMemoryGB) }
     }
 
     // MARK: - Path subtitle
@@ -458,56 +470,24 @@ struct ConfigureAIBody: View {
 
     // MARK: - Path Segmented Control
 
-    private var pathSegmentedControl: some View {
-        HStack(spacing: 0) {
-            ForEach(state.availablePaths, id: \.self) { path in
-                pathSegment(path)
-            }
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .strokeBorder(theme.inputBorder, lineWidth: 1)
-                )
+    /// Binding that drives the shared `OnboardingSegmentedControl` while
+    /// preserving the side effects on `state.selectPath(_:)` (substate
+    /// reset, slide direction). A direct `$state.selectedPath` binding
+    /// would skip those.
+    private var pathBinding: Binding<ConfigurePath> {
+        Binding(
+            get: { state.selectedPath },
+            set: { state.selectPath($0) }
         )
     }
 
-    private func pathSegment(_ path: ConfigurePath) -> some View {
-        let isSelected = state.selectedPath == path
-        return Button {
-            // No `withAnimation` wrapper: the body's own
-            // `.animation(value: substateID)` modifier animates the substate
-            // crossfade. Wrapping the state mutation in `withAnimation` would
-            // also propagate to the footer CTA (which observes `selectedPath`)
-            // and morph the button — visually distracting.
-            state.selectPath(path)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: path.icon)
-                    .font(.system(size: 12, weight: .semibold))
-                Text(path.title, bundle: .module)
-                    .font(theme.font(size: 12, weight: .semibold))
+    private var pathSegmentedControl: some View {
+        OnboardingSegmentedControl(
+            selection: pathBinding,
+            items: state.availablePaths.map {
+                OnboardingSegmentItem(tag: $0, title: $0.title, icon: $0.icon)
             }
-            .frame(maxWidth: .infinity)
-            .frame(height: 30)
-            .foregroundColor(isSelected ? .white : theme.secondaryText)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(isSelected ? theme.accentColor : Color.clear)
-                    // Localized animation on the fill ONLY — keeps the
-                    // segment selection smooth without leaking into the
-                    // footer CTA via `selectedPath`.
-                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: isSelected)
-            )
-            // Make the entire segment hit-testable, not just the icon+text.
-            // `Button { … } label: { … }` with `.plain` style only registers
-            // hits on the label's drawn pixels by default.
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        )
     }
 
     // MARK: - Substate dispatch
@@ -550,12 +530,12 @@ struct ConfigureAIBody: View {
     private var substateContainer: some View {
         switch state.selectedPath {
         case .appleFoundation:
-            appleConfirmView
+            OnboardingScrollContainer { appleConfirmView }
 
         case .local:
             switch state.localSubstate {
             case .picker:
-                scrollableSubstate { localPickerView }
+                OnboardingScrollContainer { localPickerView }
             case .downloading:
                 substateWithBackBar(
                     title: state.selectedModel?.name ?? L("Downloading"),
@@ -568,7 +548,7 @@ struct ConfigureAIBody: View {
         case .apiProvider:
             switch state.apiSubstate {
             case .picker:
-                scrollableSubstate { apiPickerView }
+                OnboardingScrollContainer { apiPickerView }
             case .keyForm(let provider):
                 substateWithBackBar(
                     title: provider == .openai ? L("Connect OpenAI") : "Connect \(provider.name)",
@@ -587,22 +567,10 @@ struct ConfigureAIBody: View {
         }
     }
 
-    /// Wraps content in a vertical ScrollView so long lists don't overflow
-    /// the body while keeping the segmented control above it pinned.
-    /// `scrollContentBuffer` gives the first/last card's hover shadow +
-    /// scale room to render without clipping at the scroll-area edges.
-    private func scrollableSubstate<C: View>(@ViewBuilder content: () -> C) -> some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            content()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(scrollContentBuffer)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    /// Sub-substate frame: an in-context back row (drills out to the picker)
-    /// followed by the substate body wrapped in a ScrollView for any
-    /// overflow (key forms, custom-provider form, etc.).
+    /// Sub-substate frame: an in-context back row (drills out to the
+    /// picker) followed by the substate body wrapped in the shared
+    /// scroll container for any overflow (key forms, custom-provider
+    /// form, etc.).
     private func substateWithBackBar<C: View>(
         title: String,
         onBack: @escaping () -> Void,
@@ -610,19 +578,8 @@ struct ConfigureAIBody: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             substateBackRow(title: title, onBack: onBack)
-            ScrollView(.vertical, showsIndicators: false) {
-                content()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(scrollContentBuffer)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            OnboardingScrollContainer { content() }
         }
-    }
-
-    /// Buffer (`EdgeInsets`) inside scroll regions so hover shadows + scale
-    /// on row/glass cards don't clip against the scroll-area edges.
-    private var scrollContentBuffer: EdgeInsets {
-        EdgeInsets(top: 6, leading: 4, bottom: 6, trailing: 4)
     }
 
     private func substateBackRow(title: String, onBack: @escaping () -> Void) -> some View {
@@ -671,6 +628,16 @@ struct ConfigureAIBody: View {
                 .padding(.vertical, OnboardingMetrics.cardPaddingV)
             }
 
+            // Capability disclosure. The on-device foundation model
+            // is lightweight — surface its limits before the user
+            // commits, not mid-task.
+            OnboardingCalloutBanner(
+                tone: .warning,
+                message:
+                    "Best for short chats. Won't run tools, browse the web, or handle complex agent tasks — pick Local or Cloud for those.",
+                multiline: true
+            )
+
             HStack(spacing: 8) {
                 Image(systemName: "checkmark.seal.fill")
                     .font(.system(size: 11, weight: .semibold))
@@ -686,47 +653,174 @@ struct ConfigureAIBody: View {
 
     // MARK: - Local picker
 
+    /// Top-suggestion curated models paired with their compatibility
+    /// verdict against the current `totalMemoryGB`. `.unknown` is treated
+    /// as "let through" — same fail-open behavior as
+    /// `ModelFilterState.PerformanceFilter.hideTooLarge`, so the list
+    /// isn't blank during startup before the system monitor reports.
+    private var topSuggestionsWithCompatibility: [(model: MLXModel, compatibility: ModelCompatibility)] {
+        let totalMemoryGB = systemMonitor.totalMemoryGB
+        return modelManager.suggestedModels
+            .filter(\.isTopSuggestion)
+            .map { ($0, $0.compatibility(totalMemoryGB: totalMemoryGB)) }
+    }
+
+    @ViewBuilder
     private var localPickerView: some View {
-        VStack(spacing: OnboardingMetrics.cardSpacing) {
-            ForEach(modelManager.suggestedModels.filter(\.isTopSuggestion), id: \.id) { model in
-                OnboardingRowCard(
-                    icon: .symbol(model.isVLM ? "eye" : "cpu"),
-                    title: model.name,
-                    subtitle: model.description,
-                    badges: localBadges(for: model),
-                    accessory: .radio(isSelected: state.selectedModel?.id == model.id),
-                    isSelected: state.selectedModel?.id == model.id
-                ) {
-                    // No `withAnimation` — selecting a model otherwise
-                    // morphs the CTA between "Continue" and
-                    // "Download & Install" as a side-effect of the
-                    // shared transaction.
-                    state.selectedModel = model
+        let pairs = topSuggestionsWithCompatibility
+        let hasAnyRunnable = pairs.contains(where: { $0.compatibility != .tooLarge })
+
+        // When nothing fits (or there are no top suggestions at all),
+        // redirecting to Apple Intelligence / cloud beats a dead-end
+        // list of disabled rows.
+        if !hasAnyRunnable {
+            localNoCompatibleModelsView
+        } else {
+            VStack(spacing: OnboardingMetrics.cardSpacing) {
+                computeIntensiveCallout
+                ForEach(pairs, id: \.model.id) { pair in
+                    let model = pair.model
+                    OnboardingRowCard(
+                        icon: .symbol(model.isVLM ? "eye" : "cpu"),
+                        title: model.name,
+                        subtitle: model.description,
+                        secondaryLine: model.formattedReleaseMonth.map { L("Released \($0)") },
+                        badges: localBadges(for: model, compatibility: pair.compatibility),
+                        accessory: .radio(isSelected: state.selectedModel?.id == model.id),
+                        isSelected: state.selectedModel?.id == model.id,
+                        isDisabled: pair.compatibility == .tooLarge
+                    ) {
+                        // No `withAnimation` — selecting a model otherwise
+                        // morphs the CTA between "Continue" and
+                        // "Download & Install" as a side-effect of the
+                        // shared transaction.
+                        state.selectedModel = model
+                    }
                 }
             }
         }
     }
 
-    private func localBadges(for model: MLXModel) -> [OnboardingRowBadge] {
+    /// Inline explainer rendered above the curated list — first-time
+    /// users don't realize local models actually run on their Mac, so
+    /// we set the RAM / latency / offline expectation up front rather
+    /// than burying it in the model detail view.
+    private var computeIntensiveCallout: some View {
+        OnboardingGlassCard {
+            HStack(spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(theme.accentColor.opacity(0.14))
+                        .frame(width: 28, height: 28)
+                    Image(systemName: "cpu")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.accentColor)
+                }
+                Text(
+                    "Local models run on your Mac's unified memory — they're compute-intensive but stay available offline.",
+                    bundle: .module
+                )
+                .font(theme.font(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    /// Empty-state shown when no curated top suggestion can run on this
+    /// Mac. Buttons drive the same `selectPath(...)` machinery as the
+    /// segmented control so the substate slide stays consistent.
+    private var localNoCompatibleModelsView: some View {
+        OnboardingGlassCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 12) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.warningColor.opacity(0.14))
+                            .frame(
+                                width: OnboardingMetrics.cardIcon,
+                                height: OnboardingMetrics.cardIcon
+                            )
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(theme.warningColor)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("No local models fit this Mac", bundle: .module)
+                            .font(theme.font(size: 14, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(
+                            "Local models are compute-intensive and our curated picks need more unified memory than this machine has. We recommend a different path.",
+                            bundle: .module
+                        )
+                        .font(theme.font(size: 12))
+                        .foregroundColor(theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 0)
+                }
+
+                HStack(spacing: 10) {
+                    Spacer()
+                    if state.foundationAvailable {
+                        OnboardingCompactButton(
+                            title: "Use Apple Intelligence",
+                            style: .accent,
+                            action: { state.selectPath(.appleFoundation) }
+                        )
+                    }
+                    OnboardingCompactButton(
+                        title: "Use a cloud provider",
+                        style: .outline,
+                        action: { state.selectPath(.apiProvider) }
+                    )
+                }
+            }
+            .padding(.horizontal, OnboardingMetrics.cardPaddingH)
+            .padding(.vertical, OnboardingMetrics.cardPaddingV)
+        }
+    }
+
+    /// Order: use-case category (leading scannable signal) → status /
+    /// size → modality → capability verdict (trailing, near the
+    /// accessory where the eye lands to evaluate the row).
+    private func localBadges(
+        for model: MLXModel,
+        compatibility: ModelCompatibility
+    ) -> [OnboardingRowBadge] {
         var result: [OnboardingRowBadge] = []
+        if let useCase = model.useCase {
+            result.append(.useCase(useCase))
+        }
         if model.isDownloaded {
             result.append(OnboardingRowBadge(L("Downloaded"), style: .success))
         } else if let size = model.formattedDownloadSize {
             result.append(OnboardingRowBadge(size))
         }
         result.append(OnboardingRowBadge(model.isVLM ? "VLM" : "LLM"))
+        switch compatibility {
+        case .tight:
+            result.append(OnboardingRowBadge(L("Tight fit"), style: .warning))
+        case .tooLarge:
+            result.append(OnboardingRowBadge(L("Too large for this Mac"), style: .error))
+        case .compatible, .unknown:
+            break
+        }
         return result
     }
 
     // MARK: - Local downloading
 
-    /// State-driven downloading view. Renders one of three layouts depending
-    /// on the live `localDownloadState`:
-    /// - `.downloading` / `.paused` (or initial): progress card with inline
-    ///   Pause / Resume / Cancel controls.
-    /// - `.failed`: an inline error card with Retry and Choose-another-model
-    ///   actions, replacing the disruptive alert that previously could leave
-    ///   the user stuck on a dead screen with a disabled Continue button.
+    /// State-driven downloading view. Renders one of two layouts
+    /// depending on the live `localDownloadState`:
+    /// - `.downloading` / `.paused` (or initial): progress card with
+    ///   inline Pause / Resume / Cancel controls.
+    /// - `.failed`: inline error card with Retry and
+    ///   Choose-another-model actions, so the user always has a path
+    ///   forward without a disabled Continue button.
     @ViewBuilder
     private var localDownloadingView: some View {
         if case .failed(let message) = state.localDownloadState {
@@ -851,9 +945,9 @@ struct ConfigureAIBody: View {
         .help(Text(help))
     }
 
-    /// Inline failure card. Replaces the previous alert-based UX so the user
-    /// always has a clear path forward (Try again / Choose another model)
-    /// without the chrome dead-ending into a disabled Continue button.
+    /// Inline failure card with Try again / Choose another model
+    /// actions, so the user always has a clear path forward without
+    /// the chrome dead-ending into a disabled Continue button.
     private func localDownloadFailedCard(message: String) -> some View {
         OnboardingGlassCard {
             VStack(alignment: .leading, spacing: 12) {
@@ -880,34 +974,17 @@ struct ConfigureAIBody: View {
 
                 HStack(spacing: 10) {
                     Spacer()
-                    Button {
-                        state.popLocalToPicker()
-                    } label: {
-                        Text("Choose another model", bundle: .module)
-                            .font(theme.font(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        state.startLocalDownload()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Try again", bundle: .module)
-                                .font(theme.font(size: 12, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8).fill(theme.accentColor)
-                        )
-                    }
-                    .buttonStyle(.plain)
+                    OnboardingCompactButton(
+                        title: "Choose another model",
+                        style: .ghost,
+                        action: { state.popLocalToPicker() }
+                    )
+                    OnboardingCompactButton(
+                        title: "Try again",
+                        icon: "arrow.clockwise",
+                        style: .accent,
+                        action: { state.startLocalDownload() }
+                    )
                 }
             }
             .padding(.horizontal, OnboardingMetrics.cardPaddingH)
@@ -1027,11 +1104,17 @@ struct ConfigureAIBody: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("PROTOCOL", bundle: .module)
-                        .font(theme.font(size: 10, weight: .bold))
+                        .font(theme.font(size: OnboardingMetrics.sectionLabelSize, weight: .bold))
                         .foregroundColor(theme.tertiaryText)
                         .tracking(0.5)
-                    OnboardingProtocolToggle(selection: $state.customForm.protocolKind)
-                        .frame(height: 38)
+                    OnboardingSegmentedControl(
+                        selection: $state.customForm.protocolKind,
+                        items: [
+                            OnboardingSegmentItem(tag: .https, title: "HTTPS"),
+                            OnboardingSegmentItem(tag: .http, title: "HTTP"),
+                        ],
+                        style: .compact
+                    )
                 }
                 .frame(width: 130)
 
@@ -1081,72 +1164,29 @@ struct ConfigureAIBody: View {
                 Text("Choose your OpenAI access", bundle: .module)
                     .font(theme.font(size: 13, weight: .semibold))
                     .foregroundColor(theme.primaryText)
-                openAIAuthChoiceCard(
-                    mode: .chatGPTSubscription,
-                    title: OpenAIProviderCredentialMode.chatGPTSubscription.title,
-                    subtitle: OpenAIProviderCredentialMode.chatGPTSubscription.subtitle,
-                    icon: OpenAIProviderCredentialMode.chatGPTSubscription.icon
-                )
-                openAIAuthChoiceCard(
-                    mode: .platformAPIKey,
-                    title: OpenAIProviderCredentialMode.platformAPIKey.title,
-                    subtitle: OpenAIProviderCredentialMode.platformAPIKey.subtitle,
-                    icon: OpenAIProviderCredentialMode.platformAPIKey.icon
-                )
+                openAIAuthChoiceRow(mode: .chatGPTSubscription)
+                openAIAuthChoiceRow(mode: .platformAPIKey)
             }
             .padding(14)
         }
     }
 
-    private func openAIAuthChoiceCard(
-        mode: OpenAIProviderCredentialMode,
-        title: String,
-        subtitle: String,
-        icon: String
-    ) -> some View {
-        let selected = state.openAIAuthMode == mode
-        return Button {
-            // No `withAnimation` wrapper — propagating to the CTA (which
-            // observes `openAIAuthMode` to switch between "Sign in with
-            // ChatGPT" and "Connect") morphs the button. Selection
-            // crossfade is handled locally by the `.animation(value:)`
-            // modifier on the background fill below.
-            state.openAIAuthMode = mode
-            state.oauthTokens = nil
-            state.testResult = nil
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
-                    .frame(width: 26, height: 26)
-                    .background(Circle().fill(selected ? theme.accentColor.opacity(0.12) : theme.tertiaryBackground))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(theme.font(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(subtitle)
-                        .font(theme.font(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                }
-                Spacer()
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+    /// Routes the auth-mode choices through the shared
+    /// `OnboardingSelectableRow`. The state mutation stays local (no
+    /// `withAnimation` wrapper) so it doesn't propagate a transaction
+    /// to observers like the footer CTA.
+    private func openAIAuthChoiceRow(mode: OpenAIProviderCredentialMode) -> some View {
+        OnboardingSelectableRow(
+            icon: mode.icon,
+            title: LocalizedStringKey(mode.title),
+            subtitle: LocalizedStringKey(mode.subtitle),
+            isSelected: state.openAIAuthMode == mode,
+            action: {
+                state.openAIAuthMode = mode
+                state.oauthTokens = nil
+                state.testResult = nil
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(selected ? theme.accentColor.opacity(0.08) : theme.cardBackground.opacity(0.4))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 9)
-                            .stroke(selected ? theme.accentColor.opacity(0.55) : theme.cardBorder, lineWidth: 1)
-                    )
-                    .animation(.spring(response: 0.35, dampingFraction: 0.85), value: selected)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        )
     }
 
     private var endpointPreview: some View {
@@ -1158,11 +1198,12 @@ struct ConfigureAIBody: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundColor(theme.secondaryText)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, OnboardingMetrics.bannerPaddingH)
+        .padding(.vertical, OnboardingMetrics.bannerPaddingV)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 8).fill(theme.accentColor.opacity(0.1))
+            RoundedRectangle(cornerRadius: OnboardingMetrics.bannerCornerRadius)
+                .fill(theme.accentColor.opacity(0.1))
         )
     }
 
@@ -1334,46 +1375,6 @@ struct ConfigureAISecondary: View {
         case .downloading: return L("Continue in background")
         case .completed, .notStarted: return L("Download later")
         }
-    }
-}
-
-// MARK: - Protocol Toggle
-
-private struct OnboardingProtocolToggle: View {
-    @Binding var selection: RemoteProviderProtocol
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        HStack(spacing: 0) {
-            protocolButton("HTTPS", protocol: .https)
-            protocolButton("HTTP", protocol: .http)
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
-    }
-
-    private func protocolButton(_ label: String, protocol proto: RemoteProviderProtocol) -> some View {
-        Button {
-            withAnimation(theme.animationQuick()) { selection = proto }
-        } label: {
-            Text(label)
-                .font(theme.font(size: 11, weight: .semibold))
-                .foregroundColor(selection == proto ? .white : theme.secondaryText)
-                .frame(maxWidth: .infinity)
-                .frame(height: 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(selection == proto ? theme.accentColor : Color.clear)
-                )
-        }
-        .buttonStyle(.plain)
     }
 }
 
