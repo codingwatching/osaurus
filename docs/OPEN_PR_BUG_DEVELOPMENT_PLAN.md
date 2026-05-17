@@ -100,6 +100,23 @@ Reasons:
   permission (`RequestReviewsByLogin`), so the evidence comment records the
   reviewer handoff state.
 
+## T-M Spec Lane Addendum - 2026-05-17
+
+- Lane T-M is a docs/spec lane for multimodal plugin input/output. It is not a
+  code lane unless review finds an explicit, small, testable plugin model hole.
+- Ownership is `docs/MULTIMODAL_PLUGIN_ENGINE_SPEC.md` plus this tracked plan.
+  Avoid provider, runtime, UI, and ABI churn in the same branch.
+- The acceptance criteria now require ordered OpenAI-compatible media content
+  parts, local capability gating, remote-consent boundaries, output stream
+  semantics, tool isolation, session/cache isolation, and redacted observability.
+- The threat model covers media exfiltration, BYO key leakage, media/prompt
+  injection, SSRF, resource exhaustion, cross-agent/member contamination,
+  reasoning disclosure, and cache confusion.
+- Future implementation work should split into T-M1 through T-M7:
+  host API contract tests, capability discovery, typed member request model,
+  streaming/output adapter, tool and consent gate, observability/redaction, and
+  a local-only manual smoke plugin.
+
 ## Maximum Parallelization Plan - 2026-05-16
 
 These lanes are intentionally disjoint. Each implementation branch must start
@@ -113,10 +130,61 @@ issues, and must acquire a mutation lock before writing to GitHub.
 | D. Eval CLI hang | #1050 | Dispatch first; isolated | `Packages/OsaurusEvals/**` only | `swift test --package-path Packages/OsaurusEvals`; CLI smoke with and without `CI=true` | Make eval CLI noninteractive/timeout-safe on current main and document the behavior in help text if needed. |
 | E. MCP stdio docs | #416, #1058 | Dispatch first; docs-only | `README.md`, `docs/REMOTE_MCP_PROVIDERS.md`, `docs/FEATURES.md`, `docs/DEVELOPER_TOOLS.md` | `git diff --check` | Align docs with command-based MCP provider support and clarify remote transport limits. |
 | F. Global proxy | #1091, #232 | Design next | Shared URLSession/proxy policy, settings UI, model download/provider/plugin call sites | Proxy config unit tests plus model/provider smoke tests | Draft architecture first because it crosses provider, model download, plugin, and remote docs scopes. |
+| T-M. Multimodal plugin I/O spec | Plugin/council roadmap; adjacent to #793, #332, #417, #1002 | Spec lane; docs-only | `docs/MULTIMODAL_PLUGIN_ENGINE_SPEC.md`, `docs/OPEN_PR_BUG_DEVELOPMENT_PLAN.md` | `git diff --check -- docs/MULTIMODAL_PLUGIN_ENGINE_SPEC.md docs/OPEN_PR_BUG_DEVELOPMENT_PLAN.md` | Use the new acceptance criteria, threat model, and T-M1-T-M7 slices to scope future implementation PRs; do not add ABI surface without a proven host gap. |
 | H. Voice reliability and TTS | #689, #1002, #417, #445, #605 | Feature/quality follow-up | voice settings, TTS/transcription services, hotkey path | Voice service tests plus manual audio smoke | Pick one small target after D/B/C settle: language selection or function-key hotkey. |
 | I. Model/download compatibility | #443, #358, #1065, #886, #833 | Research/design | model discovery/download/runtime adapters | Compatibility notes and focused model manager tests | Produce design notes before code; avoid overlapping provider fallback work. |
 | J. Document stack | #929/#936/#937/#939/#940/#941/#942/#983/#1022/#1023/#1024 and #974 | Parked | document/plugin stack | Full document-stack sequencing gates | Do not dispatch until stack base is rebuilt from current main. |
 | K. Historical PRs | #873, #913, #958, #963, #976, #985/#986/#987/#988/#992, #1006, #1048 | Observe or conflict proof only | varies | conflict proof first | Skip broad rebases; mine narrow fixes only when they match an active current-main lane. |
+
+## T-J Document I/O Foundation Wave - 2026-05-17
+
+T-J replaces the stale document-stack base with a current-main foundation lane.
+It intentionally avoids format-specific import/export depth while unblocking
+the PDF, DOCX, XLSX, and PPTX follow-up lanes with shared contracts.
+
+Wave breakdown:
+
+1. Foundation model and adapter contract:
+   - Add format-neutral document structure, anchors, text/source ranges, and
+     security/provenance metadata under `Models/Documents/**`.
+   - Keep the existing plain-text attachment path stable by preserving
+     `StructuredDocument.textFallback` and the legacy `DocumentParser` shim.
+   - Current adapters may publish shallow trees; high-fidelity lanes replace
+     leaves with page/table/cell/slide/shape subtrees.
+2. Original-file bridge:
+   - Mine #983 first, but rebuild it on current main and preserve the rule that
+     on-disk artifacts stay inside the encrypted attachment/blob envelope.
+   - Expose original bytes to local tools/plugins only through controlled
+     metadata, path containment, and redacted logs.
+3. Format read lanes:
+   - XLSX read: mine #929 for typed workbook/sheet/cell models.
+   - CSV/TSV: mine #939 for streaming tables and encoding/line-ending tests.
+   - PDF: mine #940 for page/table/image anchors and active-content inspection.
+   - PPTX/POTX: mine #1023 for slide/shape/chart/speaker-note anchors, replacing
+     subprocess unzip with a bounded ZIP reader.
+4. Emit/tool lanes:
+   - Mine #936 for XLSX emit and round trips after the typed workbook lands.
+   - Mine #937 for workbook tools after current tool/capability plumbing is
+     stable.
+   - Revisit #942/#941 only after the typed attachment and plugin extension
+     surfaces can use the same anchor/security contracts.
+5. Skills/runtime/docs lanes:
+   - Mine #974 for on-demand high-fidelity skills after document I/O exists.
+   - Mine #1022 for optional office-runtime detection with timeout/trust review.
+   - Finish with #1024-style docs once code behavior is current-main real.
+
+Acceptance gates for the foundation PR:
+
+- Existing `PlainTextAdapter`, `PDFAdapter`, and `RichDocumentAdapter`
+  behaviours remain compatible with the current attachment flow.
+- Every parsed `StructuredDocument` carries a structure tree, at least one
+  stable anchor, and explicit security metadata.
+- Security metadata distinguishes `inspected`, `partiallyInspected`, and
+  `notInspected`; adapters must not imply a deeper scan than they performed.
+- Tests cover UTF-16 text ranges, paginated source offsets, digest metadata,
+  HTML active/external content signals, and current adapter compatibility.
+- Run focused document tests plus `git diff --check`; run the full core gate
+  before publishing a PR.
 
 ## Open PR Plan - 2026-05-16 07:33 UTC
 
