@@ -108,6 +108,9 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
+        let activeAgentId = await Self.resolveAgentId(explicit: agentId)
+        let allowedToolNames = await Self.allowedToolNames(for: activeAgentId)
+
         // Run each query independently and merge by best score per item.
         // The previous implementation joined every query into one string
         // and ran a single search — `["weather API", "get current weather
@@ -120,7 +123,11 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         ) { group in
             for q in queries {
                 group.addTask {
-                    await CapabilitySearch.search(query: q, topK: Self.perQueryTopK)
+                    await CapabilitySearch.search(
+                        query: q,
+                        topK: Self.perQueryTopK,
+                        allowedToolNames: allowedToolNames
+                    )
                 }
             }
             var collected: [CapabilitySearchResults] = []
@@ -132,16 +139,9 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         let hits = Self.mergeHits(perQueryResults)
 
         if hits.isEmpty {
-            let id: UUID
-            if let existingId = agentId ?? ChatExecutionContext.currentAgentId {
-                id = existingId
-            } else {
-                id = await MainActor.run { AgentManager.shared.activeAgent.id }
-            }
-
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
             let text: String
-            if await CapabilitySearch.canCreatePlugins(agentId: id) {
+            if await CapabilitySearch.canCreatePlugins(agentId: activeAgentId) {
                 text = """
                     No capabilities found matching \(queryList).
 
@@ -202,6 +202,27 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         }
         output += "Use `capabilities_load` with the IDs to load them into this session."
         return ToolEnvelope.success(tool: name, text: output)
+    }
+
+    /// Resolve the agent whose capability picker scopes runtime search.
+    /// Tool calls usually carry `ChatExecutionContext.currentAgentId`;
+    /// tests and direct host-API invocations can pass `agentId`
+    /// explicitly. Falling back to the active agent preserves legacy
+    /// behavior for older paths that do not yet bind task-local context.
+    private static func resolveAgentId(explicit: UUID?) async -> UUID {
+        if let explicit { return explicit }
+        if let contextId = ChatExecutionContext.currentAgentId { return contextId }
+        return await MainActor.run { AgentManager.shared.activeAgent.id }
+    }
+
+    /// The enabled-tool allowlist is nil for legacy/unseeded agents,
+    /// which deliberately means "use the global enabled registry." A
+    /// non-nil set is authoritative: `capabilities_search` must not
+    /// return a dynamic tool the current agent has not been granted.
+    private static func allowedToolNames(for agentId: UUID) async -> Set<String>? {
+        await MainActor.run {
+            AgentManager.shared.effectiveEnabledToolNames(for: agentId).map(Set.init)
+        }
     }
 
     // MARK: - Merge
@@ -347,13 +368,33 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             output += "\n\n"
 
             if !method.toolsUsed.isEmpty {
-                let toolSpecs = await MainActor.run {
-                    ToolRegistry.shared.specs(forTools: method.toolsUsed)
+                let allowedNames = await grantedToolNamesForCurrentAgent()
+                let (loadableToolNames, blockedToolNames, toolSpecs) = await MainActor.run {
+                    var allowed: [String] = []
+                    var blocked: [String] = []
+                    for name in method.toolsUsed {
+                        let isBuiltIn = ToolRegistry.shared.builtInToolNames.contains(name)
+                        if isBuiltIn || (allowedNames?.contains(name) ?? true) {
+                            allowed.append(name)
+                        } else {
+                            blocked.append(name)
+                        }
+                    }
+                    return (
+                        allowed,
+                        blocked,
+                        ToolRegistry.shared.specs(forTools: allowed)
+                    )
                 }
                 for spec in toolSpecs {
                     await CapabilityLoadBuffer.shared.add(spec)
                 }
-                output += "Auto-loaded tools: \(method.toolsUsed.joined(separator: ", "))\n"
+                if !loadableToolNames.isEmpty {
+                    output += "Auto-loaded tools: \(loadableToolNames.joined(separator: ", "))\n"
+                }
+                if !blockedToolNames.isEmpty {
+                    output += "Skipped tools not enabled for this agent: \(blockedToolNames.joined(separator: ", "))\n"
+                }
             }
 
             if !method.skillsUsed.isEmpty {
@@ -376,12 +417,16 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     }
 
     private func loadTool(_ toolId: String) async -> String {
+        let allowedNames = await grantedToolNamesForCurrentAgent()
         let (isEnabled, isBuiltIn, toolSpec) = await MainActor.run {
             (
                 ToolRegistry.shared.isGlobalEnabled(toolId),
                 ToolRegistry.shared.builtInToolNames.contains(toolId),
                 ToolRegistry.shared.specs(forTools: [toolId])
             )
+        }
+        guard isBuiltIn || (allowedNames?.contains(toolId) ?? true) else {
+            return "Error: Tool '\(toolId)' is not enabled for this agent.\n"
         }
         // Built-in tools are always loaded via alwaysLoadedSpecs, so skip the
         // enabled check — rejecting them here is misleading since they're callable.
@@ -393,6 +438,23 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         }
         await CapabilityLoadBuffer.shared.add(spec)
         return "Tool '\(toolId)' loaded and available.\n"
+    }
+
+    /// Nil means this agent has not been seeded by the capability picker
+    /// yet, so the historical global-enabled behavior remains in force.
+    /// A concrete set is the user's grant boundary and is enforced even
+    /// if the model invents a `tool/<name>` ID instead of receiving it
+    /// from `capabilities_search`.
+    private func grantedToolNamesForCurrentAgent() async -> Set<String>? {
+        let id: UUID
+        if let contextId = ChatExecutionContext.currentAgentId {
+            id = contextId
+        } else {
+            id = await MainActor.run { AgentManager.shared.activeAgent.id }
+        }
+        return await MainActor.run {
+            AgentManager.shared.effectiveEnabledToolNames(for: id).map(Set.init)
+        }
     }
 
     private func loadSkill(_ skillName: String) async -> String {

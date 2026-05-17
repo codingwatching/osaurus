@@ -672,11 +672,12 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // Capability-discovery nudge: explain how to recover when the
-        // current tool kit is incomplete. Gated to auto mode + presence of
-        // `capabilities_search` so manual-mode agents and tools-disabled
-        // sessions don't see irrelevant guidance.
-        if snapshot.toolMode == .auto,
-            !effectiveToolsOff,
+        // current tool kit is incomplete. The gate follows the actual
+        // schema, not the mode label: manual-mode agents still carry
+        // `capabilities_search` / `capabilities_load` as pragmatic
+        // always-loaded tools, so hiding the instructions made the
+        // discovery path invisible even though it was callable.
+        if !effectiveToolsOff,
             tools.contains(where: { $0.function.name == "capabilities_search" })
         {
             composer.append(

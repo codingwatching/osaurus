@@ -265,7 +265,8 @@ enum CapabilitySearch {
 
     static func search(
         query: String,
-        topK: (methods: Int, tools: Int, skills: Int)
+        topK: (methods: Int, tools: Int, skills: Int),
+        allowedToolNames: Set<String>? = nil
     ) async -> CapabilitySearchResults {
         let methodsThreshold = minimumRelevanceScoreMethods
         let skillsThreshold = minimumRelevanceScoreSkills
@@ -281,6 +282,7 @@ enum CapabilitySearch {
             return await searchWithVerboseTrace(
                 query: query,
                 topK: topK,
+                allowedToolNames: allowedToolNames,
                 methodsThreshold: methodsThreshold,
                 skillsThreshold: skillsThreshold,
                 fusedCutoff: fusedCutoff
@@ -295,7 +297,8 @@ enum CapabilitySearch {
         async let toolHits = ToolSearchService.shared.searchHybrid(
             query: query,
             topK: topK.tools,
-            minFusedScore: fusedCutoff
+            minFusedScore: fusedCutoff,
+            allowedNames: allowedToolNames
         )
         async let skillHits = SkillSearchService.shared.search(
             query: query,
@@ -324,6 +327,7 @@ enum CapabilitySearch {
     private static func searchWithVerboseTrace(
         query: String,
         topK: (methods: Int, tools: Int, skills: Int),
+        allowedToolNames: Set<String>?,
         methodsThreshold: Float,
         skillsThreshold: Float,
         fusedCutoff: Float
@@ -336,7 +340,8 @@ enum CapabilitySearch {
         async let toolPair = ToolSearchService.shared.searchHybridWithDiagnostic(
             query: query,
             topK: topK.tools,
-            minFusedScore: fusedCutoff
+            minFusedScore: fusedCutoff,
+            allowedNames: allowedToolNames
         )
         async let skillPair = SkillSearchService.shared.searchWithDiagnostic(
             query: query,
@@ -360,6 +365,7 @@ enum CapabilitySearch {
             methods accepted=\(formatHits(methodDiag.acceptedHits), privacy: .public)
             tools bm25Available=\(toolDiag.bm25Available, privacy: .public) all=\(formatHybridHits(toolDiag.allHits), privacy: .public)
             tools accepted=\(formatHybridHits(toolDiag.acceptedHits), privacy: .public)
+            tools filteredByAllowlist=\(formatNames(toolDiag.filteredByAllowlist), privacy: .public)
             skills raw=\(formatHits(skillDiag.rawHits), privacy: .public)
             skills accepted=\(formatHits(skillDiag.acceptedHits), privacy: .public)
             """
@@ -416,6 +422,10 @@ fileprivate func formatHybridHits(_ hits: [ToolSearchHybridDiagnostic.Hit]) -> S
             return "\(hit.name)(bm25=\(bm25),embed=\(embed),fused=\(fused))"
         }
         .joined(separator: ",")
+}
+
+fileprivate func formatNames(_ names: [String]) -> String {
+    names.isEmpty ? "[]" : "[\(names.joined(separator: ","))]"
 }
 
 // MARK: - Preflight Tool Selection

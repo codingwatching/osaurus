@@ -81,6 +81,10 @@ public struct ToolSearchHybridDiagnostic: Sendable {
     public let acceptedHits: [Hit]
     public let requestedMinFusedScore: Float
     public let minFusedScore: Float
+    /// Names that passed score/enabled checks but were suppressed by
+    /// the active agent's enabled-tool allowlist. This separates "not
+    /// indexed" from "not granted" during #823/#789-style triage.
+    public let filteredByAllowlist: [String]
 
     public init(
         indexedToolCount: Int,
@@ -88,7 +92,8 @@ public struct ToolSearchHybridDiagnostic: Sendable {
         allHits: [Hit],
         acceptedHits: [Hit],
         minFusedScore: Float,
-        requestedMinFusedScore: Float? = nil
+        requestedMinFusedScore: Float? = nil,
+        filteredByAllowlist: [String] = []
     ) {
         self.indexedToolCount = indexedToolCount
         self.bm25Available = bm25Available
@@ -96,6 +101,7 @@ public struct ToolSearchHybridDiagnostic: Sendable {
         self.acceptedHits = acceptedHits
         self.requestedMinFusedScore = requestedMinFusedScore ?? minFusedScore
         self.minFusedScore = minFusedScore
+        self.filteredByAllowlist = filteredByAllowlist
     }
 }
 
@@ -330,12 +336,14 @@ public actor ToolSearchService {
     public func searchHybrid(
         query: String,
         topK: Int = 10,
-        minFusedScore: Float = 0.01
+        minFusedScore: Float = 0.01,
+        allowedNames: Set<String>? = nil
     ) async -> [ToolSearchResult] {
         let (results, _) = await searchHybridWithDiagnostic(
             query: query,
             topK: topK,
-            minFusedScore: minFusedScore
+            minFusedScore: minFusedScore,
+            allowedNames: allowedNames
         )
         return results
     }
@@ -355,7 +363,8 @@ public actor ToolSearchService {
     public func searchHybridWithDiagnostic(
         query: String,
         topK: Int,
-        minFusedScore: Float
+        minFusedScore: Float,
+        allowedNames: Set<String>? = nil
     ) async -> (results: [ToolSearchResult], diagnostic: ToolSearchHybridDiagnostic) {
         let indexedCount = (try? ToolDatabase.shared.entryCount()) ?? 0
         let bm25Available = ToolDatabase.sanitizeFTS5Query(query) != nil
@@ -446,10 +455,15 @@ public actor ToolSearchService {
         // checker on first attempt).
         var acceptedResults: [ToolSearchResult] = []
         var acceptedHits: [ToolSearchHybridDiagnostic.Hit] = []
+        var filteredByAllowlist: [String] = []
         for (name, score) in fused {
             if acceptedResults.count >= topK { break }
             guard score >= effectiveMinFusedScore else { continue }
             guard let entry = entriesByName[name], enabledNames.contains(name) else { continue }
+            if let allowedNames, !allowedNames.contains(name) {
+                filteredByAllowlist.append(name)
+                continue
+            }
             acceptedResults.append(ToolSearchResult(entry: entry, searchScore: score))
             acceptedHits.append(makeHit(name: name, score: score))
         }
@@ -460,7 +474,8 @@ public actor ToolSearchService {
             allHits: allHits,
             acceptedHits: acceptedHits,
             minFusedScore: effectiveMinFusedScore,
-            requestedMinFusedScore: minFusedScore
+            requestedMinFusedScore: minFusedScore,
+            filteredByAllowlist: filteredByAllowlist
         )
         return (acceptedResults, diagnostic)
     }
