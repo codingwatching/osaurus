@@ -47,6 +47,11 @@ public struct PlainTextAdapter: DocumentFormatAdapter {
         }
 
         let truncated = Self.applyCharacterCap(rawContent)
+        let structure = DocumentStructure.plainText(filename: url.lastPathComponent, text: truncated)
+        let security = DocumentFileInspector.localFileSecurityMetadata(
+            url: url,
+            formatId: formatId
+        )
 
         return StructuredDocument(
             formatId: formatId,
@@ -56,6 +61,8 @@ public struct PlainTextAdapter: DocumentFormatAdapter {
                 formatId: formatId,
                 underlying: PlainTextRepresentation(text: truncated)
             ),
+            structure: structure,
+            security: security,
             textFallback: truncated
         )
     }

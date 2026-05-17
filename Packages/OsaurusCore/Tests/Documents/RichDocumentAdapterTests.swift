@@ -28,7 +28,12 @@ struct RichDocumentAdapterTests {
 
     @Test func parse_readsHTMLBodyAsPlainText() async throws {
         let url = try Self.write(
-            "<html><body><h1>Title</h1><p>Body text</p></body></html>",
+            """
+            <html>
+              <head><script src="https://example.com/app.js"></script></head>
+              <body><h1>Title</h1><p>Body text</p></body>
+            </html>
+            """,
             filename: "page.html"
         )
         defer { try? FileManager.default.removeItem(at: url) }
@@ -38,6 +43,10 @@ struct RichDocumentAdapterTests {
         #expect(doc.textFallback.contains("Title"))
         #expect(doc.textFallback.contains("Body text"))
         #expect(doc.textFallback.contains("<h1>") == false)
+        #expect(doc.structure.elements(kind: .paragraph).first?.text == doc.textFallback)
+        #expect(doc.security.inspectionStatus == .inspected)
+        #expect(doc.security.activeContentTypes.contains(.script))
+        #expect(doc.security.externalReferences.contains { $0.kind == .script })
     }
 
     @Test func parse_readsRTFAsPlainText() async throws {

@@ -51,6 +51,16 @@ public struct RichDocumentAdapter: DocumentFormatAdapter {
         }
 
         let truncated = PlainTextAdapter.applyCharacterCap(extracted)
+        let structure = DocumentStructure.plainText(filename: url.lastPathComponent, text: truncated)
+        let securitySignals = Self.securitySignals(url: url)
+        let security = DocumentFileInspector.localFileSecurityMetadata(
+            url: url,
+            formatId: formatId,
+            inspectionStatus: securitySignals.inspectionStatus,
+            findings: securitySignals.findings,
+            externalReferences: securitySignals.externalReferences,
+            activeContentTypes: securitySignals.activeContentTypes
+        )
 
         return StructuredDocument(
             formatId: formatId,
@@ -60,6 +70,8 @@ public struct RichDocumentAdapter: DocumentFormatAdapter {
                 formatId: formatId,
                 underlying: PlainTextRepresentation(text: truncated)
             ),
+            structure: structure,
+            security: security,
             textFallback: truncated
         )
     }
@@ -80,5 +92,71 @@ public struct RichDocumentAdapter: DocumentFormatAdapter {
         case "html", "htm": return .html
         default: return nil
         }
+    }
+
+    private static func securitySignals(url: URL) -> RichSecuritySignals {
+        let ext = url.pathExtension.lowercased()
+        if ext == "html" || ext == "htm" {
+            guard let rawHTML = readTextSource(url: url) else {
+                return RichSecuritySignals(
+                    inspectionStatus: .partiallyInspected,
+                    findings: [
+                        DocumentSecurityFinding(
+                            kind: .integrityUnavailable,
+                            severity: .low,
+                            message: "Could not inspect HTML source for active content."
+                        )
+                    ]
+                )
+            }
+            let signals = DocumentFileInspector.htmlSecuritySignals(rawHTML: rawHTML)
+            return RichSecuritySignals(
+                inspectionStatus: .inspected,
+                findings: signals.findings,
+                externalReferences: signals.externalReferences,
+                activeContentTypes: signals.activeContentTypes
+            )
+        }
+
+        var findings: [DocumentSecurityFinding] = [
+            DocumentSecurityFinding(
+                kind: .unsupportedFeature,
+                severity: .informational,
+                message:
+                    "Rich document package relationships and embedded objects are not fully inspected by the text-only adapter."
+            )
+        ]
+        var activeContentTypes: Set<DocumentActiveContentType> = []
+        if ext == "doc" {
+            activeContentTypes.insert(.unknown)
+            findings.append(
+                DocumentSecurityFinding(
+                    kind: .activeContent,
+                    severity: .low,
+                    message: "Legacy Word documents may contain macros or embedded active content."
+                )
+            )
+        }
+
+        return RichSecuritySignals(
+            inspectionStatus: .partiallyInspected,
+            findings: findings,
+            activeContentTypes: activeContentTypes
+        )
+    }
+
+    private static func readTextSource(url: URL) -> String? {
+        if let utf8 = try? String(contentsOf: url, encoding: .utf8) {
+            return utf8
+        }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return String(data: data, encoding: .isoLatin1)
+    }
+
+    private struct RichSecuritySignals {
+        let inspectionStatus: DocumentSecurityMetadata.InspectionStatus
+        var findings: [DocumentSecurityFinding] = []
+        var externalReferences: [DocumentExternalReference] = []
+        var activeContentTypes: Set<DocumentActiveContentType> = []
     }
 }

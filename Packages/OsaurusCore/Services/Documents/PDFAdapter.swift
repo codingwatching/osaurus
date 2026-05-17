@@ -33,7 +33,8 @@ public struct PDFAdapter: DocumentFormatAdapter {
             throw DocumentAdapterError.readFailed(underlying: "PDFKit could not open document")
         }
 
-        let extracted = Self.extractText(from: document)
+        let pages = Self.extractTextPages(from: document)
+        let extracted = pages.map(\.text).joined(separator: "\n\n")
         guard !extracted.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             // No text layer — let the shim fall through to the legacy image-
             // render fallback. Don't claim a result we can't produce.
@@ -41,6 +42,25 @@ public struct PDFAdapter: DocumentFormatAdapter {
         }
 
         let truncated = PlainTextAdapter.applyCharacterCap(extracted)
+        let pageTexts = pages.map { DocumentPageText(pageIndex: $0.pageIndex, text: $0.text) }
+        let structure = Self.structureForTextFallback(
+            filename: url.lastPathComponent,
+            pages: pageTexts,
+            extractedText: extracted,
+            textFallback: truncated
+        )
+        let securitySignals = Self.securitySignals(for: document)
+        let securityFindings =
+            securitySignals.findings
+            + Self.truncationFindings(extractedText: extracted, textFallback: truncated)
+        let security = DocumentFileInspector.localFileSecurityMetadata(
+            url: url,
+            formatId: formatId,
+            inspectionStatus: .partiallyInspected,
+            isEncrypted: document.isEncrypted || document.isLocked,
+            findings: securityFindings,
+            activeContentTypes: securitySignals.activeContentTypes
+        )
 
         return StructuredDocument(
             formatId: formatId,
@@ -50,19 +70,92 @@ public struct PDFAdapter: DocumentFormatAdapter {
                 formatId: formatId,
                 underlying: PlainTextRepresentation(text: truncated)
             ),
+            structure: structure,
+            security: security,
             textFallback: truncated
         )
     }
 
-    private static func extractText(from document: PDFDocument) -> String {
-        var pages: [String] = []
+    private static func extractTextPages(from document: PDFDocument) -> [ExtractedPageText] {
+        var pages: [ExtractedPageText] = []
         for index in 0 ..< document.pageCount {
             guard let page = document.page(at: index),
                 let text = page.string,
                 !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else { continue }
-            pages.append(text)
+            pages.append(ExtractedPageText(pageIndex: index, text: text))
         }
-        return pages.joined(separator: "\n\n")
+        return pages
+    }
+
+    static func structureForTextFallback(
+        filename: String,
+        pages: [DocumentPageText],
+        extractedText: String,
+        textFallback: String
+    ) -> DocumentStructure {
+        guard extractedText == textFallback else {
+            return DocumentStructure.plainText(filename: filename, text: textFallback)
+        }
+        return DocumentStructure.paginatedText(filename: filename, pages: pages)
+    }
+
+    private static func securitySignals(
+        for document: PDFDocument
+    ) -> (findings: [DocumentSecurityFinding], activeContentTypes: Set<DocumentActiveContentType>) {
+        var findings: [DocumentSecurityFinding] = [
+            DocumentSecurityFinding(
+                kind: .unsupportedFeature,
+                severity: .informational,
+                message:
+                    "PDF active content, embedded files, and annotations are not fully inspected by the text-layer adapter."
+            )
+        ]
+        let activeContentTypes: Set<DocumentActiveContentType> = []
+
+        if document.isEncrypted || document.isLocked {
+            findings.append(
+                DocumentSecurityFinding(
+                    kind: .encryptedContent,
+                    severity: document.isLocked ? .high : .low,
+                    message: "PDF reports encrypted or locked content."
+                )
+            )
+        }
+
+        if !document.allowsCopying {
+            findings.append(
+                DocumentSecurityFinding(
+                    kind: .permissionRestriction,
+                    severity: .low,
+                    message: "PDF permissions disallow copying."
+                )
+            )
+        }
+
+        return (findings, activeContentTypes)
+    }
+
+    private static func truncationFindings(
+        extractedText: String,
+        textFallback: String
+    ) -> [DocumentSecurityFinding] {
+        guard extractedText != textFallback else { return [] }
+        return [
+            DocumentSecurityFinding(
+                kind: .truncatedContent,
+                severity: .low,
+                message: "PDF text fallback was character-capped; page-level text ranges were not preserved.",
+                metadata: [
+                    "extractedUTF16Length": "\(extractedText.utf16.count)",
+                    "fallbackUTF16Length": "\(textFallback.utf16.count)",
+                ]
+            )
+        ]
+    }
+
+    private struct ExtractedPageText {
+        let pageIndex: Int
+        let text: String
     }
 }

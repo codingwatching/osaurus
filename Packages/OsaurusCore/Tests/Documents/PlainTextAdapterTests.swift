@@ -33,6 +33,10 @@ struct PlainTextAdapterTests {
         #expect(doc.filename.hasSuffix("hello.txt"))
         #expect(doc.textFallback.contains("hello"))
         #expect(doc.textFallback.contains("utf8"))
+        #expect(doc.structure.root.kind == .document)
+        #expect(doc.structure.anchor(id: "document/body")?.textRange?.length == doc.textFallback.utf16.count)
+        #expect(doc.security.inspectionStatus == .inspected)
+        #expect(doc.security.sha256?.isEmpty == false)
     }
 
     @Test func parse_fallsBackToLatin1ForNonUtf8Bytes() async throws {

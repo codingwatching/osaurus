@@ -35,6 +35,8 @@ public struct StructuredDocument: @unchecked Sendable {
     public let filename: String
     public let fileSize: Int64
     public let representation: AnyStructuredRepresentation
+    public let structure: DocumentStructure
+    public let security: DocumentSecurityMetadata
     public let textFallback: String
     public let createdAt: Date
 
@@ -43,6 +45,8 @@ public struct StructuredDocument: @unchecked Sendable {
         filename: String,
         fileSize: Int64,
         representation: AnyStructuredRepresentation,
+        structure: DocumentStructure? = nil,
+        security: DocumentSecurityMetadata? = nil,
         textFallback: String,
         createdAt: Date = Date()
     ) {
@@ -50,6 +54,13 @@ public struct StructuredDocument: @unchecked Sendable {
         self.filename = filename
         self.fileSize = fileSize
         self.representation = representation
+        self.structure = structure ?? .plainText(filename: filename, text: textFallback)
+        self.security =
+            security
+            ?? .notInspected(
+                formatId: formatId,
+                fileExtension: URL(fileURLWithPath: filename).pathExtension.lowercased()
+            )
         self.textFallback = textFallback
         self.createdAt = createdAt
     }

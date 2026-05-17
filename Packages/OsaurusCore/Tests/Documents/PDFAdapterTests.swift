@@ -33,6 +33,30 @@ struct PDFAdapterTests {
         let doc = try await PDFAdapter().parse(url: url, sizeLimit: 0)
         #expect(doc.formatId == "pdf")
         #expect(doc.textFallback.contains("Hello PDF body content"))
+        #expect(doc.structure.elements(kind: .page).count == 1)
+        #expect(doc.structure.elements(kind: .page).first?.anchor.sourceRange?.start.pageIndex == 0)
+        #expect(doc.security.inspectionStatus == .partiallyInspected)
+        #expect(doc.security.findings.contains { $0.kind == .unsupportedFeature })
+    }
+
+    @Test func structureForTextFallback_usesPlainTextWhenFallbackIsCapped() {
+        let pages = [
+            DocumentPageText(pageIndex: 0, text: "first page"),
+            DocumentPageText(pageIndex: 1, text: "second page"),
+        ]
+        let extracted = "first page\n\nsecond page"
+        let fallback = "first page\n\nse"
+
+        let structure = PDFAdapter.structureForTextFallback(
+            filename: "long.pdf",
+            pages: pages,
+            extractedText: extracted,
+            textFallback: fallback
+        )
+
+        #expect(structure.elements(kind: .page).isEmpty)
+        #expect(structure.elements(kind: .paragraph).first?.text == fallback)
+        #expect(structure.anchor(id: "document/body")?.textRange == .entireText(fallback))
     }
 
     @Test func parse_throwsEmptyContentForPDFWithNoTextLayer() async throws {
