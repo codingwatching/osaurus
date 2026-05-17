@@ -35,6 +35,7 @@ struct SandboxInstallLockTests {
             try? await Task.sleep(nanoseconds: 50_000_000)  // 50ms
             await timeline.markEnd("first")
         }
+        await timeline.waitForStart("first")
         async let second: Void = lock.serialize(agentName: agentName) {
             await timeline.markStart("second")
             try? await Task.sleep(nanoseconds: 10_000_000)  // 10ms
@@ -126,11 +127,25 @@ struct SandboxInstallLockTests {
 private actor ActorTimeline {
     private var starts: [String: Date] = [:]
     private var ends: [String: Date] = [:]
+    private var startWaiters: [String: [CheckedContinuation<Void, Never>]] = [:]
 
-    func markStart(_ key: String) { starts[key] = Date() }
+    func markStart(_ key: String) {
+        starts[key] = Date()
+        let waiters = startWaiters.removeValue(forKey: key) ?? []
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
     func markEnd(_ key: String) { ends[key] = Date() }
     func startOf(_ key: String) -> Date? { starts[key] }
     func endOf(_ key: String) -> Date? { ends[key] }
+
+    func waitForStart(_ key: String) async {
+        if starts[key] != nil { return }
+        await withCheckedContinuation { continuation in
+            startWaiters[key, default: []].append(continuation)
+        }
+    }
 }
 
 /// One-shot Sendable bool flag. Lets a `@Sendable` closure mark

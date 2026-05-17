@@ -180,6 +180,19 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 See [INFERENCE_RUNTIME.md](./INFERENCE_RUNTIME.md) for the full runtime architecture.
 
+#### Local model compatibility matrix
+
+Research notes for the next local-runtime compatibility wave live in
+[MODEL_COMPATIBILITY_RESEARCH.md](./MODEL_COMPATIBILITY_RESEARCH.md).
+
+| Request | User-visible status | Next implementation step | Runtime owner |
+| --- | --- | --- | --- |
+| Hugging Face cache import | Planned: pre-downloaded MLX snapshots are not listed automatically yet. | Add a read-only HF cache scanner with per-file SHA-256 manifests before load. | Osaurus host discovery/storage. |
+| Hunyuan `hunyuan_v1_dense` | Unsupported until vmlx has a native Hunyuan Dense factory. | Add an unsupported-family diagnostic, then enable only after real-model validation. | vmlx model factory and Osaurus diagnostics. |
+| DFlash speculative decoding | Research-only; no draft/target local generation contract exists today. | Define a feature-flagged draft-model API and benchmark harness. | vmlx or dedicated MLX speculative adapter. |
+| LongCat Flash/Next | Unsupported locally; current public repos require custom LongCat code paths and large multimodal runtimes. | Track exact unsupported reasons and wait for native runtime support. | vmlx model family support. |
+| Tensor parallelism | Research-only; local runtime remains single-host. | Design authenticated cluster policy before any peer execution code. | Distributed runtime plus Osaurus identity/network policy. |
+
 ---
 
 ### Remote Providers
@@ -1181,6 +1194,7 @@ Eight settings total, down from v1's 18. The per-section budget knobs, MMR tunin
 | -------------------------------------------------------------- | ------------------------------------------------- |
 | [README.md](../README.md)                                      | Project overview, quick start, feature highlights |
 | [FEATURES.md](FEATURES.md)                                     | Feature inventory and architecture (this file)    |
+| [MODEL_COMPATIBILITY_RESEARCH.md](MODEL_COMPATIBILITY_RESEARCH.md) | Local model compatibility research and rollout plan |
 | [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
 | [AGENT_LOOP.md](AGENT_LOOP.md)                                 | Agent loop, folder context, and `todo`/`complete`/`clarify` |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
