@@ -148,7 +148,8 @@ public enum AttachmentBlobStore {
                 let hash = try write(bytes)
                 return Attachment(
                     id: attachment.id,
-                    kind: .documentRef(filename: filename, hash: hash, fileSize: fileSize)
+                    kind: .documentRef(filename: filename, hash: hash, fileSize: fileSize),
+                    structuredDocumentMetadata: attachment.structuredDocumentMetadata
                 )
             } catch {
                 log.warning(

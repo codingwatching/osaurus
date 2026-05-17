@@ -80,6 +80,55 @@ struct AttachmentSpilloverTests {
     }
 
     @Test
+    func structuredDocumentMetadataSurvivesEncryptedSpillover() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = try Self.setUpEnv()
+            defer { Self.tearDownEnv(root) }
+
+            let body = String(repeating: "cell,", count: 8 * 1024)
+            let document = StructuredDocument(
+                formatId: "csv",
+                filename: "large.csv",
+                fileSize: Int64(body.utf8.count),
+                representation: AnyStructuredRepresentation(
+                    formatId: "csv",
+                    underlying: PlainTextRepresentation(text: body)
+                ),
+                textFallback: body,
+                createdAt: Date(timeIntervalSince1970: 1_783_939_200)
+            )
+            let result = AttachmentBlobStore.spillIfNeeded([.structuredDocument(document)])
+
+            #expect(result.count == 1)
+            switch result[0].kind {
+            case .documentRef(let filename, let hash, let fileSize):
+                #expect(filename == "large.csv")
+                #expect(fileSize == body.utf8.count)
+                #expect(result[0].structuredDocumentMetadata == StructuredDocumentAttachmentMetadata(document))
+                #expect(result[0].loadDocumentContent() == body)
+
+                let url = AttachmentBlobStore.blobURL(for: hash)
+                let encrypted = try Data(contentsOf: url)
+                #expect(encrypted.first == EncryptedFileStore.version)
+
+                let entries = try FileManager.default.contentsOfDirectory(
+                    at: AttachmentBlobStore.blobsDir(),
+                    includingPropertiesForKeys: nil
+                )
+                #expect(entries.count == 1)
+                #expect(entries.allSatisfy { $0.pathExtension == "osec" })
+                #expect(
+                    !FileManager.default.fileExists(
+                        atPath: AttachmentBlobStore.blobsDir().appendingPathComponent("large.csv").path
+                    )
+                )
+            default:
+                Issue.record("expected documentRef, got \(result[0].kind)")
+            }
+        }
+    }
+
+    @Test
     func dedupReusesSameBlob() async throws {
         try await StoragePathsTestLock.shared.run {
             let root = try Self.setUpEnv()

@@ -10,6 +10,7 @@ import Foundation
 public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     public let id: UUID
     public let kind: Kind
+    public let structuredDocumentMetadata: StructuredDocumentAttachmentMetadata?
 
     public enum Kind: Codable, Sendable, Equatable {
         case image(Data)
@@ -144,9 +145,14 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         }
     }
 
-    public init(id: UUID = UUID(), kind: Kind) {
+    public init(
+        id: UUID = UUID(),
+        kind: Kind,
+        structuredDocumentMetadata: StructuredDocumentAttachmentMetadata? = nil
+    ) {
         self.id = id
         self.kind = kind
+        self.structuredDocumentMetadata = structuredDocumentMetadata
     }
 
     // MARK: - Factory Methods
@@ -157,6 +163,17 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
 
     public static func document(filename: String, content: String, fileSize: Int) -> Attachment {
         Attachment(kind: .document(filename: filename, content: content, fileSize: fileSize))
+    }
+
+    public static func structuredDocument(_ document: StructuredDocument) -> Attachment {
+        Attachment(
+            kind: .document(
+                filename: document.filename,
+                content: document.textFallback,
+                fileSize: document.attachmentFileSize
+            ),
+            structuredDocumentMetadata: StructuredDocumentAttachmentMetadata(document)
+        )
     }
 
     public static let pastedContentFilename = "Pasted content"
@@ -417,6 +434,49 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
     /// `AttachmentBlobStore.spillIfNeeded`.
     public static let audioSpillThresholdBytes = 256 * 1024
     public static let videoSpillThresholdBytes = 64 * 1024
+}
+
+/// Persisted sidecar for typed parses: it keeps cheap routing metadata
+/// with the attachment while the existing `.document` case remains the
+/// compatibility surface for text-only consumers and older builds.
+public struct StructuredDocumentAttachmentMetadata: Codable, Sendable, Equatable {
+    public let formatId: String
+    public let representationFormatId: String
+    public let filename: String
+    public let fileSize: Int64
+    public let createdAt: Date
+
+    public init(
+        formatId: String,
+        representationFormatId: String,
+        filename: String,
+        fileSize: Int64,
+        createdAt: Date
+    ) {
+        self.formatId = formatId
+        self.representationFormatId = representationFormatId
+        self.filename = filename
+        self.fileSize = fileSize
+        self.createdAt = createdAt
+    }
+
+    public init(_ document: StructuredDocument) {
+        self.init(
+            formatId: document.formatId,
+            representationFormatId: document.representation.formatId,
+            filename: document.filename,
+            fileSize: document.fileSize,
+            createdAt: document.createdAt
+        )
+    }
+}
+
+extension StructuredDocument {
+    fileprivate var attachmentFileSize: Int {
+        if fileSize < 0 { return 0 }
+        if fileSize > Int64(Int.max) { return Int.max }
+        return Int(fileSize)
+    }
 }
 
 // MARK: - Array Helpers

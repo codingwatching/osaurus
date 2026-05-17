@@ -294,13 +294,7 @@ enum DocumentParser {
             let document = try runBlocking {
                 try await adapter.parse(url: url, sizeLimit: sizeLimit)
             }
-            return [
-                .document(
-                    filename: document.filename,
-                    content: document.textFallback,
-                    fileSize: Int(document.fileSize)
-                )
-            ]
+            return [.structuredDocument(document)]
         } catch DocumentAdapterError.emptyContent, DocumentAdapterError.unsupportedFormat {
             // Fall through so the legacy switch (image-only PDFs, formats
             // without an adapter yet) still gets a shot.
