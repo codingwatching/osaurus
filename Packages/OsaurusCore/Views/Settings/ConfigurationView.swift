@@ -50,6 +50,7 @@ struct ConfigurationView: View {
     // Local Inference settings state
     @State private var tempTopP: String = ""
     @State private var tempEvictionPolicy: ModelEvictionPolicy = .strictSingleModel
+    @State private var tempIdleResidencyPolicy: ModelIdleResidencyPolicy = .immediately
 
     // Toast settings state
     @State private var tempToastPosition: ToastPosition = .topRight
@@ -501,7 +502,7 @@ struct ConfigurationView: View {
 
                                     // Eviction Policy
                                     SettingsSubsection(label: "Model Management") {
-                                        VStack(alignment: .leading, spacing: 10) {
+                                        VStack(alignment: .leading, spacing: 14) {
                                             Picker("", selection: $tempEvictionPolicy) {
                                                 ForEach(ModelEvictionPolicy.allCases, id: \.self) { policy in
                                                     Text(policy.rawValue).tag(policy)
@@ -513,6 +514,27 @@ struct ConfigurationView: View {
                                             Text(tempEvictionPolicy.description)
                                                 .font(.system(size: 11))
                                                 .foregroundColor(theme.tertiaryText)
+
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                HStack(spacing: 12) {
+                                                    Text("Keep model loaded after use", bundle: .module)
+                                                        .font(.system(size: 12, weight: .medium))
+                                                        .foregroundColor(theme.primaryText)
+                                                    Spacer()
+                                                    Picker("", selection: $tempIdleResidencyPolicy) {
+                                                        ForEach(ModelIdleResidencyPolicy.presets, id: \.self) {
+                                                            policy in
+                                                            Text(policy.displayName).tag(policy)
+                                                        }
+                                                    }
+                                                    .pickerStyle(.menu)
+                                                    .labelsHidden()
+                                                }
+
+                                                Text(tempIdleResidencyPolicy.description)
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(theme.tertiaryText)
+                                            }
                                         }
                                     }
                                 }
@@ -817,6 +839,7 @@ struct ConfigurationView: View {
         tempTopP = configuration.genTopP == defaults.genTopP ? "" : String(configuration.genTopP)
         tempAllowedOrigins = configuration.allowedOrigins.joined(separator: ", ")
         tempEvictionPolicy = configuration.modelEvictionPolicy
+        tempIdleResidencyPolicy = configuration.modelIdleResidencyPolicy
 
         // Load toast configuration
         let toastConfig = ToastConfigurationStore.load()
@@ -871,6 +894,7 @@ struct ConfigurationView: View {
 
         tempTopP = ""
         tempEvictionPolicy = serverDefaults.modelEvictionPolicy
+        tempIdleResidencyPolicy = serverDefaults.modelIdleResidencyPolicy
 
         showSuccess("Settings restored to defaults")
     }
@@ -927,6 +951,7 @@ struct ConfigurationView: View {
         // configs but is not surfaced in the UI any more.
 
         configuration.modelEvictionPolicy = tempEvictionPolicy
+        configuration.modelIdleResidencyPolicy = tempIdleResidencyPolicy
 
         let parsedOrigins: [String] =
             tempAllowedOrigins

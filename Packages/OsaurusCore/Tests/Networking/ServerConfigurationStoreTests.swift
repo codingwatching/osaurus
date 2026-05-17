@@ -25,6 +25,7 @@ struct ServerConfigurationStoreTests {
         #expect(decoded.backlog == defaults.backlog)
         #expect(decoded.genTopP == defaults.genTopP)
         #expect(decoded.genMaxKVSize == nil)
+        #expect(decoded.modelIdleResidencyPolicy == defaults.modelIdleResidencyPolicy)
     }
 
     @Test @MainActor func storeRoundTrip_readsWhatWasWritten() async throws {
@@ -78,5 +79,70 @@ struct ServerConfigurationStoreTests {
             from: Data(json.utf8)
         )
         #expect(decoded.port == 1234)
+    }
+
+    @Test func modelIdleResidencyPolicy_decodesStableJSON() async throws {
+        let json = """
+            {
+                "port": 1337,
+                "modelIdleResidencyPolicy": {
+                    "mode": "after_seconds",
+                    "seconds": 900
+                }
+            }
+            """
+        let decoded = try JSONDecoder().decode(ServerConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.modelIdleResidencyPolicy == .afterSeconds(900))
+    }
+
+    @Test func modelIdleResidencyPolicy_defaultsWhenMalformed() async throws {
+        let json = """
+            {
+                "port": 1337,
+                "modelIdleResidencyPolicy": {
+                    "mode": "after_seconds",
+                    "seconds": "soon"
+                }
+            }
+            """
+        let decoded = try JSONDecoder().decode(ServerConfiguration.self, from: Data(json.utf8))
+
+        #expect(decoded.modelIdleResidencyPolicy == ServerConfiguration.default.modelIdleResidencyPolicy)
+    }
+
+    @Test func modelIdleResidencyPolicy_clampsPersistedSeconds() async throws {
+        let lowJSON = """
+            {
+                "modelIdleResidencyPolicy": {
+                    "mode": "after_seconds",
+                    "seconds": 1
+                }
+            }
+            """
+        let highJSON = """
+            {
+                "modelIdleResidencyPolicy": {
+                    "mode": "after_seconds",
+                    "seconds": 999999
+                }
+            }
+            """
+
+        let low = try JSONDecoder().decode(ServerConfiguration.self, from: Data(lowJSON.utf8))
+        let high = try JSONDecoder().decode(ServerConfiguration.self, from: Data(highJSON.utf8))
+
+        #expect(low.modelIdleResidencyPolicy == .afterSeconds(30))
+        #expect(high.modelIdleResidencyPolicy == .afterSeconds(86_400))
+    }
+
+    @Test func modelIdleResidencyPolicy_encodesStableJSON() async throws {
+        let data = try JSONEncoder().encode(ModelIdleResidencyPolicy.afterSeconds(12))
+        let object = try #require(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+
+        #expect(object["mode"] as? String == "after_seconds")
+        #expect(object["seconds"] as? Int == 30)
     }
 }

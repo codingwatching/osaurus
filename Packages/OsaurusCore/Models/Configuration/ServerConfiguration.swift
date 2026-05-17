@@ -69,6 +69,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Memory management policy for loaded models
     public var modelEvictionPolicy: ModelEvictionPolicy
 
+    /// Idle memory residency policy for loaded local models.
+    public var modelIdleResidencyPolicy: ModelIdleResidencyPolicy
+
     /// Maximum HTTP request body size, in bytes, accepted by the public
     /// server before it returns `413 Payload Too Large`. Caps memory
     /// pressure from unauthenticated clients sending oversized bodies.
@@ -92,6 +95,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         case genMaxKVSize
         case allowedOrigins
         case modelEvictionPolicy
+        case modelIdleResidencyPolicy
         case maxRequestBodyBytes
         case maxPairingBodyBytes
     }
@@ -119,6 +123,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.modelEvictionPolicy =
             try container.decodeIfPresent(ModelEvictionPolicy.self, forKey: .modelEvictionPolicy)
             ?? defaults.modelEvictionPolicy
+        self.modelIdleResidencyPolicy =
+            (try? container.decodeIfPresent(ModelIdleResidencyPolicy.self, forKey: .modelIdleResidencyPolicy))
+            ?? defaults.modelIdleResidencyPolicy
         self.maxRequestBodyBytes =
             try container.decodeIfPresent(Int.self, forKey: .maxRequestBodyBytes)
             ?? defaults.maxRequestBodyBytes
@@ -139,6 +146,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         genMaxKVSize: Int?,
         allowedOrigins: [String] = [],
         modelEvictionPolicy: ModelEvictionPolicy = .strictSingleModel,
+        modelIdleResidencyPolicy: ModelIdleResidencyPolicy = .immediately,
         maxRequestBodyBytes: Int = 32 * 1024 * 1024,
         maxPairingBodyBytes: Int = 64 * 1024
     ) {
@@ -153,6 +161,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
         self.genMaxKVSize = genMaxKVSize
         self.allowedOrigins = allowedOrigins
         self.modelEvictionPolicy = modelEvictionPolicy
+        self.modelIdleResidencyPolicy = modelIdleResidencyPolicy
         self.maxRequestBodyBytes = maxRequestBodyBytes
         self.maxPairingBodyBytes = maxPairingBodyBytes
     }
@@ -171,6 +180,7 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
             genMaxKVSize: nil,
             allowedOrigins: [],
             modelEvictionPolicy: .strictSingleModel,
+            modelIdleResidencyPolicy: .immediately,
             maxRequestBodyBytes: 32 * 1024 * 1024,
             maxPairingBodyBytes: 64 * 1024
         )
@@ -179,6 +189,112 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Validates if the port is in valid range
     public var isValidPort: Bool {
         (1 ..< 65536).contains(port)
+    }
+}
+
+/// User policy for keeping local model weights resident after the last stream
+/// releases its lease.
+public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
+    case immediately
+    case afterSeconds(Int)
+    case never
+
+    private enum Mode: String, Codable {
+        case immediately
+        case afterSeconds = "after_seconds"
+        case never
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode
+        case seconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let mode = try container.decode(Mode.self, forKey: .mode)
+        switch mode {
+        case .immediately:
+            self = .immediately
+        case .afterSeconds:
+            let decodedSeconds = try container.decode(Int.self, forKey: .seconds)
+            self = .afterSeconds(Self.clampPersistedSeconds(decodedSeconds))
+        case .never:
+            self = .never
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .immediately:
+            try container.encode(Mode.immediately, forKey: .mode)
+        case .afterSeconds(let seconds):
+            try container.encode(Mode.afterSeconds, forKey: .mode)
+            try container.encode(Self.clampPersistedSeconds(seconds), forKey: .seconds)
+        case .never:
+            try container.encode(Mode.never, forKey: .mode)
+        }
+    }
+
+    /// Settings picker presets. The default stays immediate for compatibility;
+    /// users opt into warmer API/chat behavior explicitly.
+    public static let presets: [ModelIdleResidencyPolicy] = [
+        .immediately,
+        .afterSeconds(300),
+        .afterSeconds(900),
+        .afterSeconds(1_800),
+        .afterSeconds(3_600),
+        .never,
+    ]
+
+    public var displayName: String {
+        switch self {
+        case .immediately:
+            return L("Immediately")
+        case .afterSeconds(300):
+            return L("5 minutes")
+        case .afterSeconds(900):
+            return L("15 minutes")
+        case .afterSeconds(1_800):
+            return L("30 minutes")
+        case .afterSeconds(3_600):
+            return L("1 hour")
+        case .afterSeconds(let seconds):
+            let minutes = max(1, seconds / 60)
+            return String(format: L("%d minutes"), minutes)
+        case .never:
+            return L("Never")
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case .immediately:
+            return L("Unloads model memory as soon as no active chat window or generation lease keeps it warm.")
+        case .afterSeconds(let seconds):
+            return String(
+                format: L("Keeps model memory resident for %d minutes after the last generation finishes."),
+                max(1, seconds / 60)
+            )
+        case .never:
+            return L("Keeps model memory resident until manual unload, model switch, memory cleanup, or quit.")
+        }
+    }
+
+    public var seconds: Int? {
+        switch self {
+        case .immediately:
+            return 0
+        case .afterSeconds(let seconds):
+            return seconds
+        case .never:
+            return nil
+        }
+    }
+
+    private static func clampPersistedSeconds(_ seconds: Int) -> Int {
+        min(max(seconds, 30), 86_400)
     }
 }
 

@@ -609,8 +609,13 @@ public final class ChatWindowManager: NSObject, ObservableObject {
                 // next compose pass.
                 await MemoryContextAssembler.shared.invalidateCache(agentId: aid.uuidString)
             }
-            let active = self.activeLocalModelNames()
-            await ModelRuntime.shared.unloadModelsNotIn(active)
+            let idlePolicy =
+                ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+                ?? ServerConfiguration.default.modelIdleResidencyPolicy
+            if idlePolicy == .immediately {
+                let active = self.activeLocalModelNames()
+                await ModelRuntime.shared.unloadModelsNotIn(active)
+            }
         }
 
         // Sever NSWindow -> NSHostingController link so the SwiftUI view tree

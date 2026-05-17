@@ -4179,11 +4179,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         Task(priority: .userInitiated) {
             let inflight = await ModelLease.shared.snapshot()
             let cached = await ModelRuntime.shared.cachedModelSummaries()
+            let residency = await ModelResidencyManager.shared.snapshots()
+            let residencyByName = Dictionary(uniqueKeysWithValues: residency.map { ($0.modelName, $0) })
+            let now = Date()
             let loaded = cached.map { $0.name }
             let current = cached.first(where: { $0.isCurrent })?.name as Any? ?? NSNull()
 
             var inflightObj: [String: Any] = [:]
             for (name, count) in inflight { inflightObj[name] = count }
+
+            let residentModels: [[String: Any]] = cached.map { summary in
+                var row: [String: Any] = [
+                    "name": summary.name,
+                    "is_current": summary.isCurrent,
+                    "inflight": inflight[summary.name] ?? 0,
+                ]
+                if let unloadAt = residencyByName[summary.name]?.unloadAt {
+                    row["idle_unload_at"] = unloadAt.ISO8601Format()
+                    row["idle_seconds_remaining"] =
+                        max(0, Int(ceil(unloadAt.timeIntervalSince(now))))
+                } else {
+                    row["idle_unload_at"] = NSNull()
+                    row["idle_seconds_remaining"] = NSNull()
+                }
+                return row
+            }
 
             let obj: [String: Any] = [
                 "status": "healthy",
@@ -4191,6 +4211,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "loaded": loaded,
                 "current_model": current,
                 "inflight": inflightObj,
+                "resident_models": residentModels,
             ]
             let data = try? JSONSerialization.data(withJSONObject: obj)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"

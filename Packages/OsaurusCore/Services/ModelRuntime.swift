@@ -177,6 +177,7 @@ public actor ModelRuntime {
             )
         }
 
+        await ModelResidencyManager.shared.markActive(modelName: holder.name)
         await ModelLease.shared.acquire(holder.name)
         let soloLease = await MLXBatchAdapter.Registry.shared.acquireSoloLease(for: holder.name)
 
@@ -237,6 +238,7 @@ public actor ModelRuntime {
         } catch {
             await soloLease.release()
             await ModelLease.shared.release(holder.name)
+            await scheduleIdleResidency(for: holder.name)
             return LiveVoiceAudioPreencodeResult(
                 status: .failed,
                 sampleCount: samples.count,
@@ -248,6 +250,7 @@ public actor ModelRuntime {
 
         await soloLease.release()
         await ModelLease.shared.release(holder.name)
+        await scheduleIdleResidency(for: holder.name)
 
         return box.result
             ?? LiveVoiceAudioPreencodeResult(
@@ -344,6 +347,8 @@ public actor ModelRuntime {
     /// stream lifetime (see `generateEventStream`), so this guarantees we
     /// never free buffers that an active Metal command buffer still references.
     func unload(name: String) async {
+        await ModelResidencyManager.shared.cancel(modelName: name)
+
         // Shut the BatchEngine first so its scheduling loop stops issuing
         // new model forward passes; then wait for any in-flight per-request
         // leases to drain before we touch the container.
@@ -386,6 +391,8 @@ public actor ModelRuntime {
     }
 
     func clearAll() async {
+        await ModelResidencyManager.shared.cancelAll()
+
         // Shut down every BatchEngine so they stop scheduling new forward
         // passes, then cancel the latest tracked wrapper task and wait for
         // every leased model to drain before we touch any container.
@@ -431,6 +438,20 @@ public actor ModelRuntime {
         let cfg = await RuntimeConfig.snapshot()
         cachedConfig = cfg
         return cfg
+    }
+
+    private func scheduleIdleResidency(for modelName: String) async {
+        let policy =
+            await ServerConfigurationStore.load()?.modelIdleResidencyPolicy
+            ?? ServerConfiguration.default.modelIdleResidencyPolicy
+
+        await ModelResidencyManager.shared.scheduleIdleUnload(
+            modelName: modelName,
+            policy: policy,
+            unload: { name in await ModelRuntime.shared.unload(name: name) },
+            leaseCount: { name in await ModelLease.shared.count(for: name) },
+            isResident: { name in await ModelRuntime.shared.isResident(name: name) }
+        )
     }
 
     /// MLX freed-buffer cache limit sized for intermediate activation reuse.
@@ -1020,6 +1041,7 @@ public actor ModelRuntime {
         if Task.isCancelled { throw CancellationError() }
 
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
+        await ModelResidencyManager.shared.markActive(modelName: modelName)
 
         // Scoped start/finish around ONLY the container load — the "loading
         // model" UI flag flips off as soon as the container is ready. The
@@ -1033,6 +1055,7 @@ public actor ModelRuntime {
         do {
             holder = try await loadContainer(id: modelId, name: modelName)
         } catch {
+            await ModelResidencyManager.shared.cancel(modelName: modelName)
             InferenceProgressManager.shared.modelLoadDidFinishAsync()
             throw error
         }
@@ -1069,6 +1092,7 @@ public actor ModelRuntime {
         } catch {
             InferenceProgressManager.shared.prefillDidFinishAsync()
             await ModelLease.shared.release(modelName)
+            await scheduleIdleResidency(for: modelName)
             throw error
         }
 
@@ -1091,6 +1115,7 @@ public actor ModelRuntime {
                 innerProducer.cancel()
             }
             await ModelLease.shared.release(modelName)
+            await self.scheduleIdleResidency(for: modelName)
         }
         activeGenerationTask = ActiveGenerationRecord(modelName: modelName, task: activeTask)
 

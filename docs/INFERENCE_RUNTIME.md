@@ -83,8 +83,25 @@ the `LayerKind.deepseekV4` disk serializer instead of generic paged KV blocks.
 | `BatchEngine` actor (vmlx) | Serializes Metal / model access. Continuous batching for same-model concurrent requests. |
 | `MLXBatchAdapter.Registry` | Keeps one `BatchEngine` per model name and coalesces concurrent first creation so two same-model requests cannot build duplicate engines for one `ModelContainer`. |
 | `ModelLease` | Pins a model name for the lifetime of one stream so eviction (`unload`, `clearAll`, GC) blocks until the lease drops to zero. |
+| `ModelResidencyManager` | Schedules Osaurus-owned idle unload policy after the final lease drops; it never owns execution, KV cache, or disk cache deletion. |
 | `PluginHostAPI` per-plugin in-flight cap | Caps concurrent inference calls per plugin (default 2). Excess returns `plugin_busy`. |
 | `MetalGate.enterEmbedding` | Embedding service (`MetalSafeEmbedder`) opt-in serialization point. The generation surface of the gate was retired; only embeddings call into it today. |
+
+## Residency policy
+
+Settings > Local Inference > Model Management includes **Keep model loaded
+after use**. The default remains `Immediately` for compatibility with older
+window-close GC behavior. Users can choose 5, 15, 30, or 60 minutes, or
+`Never`, to keep weights resident after the last stream releases its
+`ModelLease`.
+
+This is an Osaurus memory-residency policy around `ModelRuntime.unload(name:)`.
+It unloads model weights and runtime buffers only; it does not delete
+downloaded models or vmlx disk KV cache entries. Strict single-model eviction,
+manual unload, `clearAll`, app quit, and memory cleanup still win over idle
+timers. `/health` keeps the existing `loaded`, `current_model`, and `inflight`
+fields and adds `resident_models[]` with per-model `idle_unload_at` and
+`idle_seconds_remaining` diagnostics.
 
 ## Tunable
 
@@ -180,14 +197,16 @@ reasoning gets dropped together with the other sentinels.
 | `InferenceFeatureFlags.swift` | Single user-tunable: `mlxBatchEngineMaxBatchSize`. |
 | `MetalGate.swift` | Embedding-only counter (kept as the canonical hook for any future MLX-vs-CoreML interlock). |
 | `ModelLease.swift` | Per-model refcount; `unload(name)` waits for `count == 0` before freeing buffers. |
+| `ModelResidencyManager.swift` | Per-model idle timers and health snapshots for the Settings residency policy. |
 
 ## Tests
 
 | File | Coverage |
 |---|---|
 | `MLXBatchAdapterTests` | Max-batch-size flag clamping; Ling forced thinking-off context; ZAYA default-off but explicit thinking opt-in context; registry-shutdown safety. |
+| `ModelResidencyManagerTests` | Timer scheduling, cancellation on new use, never policy, and active-lease protection. |
 | `TaskCoalescerTests` | Single-flight engine-creation discipline and teardown-during-creation races. |
-| `RuntimePolicySourceTests` | Source-level guardrails for DSV4 cache ownership, vmlx pin, SSM re-derive opt-out, and max-batch docs. |
+| `RuntimePolicySourceTests` | Source-level guardrails for DSV4 cache ownership, vmlx pin, SSM re-derive opt-out, idle residency wiring, and max-batch docs. |
 | `GenerationEventMapperTests` | `chunk` -> `tokens`; `toolCall` -> `toolInvocation` JSON serialization (happy path + failure envelope); `info` -> `completionInfo`; cross-chunk stop-sequence cut. |
 | `StreamingReasoningHintTests` | Sentinel encode/decode round-trip; co-existence with the tool sentinel filter. |
 | `MetalGateTests` | Embedding gate happy paths. |

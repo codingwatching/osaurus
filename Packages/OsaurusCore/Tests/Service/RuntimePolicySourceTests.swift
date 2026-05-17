@@ -461,6 +461,39 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("ModelRuntime wires idle residency around model leases")
+    func modelRuntimeWiresIdleResidencyAroundLeases() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let manager = try Self.source("Services/ModelRuntime/ModelResidencyManager.swift")
+
+        #expect(runtime.contains("ModelResidencyManager.shared.markActive(modelName: modelName)"))
+        #expect(runtime.contains("ModelResidencyManager.shared.markActive(modelName: holder.name)"))
+        #expect(runtime.contains("private func scheduleIdleResidency(for modelName: String) async"))
+        #expect(runtime.contains("ServerConfigurationStore.load()?.modelIdleResidencyPolicy"))
+        #expect(runtime.contains("ModelResidencyManager.shared.scheduleIdleUnload"))
+        #expect(runtime.contains("ModelLease.shared.count(for: name)"))
+        #expect(runtime.contains("await ModelResidencyManager.shared.cancel(modelName: name)"))
+        #expect(runtime.contains("await ModelResidencyManager.shared.cancelAll()"))
+        #expect(manager.contains("guard await leaseCount(modelName) == 0"))
+        #expect(manager.contains("guard await isResident(modelName)"))
+    }
+
+    @Test("UI and health expose model idle residency")
+    func uiAndHealthExposeModelIdleResidency() throws {
+        let settings = try Self.source("Views/Settings/ConfigurationView.swift")
+        let health = try Self.source("Networking/HTTPHandler.swift")
+        let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
+
+        #expect(settings.contains("tempIdleResidencyPolicy"))
+        #expect(settings.contains("Keep model loaded after use"))
+        #expect(settings.contains("ModelIdleResidencyPolicy.presets"))
+        #expect(health.contains("\"resident_models\": residentModels"))
+        #expect(health.contains("\"idle_unload_at\""))
+        #expect(health.contains("\"idle_seconds_remaining\""))
+        #expect(windows.contains("modelIdleResidencyPolicy"))
+        #expect(windows.contains("if idlePolicy == .immediately"))
+    }
+
     @Test("ModelRuntime does not block model-ready on hidden Hy3 warmup generation")
     func modelRuntimeDoesNotBlockModelReadyOnHy3WarmupGeneration() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
