@@ -51,13 +51,24 @@ Or call the CLI directly if you need flags the Makefile doesn't expose:
 cd Packages/OsaurusEvals
 swift run osaurus-evals run --suite Suites/Preflight --model foundation
 swift run osaurus-evals run --suite Suites/Preflight --filter browser --out report.json
+swift run osaurus-evals run --suite Suites/CapabilitySearch --bootstrap-plugins
 ```
+
+Startup bootstrap is domain-aware. `preflight` suites load installed native plugins
+and rebuild search indices so they mirror the host app. `capability_search`
+suites initialize only the selected tool / method / skill index lanes without
+loading native plugins; those index-only runs use isolated temporary storage so
+fixtures never touch the user's real encrypted databases or Keychain.
+Plugin-required cases are skipped unless you pass `--bootstrap-plugins`. A
+filtered run that only selects plugin-required cases skips without index
+bootstrap.
 
 Exit codes:
 
 - `0` — every non-skipped case passed
 - `1` — at least one case failed or errored
 - `2` — bad arguments / suite path
+- `124` — startup bootstrap exceeded `--startup-timeout`
 
 ## Case schema
 
@@ -115,7 +126,7 @@ Field notes:
 
 ### `capability_search` domain
 
-Index-only recall measurements over the tools / methods / skills lanes. No LLM, fast (~10 ms/case), deterministic. Drives `CapabilitySearchEvaluator.evaluate` and pins recall + abstain behaviour against `expect.capabilitySearch`.
+Index-only recall measurements over the tools / methods / skills lanes. No LLM, fast (~10 ms/case), deterministic. Drives `CapabilitySearchEvaluator.evaluate` and pins recall + abstain behaviour against `expect.capabilitySearch`. The CLI initializes only the selected index lanes for this domain and does not load installed native plugins by default; pass `--bootstrap-plugins` when you intentionally want local plugin tools included.
 
 ```json
 {

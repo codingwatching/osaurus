@@ -54,8 +54,17 @@ struct OsaurusEvalsCLI {
             exit(2)
         }
 
-        let startupWatchdog = makeStartupWatchdog(options: opts, suite: suite)
-        await PreflightEvaluator.loadInstalledPlugins()
+        let bootstrapPlan = EvalBootstrapPlan.make(
+            suite: suite,
+            filter: opts.filter,
+            preference: opts.pluginBootstrapPreference
+        )
+        _ = EvalBootstrap.configureIsolatedSearchStorageIfNeeded(for: bootstrapPlan)
+        let startupWatchdog =
+            bootstrapPlan.requiresWork
+            ? makeStartupWatchdog(options: opts, suite: suite)
+            : nil
+        await EvalBootstrap.run(bootstrapPlan)
         startupWatchdog?.cancel()
 
         let report = await EvalRunner.run(
@@ -428,6 +437,10 @@ struct OsaurusEvalsCLI {
         /// Wall-clock guard for the Core/plugin/index bootstrap that
         /// happens before the first case can run. `nil` disables it.
         let startupTimeoutSeconds: Double?
+        /// Controls native installed-plugin bootstrap. Automatic mode
+        /// loads plugins only for preflight suites; capability-search
+        /// suites initialize indices without dlopen-ing local plugins.
+        let pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference
 
         static func parse(_ args: [String]) throws -> Options {
             var suite: URL?
@@ -440,6 +453,7 @@ struct OsaurusEvalsCLI {
             var floorsPath: String?
             var failOnFloor = false
             var startupTimeoutSeconds = EvalTimeoutReport.configuredStartupTimeoutSeconds()
+            var pluginBootstrapPreference: EvalInstalledPluginBootstrapPreference = .automatic
 
             var i = 0
             while i < args.count {
@@ -481,6 +495,12 @@ struct OsaurusEvalsCLI {
                     }
                     startupTimeoutSeconds = value > 0 ? value : nil
                     i += 2
+                case "--bootstrap-plugins":
+                    pluginBootstrapPreference = .force
+                    i += 1
+                case "--no-plugin-bootstrap":
+                    pluginBootstrapPreference = .disabled
+                    i += 1
                 case "--help", "-h":
                     printUsage()
                     exit(0)
@@ -500,7 +520,8 @@ struct OsaurusEvalsCLI {
                 reportForensics: reportForensics,
                 floorsPath: floorsPath,
                 failOnFloor: failOnFloor,
-                startupTimeoutSeconds: startupTimeoutSeconds
+                startupTimeoutSeconds: startupTimeoutSeconds,
+                pluginBootstrapPreference: pluginBootstrapPreference
             )
         }
     }
@@ -580,6 +601,15 @@ struct OsaurusEvalsCLI {
                                       disable. Defaults: 120s locally, 30s
                                       when CI=true. Env override:
                                       OSAURUS_EVALS_STARTUP_TIMEOUT_SECONDS.
+                --bootstrap-plugins  Force installed native plugin loading
+                                      before the suite. Automatic mode loads
+                                      plugins for preflight suites only.
+                --no-plugin-bootstrap
+                                      Disable installed native plugin loading.
+                                      Capability-search suites initialize only
+                                      selected search-index lanes in isolated
+                                      eval storage and skip plugin-required
+                                      cases when no plugin is loaded.
 
             EXAMPLES:
                 osaurus-evals run --suite Suites/Preflight --model foundation
