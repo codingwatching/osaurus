@@ -7,10 +7,11 @@
 //  Order matters because `PromptManifest.staticPrefixContent` walks the
 //  list and stops at the first dynamic section — every static section
 //  ahead of that break joins the cached KV-cache reuse window. Putting
-//  cross-cutting rules (operational directives, agent loop) in front of
-//  mode-specific capability (sandbox/folder) and recovery (capability
-//  nudge) maximises the cached prefix and biases the model toward
-//  general behaviour before mode-specific action.
+//  cross-cutting rules (operational directives, agent loop when a session
+//  has actually entered it) in front of mode-specific capability
+//  (sandbox/folder) and recovery (capability nudge) maximises the cached
+//  prefix and biases the model toward general behaviour before mode-
+//  specific action.
 //
 //  Target order documented on `appendGatedSections`:
 //
@@ -20,7 +21,7 @@
 //    4. modelFamilyGuidance       static, gated on family match
 //    5. codeStyle                 static, gated on file-mutation tools
 //    6. riskAware                 static, gated on file-mutation tools
-//    7. agentLoopGuidance         static, gated on loop tools
+//    7. agentLoopGuidance         static, gated on prior loop-tool use
 //    8. sandbox / folderContext   static, mode-specific
 //    9. capabilityNudge           static, gated on capabilities_search
 //   10. sandboxUnavailable        dynamic
@@ -90,9 +91,10 @@ struct PromptSectionOrderingTests {
 
     // MARK: - Auto mode, no execution mode
 
-    /// Plain chat with auto-mode tools: cross-cutting rules (gemma family
-    /// guidance) come before agent loop, then capability nudge. No
-    /// sandbox / folder section in this mode.
+    /// Plain first-turn chat with auto-mode tools: cross-cutting rules
+    /// (gemma family guidance) come before capability nudge. Agent-loop
+    /// guidance is intentionally absent until history contains a loop
+    /// tool call.
     @Test("ordering: auto + gemma + no exec mode")
     func ordering_autoGemmaNoExecMode() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
@@ -107,7 +109,6 @@ struct PromptSectionOrderingTests {
                     "platform",
                     "persona",
                     "modelFamilyGuidance",
-                    "agentLoopGuidance",
                     "capabilityNudge",
                 ],
                 inside: sectionIds(ctx)
@@ -118,8 +119,8 @@ struct PromptSectionOrderingTests {
     // MARK: - Sandbox mode
 
     /// Sandbox mode: file-mutation tools fire, so codeStyle + riskAware
-    /// land between modelFamilyGuidance and agentLoopGuidance. Sandbox
-    /// section sits between agent loop and capability nudge.
+    /// land between modelFamilyGuidance and sandbox. Agent-loop guidance
+    /// is still absent on first turn; sandbox sits before capability nudge.
     @Test("ordering: auto + gpt + sandbox mode")
     func ordering_autoGptSandbox() async {
         await SandboxTestLock.runWithStoragePaths {
@@ -149,7 +150,6 @@ struct PromptSectionOrderingTests {
                     "modelFamilyGuidance",
                     "codeStyle",
                     "riskAware",
-                    "agentLoopGuidance",
                     "sandbox",
                     "capabilityNudge",
                 ],
@@ -203,7 +203,6 @@ struct PromptSectionOrderingTests {
                     "modelFamilyGuidance",
                     "codeStyle",
                     "riskAware",
-                    "agentLoopGuidance",
                     "folderContext",
                     "capabilityNudge",
                 ],
@@ -211,6 +210,46 @@ struct PromptSectionOrderingTests {
             )
 
             _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    /// Once a loop tool is in history, the continuation guide joins the
+    /// static prefix in its original order slot: after model-family guidance
+    /// and before capability discovery.
+    @Test("ordering: prior loop use places agent loop before capability nudge")
+    func ordering_priorLoopUse() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let messages = [
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_todo",
+                            type: "function",
+                            function: ToolCallFunction(name: "todo", arguments: #"{"markdown":"- [ ] one"}"#)
+                        )
+                    ],
+                    tool_call_id: nil
+                )
+            ]
+            let ctx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                model: "google/gemma-3-12b-it",
+                messages: messages,
+                cachedPreflight: .empty
+            )
+            assertOrderedPrefix(
+                [
+                    "platform",
+                    "persona",
+                    "modelFamilyGuidance",
+                    "agentLoopGuidance",
+                    "capabilityNudge",
+                ],
+                inside: sectionIds(ctx)
+            )
         }
     }
 

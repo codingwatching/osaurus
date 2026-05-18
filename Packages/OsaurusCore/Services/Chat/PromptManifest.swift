@@ -66,7 +66,7 @@ public struct PromptManifest: Sendable {
         return tokens
     }
 
-    /// Hash of the static prefix content only (for KV cache reuse).
+    /// Hash of the static prefix content only (debug display without tools).
     public var prefixHash: String {
         staticPrefixHash(toolNames: [])
     }
@@ -96,12 +96,14 @@ public struct PromptManifest: Sendable {
         return parts.joined(separator: "\n\n")
     }
 
-    /// Hash of static prefix content + tool names for cache key.
+    /// Legacy hash of static prefix content + tool names.
     public func staticPrefixHash(toolNames: [String]) -> String {
-        let tools = toolNames.sorted().joined(separator: "\0")
-        let combined = staticPrefixContent + "\0" + tools
-        let digest = SHA256.hash(data: Data(combined.utf8))
-        return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
+        PromptPrefixHasher.hash(systemContent: staticPrefixContent, toolNames: toolNames)
+    }
+
+    /// Hash of static prefix content + canonical tool payloads for cache evidence.
+    func staticPrefixHash(tools: [Tool]) -> String {
+        PromptPrefixHasher.hash(systemContent: staticPrefixContent, tools: tools)
     }
 
     public var debugDescription: String {
@@ -120,6 +122,29 @@ public struct PromptManifest: Sendable {
         let hash = prefixHash.prefix(16)
         lines.append("  Static prefix:       \(String(format: "%5d", staticPrefixTokens)) (hash: \(hash))")
         return lines.joined(separator: "\n")
+    }
+}
+
+enum PromptPrefixHasher {
+    static func hash(systemContent: String, toolNames: [String]) -> String {
+        let tools = toolNames.sorted().joined(separator: "\0")
+        let combined = systemContent + "\0" + tools
+        return digest(Data(combined.utf8))
+    }
+
+    static func hash(systemContent: String, tools: [Tool]) -> String {
+        var payload = Data(systemContent.utf8)
+        payload.append(0)
+        for tool in tools {
+            payload.append(tool.canonicalHashPayload())
+            payload.append(0)
+        }
+        return digest(payload)
+    }
+
+    private static func digest(_ data: Data) -> String {
+        let digest = SHA256.hash(data: data)
+        return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -150,7 +175,7 @@ struct ComposedContext: Sendable {
     /// it via `frozenAlwaysLoadedNames` — preventing tools that register
     /// mid-session from silently appearing in turn 2.
     let alwaysLoadedNames: LoadedTools
-    /// Hash of the static prefix + tool names for KV cache lookup.
+    /// Hash of the static prefix + canonical tool payloads for cache evidence.
     let cacheHint: String
     /// Rendered static-only system content for prefix cache building.
     /// The prefix cache should be built from this content (not the full prompt)

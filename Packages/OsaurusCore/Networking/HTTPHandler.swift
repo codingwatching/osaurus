@@ -3454,11 +3454,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_enrich_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
 
-                    // Compute prefix hash after enrichment so it matches the cache key
+                    // Compute prefix evidence after enrichment so it tracks
+                    // the actual system prompt + tool schema payload sent.
                     let prefixHash: String = {
                         let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
-                        let toolNames = (enrichedReq.tools ?? []).map { $0.function.name }
-                        return ModelRuntime.computePrefixHash(systemContent: sysContent, toolNames: toolNames)
+                        return ModelRuntime.computePrefixHash(
+                            systemContent: sysContent,
+                            tools: enrichedReq.tools ?? []
+                        )
                     }()
                     hop {
                         writerBound.value.writeRole(
@@ -3734,10 +3737,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.mark("http_complete_chat_start")
                     var resp = try await chatEngine.completeChat(request: enrichedReq)
                     httpTrace.mark("http_complete_chat_done")
-                    // Compute prefix hash after enrichment so it matches the cache key
+                    // Compute prefix evidence after enrichment so it tracks
+                    // the actual system prompt + tool schema payload sent.
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
-                    let toolNames = (enrichedReq.tools ?? []).map { $0.function.name }
-                    resp.prefix_hash = ModelRuntime.computePrefixHash(systemContent: sysContent, toolNames: toolNames)
+                    resp.prefix_hash = ModelRuntime.computePrefixHash(
+                        systemContent: sysContent,
+                        tools: enrichedReq.tools ?? []
+                    )
                     if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
                         var finalMessages = priorMessages
                         finalMessages.append(assistantMsg)

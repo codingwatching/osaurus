@@ -1,22 +1,16 @@
 //
 //  SandboxSectionTokenAuditTests.swift
 //
-//  Item 7 of the sandbox tightening spec, decided after measurement:
-//  the canonical sandbox section sits at ~458 tokens once items 1–6
-//  land plus the SOUL.md advert (~50 tokens, added in the SOUL.md PR3).
-//  The compact pair only saved ~150 tokens vs that baseline while
-//  doubling the maintenance surface (same lockstep hazard
-//  `composeChatContext` and `composePreviewContext` had before parity
-//  tests landed). The compact variants were dropped —
-//  `SystemPromptTemplates.sandbox` now takes only `secretNames`. This
-//  test pins the canonical cost so it can't drift back into "expensive
-//  enough that someone re-introduces a compact pair" territory.
+//  Item 7 of the sandbox tightening spec, refreshed during the prompt-bloat
+//  follow-up: the canonical sandbox section should sit around 400 tokens
+//  even with the SOUL.md advert. The full operational details now live in
+//  the sandbox tool descriptions and can be pulled in through lazy schemas,
+//  so this top-level section only carries mode framing and dispatch hints.
 //
 //  Numbers from the in-tree run on 2026-05-06:
-//    canonical: 458 tokens (no secrets configured)
-//      (was 408 tokens before SOUL.md advert landed)
+//    canonical before T-O: 458 tokens (no secrets configured)
 //
-//  The 550-token ceiling leaves headroom for trivial wording changes
+//  The 420-token ceiling leaves headroom for trivial wording changes
 //  without breaking the test. The failure message includes the live
 //  number so reviewers can re-anchor this comment when it shifts.
 //
@@ -29,13 +23,13 @@ import Testing
 @Suite("Sandbox section token cost audit")
 struct SandboxSectionTokenAuditTests {
 
-    @Test("sandbox section stays under 550 tokens")
+    @Test("sandbox section stays under 420 tokens")
     func sandboxSectionFitsBudget() {
         let section = SystemPromptTemplates.sandbox()
         let cost = TokenEstimator.estimate(section)
         #expect(
-            cost < 550,
-            "Sandbox section grew to \(cost) tokens (>550). Trim it back; if the growth is genuinely needed, revisit whether the small-context budget allocation still makes sense."
+            cost < 420,
+            "Sandbox section grew to \(cost) tokens (>420). Trim it back; if the growth is genuinely needed, revisit whether the small-context budget allocation still makes sense."
         )
     }
 

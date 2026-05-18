@@ -182,34 +182,30 @@ public enum SystemPromptTemplates {
         "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
 
     private static let sandboxEnvironmentBlock = """
-        You have access to an isolated Linux sandbox (Alpine Linux, ARM64). \
-        Your workspace is your home directory inside the sandbox.
+        You have an isolated Alpine Linux ARM64 sandbox. Your home directory \
+        is the workspace; files persist across messages.
 
-        You have full internet access in the sandbox. Use `curl`, `wget`, \
-        Python `requests`, or Node `fetch` for live data; prefer fetched \
-        data over generated placeholders.
+        Internet access is available. Use `curl`, `wget`, Python `requests`, \
+        or Node `fetch` for live data; prefer fetched data over placeholders.
 
-        Pre-installed: bash, python3, node, git, curl, wget, jq, ripgrep (rg), \
-        sqlite3, build-base (gcc/make), cmake, vim, tree, and standard POSIX utilities.
+        Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, \
+        build-base, cmake, vim, tree, and standard POSIX utilities.
         """
 
     private static let sandboxToolGuide = """
-        Tool dispatch (each tool's description has full detail and the \
-        shell pattern it replaces):
-        - File IO: `sandbox_read_file` to read, `sandbox_write_file` to create or rewrite, `sandbox_edit_file` for targeted in-place edits.
-        - Search: `sandbox_search_files` (`target="content"` for ripgrep, `target="files"` for filename glob).
-        - Shell: `sandbox_exec` for builds, installs, git, processes, network calls. Pass `background:true` for servers; track with `sandbox_process`.
-        - Python orchestration: `sandbox_execute_code` for 3+ calls with logic between them. Helpers: `from osaurus_tools import read_file, write_file, edit_file, search_files, terminal`.
-        - Issue independent calls in parallel; chain dependent shell steps with `&&` inside one `sandbox_exec`.
+        Tool dispatch:
+        - File IO: `sandbox_read_file`, `sandbox_write_file`, `sandbox_edit_file`.
+        - Search: `sandbox_search_files` with `target="content"` or `target="files"`.
+        - Shell: `sandbox_exec`; use `background:true` for servers and `sandbox_process` to inspect them.
+        - Multi-step Python: `sandbox_execute_code` with `osaurus_tools` helpers (`read_file`, `write_file`, `edit_file`, `search_files`, `terminal`).
+        - Run independent calls in parallel; chain dependent shell steps with `&&`.
         """
 
     private static let sandboxRuntimeHints = """
         Runtime hints:
-        - Python deps: `sandbox_pip_install` — e.g. `{"packages": ["numpy"]}`.
-        - Node deps: `sandbox_npm_install` — e.g. `{"packages": ["express"]}`.
-        - System packages: `sandbox_install` — e.g. `{"packages": ["ffmpeg"]}`.
+        - Install Python, Node, or system deps with `sandbox_pip_install`, `sandbox_npm_install`, or `sandbox_install`.
         - Use \(sandboxReadFileHint) to inspect large logs.
-        - The sandbox is disposable — experiment freely.
+        - The sandbox is disposable; experiment freely.
         - Your `SOUL.md` at `~/SOUL.md` records stable preferences across sessions. Edit it with `sandbox_edit_file` or `sandbox_write_file` when you observe a durable pattern; edits apply on the next session.
         """
 

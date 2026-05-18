@@ -1308,16 +1308,22 @@ public actor ModelRuntime {
 
     // MARK: - Static helpers (nonisolated)
 
-    /// Computes a deterministic hash from system content and tool names.
+    /// Computes a deterministic legacy hash from system content and tool names.
     /// Used by the HTTP API to expose a prefix_hash field in responses.
     public nonisolated static func computePrefixHash(
         systemContent: String,
         toolNames: [String]
     ) -> String {
-        let tools = toolNames.sorted().joined(separator: "\0")
-        let combined = systemContent + "\0" + tools
-        let digest = SHA256.hash(data: Data(combined.utf8))
-        return digest.prefix(16).map { String(format: "%02x", $0) }.joined()
+        PromptPrefixHasher.hash(systemContent: systemContent, toolNames: toolNames)
+    }
+
+    /// Computes a deterministic hash from system content and the exact
+    /// canonical tool payloads handed to the tokenizer/chat template.
+    nonisolated static func computePrefixHash(
+        systemContent: String,
+        tools: [Tool]
+    ) -> String {
+        PromptPrefixHasher.hash(systemContent: systemContent, tools: tools)
     }
 
     /// Build the `GenerateParameters` value handed to `BatchEngine.generate`.

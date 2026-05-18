@@ -20,6 +20,39 @@ struct PreflightCapabilitySearchTests {
         #expect(result.items.isEmpty)
     }
 
+    @Test @MainActor
+    func trivialGreetingReturnsEmptyBeforeLLMSelection() async throws {
+        await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-preflight-trivial-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer { ToolConfigurationStore.overrideDirectory = previousOverride }
+
+            let fixture = PreflightSearchExposureFixtureTool()
+            ToolRegistry.shared.registerPluginTool(fixture)
+            ToolRegistry.shared.setEnabled(true, for: fixture.name)
+            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
+
+            let result = await PreflightCapabilitySearch.search(
+                query: "hello!",
+                mode: .balanced,
+                allowedNames: [fixture.name],
+                llm: { _, _ in
+                    Issue.record("Trivial greetings must not invoke the selector LLM")
+                    return fixture.name
+                },
+                embedder: nil
+            )
+            #expect(PreflightCapabilitySearch.isTrivialUserInput("hello!"))
+            #expect(result.toolSpecs.isEmpty)
+            #expect(result.items.isEmpty)
+        }
+    }
+
     @Test func nonsenseQueryReturnsGracefully() async {
         let result = await PreflightCapabilitySearch.search(
             query: "zzz_completely_nonexistent_capability_xyz_12345",

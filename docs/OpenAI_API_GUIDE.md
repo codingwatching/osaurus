@@ -292,7 +292,7 @@ Keep `session_id` stable per conversation and per model.
 
 KV cache reuse across requests is **automatic and content-addressed** — Osaurus delegates prefix cache management to vmlx-swift-lm's `CacheCoordinator`. Two requests that share the same prefix tokens (system prompt, tools, prior turns) automatically share the cached KV blocks. There is no client-side opt-in or cache key to manage.
 
-For visibility, every response carries a `prefix_hash` field — a stable hash of the system prompt + tool names that produced this generation. Clients can use it to detect when the system prefix changed across requests:
+For visibility, every response carries a `prefix_hash` field — a stable hash of the system prompt + canonical tool schemas that produced this generation. Clients can use it to detect when the system prefix changed across requests:
 
 ```json
 { "prefix_hash": "a1b2c3d4e5f67890..." }

@@ -67,6 +67,44 @@ private final class ToolBodyRaceState: @unchecked Sendable {
     }
 }
 
+/// Shared rough estimator for actual `tools[]` payloads. The budget UI
+/// must price the spec that will be sent this turn, not the registry's
+/// canonical full schema, because the prompt composer can now ship compact
+/// bootstrap schemas and hot-load full ones later.
+fileprivate enum ToolSpecTokenEstimator {
+    static func estimate(name: String, description: String?, parameters: JSONValue?) -> Int {
+        var total = name.count + (description?.count ?? 0)
+        if let parameters {
+            total += estimateJSONSize(parameters)
+        }
+        // Overhead for JSON structure:
+        // {"type":"function","function":{"name":"...","description":"...","parameters":...}}
+        total += 72
+        return max(1, total / TokenEstimator.charsPerToken)
+    }
+
+    /// Recursively estimate serialized JSON size without paying to encode
+    /// every tool during every context-budget refresh.
+    private static func estimateJSONSize(_ value: JSONValue) -> Int {
+        switch value {
+        case .null:
+            return 4
+        case .bool(let value):
+            return value ? 4 : 5
+        case .number(let value):
+            return String(value).count
+        case .string(let value):
+            return value.count + 2
+        case .array(let array):
+            return array.reduce(2) { $0 + estimateJSONSize($1) + 1 }
+        case .object(let object):
+            return object.reduce(2) { total, pair in
+                total + pair.key.count + 5 + estimateJSONSize(pair.value)
+            }
+        }
+    }
+}
+
 @MainActor
 final class ToolRegistry: ObservableObject {
     static let shared = ToolRegistry()
@@ -107,35 +145,11 @@ final class ToolRegistry: ObservableObject {
 
         /// Estimated tokens for full tool schema (rough heuristic: ~4 chars per token)
         var estimatedTokens: Int {
-            var total = name.count + description.count
-            if let params = parameters {
-                total += Self.estimateJSONSize(params)
-            }
-            // Overhead for JSON structure: {"type":"function","function":{"name":"...","description":"...","parameters":...}}
-            // = 38 (prefix) + 17 (desc key) + 15 (params key) + 2 (closing) = 72 chars
-            total += 72
-            return max(1, total / TokenEstimator.charsPerToken)
-        }
-
-        /// Recursively estimate the serialized size of a JSONValue
-        private static func estimateJSONSize(_ value: JSONValue) -> Int {
-            switch value {
-            case .null:
-                return 4  // "null"
-            case .bool(let b):
-                return b ? 4 : 5  // "true" or "false"
-            case .number(let n):
-                return String(n).count
-            case .string(let s):
-                return s.count + 2  // quotes
-            case .array(let arr):
-                return arr.reduce(2) { $0 + estimateJSONSize($1) + 1 }  // brackets + commas
-            case .object(let dict):
-                return dict.reduce(2) { acc, pair in
-                    // "key": value, = key.count + 4 (quotes + colon + space) + value + 1 (comma)
-                    acc + pair.key.count + 5 + estimateJSONSize(pair.value)
-                }
-            }
+            ToolSpecTokenEstimator.estimate(
+                name: name,
+                description: description,
+                parameters: parameters
+            )
         }
     }
 
@@ -616,7 +630,12 @@ final class ToolRegistry: ObservableObject {
     /// Useful when the active tool list is mode- or session-dependent.
     func totalEstimatedTokens(for tools: [Tool]) -> Int {
         tools.reduce(0) { total, tool in
-            total + estimatedTokens(for: tool.function.name)
+            total
+                + ToolSpecTokenEstimator.estimate(
+                    name: tool.function.name,
+                    description: tool.function.description,
+                    parameters: tool.function.parameters
+                )
         }
     }
 

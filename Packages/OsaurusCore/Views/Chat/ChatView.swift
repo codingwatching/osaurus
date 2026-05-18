@@ -2384,9 +2384,18 @@ final class ChatSession: ObservableObject {
                                     || inv.toolName == "sandbox_plugin_register"
                             {
                                 let newTools = await CapabilityLoadBuffer.shared.drain()
-                                for tool in newTools
-                                where !toolSpecs.contains(where: { $0.function.name == tool.function.name }) {
-                                    toolSpecs.append(tool)
+                                for tool in newTools {
+                                    if let existing = toolSpecs.firstIndex(where: {
+                                        $0.function.name == tool.function.name
+                                    }) {
+                                        // `capabilities_load` upgrades compact bootstrap schemas to
+                                        // full schemas in-place, so the next tool iteration can use
+                                        // the complete argument contract without waiting for a
+                                        // fresh compose.
+                                        toolSpecs[existing] = tool
+                                    } else {
+                                        toolSpecs.append(tool)
+                                    }
                                 }
                                 // Persist names into the session's tool union
                                 // so they survive the next compose call

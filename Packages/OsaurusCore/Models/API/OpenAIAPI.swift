@@ -626,7 +626,7 @@ struct ChatCompletionResponse: Codable, Sendable {
     let choices: [ChatChoice]
     let usage: Usage
     var system_fingerprint: String? = nil
-    /// Content hash of the system prompt + tool names used for this request.
+    /// Content hash of the system prompt + canonical tool schemas used for this request.
     /// Informational only — clients can use it to detect when the system
     /// prefix changed across requests. KV reuse itself is handled
     /// autonomously by vmlx's `CacheCoordinator` (content-addressed).
@@ -971,6 +971,23 @@ extension Tool {
             "function": function.toFunctionSpec(),
         ]
         return Self.canonicalize(raw) ?? raw
+    }
+
+    /// Canonical JSON bytes for hash/evidence paths that need to distinguish
+    /// compact bootstrap schemas from full tool schemas. This mirrors the
+    /// tokenizer-tool shape so prefix evidence tracks the bytes handed to the
+    /// chat template, not just the callable names.
+    func canonicalHashPayload() -> Data {
+        let spec = toTokenizerToolSpec()
+        if JSONSerialization.isValidJSONObject(spec),
+            let data = try? JSONSerialization.data(withJSONObject: spec, options: [.sortedKeys])
+        {
+            return data
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(self)) ?? Data("\(type)\0\(function.name)".utf8)
     }
 
     /// Round-trip a Sendable JSON value through `JSONSerialization` with

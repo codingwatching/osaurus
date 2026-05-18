@@ -120,11 +120,12 @@ struct ContextBudgetPreviewTests {
 
     // MARK: - Tools on (auto)
 
-    /// Auto-mode with tools on hits the always-loaded baseline → which
-    /// trips the agent loop + capability discovery gates. This is the
-    /// previously-hidden surface the welcome screen used to under-report.
-    @Test("preview: tools on (auto) surfaces agent loop + capability discovery")
-    func toolsOn_auto_includesLoopAndCapabilityNudge() async {
+    /// Auto-mode with tools on hits the always-loaded baseline and prices
+    /// capability discovery ahead of time. Agent-loop prose is no longer a
+    /// first-turn cost: compact tool descriptions carry the initial contract,
+    /// and the heavier cheat sheet appears only after a loop tool is used.
+    @Test("preview: tools on (auto) surfaces capability discovery, not agent loop")
+    func toolsOn_auto_includesCapabilityNudgeOnly() async {
         await withAgent(toolSelectionMode: .auto) { agentId in
             let preview = SystemPromptComposer.composePreviewContext(
                 agentId: agentId,
@@ -133,7 +134,7 @@ struct ContextBudgetPreviewTests {
             let ids = sectionIds(preview)
             #expect(ids.contains("platform"))
             #expect(ids.contains("persona"))
-            #expect(ids.contains("agentLoopGuidance"))
+            #expect(ids.contains("agentLoopGuidance") == false)
             #expect(ids.contains("capabilityNudge"))
             // No model-family hint without a model id, no skills configured.
             #expect(ids.contains("modelFamilyGuidance") == false)
@@ -150,7 +151,8 @@ struct ContextBudgetPreviewTests {
     /// must explain those tools whenever they are callable; otherwise the
     /// model sees an opaque `capabilities_search` function and #789-style
     /// "search is enabled but never found" failures are hard to diagnose.
-    @Test("preview: manual mode keeps agent loop and capability nudge")
+    /// Loop guidance is separately deferred until a loop tool has been used.
+    @Test("preview: manual mode defers agent loop and keeps capability nudge")
     func toolsOn_manual_keepsCapabilityNudge() async {
         await withAgent(
             toolSelectionMode: .manual,
@@ -161,9 +163,95 @@ struct ContextBudgetPreviewTests {
                 executionMode: .none
             )
             let ids = sectionIds(preview)
-            #expect(ids.contains("agentLoopGuidance"))
+            #expect(ids.contains("agentLoopGuidance") == false)
             #expect(ids.contains("capabilityNudge"))
             #expect(preview.tools.contains { $0.function.name == "render_chart" })
+        }
+    }
+
+    /// The prompt-bloat fix prices the actual compact bootstrap schema, not
+    /// the registry's full tool definitions. Loading a tool by name upgrades
+    /// that compact placeholder back to the full schema for subsequent tool
+    /// iterations.
+    @Test("preview: always-loaded tools use compact bootstrap schemas")
+    func toolsOn_auto_usesCompactBootstrapSchemas() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let preview = SystemPromptComposer.composePreviewContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let fullBaseline = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            let fullBaselineTokens = ToolRegistry.shared.totalEstimatedTokens(for: fullBaseline)
+            #expect(preview.toolTokens < fullBaselineTokens)
+
+            let compactTodo = preview.tools.first { $0.function.name == "todo" }
+            let fullTodo = TodoTool().asOpenAITool()
+            #expect(compactTodo?.function.description != fullTodo.function.description)
+            #expect(
+                (compactTodo?.function.description?.count ?? 0)
+                    < (fullTodo.function.description?.count ?? 0)
+            )
+
+            let upgraded = SystemPromptComposer.resolveTools(
+                agentId: agentId,
+                executionMode: .none,
+                additionalToolNames: ["todo"]
+            )
+            let upgradedTodo = upgraded.first { $0.function.name == "todo" }
+            #expect(upgradedTodo?.function.description == fullTodo.function.description)
+            #expect(upgradedTodo?.function.parameters == fullTodo.function.parameters)
+        }
+    }
+
+    /// A greeting should not run preflight or carry dynamic discovery
+    /// prompt text. The callable bootstrap tools remain present so the
+    /// session can grow as soon as the user asks for real work.
+    @Test("compose: trivial greeting skips dynamic capability prompt sections")
+    func trivialGreeting_skipsPreflightAndDynamicPromptSections() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "hi!"
+            )
+            let ids = sectionIds(context)
+            #expect(SystemPromptComposer.isTrivialPreflightQuery("hi!"))
+            #expect(context.preflightItems.isEmpty)
+            #expect(ids.contains("capabilityNudge") == false)
+            #expect(ids.contains("pluginCreator") == false)
+            #expect(ids.contains("agentLoopGuidance") == false)
+            #expect(context.tools.contains { $0.function.name == "capabilities_load" })
+        }
+    }
+
+    /// Once history contains an agent-loop call, the continuation guide is
+    /// worth the prompt cost. This keeps multi-step sessions stable without
+    /// charging the first "hello" or "can you..." turn.
+    @Test("compose: prior loop use enables agent loop guidance")
+    func priorLoopUse_enablesAgentLoopGuidance() async {
+        await withAgent(toolSelectionMode: .auto) { agentId in
+            let messages = [
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_todo",
+                            type: "function",
+                            function: ToolCallFunction(name: "todo", arguments: #"{"markdown":"- [ ] one"}"#)
+                        )
+                    ],
+                    tool_call_id: nil
+                )
+            ]
+            let context = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none,
+                query: "continue",
+                messages: messages,
+                cachedPreflight: .empty
+            )
+            #expect(sectionIds(context).contains("agentLoopGuidance"))
         }
     }
 

@@ -434,6 +434,34 @@ enum PreflightCapabilitySearch {
 
     private static let selectionTimeout: TimeInterval = 8
 
+    /// High-volume salutations and acknowledgements are not capability
+    /// requests. Short-circuiting them here protects every entry point
+    /// (chat, HTTP, plugin host, eval probes) from spending an LLM call and
+    /// a dynamic prompt block before the user has asked the agent to do work.
+    static func isTrivialUserInput(_ query: String) -> Bool {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= 32 else { return false }
+
+        let keptScalars = trimmed.lowercased().unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar)
+                || CharacterSet.whitespacesAndNewlines.contains(scalar)
+            {
+                return Character(String(scalar))
+            }
+            return " "
+        }
+        let normalized = String(keptScalars)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let trivialInputs: Set<String> = [
+            "hi", "hello", "hey", "yo", "hiya", "howdy",
+            "good morning", "good afternoon", "good evening",
+            "thanks", "thank you", "thx", "ty",
+            "ok", "okay", "cool", "nice", "great",
+        ]
+        return trivialInputs.contains(normalized)
+    }
+
     /// Test seam for the LLM call. Production calls go through
     /// `CoreModelService.shared.generate`; tests inject canned responses.
     typealias LLMGenerator = @Sendable (_ prompt: String, _ systemPrompt: String) async throws -> String
@@ -560,6 +588,7 @@ enum PreflightCapabilitySearch {
         guard mode != .off,
             !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         else { return (.empty, nil) }
+        guard !isTrivialUserInput(query) else { return (.empty, nil) }
 
         let (catalog, groups) = await MainActor.run {
             loadDynamicCatalog(allowedNames: allowedNames)

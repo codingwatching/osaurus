@@ -32,6 +32,30 @@ private final class TestContextHandler: ChannelInboundHandler, @unchecked Sendab
 
 struct PrefixHashTests {
 
+    private func fixtureTool(
+        description: String,
+        parameterDescription: String? = nil
+    ) -> Tool {
+        var pathSchema: [String: JSONValue] = ["type": .string("string")]
+        if let parameterDescription {
+            pathSchema["description"] = .string(parameterDescription)
+        }
+        return Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "mutable_context",
+                description: description,
+                parameters: .object([
+                    "type": .string("object"),
+                    "required": .array([.string("path")]),
+                    "properties": .object([
+                        "path": .object(pathSchema)
+                    ]),
+                ])
+            )
+        )
+    }
+
     // MARK: - computePrefixHash
 
     @Test func hashIsDeterministic() {
@@ -99,6 +123,80 @@ struct PrefixHashTests {
         let h1 = ModelRuntime.computePrefixHash(systemContent: "a|b", toolNames: [])
         let h2 = ModelRuntime.computePrefixHash(systemContent: "a", toolNames: ["b"])
         #expect(h1 != h2)
+    }
+
+    @Test func toolSchemaChangeProducesDifferentHashForSameToolName() {
+        let compact = fixtureTool(description: "Mutates context.")
+        let full = fixtureTool(
+            description: "Mutates context after validating the target path and replacement body.",
+            parameterDescription: "Repository-relative path to mutate."
+        )
+
+        let legacyCompact = ModelRuntime.computePrefixHash(
+            systemContent: "sys",
+            toolNames: [compact.function.name]
+        )
+        let legacyFull = ModelRuntime.computePrefixHash(
+            systemContent: "sys",
+            toolNames: [full.function.name]
+        )
+        #expect(legacyCompact == legacyFull)
+
+        let payloadCompact = ModelRuntime.computePrefixHash(systemContent: "sys", tools: [compact])
+        let payloadFull = ModelRuntime.computePrefixHash(systemContent: "sys", tools: [full])
+        #expect(payloadCompact != payloadFull)
+    }
+
+    @Test func staticPrefixCacheHintIncludesToolSchemaPayload() {
+        let manifest = PromptManifest(sections: [
+            .static(id: "platform", label: "Platform", content: "You are Osaurus.")
+        ])
+        let compact = fixtureTool(description: "Mutates context.")
+        let full = fixtureTool(
+            description: "Mutates context after validating the target path and replacement body.",
+            parameterDescription: "Repository-relative path to mutate."
+        )
+
+        #expect(
+            manifest.staticPrefixHash(tools: [compact])
+                != manifest.staticPrefixHash(tools: [full])
+        )
+    }
+
+    @Test func toolSchemaHashCanonicalizesNestedPropertyOrder() {
+        let a = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "stable_context",
+                description: "Stable schema.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "z": .object(["type": .string("string")]),
+                        "a": .object(["type": .string("number")]),
+                    ]),
+                ])
+            )
+        )
+        let b = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "stable_context",
+                description: "Stable schema.",
+                parameters: .object([
+                    "properties": .object([
+                        "a": .object(["type": .string("number")]),
+                        "z": .object(["type": .string("string")]),
+                    ]),
+                    "type": .string("object"),
+                ])
+            )
+        )
+
+        #expect(
+            ModelRuntime.computePrefixHash(systemContent: "sys", tools: [a])
+                == ModelRuntime.computePrefixHash(systemContent: "sys", tools: [b])
+        )
     }
 
     // MARK: - SSE writeRole prefix_hash

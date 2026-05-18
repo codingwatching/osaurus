@@ -1,8 +1,14 @@
 # Prompt Bloat — TTFT Follow-Up (osaurus chat UI)
 
-**Status:** Tracked, **out of scope for the vmlx `b9da180` bump PR**. Filed
-as a distinct concern so a future PR can take it on without needing to
-re-derive the analysis from scratch.
+**Status:** Follow-up implemented in the T-O prompt-bloat lane. This note is
+kept as the measurement trail and review checklist for future prompt-budget
+work.
+
+The T-O implementation keeps only compact schema skeletons for first-turn
+always-loaded tools, lets `capabilities_load` upgrade compact placeholders to
+full schemas in-session, skips preflight on trivial greetings, defers
+`agentLoopGuidance` until a loop tool has appeared in history, and tightens the
+sandbox prompt audit to a 420-token ceiling.
 
 ## Symptom
 
@@ -74,30 +80,24 @@ greeting. Stripping the preamble eliminates the drift — proven with the
 no-system-prompt API test that returned "Hello! I am an AI-powered
 conversational entity…".
 
-## Recommended fix shape (separate PR)
+## Implemented fix shape
 
-1. **Lazy tool schemas.** Ship only the *names* + one-line descriptions of
-   always-loaded tools in the system prompt; expose
-   `capabilities_load(tool_id)` (already wired) as the on-demand schema fetch.
-   This alone removes ~2000 tokens from a typical greeting.
+1. **Lazy tool schemas.** Ship one-line descriptions plus JSON schema
+   skeletons for always-loaded tools in the first-turn `tools[]`; preserve full
+   schemas for `capabilities_search` / `capabilities_load`, manual picks,
+   preflight picks, and anything loaded mid-session.
 
-2. **Conditional `agentLoopGuidance`.** Today it fires whenever `todo` /
-   `complete` / `clarify` / `share_artifact` appear in the resolved schema,
-   which is "always" for non-trivial sessions. Promote it to a
-   "first-call-needed" cheat sheet that's omitted when no `todo`/loop tool has
-   been invoked in the current session.
+2. **Conditional `agentLoopGuidance`.** The cheat sheet is omitted on first
+   turn and added only after history contains a loop-tool call.
 
-3. **Sandbox section size cap.** Cap the `SandboxToolGuide` rendering at
-   ~400 tokens, push the long-form runtime hints into individual tool
-   descriptions where they're only paid for if that tool's schema is actually
-   loaded.
+3. **Sandbox section size cap.** The canonical sandbox prompt was tightened and
+   is pinned below 420 estimated tokens.
 
-4. **Preflight skip on trivial inputs.** In `auto` mode, skip preflight
-   capability search for inputs under ~10 chars or matching common
-   non-discovery patterns ("hi", "hello", "thanks").
+4. **Preflight skip on trivial inputs.** In `auto` mode, preflight now skips
+   common non-discovery patterns ("hi", "hello", "thanks", acknowledgements).
 
-Each of these is independent and can land separately. Priority is **#1**;
-that's where ~70% of the budget goes.
+The highest-leverage piece remains lazy tool schemas: that is where the
+largest share of the greeting budget lived.
 
 ## Why this isn't blocking the bump PR
 
@@ -120,9 +120,9 @@ bump and that holds at every prior commit. Bundling it in here would balloon
 this PR past the bump-and-wire scope it has now and make CI / review
 substantially riskier.
 
-## Pointers for the follow-up author
+## Pointers for future prompt-budget work
 
-* `Packages/OsaurusCore/Services/Prompt/SystemPromptComposer.swift` — entry
+* `Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift` — entry
   point for the per-section assembly. The token-budget pre-flight already
   exists at `ContextBudgetPreview`; the disable-info path it emits can be
   reused to gate the heavier sections.
@@ -137,6 +137,6 @@ substantially riskier.
   `SystemPromptComposerToolResolutionTests.swift` — existing coverage that
   any refactor will need to pass.
 
-When picking this up, capture before/after `tokenCount=` on the same
-greeting + agent profile and a TTFT measurement for each — that's the
+Future prompt-budget work should still capture before/after `tokenCount=` on
+the same greeting + agent profile and a TTFT measurement for each — that's the
 unambiguous regression / improvement signal.
