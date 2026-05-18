@@ -3,6 +3,28 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.25</title>
+            <pubDate>Mon, 18 May 2026 01:06:56 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.25</sparkle:version>
+            <sparkle:shortVersionString>0.18.25</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.25/Osaurus-0.18.25.dmg" length="42439933" type="application/octet-stream" sparkle:edSignature="tX3EsaOKwiGWuKS7VsmSn9w82yFcW3hwNG+NqKY79n3tkZkLaA+kBbdfO78H0ChyNBrQqx0kIMzZHTKn5BYmBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- [codex] Shrink first-turn prompt tool surface (#1120) by @mimeding
+- [codex] Add coordinator CLI foundation (#1137) by @mimeding
+
+## 🚀 Features
+
+- auto-queue messages and send immediately feature (#1144) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.24...0.18.25
+]]></description>
+        </item>
+        <item>
             <title>0.18.24</title>
             <pubDate>Sun, 17 May 2026 22:44:37 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
