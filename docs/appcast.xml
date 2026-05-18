@@ -3,6 +3,27 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.26</title>
+            <pubDate>Mon, 18 May 2026 03:56:33 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.26</sparkle:version>
+            <sparkle:shortVersionString>0.18.26</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.26/Osaurus-0.18.26.dmg" length="42464594" type="application/octet-stream" sparkle:edSignature="zcwvmmmzj4UePgh5khQcQATqotOb2P9ygwAPkezSL9v5d9G8SwHtA3g0JyXb6xIgYD0nk90UJjJqEjJW+rnyBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Update image in README.md (#1146) by @tpae
+
+## 🧰 Maintenance
+
+- added agent settings shortcut and minor UX updates (#1145) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.25...0.18.26
+]]></description>
+        </item>
+        <item>
             <title>0.18.25</title>
             <pubDate>Mon, 18 May 2026 01:06:56 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
