@@ -63,6 +63,74 @@ final class ModelDownloadService: ObservableObject {
 
     @Published var downloadStates: [String: DownloadState] = [:]
     @Published var downloadMetrics: [String: DownloadMetrics] = [:]
+    /// Last download failure surfaced to the UI.
+    @Published var downloadAlert: DownloadAlertInfo?
+
+    /// Categorised failure info shown in the alert. The `title` describes
+    /// the kind of failure, `message` is the human-readable cause, and
+    /// `details` is a copyable diagnostic line users can paste into bug
+    /// reports.
+    struct DownloadAlertInfo: Equatable, Identifiable {
+        let id = UUID()
+        let title: String
+        let message: String
+        let details: String
+    }
+
+    /// Build a categorised alert from a raw error message and the affected
+    /// model. Routes well-known patterns (disk, network, gated, etc.) to
+    /// friendlier titles. falls back to a generic one.
+    private static func makeAlert(
+        modelId: String,
+        rawError: String,
+        stage: String,
+        filePath: String? = nil
+    ) -> DownloadAlertInfo {
+        let lower = rawError.lowercased()
+        let title: String
+        let message: String
+        if lower.contains("not enough disk space") || lower.contains("no space") {
+            title = "Not enough disk space"
+            message = rawError
+        } else if lower.contains("hugging face") || lower.contains("file list") {
+            title = "Repository unavailable"
+            message =
+                "Couldn't reach this model on Hugging Face. The repo may be private, gated, removed, or temporarily unreachable."
+        } else if lower.hasPrefix("http ") {
+            title = "Repository unavailable"
+            message =
+                "Hugging Face responded with \(rawError). Private or gated repos aren't supported yet; otherwise try again in a moment."
+        } else if lower.contains("offline") || lower.contains("internet connection")
+            || lower.contains("network") || lower.contains("timed out")
+        {
+            title = "Network error"
+            message = rawError
+        } else if lower.contains("size mismatch") {
+            title = "Downloaded file corrupted"
+            message =
+                "A file came back at the wrong size, which usually means the connection was interrupted. Retrying should fix this."
+        } else if lower.contains("download incomplete") {
+            title = "Download incomplete"
+            message = rawError
+        } else if lower.contains("create directory") || lower.contains("couldn't")
+            || lower.contains("permission") || lower.contains("read-only")
+        {
+            title = "Couldn't save files"
+            message = rawError
+        } else {
+            title = "Model download failed"
+            message = rawError
+        }
+
+        var detailParts: [String] = [
+            "model=\(modelId)",
+            "stage=\(stage)",
+        ]
+        if let filePath { detailParts.append("file=\(filePath)") }
+        detailParts.append("raw=\(rawError)")
+        let details = detailParts.joined(separator: " | ")
+        return DownloadAlertInfo(title: title, message: message, details: details)
+    }
 
     // MARK: - Properties
 
@@ -118,12 +186,24 @@ final class ModelDownloadService: ObservableObject {
     }
 
     private func startOrchestration(model: MLXModel, resuming: PausedSnapshot?) {
-        if model.isDownloaded {
-            downloadStates[model.id] = .completed
-            return
-        }
+        // `model.isDownloaded` is satisfied by config + tokenizer + any single
+        // shard so don't short-circuit on it. the per-file size check below
+        // is authoritative
         let state = downloadStates[model.id] ?? .notStarted
         if case .downloading = state { return }
+
+        // upfront disk-space preflight so we alert instead of flashing a
+        // progress bar that the in-task check would rip down ~300ms later.
+        if let needed = model.totalSizeEstimateBytes,
+            let probePath = Self.existingAncestor(of: model.localDirectory),
+            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: probePath.path),
+            let refusal = Self.storageRefusalMessage(neededBytes: needed, freeBytes: freeBytes)
+        {
+            downloadAlert = Self.makeAlert(
+                modelId: model.id, rawError: refusal, stage: "preflight"
+            )
+            return
+        }
 
         activeDownloadTasks[model.id]?.cancel()
         activeDownloaders[model.id]?.invalidate()
@@ -145,8 +225,10 @@ final class ModelDownloadService: ObservableObject {
                 withIntermediateDirectories: true
             )
         } catch {
-            downloadStates[model.id] = .failed(
-                error: "Failed to create directory: \(error.localizedDescription)"
+            let message = "Failed to create directory: \(error.localizedDescription)"
+            downloadStates[model.id] = .failed(error: message)
+            downloadAlert = Self.makeAlert(
+                modelId: model.id, rawError: message, stage: "create-directory"
             )
             clearDownloadTracking(for: model.id)
             return
@@ -184,7 +266,8 @@ final class ModelDownloadService: ObservableObject {
                             token: token,
                             finalState: .failed(
                                 error: "Could not retrieve file list from Hugging Face"
-                            )
+                            ),
+                            failureStage: "fetch-manifest"
                         )
                     }
                     return
@@ -223,7 +306,8 @@ final class ModelDownloadService: ObservableObject {
                         self.finalizeOrchestration(
                             modelId: model.id,
                             token: token,
-                            finalState: .failed(error: refusal)
+                            finalState: .failed(error: refusal),
+                            failureStage: "preflight-in-task"
                         )
                     }
                     return
@@ -283,14 +367,38 @@ final class ModelDownloadService: ObservableObject {
                     inFlightFilePath = nil
                 }
 
-                let isComplete = model.isDownloaded
-                let finalState: DownloadState =
-                    isComplete ? .completed : .failed(error: "Download incomplete")
+                // Manifest driven completion check. `model.isDownloaded` only
+                // looks for config + tokenizer + ≥1 shard on disc so a
+                // multi shard download with a silently skipped file would
+                // still pass that test. Verify every manifest entry is on
+                // disk at its expected size and report which are missing
+                let fm = FileManager.default
+                let missing: [String] = files.compactMap { file in
+                    let dest = model.localDirectory.appendingPathComponent(file.path)
+                    let attrs = try? fm.attributesOfItem(atPath: dest.path)
+                    let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+                    return size == file.size ? nil : file.path
+                }
+                let isComplete = missing.isEmpty
+                let finalState: DownloadState
+                if isComplete {
+                    finalState = .completed
+                } else if missing.count == 1 {
+                    finalState = .failed(
+                        error: "Download incomplete: \(missing[0]) is missing or has wrong size"
+                    )
+                } else {
+                    finalState = .failed(
+                        error: "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
+                    )
+                }
                 await MainActor.run {
                     let didFinalize = self.finalizeOrchestration(
                         modelId: model.id,
                         token: token,
-                        finalState: finalState
+                        finalState: finalState,
+                        failureStage: "completion-check",
+                        failureFilePath: missing.first
                     )
                     if didFinalize && isComplete {
                         NotificationService.shared.postModelReady(
@@ -323,11 +431,14 @@ final class ModelDownloadService: ObservableObject {
                     )
                 }
             } catch {
+                let snapshotPath = inFlightFilePath
                 await MainActor.run {
                     self.finalizeOrchestration(
                         modelId: model.id,
                         token: token,
-                        finalState: .failed(error: error.localizedDescription)
+                        finalState: .failed(error: error.localizedDescription),
+                        failureStage: snapshotPath != nil ? "file-transfer" : "orchestration",
+                        failureFilePath: snapshotPath
                     )
                 }
             }
@@ -539,7 +650,9 @@ final class ModelDownloadService: ObservableObject {
     private func finalizeOrchestration(
         modelId: String,
         token: UUID,
-        finalState: DownloadState
+        finalState: DownloadState,
+        failureStage: String = "download",
+        failureFilePath: String? = nil
     ) -> Bool {
         guard downloadTokens[modelId] == token else { return false }
         downloadStates[modelId] = finalState
@@ -547,6 +660,14 @@ final class ModelDownloadService: ObservableObject {
         pausedDownloads[modelId] = nil
         activeDownloaders[modelId]?.invalidate()
         activeDownloaders[modelId] = nil
+        if case .failed(let error) = finalState {
+            downloadAlert = Self.makeAlert(
+                modelId: modelId,
+                rawError: error,
+                stage: failureStage,
+                filePath: failureFilePath
+            )
+        }
         return true
     }
 
@@ -592,6 +713,19 @@ final class ModelDownloadService: ObservableObject {
     /// "unknown, proceed" rather than "zero, block".
     static func freeBytesOnVolume(containing url: URL) -> Int64? {
         OsaurusPaths.volumeFreeBytes(forPath: url.path)
+    }
+
+    /// Nearest ancestor of `url` that exists on disk, so volume-capacity
+    /// queries have a statable path before the per-model dir is created.
+    static func existingAncestor(of url: URL) -> URL? {
+        var current = url
+        let fm = FileManager.default
+        while !fm.fileExists(atPath: current.path) {
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { return nil }
+            current = parent
+        }
+        return current
     }
 
     private func updateDownloadProgress(
