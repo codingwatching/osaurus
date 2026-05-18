@@ -3,6 +3,30 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.18.27</title>
+            <pubDate>Mon, 18 May 2026 21:32:21 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.18.27</sparkle:version>
+            <sparkle:shortVersionString>0.18.27</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.18.27/Osaurus-0.18.27.dmg" length="42493291" type="application/octet-stream" sparkle:edSignature="Foi+1YX5J/ZgE1L1W0CFPjKzJN39cfEdGXm5gvImXCDiOEPmpfUocpmBdo/+CO6hLdFLvlbtsy2njxfkjm7LBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- added missing ChatGPT models (including gpt 5.5) (#1150) by @tpae
+
+## 🧰 Maintenance
+
+- fixed minor onboarding issues (#1152) by @tpae
+- improved model download error handling (#1148) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.18.26...0.18.27
+]]></description>
+        </item>
+        <item>
             <title>0.18.26</title>
             <pubDate>Mon, 18 May 2026 03:56:33 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
