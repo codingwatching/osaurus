@@ -261,18 +261,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             await serverController.startServer()
         }
 
-        let storageKeyPrewarmTask = Task.detached(priority: .utility) {
-            do {
-                try StorageKeyManager.shared.prewarmCurrentKey()
-            } catch {
-                NSLog("[Osaurus] Storage key prewarm failed: \(error)")
-            }
-        }
-
-        // Auto-connect to enabled providers, then update model cache with remote models
+        // Do not auto-connect keychain-backed providers at launch. Explicit
+        // provider connect actions may read credentials; startup must not.
         Task { @MainActor in
-            await MCPProviderManager.shared.connectEnabledProviders()
-            await RemoteProviderManager.shared.connectEnabledProviders()
             await ModelPickerItemCache.shared.prewarmModelCache()
         }
 
@@ -288,7 +279,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // defensively (no-op fast path) for the plugin/HTTP entry
         // points that don't go through this Task.
         let embeddingInitTask = Task.detached(priority: .utility) {
-            await storageKeyPrewarmTask.value
+            guard StorageKeyManager.shared.hasCachedKey else {
+                MemoryLogger.database.error(
+                    "Storage-dependent search/index services disabled — storage key is not already unlocked"
+                )
+                return
+            }
             var memoryDBOpened = false
             for attempt in 1 ... 3 {
                 do {
@@ -355,12 +351,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // Initialize WatcherManager to start file system watchers
         _ = WatcherManager.shared
 
-        // Start the self-scheduling loop (spec §9). The scheduler reads
-        // from `~/.osaurus/scheduler.sqlite` so the storage migrator
-        // must already be ready by this point — and it is, because
-        // `StorageMigrationCoordinator.blockingAwaitReady` ran at the
-        // top of `applicationDidFinishLaunching`.
-        NextRunScheduler.shared.start()
+        // Start the self-scheduling loop only if encrypted storage is already
+        // unlocked. Startup must not trigger a Keychain/password prompt.
+        Task { @MainActor in
+            guard StorageKeyManager.shared.hasCachedKey else {
+                NSLog("[Osaurus] Scheduler disabled: storage key is not already unlocked")
+                return
+            }
+            NextRunScheduler.shared.start()
+        }
 
         // Start sandbox tool registrar. Internally awaits container
         // auto-start before the initial `registerTools` call, so the first
