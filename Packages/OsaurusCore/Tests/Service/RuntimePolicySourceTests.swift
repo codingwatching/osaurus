@@ -745,6 +745,24 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Preflight logs do not publish raw prompt payloads")
+    func preflightLogsDoNotPublishRawPromptPayloads() throws {
+        let preflight = try Self.source("Services/Context/PreflightCapabilitySearch.swift")
+
+        #expect(
+            !preflight.contains("query, privacy: .public"),
+            "Preflight diagnostics must not publish the raw user query because it can contain prompt text, secrets, or document excerpts"
+        )
+        #expect(
+            preflight.contains("query, privacy: .private(mask: .hash)"),
+            "Preflight can still correlate fallback paths with a private hash instead of logging raw prompt text"
+        )
+        #expect(
+            preflight.contains("trimmed, privacy: .private(mask: .hash)"),
+            "The background LLM response can include prompt-adjacent content and should stay private in logs"
+        )
+    }
+
     @Test("MLXBatchAdapter image preprocessing preserves media, reasoning, and tool metadata")
     func mlxBatchAdapterPreprocessingPreservesMediaReasoningAndToolMetadata() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")

@@ -3068,14 +3068,11 @@ extension RemoteProviderService {
             throw RemoteProviderServiceError.invalidURL
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        // Add provider headers
-        for (key, value) in await provider.resolvedHeadersOffMainActor() {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
+        let request = modelDiscoveryRequest(
+            url: url,
+            headers: await provider.resolvedHeadersOffMainActor(),
+            timeout: provider.timeout
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -3114,6 +3111,30 @@ extension RemoteProviderService {
             }
             throw error
         }
+    }
+
+    /// Builds a bounded `/models` request so provider connect tests do not hang
+    /// longer than the user-configured discovery timeout.
+    static func modelDiscoveryRequest(
+        url: URL,
+        headers: [String: String],
+        timeout: TimeInterval
+    ) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = modelDiscoveryTimeout(timeout)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        for (key, value) in headers {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+
+        return request
+    }
+
+    static func modelDiscoveryTimeout(_ timeout: TimeInterval) -> TimeInterval {
+        guard timeout.isFinite else { return 30 }
+        return min(max(timeout, 1), 30)
     }
 
     private static func canUseManualModelDiscoveryFallback(
@@ -3266,12 +3287,7 @@ extension RemoteProviderService {
                 throw RemoteProviderServiceError.invalidURL
             }
 
-            var request = URLRequest(url: url)
-            request.httpMethod = "GET"
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            for (key, value) in headers {
-                request.setValue(value, forHTTPHeaderField: key)
-            }
+            let request = modelDiscoveryRequest(url: url, headers: headers, timeout: timeout)
 
             let (data, response) = try await URLSession.shared.data(for: request)
 
