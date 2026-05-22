@@ -2368,7 +2368,7 @@ public actor ModelRuntime {
         }
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
-        let (tempURL, response) = try await URLSession.shared.download(for: request)
+        let (tempURL, response) = try await GlobalProxySettings.makeSession().download(for: request)
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
         guard let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) else {
