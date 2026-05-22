@@ -31,6 +31,71 @@ public enum RemoteProviderAuthType: String, Codable, Sendable, CaseIterable {
     case openAICodexOAuth
 }
 
+enum RemoteProviderHeaderRedactor {
+    static let redactedValue = "***"
+
+    private static let exactSensitiveHeaderNames: Set<String> = [
+        "authorization",
+        "api-key",
+        "proxy-authorization",
+        "x-api-key",
+        "x-goog-api-key",
+    ]
+
+    private static let likelySensitiveNameFragments = [
+        "token",
+        "secret",
+        "password",
+        "passwd",
+        "key",
+    ]
+
+    /// Custom provider headers are user-defined, so log redaction treats likely credential names as sensitive.
+    static func isSensitiveHeader(_ name: String, configuredSecretHeaderKeys: [String] = []) -> Bool {
+        let normalizedName = normalize(name)
+        guard !normalizedName.isEmpty else { return false }
+
+        if exactSensitiveHeaderNames.contains(normalizedName) {
+            return true
+        }
+
+        if configuredSecretHeaderKeys.contains(where: { normalize($0) == normalizedName }) {
+            return true
+        }
+
+        return likelySensitiveNameFragments.contains { normalizedName.contains($0) }
+    }
+
+    static func valueForLogging(
+        headerName: String,
+        value: String,
+        configuredSecretHeaderKeys: [String] = []
+    ) -> String {
+        isSensitiveHeader(headerName, configuredSecretHeaderKeys: configuredSecretHeaderKeys)
+            ? redactedValue
+            : value
+    }
+
+    static func redactedHeaders(
+        _ headers: [String: String],
+        configuredSecretHeaderKeys: [String] = []
+    ) -> [String: String] {
+        var redacted = headers
+        for (name, value) in headers {
+            redacted[name] = valueForLogging(
+                headerName: name,
+                value: value,
+                configuredSecretHeaderKeys: configuredSecretHeaderKeys
+            )
+        }
+        return redacted
+    }
+
+    private static func normalize(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
 // MARK: - Provider Type
 
 /// Type of remote provider (determines API format)
