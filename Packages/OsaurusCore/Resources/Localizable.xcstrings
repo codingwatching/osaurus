@@ -7708,6 +7708,9 @@
         }
       }
     },
+    "ENDPOINT" : {
+
+    },
     "English-only model with highest recall" : {
       "localizations" : {
         "de" : {
@@ -14390,6 +14393,9 @@
           }
         }
       }
+    },
+    "Override the base URL to route through a proxy or self-hosted gateway. Leave as-is for the official endpoint." : {
+
     },
     "Overview" : {
       "localizations" : {
