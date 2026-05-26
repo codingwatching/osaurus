@@ -812,6 +812,7 @@ struct MLXBatchAdapter {
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
+        buildRawPrompt: (@Sendable () -> String)? = nil,
         generation: GenerationParameters,
         toolChoice: ToolChoiceOption?,
         stopSequences: [String],
@@ -837,6 +838,7 @@ struct MLXBatchAdapter {
                 container: container,
                 buildChat: buildChat,
                 buildToolsSpec: buildToolsSpec,
+                buildRawPrompt: buildRawPrompt,
                 generation: generation,
                 toolChoice: toolChoice,
                 trace: trace
@@ -978,6 +980,7 @@ struct MLXBatchAdapter {
         container: ModelContainer,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
+        buildRawPrompt: (@Sendable () -> String)? = nil,
         generation: GenerationParameters,
         toolChoice: ToolChoiceOption?,
         trace: TTFTTrace?
@@ -1007,57 +1010,75 @@ struct MLXBatchAdapter {
         try await container.perform { (context: MLXLMCommon.ModelContext) in
             box.performEnteredAt = CFAbsoluteTimeGetCurrent()
             trace?.mark("batch_container_perform_entered")
-            var chat = preprocessImages(in: buildChat())
-            chat = try preencodeNemotronOmniAudioIfPossible(
-                in: chat,
-                modelName: modelName,
-                model: context.model,
-                trace: trace
-            )
-            box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
-            box.chatCount = chat.count
-            box.imageCount = chat.reduce(0) { $0 + $1.images.count }
-            box.videoCount = chat.reduce(0) { $0 + $1.videos.count }
-            box.audioCount = chat.reduce(0) { $0 + $1.audios.count }
-            let toolsSpec = buildToolsSpec()
-            box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
-            box.toolCount = toolsSpec?.count ?? 0
-
-            // Reasoning template context. Only explicit request controls are
-            // translated into model-specific template kwargs; omitted controls
-            // leave the model template/default contract untouched.
-            let additionalContext = additionalContext(
-                for: generation,
-                modelName: modelName,
-                toolChoice: toolChoice
-            )
-            box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
-            box.contextKeys = additionalContext.keys.sorted()
-            box.contextSummary = Self.safeContextSummary(additionalContext)
-            let userInput = MLXLMCommon.UserInput(
-                chat: chat,
-                processing: .init(),
-                tools: toolsSpec,
-                additionalContext: additionalContext
-            )
-
-            trace?.mark("batch_tokenization_start")
             let lmInput: LMInput
-            do {
-                let prepared = try await context.processor.prepare(input: userInput)
-                lmInput = prepared.withToolSchemas(toolsSpec)
-            } catch {
-                let detail =
-                    (error as? LocalizedError)?.errorDescription
-                    ?? String(describing: error)
-                throw NSError(
-                    domain: "MLXBatchAdapter",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+            if let buildRawPrompt {
+                // Raw completion path (OpenAI-legacy `/v1/completions`, e.g.
+                // FIM autocomplete): tokenize the prompt verbatim and bypass
+                // the chat template, so tokens like `<|fim_prefix|>` reach the
+                // model exactly as the client sent them. The chat / media /
+                // tools building is skipped entirely.
+                let raw = buildRawPrompt()
+                let now = CFAbsoluteTimeGetCurrent()
+                box.chatBuiltAt = now
+                box.toolsBuiltAt = now
+                box.contextBuiltAt = now
+                trace?.mark("batch_tokenization_start")
+                let promptTokens = context.tokenizer.encode(text: raw)
+                lmInput = LMInput(tokens: MLXArray(promptTokens))
+                box.processorDoneAt = CFAbsoluteTimeGetCurrent()
+                trace?.mark("batch_tokenization_done")
+            } else {
+                var chat = preprocessImages(in: buildChat())
+                chat = try preencodeNemotronOmniAudioIfPossible(
+                    in: chat,
+                    modelName: modelName,
+                    model: context.model,
+                    trace: trace
                 )
+                box.chatBuiltAt = CFAbsoluteTimeGetCurrent()
+                box.chatCount = chat.count
+                box.imageCount = chat.reduce(0) { $0 + $1.images.count }
+                box.videoCount = chat.reduce(0) { $0 + $1.videos.count }
+                box.audioCount = chat.reduce(0) { $0 + $1.audios.count }
+                let toolsSpec = buildToolsSpec()
+                box.toolsBuiltAt = CFAbsoluteTimeGetCurrent()
+                box.toolCount = toolsSpec?.count ?? 0
+
+                // Reasoning template context. Only explicit request controls are
+                // translated into model-specific template kwargs; omitted controls
+                // leave the model template/default contract untouched.
+                let additionalContext = additionalContext(
+                    for: generation,
+                    modelName: modelName,
+                    toolChoice: toolChoice
+                )
+                box.contextBuiltAt = CFAbsoluteTimeGetCurrent()
+                box.contextKeys = additionalContext.keys.sorted()
+                box.contextSummary = Self.safeContextSummary(additionalContext)
+                let userInput = MLXLMCommon.UserInput(
+                    chat: chat,
+                    processing: .init(),
+                    tools: toolsSpec,
+                    additionalContext: additionalContext
+                )
+
+                trace?.mark("batch_tokenization_start")
+                do {
+                    let prepared = try await context.processor.prepare(input: userInput)
+                    lmInput = prepared.withToolSchemas(toolsSpec)
+                } catch {
+                    let detail =
+                        (error as? LocalizedError)?.errorDescription
+                        ?? String(describing: error)
+                    throw NSError(
+                        domain: "MLXBatchAdapter",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+                    )
+                }
+                box.processorDoneAt = CFAbsoluteTimeGetCurrent()
+                trace?.mark("batch_tokenization_done")
             }
-            box.processorDoneAt = CFAbsoluteTimeGetCurrent()
-            trace?.mark("batch_tokenization_done")
 
             let tokens = lmInput.text.tokens.asArray(Int.self)
             box.tokenArrayDoneAt = CFAbsoluteTimeGetCurrent()
