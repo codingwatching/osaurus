@@ -39,6 +39,28 @@ xcodebuild -workspace osaurus.xcworkspace \
   clean build
 
 # 2. Archive the App (which doesn't have the CLI embedded yet via Xcode)
+#
+# The data-protection keychain entitlement (`keychain-access-groups`) is a
+# profile-managed entitlement: `xcodebuild archive` refuses to sign it without a
+# provisioning profile, even under manual Developer ID signing. Osaurus ships
+# Developer ID without a profile, so we archive against a copy of the
+# entitlements with that single key stripped, then re-apply the full set (with
+# the resolved `$(AppIdentifierPrefix)`) during the manual re-sign below — there
+# `codesign` embeds the access group directly, no profile required.
+#
+# osaurus.entitlements stays the single source of truth: the stripped file is
+# generated from it here, and local Xcode dev keeps using the full file via
+# automatic signing (which provisions the access group automatically).
+echo "Generating profile-free archive entitlements..."
+mkdir -p build
+ARCHIVE_ENTITLEMENTS="${PWD}/build/osaurus.archive.entitlements"
+cp "App/osaurus/osaurus.entitlements" "$ARCHIVE_ENTITLEMENTS"
+/usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$ARCHIVE_ENTITLEMENTS" >/dev/null 2>&1 || true
+if /usr/libexec/PlistBuddy -c "Print :keychain-access-groups" "$ARCHIVE_ENTITLEMENTS" >/dev/null 2>&1; then
+  echo "Error: failed to strip keychain-access-groups from archive entitlements" >&2
+  exit 1
+fi
+
 echo "Archiving App (osaurus)..."
 xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus \
@@ -51,6 +73,7 @@ xcodebuild -workspace osaurus.xcworkspace \
   ONLY_ACTIVE_ARCH=NO \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${VERSION}" \
+  CODE_SIGN_ENTITLEMENTS="$ARCHIVE_ENTITLEMENTS" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_STYLE=Manual \
@@ -73,6 +96,13 @@ chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
 
 # Re-sign the modified app bundle inside the archive
 # (Use --deep to sign the nested CLI binary as well, but explicitly re-apply entitlements)
+#
+# NOTE: `xcodebuild -exportArchive` (below) re-signs the app for distribution
+# using the entitlements captured in the archive (the stripped set, without
+# keychain-access-groups). So this in-archive re-sign is NOT the authoritative
+# place for the data-protection keychain entitlement — it primarily signs the
+# freshly embedded CLI binary. The full, resolved entitlement set is re-applied
+# in a final top-level re-sign AFTER export (see "Restore full entitlements").
 #
 # IMPORTANT: codesign does NOT expand Xcode build variables. The source
 # entitlements use `$(AppIdentifierPrefix)` for the keychain-access-groups value,
@@ -115,3 +145,29 @@ xcodebuild -exportArchive \
   -archivePath build/osaurus.xcarchive \
   -exportPath build_output \
   -exportOptionsPlist ExportOptions.plist
+
+# Restore full entitlements (post-export)
+#
+# `xcodebuild -exportArchive` re-signs the app from the archive's captured
+# entitlements, which omit `keychain-access-groups` (stripped above so the
+# `archive` action wouldn't demand a provisioning profile). Re-apply the full
+# resolved entitlement set with a final TOP-LEVEL re-sign so the shipped binary
+# carries the data-protection keychain access group. `codesign` embeds the
+# team-prefixed group directly under Developer ID — no provisioning profile
+# required.
+#
+#  - No `--deep`: nested code (frameworks, embedded CLI) is already validly
+#    signed by export; only the outer bundle's entitlements/seal change here.
+#  - `--timestamp`: re-signing drops export's secure timestamp, which
+#    notarization requires; request a fresh one.
+EXPORTED_APP="build_output/Osaurus.app"
+if [[ ! -d "$EXPORTED_APP" ]]; then
+  echo "Error: exported app not found at $EXPORTED_APP" >&2
+  exit 1
+fi
+
+echo "Restoring full entitlements on exported app (post-export re-sign)..."
+codesign --force --timestamp --options runtime \
+  --entitlements "$RESOLVED_ENTITLEMENTS" \
+  --sign "${CODE_SIGN_IDENTITY_VALUE}" \
+  "$EXPORTED_APP"
