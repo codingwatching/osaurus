@@ -3,35 +3,6 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>0.19.3</title>
-            <pubDate>Fri, 29 May 2026 18:12:04 +0000</pubDate>
-            <sparkle:channel>release</sparkle:channel>
-            <sparkle:version>0.19.3</sparkle:version>
-            <sparkle:shortVersionString>0.19.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.3/Osaurus-0.19.3.dmg" length="50225392" type="application/octet-stream" sparkle:edSignature="kwdgYTFAhcGYuur0GP4yawuxQfNOdJd25HDKBZn6oFAhh/x9tMrCfaQFDNic69J2yteJ4ZHkjsrlnLKPG8JzBg=="/>
-            <description sparkle:format="markdown"><![CDATA[
-## What's Changed
-
-- [codex] Restore Swift format gate (#1286) by @mimeding
-
-## 🐛 Bug Fixes
-
-- detect already downloaded local models in onboarding (#1292) by @RaajeevChandran
-- fixed remote providers failing to authenticate after keychain migration (#1291) by @RaajeevChandran
-
-## 🧰 Maintenance
-
-- harden default agent configuration, added mcp (#1290) by @tpae
-- removed unused configurations (#1289) by @tpae
-- migrate legacy keychain to data protection keychain (#1288) by @tpae
-- set imported theme as current theme (#1287) by @RaajeevChandran
-
-**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.2...0.19.3
-]]></description>
-        </item>
-        <item>
             <title>0.19.2</title>
             <pubDate>Thu, 28 May 2026 16:12:35 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
