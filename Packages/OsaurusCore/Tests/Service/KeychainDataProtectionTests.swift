@@ -39,7 +39,8 @@ struct KeychainDataProtectionTests {
         let body = try Self.writeFunctionBody(in: source)
         // Strip line comments so prose that mentions the call (e.g. the comment
         // explaining why it must not happen) doesn't trip the check.
-        let code = body
+        let code =
+            body
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { line -> Substring in
                 guard let comment = line.range(of: "//") else { return line }
