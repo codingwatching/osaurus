@@ -56,7 +56,6 @@ xcodebuild -workspace osaurus.xcworkspace \
   ONLY_ACTIVE_ARCH=NO \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${VERSION}" \
-  CODE_SIGN_ENTITLEMENTS="App/osaurus/osaurus.entitlements" \
   CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
   DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
   CODE_SIGN_STYLE=Manual \
