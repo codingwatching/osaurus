@@ -3,6 +3,40 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.4</title>
+            <pubDate>Sat, 30 May 2026 13:15:18 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.4</sparkle:version>
+            <sparkle:shortVersionString>0.19.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.4/Osaurus-0.19.4.dmg" length="50318795" type="application/octet-stream" sparkle:edSignature="ec+9YauqSzprOnqOjQWip9aT7t1TEqa2rftmR+idVAvvGxZae6YN7JmeQomZkTvDYgAi6ze7s/p+YXay3yYBCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add post-1266 live family cache matrix harness (#1268) by @jjang-ai
+- [codex] Prove folder artifact tool exposure (#1295) by @mimeding
+- [codex] Restore keychain test formatting gate (#1293) by @mimeding
+- [codex] Add ChatGPT auth diagnostics (#1294) by @mimeding
+- [codex] Restore Swift format gate (#1286) by @mimeding
+
+## 🚀 Features
+
+- added ability for sandbox to read host workspace (#1298) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed missing stop button (#1301) by @tpae
+
+## 🧰 Maintenance
+
+- minor improvements (#1297) by @RaajeevChandran
+- crash fix: reverted breaking change, added failsafe check (#1296) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.2...0.19.3
+]]></description>
+        </item>
+        <item>
             <title>0.19.2</title>
             <pubDate>Thu, 28 May 2026 16:12:35 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
