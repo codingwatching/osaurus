@@ -79,8 +79,10 @@ public enum SystemPromptTemplates {
     public static let capabilityDiscoveryNudge = """
         ## Discovering more tools
 
-        Your current tool list is the relevant subset for this task. If you \
-        need a capability that is not listed, grow the list in two steps:
+        Your current tool list was pre-selected for this session from your \
+        request and the contents of your working directory. It is a starting \
+        set, not an exhaustive one. If you need a capability that is not \
+        listed, grow the list in two steps:
 
         1. `capabilities_search({"query": "<what you need>"})` — returns \
         IDs like `tool/sandbox_exec` or `skill/plot-data`.
@@ -133,17 +135,33 @@ public enum SystemPromptTemplates {
     /// renderer pure means PR2's bootstrap seed and PR3's advert can
     /// reuse `soulSection` without dragging in I/O.
     public static func soulSection(_ content: String) -> String {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = stripLeadingSoulHeading(content.trimmingCharacters(in: .whitespacesAndNewlines))
         guard !trimmed.isEmpty else { return "" }
         return """
             ## SOUL
 
             The agent has recorded the following stable preferences and patterns \
             across prior sessions. These are the agent's own notes; the user's \
-            instructions in earlier sections take precedence.
+            instructions in earlier sections take precedence. Any plugin or tool \
+            named in these notes is NOT automatically callable — bring it into \
+            your schema with `capabilities_search` / `capabilities_load` before \
+            invoking it.
 
             \(trimmed)
             """
+    }
+
+    /// The seeded `~/SOUL.md` (and many hand-edited ones) begin with their own
+    /// `# SOUL` title. Since `soulSection` already emits a `## SOUL` heading,
+    /// keeping the file's title would render the heading twice. Strip a single
+    /// leading markdown heading whose text is exactly "SOUL" (any `#` depth).
+    private static func stripLeadingSoulHeading(_ content: String) -> String {
+        var lines = content.components(separatedBy: "\n")
+        guard let first = lines.first, first.hasPrefix("#") else { return content }
+        let headingText = first.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+        guard headingText.caseInsensitiveCompare("SOUL") == .orderedSame else { return content }
+        lines.removeFirst()
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     // MARK: - Sandbox
@@ -183,7 +201,7 @@ public enum SystemPromptTemplates {
 
     private static let sandboxEnvironmentBlock = """
         You have an isolated Alpine Linux ARM64 sandbox. Your home directory \
-        is the workspace; files persist across messages.
+        (`~`) is your sandbox home; files persist across messages.
 
         Internet access is available. Use `curl`, `wget`, Python `requests`, \
         or Node `fetch` for live data; prefer fetched data over placeholders.
@@ -306,6 +324,101 @@ public enum SystemPromptTemplates {
     /// artifact card in the chat thread.
     static let folderArtifactReminder = """
         **Files land in the working folder, not in chat.** When you create or edit a file with `file_write` / `file_edit`, the user can see it on disk and in the operations log. If the user needs the deliverable to appear in the chat thread (an image, chart, generated text, report, code blob), additionally call `share_artifact` — it's the only thing that surfaces an artifact card.
+        """
+
+    // MARK: - Combined Sandbox + Host-Read
+
+    /// Read-only host-workspace framing for combined mode
+    /// (`ExecutionMode.sandbox(hostRead: ctx)`). Rendered AFTER the
+    /// sandbox section so the agent reads the sandbox framing first,
+    /// then learns the host workspace is a separate, read-only
+    /// filesystem. Unlike `folderContext` this marks the workspace
+    /// read-only, lists only the read tools, and appends the
+    /// two-filesystem block. Returns "" when no host-read folder is
+    /// attached so the composer can append unconditionally.
+    public static func combinedHostRead(
+        from folderContext: FolderContext?,
+        allowSecretReads: Bool = false
+    ) -> String {
+        guard let folder = folderContext else { return "" }
+
+        var lines: [String] = ["## Host Workspace (read-only)"]
+        lines.append("**Path:** \(folder.rootPath.path)")
+        if folder.projectType != .unknown {
+            lines.append("**Project Type:** \(folder.projectType.displayName)")
+        }
+        let topLevel = buildTopLevelSummary(from: folder.tree)
+        if !topLevel.isEmpty {
+            lines.append("**Root contents:** \(topLevel)")
+        }
+        var section = "\n" + lines.joined(separator: "\n") + "\n"
+
+        if let status = folder.gitStatus {
+            let trimmed = String(status.prefix(300))
+            if !trimmed.isEmpty {
+                section += "\n**Git status (uncommitted changes):**\n```\n\(trimmed)\n```\n"
+            }
+        }
+
+        section += """
+
+            \(combinedHostReadGuide(allowSecretReads: allowSecretReads))
+
+            \(twoFilesystemBlock)
+
+            """
+
+        // Same project-context file the folder section surfaces, loaded
+        // once at folder-mount time so it lives in the static prefix.
+        if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
+            section += """
+
+                ## Project Context
+
+                The following project context file has been loaded and should be followed:
+
+                \(contextFiles)
+
+                """
+        }
+
+        return section
+    }
+
+    /// Read-only dispatch table for the host workspace in combined mode.
+    /// Lists only the read tools and states the host is read-only — no
+    /// `file_write` / `file_edit` / `shell_run`, those are hidden in
+    /// this mode because exec is confined to the sandbox. The final
+    /// sentence reflects the per-agent secret-read setting so the agent
+    /// isn't told secrets are blocked when the user has opted in.
+    static func combinedHostReadGuide(allowSecretReads: Bool) -> String {
+        let secretLine =
+            allowSecretReads
+            ? "Secret files (`.env`, keys, credentials) are readable because the user enabled secret reads for this agent — handle them carefully and never write them into the sandbox or send them off-host."
+            : "Secret files (`.env`, keys, credentials) are refused even inside the workspace."
+        return """
+            This is your read-only host workspace. Tool paths are relative to it; absolute paths are rejected.
+            - Layout: `file_tree` to list the workspace structure.
+            - Search: `file_search` for content (case-insensitive substring match).
+            - Read: `file_read` to inspect a file (optional line range).
+            You cannot write, edit, or run commands against the host workspace — it is read-only. \(secretLine)
+            """
+    }
+
+    /// The load-bearing mental model for combined mode. Short and
+    /// concrete, leading with the failure weaker models hit: the sandbox
+    /// shell cannot see the host workspace because there is no shared
+    /// mount. Names the real exec tools (`sandbox_exec` /
+    /// `sandbox_execute_code`), never the host `shell_run` (hidden in
+    /// this mode).
+    static let twoFilesystemBlock = """
+        ## Two filesystems
+
+        You work with two separate filesystems that never share storage:
+        - The `file_*` tools above read your **read-only host workspace**.
+        - `sandbox_exec` and `sandbox_execute_code` run in a **separate Linux sandbox** that CANNOT see the host workspace. `sandbox_exec cat <a workspace file>` will fail — the sandbox has no copy of the workspace.
+
+        To use a workspace file inside the sandbox, `file_read` it on the host and carry the content across: inline it into your script, or `sandbox_write_file` it into the sandbox first. Nothing flows through a shared mount. Surface results to the user with `share_artifact` from the sandbox — the host workspace is read-only.
         """
 
     private static func buildTopLevelSummary(from tree: String) -> String {

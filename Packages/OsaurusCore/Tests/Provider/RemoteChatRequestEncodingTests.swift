@@ -68,6 +68,212 @@ struct RemoteChatRequestEncodingTests {
         #expect(payload["input"] as? String == "hi")
     }
 
+    /// A two-turn tool loop must re-send the captured reasoning item
+    /// (id + encrypted_content) immediately BEFORE the assistant's
+    /// function_call, so a reasoning model resumes its chain instead of
+    /// re-deriving it.
+    @Test func openResponsesRequest_reEmitsReasoningItemBeforeFunctionCall() throws {
+        let request = RemoteChatRequest(
+            model: "gpt-5.2",
+            messages: [
+                ChatMessage(role: "user", content: "what's the weather?"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_1",
+                            type: "function",
+                            function: ToolCallFunction(name: "get_weather", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil,
+                    reasoning_content: nil,
+                    reasoning_item_id: "rs_abc123",
+                    reasoning_encrypted: "ENCRYPTED_BLOB"
+                ),
+                ChatMessage(role: "tool", content: "sunny", tool_calls: nil, tool_call_id: "call_1"),
+            ],
+            temperature: nil,
+            max_completion_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            reasoning_effort: nil,
+            reasoning: nil,
+            thinking: nil,
+            modelOptions: [:],
+            veniceParameters: nil
+        )
+
+        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        guard case .items(let items) = responsesRequest.input else {
+            Issue.record("expected items input")
+            return
+        }
+
+        // Find the reasoning item and the function call; reasoning must precede it.
+        let reasoningIndex = items.firstIndex { item in
+            if case .reasoning = item { return true }
+            return false
+        }
+        let functionCallIndex = items.firstIndex { item in
+            if case .functionCall = item { return true }
+            return false
+        }
+        let reasoningIdx = try #require(reasoningIndex, "no reasoning input item emitted")
+        let funcIdx = try #require(functionCallIndex, "no function_call input item emitted")
+        #expect(reasoningIdx < funcIdx, "reasoning item must come before its function_call")
+
+        // Verify the emitted reasoning item carries id + encrypted_content.
+        if case .reasoning(let reasoning) = items[reasoningIdx] {
+            #expect(reasoning.id == "rs_abc123")
+            #expect(reasoning.encrypted_content == "ENCRYPTED_BLOB")
+            #expect(reasoning.type == "reasoning")
+        } else {
+            Issue.record("item at reasoning index was not a reasoning item")
+        }
+
+        // The encoded payload contains the reasoning item with its blob.
+        let payload = try Self.encodeAsDictionary(responsesRequest)
+        let inputArray = try #require(payload["input"] as? [[String: Any]])
+        let reasoningDict = inputArray.first { ($0["type"] as? String) == "reasoning" }
+        let reasoningObj = try #require(reasoningDict)
+        #expect(reasoningObj["id"] as? String == "rs_abc123")
+        #expect(reasoningObj["encrypted_content"] as? String == "ENCRYPTED_BLOB")
+    }
+
+    /// A plain-answer turn (no tool call) must also re-send the captured
+    /// reasoning item immediately BEFORE the assistant message, so a reasoning
+    /// model resumes its chain on follow-ups that didn't end in a tool call.
+    @Test func openResponsesRequest_reEmitsReasoningItemBeforeAssistantMessage() throws {
+        let request = RemoteChatRequest(
+            model: "gpt-5.2",
+            messages: [
+                ChatMessage(role: "user", content: "explain quicksort"),
+                ChatMessage(
+                    role: "assistant",
+                    content: "Quicksort partitions around a pivot...",
+                    tool_calls: nil,
+                    tool_call_id: nil,
+                    reasoning_content: nil,
+                    reasoning_item_id: "rs_text1",
+                    reasoning_encrypted: "TEXT_BLOB"
+                ),
+                ChatMessage(role: "user", content: "what's its worst case?"),
+            ],
+            temperature: nil,
+            max_completion_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            reasoning_effort: nil,
+            reasoning: nil,
+            thinking: nil,
+            modelOptions: [:],
+            veniceParameters: nil
+        )
+
+        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        guard case .items(let items) = responsesRequest.input else {
+            Issue.record("expected items input")
+            return
+        }
+
+        let reasoningIdx = try #require(
+            items.firstIndex { if case .reasoning = $0 { return true } else { return false } },
+            "no reasoning input item emitted"
+        )
+        let assistantMsgIdx = try #require(
+            items.firstIndex { item in
+                if case .message(let m) = item, m.role == "assistant" { return true }
+                return false
+            },
+            "no assistant message input item emitted"
+        )
+        #expect(reasoningIdx < assistantMsgIdx, "reasoning item must precede the assistant message")
+        if case .reasoning(let reasoning) = items[reasoningIdx] {
+            #expect(reasoning.id == "rs_text1")
+            #expect(reasoning.encrypted_content == "TEXT_BLOB")
+        } else {
+            Issue.record("item at reasoning index was not a reasoning item")
+        }
+    }
+
+    /// When no reasoning item was captured (non-reasoning provider), the
+    /// function_call history is emitted without a stray reasoning item.
+    @Test func openResponsesRequest_omitsReasoningItem_whenNoneCaptured() throws {
+        let request = RemoteChatRequest(
+            model: "gpt-5.2",
+            messages: [
+                ChatMessage(role: "user", content: "hi"),
+                ChatMessage(
+                    role: "assistant",
+                    content: nil,
+                    tool_calls: [
+                        ToolCall(
+                            id: "call_1",
+                            type: "function",
+                            function: ToolCallFunction(name: "noop", arguments: "{}")
+                        )
+                    ],
+                    tool_call_id: nil
+                ),
+                ChatMessage(role: "tool", content: "ok", tool_calls: nil, tool_call_id: "call_1"),
+            ],
+            temperature: nil,
+            max_completion_tokens: nil,
+            stream: false,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            tools: nil,
+            tool_choice: nil,
+            reasoning_effort: nil,
+            reasoning: nil,
+            thinking: nil,
+            modelOptions: [:],
+            veniceParameters: nil
+        )
+
+        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        guard case .items(let items) = responsesRequest.input else {
+            Issue.record("expected items input")
+            return
+        }
+        let hasReasoning = items.contains { item in
+            if case .reasoning = item { return true }
+            return false
+        }
+        #expect(!hasReasoning, "no reasoning item should be emitted when none was captured")
+    }
+
+    /// A reasoning request must ask for a human-readable summary
+    /// (`reasoning.summary == "auto"`). Without it the Responses API returns
+    /// only the opaque `encrypted_content` blob and the Think panel stays
+    /// empty — the user sees no reasoning.
+    @Test func openResponsesRequest_reasoningModelRequestsSummary() throws {
+        let request = Self.makeRequest(
+            model: "gpt-5.5",
+            maxTokens: 1024,
+            reasoningEffort: "high"
+        )
+        let responsesRequest = request.toOpenResponsesRequest(alwaysUseInputItems: true)
+        let payload = try Self.encodeAsDictionary(responsesRequest)
+        let reasoning = try #require(payload["reasoning"] as? [String: Any])
+        #expect(reasoning["effort"] as? String == "high")
+        #expect(reasoning["summary"] as? String == "auto")
+    }
+
     @Test func openResponsesRequest_forcedInputItems_usesList() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
         let responsesRequest = request.toCodexOpenResponsesRequest()

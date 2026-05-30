@@ -475,7 +475,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         let resolvedTools = await MainActor.run {
             SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
-                executionMode: .sandbox
+                executionMode: .sandbox(hostRead: nil)
             )
         }
         let tokenizerTools = ModelRuntime.makeTokenizerTools(

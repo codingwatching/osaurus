@@ -35,6 +35,9 @@ enum FolderToolError: LocalizedError {
         case decodeFailed
         /// `DocumentParser` returned an image-only PDF (no text layer).
         case imageOnlyPdf
+        /// The file is an image (`.png` / `.jpg` / ...); `file_read`
+        /// returns text only and cannot surface pixels.
+        case image
         /// `DocumentParser` threw `.readFailed` / `.unsupportedFormat` /
         /// `.fileTooLarge`.
         case parseFailed
@@ -44,6 +47,9 @@ enum FolderToolError: LocalizedError {
             case .imageOnlyPdf:
                 return
                     "The PDF has no extractable text layer (likely scanned images); use an OCR tool via shell_run."
+            case .image:
+                return
+                    "This is an image file; file_read returns text only. Attach the image to chat or use an OCR / vision tool to read it."
             case .parseFailed:
                 return
                     "The document couldn't be parsed — it may be encrypted, password-protected, or malformed."
@@ -103,6 +109,25 @@ enum FolderToolHelpers {
             resolvedURL.path == rootStandardized
             || resolvedURL.path.hasPrefix(rootStandardized + "/")
         guard isWithinRoot else {
+            throw FolderToolError.pathOutsideRoot(relativePath)
+        }
+
+        // Symlink-safe containment: the lexical check above only resolves
+        // `..` / `.`, so a symlink *inside* the root (e.g. `notes.txt ->
+        // ~/.ssh/id_rsa`) would pass it and then be followed out of scope
+        // on read. Resolve symlinks on both the target and the root and
+        // re-check. `resolvingSymlinksInPath()` resolves existing
+        // components (and macOS firmlinks like `/tmp` -> `/private/tmp`),
+        // leaving not-yet-created trailing components intact — so a new
+        // file under a real directory still passes, while a symlink whose
+        // real target escapes the root is rejected. Both sides are
+        // resolved so the firmlink rewrite can't cause a false mismatch.
+        let realRoot = rootPath.resolvingSymlinksInPath().standardized.path
+        let realResolved = resolvedURL.resolvingSymlinksInPath().standardized.path
+        let isWithinRealRoot =
+            realResolved == realRoot
+            || realResolved.hasPrefix(realRoot + "/")
+        guard isWithinRealRoot else {
             throw FolderToolError.pathOutsideRoot(relativePath)
         }
         return resolvedURL
@@ -196,6 +221,97 @@ enum FolderToolHelpers {
 
         return (output, process.terminationStatus)
     }
+
+    // MARK: - Combined-mode secret denylist
+
+    /// Extensions whose files are treated as secret material (private
+    /// keys, certs with keys, keystores). Lowercased, no leading dot.
+    private static let secretExtensions: Set<String> = [
+        "pem", "key", "p12", "pfx", "keystore", "jks",
+    ]
+
+    /// Exact basenames that are secret regardless of extension.
+    private static let secretBasenames: Set<String> = [
+        ".npmrc", ".netrc", "credentials", ".pypirc", ".dockercfg",
+    ]
+
+    /// Suffixes on a `.env` family file that are conventionally NON-secret
+    /// (templates / samples) and therefore allowed even under refusal.
+    private static let envAllowedSuffixes: [String] = [
+        ".example", ".sample", ".template", ".dist",
+    ]
+
+    /// True when the current execution is combined sandbox + host-read
+    /// mode (`ChatExecutionContext.hostReadOnlyScope` set) and secret
+    /// reads are not explicitly allowed for the session. Plain folder
+    /// mode (scope `nil`) is always `false`, so its behavior is unchanged.
+    private static var secretRefusalActive: Bool {
+        ChatExecutionContext.hostReadOnlyScope != nil
+            && !ChatExecutionContext.allowHostSecretReads
+    }
+
+    /// Whether `fileURL` points at a file that should be refused in
+    /// combined read-only mode. Checks the basename, extension, and the
+    /// path components so a key under `.ssh/` or `.aws/` is caught even
+    /// when its own name looks innocuous. Single source of truth shared
+    /// by `file_read`, `file_search`, and `file_tree`.
+    static func isSecretPath(fileURL: URL) -> Bool {
+        let lowerName = fileURL.lastPathComponent.lowercased()
+        let ext = fileURL.pathExtension.lowercased()
+
+        // `.git/config` and `.aws/`, `.ssh/`, `.gnupg/` directory contents
+        // routinely carry tokens / private keys.
+        let components = fileURL.pathComponents
+        let secretDirs: Set<String> = [".aws", ".ssh", ".gnupg"]
+        if !secretDirs.isDisjoint(with: Set(components.map { $0.lowercased() })) {
+            return true
+        }
+        if components.count >= 2 {
+            let tail = components.suffix(2).map { $0.lowercased() }
+            if tail == [".git", "config"] { return true }
+        }
+
+        if secretBasenames.contains(lowerName) { return true }
+
+        // SSH/GPG private keys: `id_rsa`, `id_ed25519`, etc. — but allow
+        // the matching `.pub` public keys.
+        if lowerName.hasPrefix("id_"), ext != "pub" { return true }
+
+        // `.env` family: refuse `.env` and `.env.<anything>` except
+        // template/sample suffixes.
+        if lowerName == ".env" { return true }
+        if lowerName.hasPrefix(".env.") {
+            return !envAllowedSuffixes.contains { lowerName.hasSuffix($0) }
+        }
+
+        // Public keys (`*.pub`) are safe; secret extensions otherwise.
+        if ext == "pub" { return false }
+        if secretExtensions.contains(ext) { return true }
+
+        return false
+    }
+
+    /// True when `fileURL` must be refused for the current execution
+    /// because the combined-mode secret denylist is active and the file
+    /// is classified secret. Convenience combiner used by the read tools.
+    static func shouldRefuseSecret(fileURL: URL) -> Bool {
+        secretRefusalActive && isSecretPath(fileURL: fileURL)
+    }
+
+    /// The shared `rejected` envelope returned when a read tool refuses a
+    /// secret file in combined mode. `tool` names the refusing tool so
+    /// the model-facing message is attributed correctly.
+    static func secretRefusalEnvelope(relativePath: String, tool: String) -> String {
+        ToolEnvelope.failure(
+            kind: .rejected,
+            message:
+                "Refused to read '\(relativePath)': secret files (.env, private keys, "
+                + "credentials) are blocked in read-only sandbox mode to prevent leaking "
+                + "secrets into the sandbox. This is not retryable.",
+            tool: tool,
+            retryable: false
+        )
+    }
 }
 
 // MARK: - Core Tools
@@ -205,9 +321,9 @@ enum FolderToolHelpers {
 struct FileTreeTool: OsaurusTool {
     let name = "file_tree"
     let description =
-        "List the directory structure of the working directory or a subdirectory. **Use this instead "
-        + "of `ls` / `tree` in `shell_run`.** Returns a tree view of files and folders. Skips hidden "
-        + "files and truncates at 300 files."
+        "List the directory structure of the working directory or a subdirectory. Use this (rather "
+        + "than a shell `ls` / `tree`) to inspect the working directory layout. Returns a tree view of "
+        + "files and folders. Skips hidden files and truncates at 300 files."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -254,14 +370,29 @@ struct FileTreeTool: OsaurusTool {
         return ToolEnvelope.success(tool: name, text: buildTree(targetURL, maxDepth: maxDepth))
     }
 
+    /// File-count ceiling — caps how many leaf files the tree enumerates.
+    private static let maxFiles = 300
+    /// Character ceiling for the rendered tree. A wide/deep layout (many
+    /// directories, which don't count toward `maxFiles`) can still bloat the
+    /// retained context across every later request, so cap the raw output too.
+    private static let maxOutputChars = 8000
+    /// Per-directory file ceiling. A flat media folder (hundreds of
+    /// screenshots) is collapsed past this so the listing — and the retained
+    /// context on every later turn — stays readable. Directories are never
+    /// collapsed; the full folder structure is always shown.
+    private static let maxFilesPerDir = 20
+
     private func buildTree(_ url: URL, maxDepth: Int) -> String {
         var result = "./\n"
         var fileCount = 0
-        let maxFiles = 300
+        var truncated = false
+        let maxFiles = Self.maxFiles
+        let maxChars = Self.maxOutputChars
+        let maxFilesPerDir = Self.maxFilesPerDir
         let ignorePatterns = FolderToolHelpers.detectProjectType(rootPath).ignorePatterns
 
         func traverse(_ currentURL: URL, depth: Int, prefix: String) {
-            guard depth <= maxDepth, fileCount < maxFiles else { return }
+            guard depth <= maxDepth else { return }
 
             let fm = FileManager.default
             guard
@@ -279,14 +410,24 @@ struct FileTreeTool: OsaurusTool {
                 return a.lastPathComponent.lowercased() < b.lastPathComponent.lowercased()
             }
 
+            // Directories sort first, so files form a contiguous tail; track
+            // how many files this directory has shown to collapse the rest.
+            var filesShownHere = 0
+            var filesCollapsedHere = 0
             for (index, item) in sorted.enumerated() {
-                guard fileCount < maxFiles else {
-                    result += "\(prefix)... (truncated)\n"
+                guard fileCount < maxFiles, result.count < maxChars else {
+                    truncated = true
                     return
                 }
 
                 let name = item.lastPathComponent
                 if FolderToolHelpers.shouldIgnore(name, patterns: ignorePatterns) { continue }
+
+                // Combined-mode secret denylist: don't even disclose the
+                // names of secret files in the tree. Inert in plain folder
+                // mode. Directories are never classified secret, so this
+                // only prunes individual files.
+                if FolderToolHelpers.shouldRefuseSecret(fileURL: item) { continue }
 
                 let isLast = index == sorted.count - 1
                 let connector = isLast ? "└── " : "├── "
@@ -299,13 +440,28 @@ struct FileTreeTool: OsaurusTool {
                         traverse(item, depth: depth + 1, prefix: prefix + childPrefix)
                     }
                 } else {
+                    if filesShownHere >= maxFilesPerDir {
+                        filesCollapsedHere += 1
+                        continue
+                    }
                     result += "\(prefix)\(connector)\(name)\n"
+                    filesShownHere += 1
                     fileCount += 1
                 }
+            }
+            // Collapsed files are the directory's trailing entries, so the
+            // summary is its last visual child (`└──`).
+            if filesCollapsedHere > 0 {
+                result += "\(prefix)└── ... +\(filesCollapsedHere) more files\n"
             }
         }
 
         traverse(url, depth: 1, prefix: "")
+        if truncated {
+            result +=
+                "... (truncated at \(maxFiles) files / \(maxChars) chars — "
+                + "narrow the view with `path` or a smaller `max_depth`)\n"
+        }
         return result
     }
 }
@@ -315,10 +471,11 @@ struct FileTreeTool: OsaurusTool {
 struct FileReadTool: OsaurusTool {
     let name = "file_read"
     let description =
-        "Read the contents of a text file or a bounded preview of an XLSX workbook. **Use this instead "
-        + "of `cat` / `head` / `tail` in `shell_run`.** Cannot read most binary files (PDFs, images, etc.). "
-        + "Optionally specify start_line and end_line for partial text reads; for workbooks they select "
-        + "worksheet row numbers. Line numbers are 1-indexed."
+        "Read the contents of a text or source file, a text-extractable document (PDF, Word, "
+        + "PowerPoint, RTF, HTML), or a bounded preview of an XLSX workbook in the working directory. "
+        + "Use this (rather than a shell `cat` / `head` / `tail`) to read files. Images and other "
+        + "non-text binaries are not supported. Optionally specify start_line and end_line for partial "
+        + "text reads; for workbooks they select worksheet row numbers. Line numbers are 1-indexed."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -363,14 +520,6 @@ struct FileReadTool: OsaurusTool {
     /// Consistent with truncation limits on shell_run (10k) and git_diff (20k).
     private static let maxOutputChars = 15_000
 
-    /// File extensions that `DocumentParser` (PDFKit + `NSAttributedString`)
-    /// already extracts plain text from. For these we route through the
-    /// parser instead of attempting a UTF-8 decode that would fail with
-    /// `NSCocoaError 264` ("isn't in the correct format").
-    private static let richDocumentExtensions: Set<String> = [
-        "pdf", "docx", "doc", "rtf", "rtfd", "html", "htm",
-    ]
-
     /// First-chunk byte budget for the NUL-byte binary sniff. Catches
     /// off-extension binaries whose UTF-8 decode happens to succeed by
     /// luck. Matches the size most editors / `file(1)` use for the same
@@ -392,6 +541,19 @@ struct FileReadTool: OsaurusTool {
         }
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+
+        // Combined sandbox + host-read mode: refuse secret files even
+        // though they live inside the scoped workspace. The read channel
+        // is the agent-as-bridge surface, so a poisoned README or a
+        // steered instruction shouldn't be able to pull `.env` / private
+        // keys / credentials into context and exfiltrate them via the
+        // sandbox. Plain folder mode is unaffected (the gate is inert
+        // when no read-only host scope is bound). Shared with
+        // `file_search` / `file_tree` so the denylist can't be bypassed
+        // by switching tools.
+        if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+            return FolderToolHelpers.secretRefusalEnvelope(relativePath: relativePath, tool: name)
+        }
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw FolderToolError.fileNotFound(relativePath)
@@ -462,18 +624,10 @@ struct FileReadTool: OsaurusTool {
         } else {
             text = output
         }
-        let contentEnd = max(validStart - 1, lastLineIncluded)
-        let rawContent: String
-        if contentEnd > validStart - 1 {
-            rawContent = lines[(validStart - 1) ..< contentEnd].joined(separator: "\n")
-        } else {
-            rawContent = ""
-        }
         return ToolEnvelope.success(
             tool: name,
             result: [
                 "text": text,
-                "content": rawContent,
                 "path": relativePath,
                 "start_line": validStart,
                 "end_line": lastLineIncluded,
@@ -484,18 +638,27 @@ struct FileReadTool: OsaurusTool {
     }
 
     /// Pull text out of the file at `url`, throwing `binaryContent` when
-    /// the file is not decodable as text. Two branches:
-    ///   - rich extensions go through `DocumentParser` (PDFKit /
-    ///     `NSAttributedString`);
-    ///   - other extensions read raw bytes, NUL-sniff the first 4KB,
-    ///     then UTF-8 decode. The byte-first ordering catches binaries
-    ///     whose UTF-8 prefix happens to be valid by coincidence.
+    /// the file is not text or text-extractable. Three branches:
+    ///   - images are refused outright (this tool returns text only);
+    ///   - text-extractable documents (PDF, Word, PowerPoint, RTF, HTML,
+    ///     …) go through `DocumentParser`, which routes through
+    ///     `DocumentFormatRegistry` and PDFKit / `NSAttributedString`;
+    ///   - plain text / source / CSV / unknown extensions read raw bytes,
+    ///     NUL-sniff the first 4KB, then UTF-8 decode. The raw path keeps
+    ///     line-numbering and `start_line`/`end_line` semantics, and the
+    ///     byte-first ordering catches binaries whose UTF-8 prefix happens
+    ///     to be valid by coincidence.
     private func loadFileContent(
         url: URL,
         relativePath: String,
         ext: String
     ) async throws -> String {
-        if Self.richDocumentExtensions.contains(ext) {
+        // Text-only tool: never try to surface image pixels.
+        if DocumentParser.isImageFile(url: url) {
+            throw binaryError(path: relativePath, ext: ext, detail: .image)
+        }
+
+        if Self.shouldExtractViaParser(url: url, ext: ext) {
             return try await extractRichDocumentText(
                 url: url,
                 relativePath: relativePath,
@@ -511,6 +674,20 @@ struct FileReadTool: OsaurusTool {
             return text
         }
         throw binaryError(path: relativePath, ext: ext, detail: .decodeFailed)
+    }
+
+    /// Whether `url` should be routed through `DocumentParser` for text
+    /// extraction rather than read as raw bytes. Plain-text / source /
+    /// CSV extensions stay on the raw path (so line ranges keep working);
+    /// every other format the document infrastructure can parse — PDF,
+    /// Word, PowerPoint, RTF, HTML, etc. — is extracted. Lazily registers
+    /// the built-in adapters (idempotent) so `canParse` sees formats like
+    /// PPTX even on entry points that didn't bootstrap at launch, mirroring
+    /// `workbookAdapter(for:)`.
+    private static func shouldExtractViaParser(url: URL, ext: String) -> Bool {
+        if DocumentParser.isPlainTextExtension(ext) { return false }
+        DocumentAdaptersBootstrap.registerBuiltIns()
+        return DocumentParser.canParse(url: url)
     }
 
     /// Run `DocumentParser.parse(url:)` on a detached task so the
@@ -1007,8 +1184,9 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
 struct FileSearchTool: OsaurusTool {
     let name = "file_search"
     let description =
-        "Search for text in files using case-insensitive substring matching. **Use this instead of "
-        + "`grep` / `rg` / `find` in `shell_run`.** Returns matching lines with file paths and line numbers."
+        "Search for text in files in the working directory using case-insensitive substring matching. "
+        + "Use this (rather than a shell `grep` / `rg` / `find`) to search file contents. Returns matching "
+        + "lines with file paths and line numbers."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1071,6 +1249,16 @@ struct FileSearchTool: OsaurusTool {
             throw FolderToolError.fileNotFound(searchPath)
         }
 
+        // Combined-mode secret denylist (shared with `file_read`). A
+        // single-file search targeting a secret (`path:".env"`) would
+        // otherwise leak its contents line-by-line and bypass both the
+        // `file_read` refusal and the directory hidden-file filter, so
+        // refuse it outright. Directory searches skip secret files
+        // per-entry below instead of failing the whole call.
+        if !isDirectory.boolValue, FolderToolHelpers.shouldRefuseSecret(fileURL: searchURL) {
+            return FolderToolHelpers.secretRefusalEnvelope(relativePath: searchPath, tool: name)
+        }
+
         if isDirectory.boolValue {
             // Search directory recursively
             let enumerator = FileManager.default.enumerator(
@@ -1087,6 +1275,14 @@ struct FileSearchTool: OsaurusTool {
                     let resourceValues = try? fileURL.resourceValues(forKeys: [.isRegularFileKey]),
                     resourceValues.isRegularFile == true
                 else { continue }
+
+                // Combined-mode secret denylist: never return contents of
+                // a non-hidden secret (`server.pem`, `id_rsa`, …). `.env`
+                // and other dotfiles are already excluded by
+                // `.skipsHiddenFiles`; this catches the rest.
+                if FolderToolHelpers.shouldRefuseSecret(fileURL: fileURL) {
+                    continue
+                }
 
                 // Check file pattern
                 if let pattern = filePattern {
@@ -1162,7 +1358,7 @@ struct ShellRunTool: OsaurusTool, PermissionedTool {
         "Run a shell command in the working directory. **Reserve this for builds, tests, "
         + "git, processes, network calls, and filesystem mutations (`mv`/`cp`/`rm`/`mkdir`).** "
         + "For file IO, search, edit, write, and directory listing, prefer the dedicated "
-        + "`file_*` tools — each one's description states the `shell_run` pattern it "
+        + "`file_*` tools — each one's description notes the shell pattern it "
         + "replaces. This action requires approval. Long-running commands stream their "
         + "output live to the chat — the user sees it as it happens and can press [Terminate] "
         + "at any time. Final stdout truncated to 10,000 characters. No built-in timeout: "

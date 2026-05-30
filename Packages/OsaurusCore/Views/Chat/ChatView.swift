@@ -1557,7 +1557,11 @@ final class ChatSession: ObservableObject {
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
         // the next send will most likely produce after `registerTools` runs.
-        if autonomous && resolved.usesSandboxTools == false { return .sandbox }
+        // Thread the folder through so the combined sandbox + host-read mode
+        // is estimated correctly when a folder is also mounted.
+        if autonomous && resolved.usesSandboxTools == false {
+            return .sandbox(hostRead: folder)
+        }
         return resolved
     }
 
@@ -1845,6 +1849,14 @@ final class ChatSession: ObservableObject {
                 if let toolName = StreamingToolHint.decode(delta) {
                     currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                     rebuildVisibleBlocks()
+                    continue
+                }
+                // Captured OpenAI Responses reasoning item (id + encrypted blob).
+                // Not visible text — stash it on the turn so the next request
+                // re-emits it before this turn's function_call(s).
+                if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                    currentTurn.reasoningItemId = reasoningItem.id
+                    currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
                     continue
                 }
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
@@ -2251,6 +2263,7 @@ final class ChatSession: ObservableObject {
                         cachedPreflight: cachedSession?.initialPreflight,
                         additionalToolNames: cachedSession?.loadedToolNames ?? [],
                         frozenAlwaysLoadedNames: cachedSession?.initialAlwaysLoadedNames,
+                        cachedSkillSuggestions: cachedSession?.frozenSkillSuggestions,
                         trace: ttftTrace
                     )
                     guard isRunActive(runId) else { return }
@@ -2302,7 +2315,8 @@ final class ChatSession: ObservableObject {
                             sessionStateKey(sid),
                             preflight: context.preflight,
                             alwaysLoadedNames: context.alwaysLoadedNames,
-                            fingerprint: liveFingerprint
+                            fingerprint: liveFingerprint,
+                            skillSuggestions: context.skillSuggestions
                         )
                     }
 
@@ -2344,7 +2358,9 @@ final class ChatSession: ObservableObject {
                                 content: content,
                                 tool_calls: t.toolCalls,
                                 tool_call_id: nil,
-                                reasoning_content: reasoning
+                                reasoning_content: reasoning,
+                                reasoning_item_id: t.reasoningItemId,
+                                reasoning_encrypted: t.reasoningEncrypted
                             )
                         case .tool:
                             return ChatMessage(
@@ -2622,6 +2638,10 @@ final class ChatSession: ObservableObject {
                                 ) {
                                     try await ChatExecutionContext.$currentAssistantTurnId.withValue(assistantTurn.id) {
                                         try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
+                                            // The combined-mode host-read scope +
+                                            // secret-read policy are bound centrally
+                                            // inside ToolRegistry.execute, so every
+                                            // entrypoint inherits them uniformly.
                                             try await ToolRegistry.shared.execute(
                                                 name: inv.toolName,
                                                 argumentsJSON: inv.jsonArguments
@@ -2720,6 +2740,13 @@ final class ChatSession: ObservableObject {
                                         } else {
                                             toolSpecs.append(tool)
                                         }
+                                    }
+                                    // Re-sort into canonical order so a tool loaded
+                                    // mid-turn lands in the same slot it will occupy
+                                    // on the next recompose — appended tools would
+                                    // otherwise sit at the tail and bust the KV cache.
+                                    if !newTools.isEmpty {
+                                        toolSpecs = SystemPromptComposer.canonicalToolOrder(toolSpecs)
                                     }
                                     // Persist names into the session's tool union
                                     // so they survive the next compose call

@@ -161,7 +161,10 @@ struct FolderToolsResilienceTests {
         #expect(text == "(empty file)", "got: \(text)")
     }
 
-    @Test func fileRead_successPayloadIncludesRawContentForModelReplay() async throws {
+    /// The success payload carries a single line-numbered `text` field — no
+    /// duplicate raw `content`. Sending both doubled the retained token cost
+    /// of every read under `store:false`; the model reads ranges from `text`.
+    @Test func fileRead_successPayloadIsSingleLineNumberedField() async throws {
         let root = tmpRoot()
         let path = root.appendingPathComponent("script.py")
         try "#!/usr/bin/env python3\nprint('ok')\n".write(
@@ -179,7 +182,8 @@ struct FolderToolsResilienceTests {
         #expect(result.contains(#"\/"#) == false)
         let payload = try #require(EnvelopeAssertions.successPayload(result))
         #expect(payload["path"] as? String == "script.py")
-        #expect(payload["content"] as? String == "#!/usr/bin/env python3")
+        // The duplicate raw-content field is gone.
+        #expect(payload["content"] == nil)
         #expect(payload["start_line"] as? Int == 1)
         #expect(payload["end_line"] as? Int == 1)
         #expect(payload["total_lines"] as? Int == 3)
@@ -255,6 +259,33 @@ struct FolderToolsResilienceTests {
         #expect(ToolEnvelope.isSuccess(result))
         let after = try String(contentsOf: path, encoding: .utf8)
         #expect(after == "hello ")
+    }
+
+    // MARK: - file_tree
+
+    /// A wide directory (many sibling files) must not dump the whole listing
+    /// into the retained context: files past the per-directory cap collapse
+    /// into a `... +N more files` summary so the payload stays lean.
+    @Test func fileTree_collapsesWideDirectory() async throws {
+        let root = tmpRoot()
+        for i in 0 ..< 600 {
+            let name = "file_with_a_reasonably_long_name_\(i).txt"
+            FileManager.default.createFile(
+                atPath: root.appendingPathComponent(name).path,
+                contents: Data("x".utf8)
+            )
+        }
+        let tool = FileTreeTool(rootPath: root)
+        let result = try await tool.execute(argumentsJSON: "{}")
+        let text = EnvelopeAssertions.successText(result) ?? result
+        #expect(text.contains("more files"))
+        // Collapsing keeps the payload tiny vs. the ~600-line raw listing.
+        #expect(text.count < 4000)
+        // Only the per-directory cap worth of files is listed individually.
+        let listedFiles = text.components(separatedBy: "\n").filter {
+            $0.contains("file_with_a_reasonably_long_name_")
+        }
+        #expect(listedFiles.count == 20)
     }
 
     // MARK: - file_search
