@@ -317,7 +317,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - `Managers/Documents/DocumentAdaptersBootstrap.swift` — registers built-in document adapters.
 - `Models/Documents/Workbook.swift` — typed workbook, sheet, row, and cell representation.
 - `Models/Documents/PDFDocumentRepresentation.swift` — typed PDF pages and heuristic table detections with source anchors.
-- `Models/Documents/PresentationDocument.swift` — typed deck, slide, note, and relationship representation.
+- `Models/Documents/PresentationDocument.swift` — typed deck, slide, note, table, and relationship representation.
 - `Models/Documents/RichDocumentRepresentation.swift` — sections, headings, links, and metadata for rich text sources.
 - `Services/Documents/CSVAdapter.swift` — CSV and TSV table parsing with bounded input handling.
 - `Services/Documents/XLSXAdapter.swift` — XLSX workbook parsing from Office Open XML packages.
@@ -331,7 +331,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 
 - CSV and TSV tables preserve headers, rows, delimiters, and source metadata.
 - XLSX workbooks preserve sheets, cells, shared strings, relationships, and can emit a minimal valid `.xlsx` package.
-- PPTX/POTX decks preserve slide grouping, text runs, notes, and relationships.
+- PPTX/POTX decks preserve slide grouping, text runs, notes, slide tables, and relationships.
 - PDFs preserve page boundaries, anchors, and simple text-layer tables so citations can point back to pages and detected table cells.
 - Rich documents preserve section boundaries, headings, links, and metadata.
 
