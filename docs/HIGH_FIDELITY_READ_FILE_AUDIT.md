@@ -27,7 +27,7 @@ weight because core `file_read` already owns their read path.
 | Format | Current surface | Proof |
 | --- | --- | --- |
 | CSV/TSV | Raw line-numbered `file_read`; structured adapter remains available for document parsing | `FileReadDocumentFormatsTests.fileReadCSVStaysRawLineNumbered`, `CSVAdapterTests` |
-| XLSX | Bounded workbook preview through `file_read`, with sheet, row, row-cap, and column-cap controls | `FileReadWorkbookTests`, `XLSXAdapterTests` |
+| XLSX | Bounded workbook preview through `file_read`, with sheet, row, row-cap, column-cap, formula, merged-range, and security summary controls | `FileReadWorkbookTests`, `XLSXAdapterTests` |
 | PPTX | Text extraction through `file_read` and the in-tree PPTX adapter | `FileReadDocumentFormatsTests.fileReadExtractsPPTXSlideText`, `PPTXAdapterTests` |
 | PDF | Text-layer extraction through `file_read` and the in-tree PDF adapter | `FileReadDocumentFormatsTests.fileReadExtractsPDFTextLayerPages`, `PDFAdapterTests` |
 | Images / scanned PDF | Refused by `file_read` with a pivot to attachment, OCR, or vision workflow | `FileReadDocumentFormatsTests.fileReadRefusesImagesWithImagePivot`, `PDFAdapterTests.parse_throwsEmptyContentForPDFWithNoTextLayer` |
