@@ -635,6 +635,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries()
+            let diagnostics = await MLXBatchAdapter.snapshotDiagnostics()
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
                 "prefix_misses": 0,
@@ -787,11 +788,41 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
+            let batchDiagnostics: Any
+            if let snapshot = diagnostics {
+                var row: [String: Any] = [
+                    "pending_count": snapshot.pendingCount,
+                    "active_count": snapshot.activeCount,
+                    "active_high_watermark": snapshot.activeHighWatermark,
+                    "decode_split_count": snapshot.decodeSplitCount,
+                    "turbo_quant_compressions": snapshot.turboQuantCompressions,
+                    "is_accepting_requests": snapshot.isAcceptingRequests,
+                    "loaded_model_count": snapshot.loadedModelCount,
+                    "native_mtp_model_count": snapshot.nativeMTPModelCount,
+                    "cache_enabled_model_count": snapshot.cacheEnabledModelCount,
+                    "hybrid_model_count": snapshot.hybridModelCount,
+                    "paged_incompatible_model_count": snapshot.pagedIncompatibleModelCount,
+                    "prefix_hits": snapshot.prefixHits,
+                    "prefix_misses": snapshot.prefixMisses,
+                    "disk_l2_hits": snapshot.diskL2Hits,
+                    "disk_l2_misses": snapshot.diskL2Misses,
+                    "disk_l2_stores": snapshot.diskL2Stores,
+                    "ssm_companion_hits": snapshot.ssmCompanionHits,
+                    "ssm_companion_misses": snapshot.ssmCompanionMisses,
+                    "ssm_companion_rederives": snapshot.ssmCompanionReDerives,
+                ]
+                row["native_mtp_depth_summary"] = snapshot.nativeMTPDepthSummary ?? NSNull()
+                batchDiagnostics = row
+            } else {
+                batchDiagnostics = NSNull()
+            }
+
             let obj: [String: Any] = [
                 "status": "ok",
                 "timestamp": Date().ISO8601Format(),
                 "models": models,
                 "aggregate": aggregate,
+                "batch_diagnostics": batchDiagnostics,
             ]
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"

@@ -1399,11 +1399,11 @@ extension ModelManager {
     internal nonisolated static func scanLocalModels(at root: URL) -> [MLXModel] {
         let fm = FileManager.default
         guard
-            let topEntries = try? fm.contentsOfDirectory(
+            (try? fm.contentsOfDirectory(
                 at: root,
                 includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
-            )
+            )) != nil
         else {
             return []
         }
@@ -1424,7 +1424,12 @@ extension ModelManager {
             return resolved
         }
 
-        /// True if `dir` contains config.json + a recognised tokenizer + at least one safetensors file.
+        /// True if `dir` contains config.json + a recognised tokenizer + model weights.
+        ///
+        /// Keep this probe bounded. Some local model roots point through
+        /// symlinks to large external-drive bundles; a full directory listing
+        /// can block the `/models` API path even though Hugging Face-style
+        /// bundles expose stable weight sentinels.
         func isModelBundle(_ dir: URL) -> Bool {
             guard exists(dir, "config.json") else { return false }
             let hasTokenizerJSON = exists(dir, "tokenizer.json")
@@ -1434,10 +1439,19 @@ extension ModelManager {
             let hasSentencePiece =
                 exists(dir, "tokenizer.model") || exists(dir, "spiece.model")
             guard hasTokenizerJSON || hasBPE || hasSentencePiece else { return false }
-            guard
-                let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-            else { return false }
-            return items.contains(where: { $0.pathExtension == "safetensors" })
+
+            if exists(dir, "model.safetensors") || exists(dir, "model.safetensors.index.json") {
+                return true
+            }
+
+            // Common sharded names used by HF exports. Checking a bounded
+            // prefix avoids scanning every entry in large model directories.
+            for total in 1 ... 256 {
+                if exists(dir, "model-00001-of-\(String(format: "%05d", total)).safetensors") {
+                    return true
+                }
+            }
+            return false
         }
 
         // Three layouts are supported and may coexist under the same root:
