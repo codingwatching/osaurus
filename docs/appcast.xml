@@ -3,6 +3,25 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.6</title>
+            <pubDate>Mon, 01 Jun 2026 06:46:08 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.6</sparkle:version>
+            <sparkle:shortVersionString>0.19.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.6/Osaurus-0.19.6.dmg" length="50442649" type="application/octet-stream" sparkle:edSignature="YEJdBjnykQVnmf36/jqRvMkvyEcvdBpkJ003pc1XWBCL5UTk8u0nIvZRgDknRqJfNrF2QPIQZFjLwIXEgOoiDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- added MiniMax provider (#1316) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.5...0.19.6
+]]></description>
+        </item>
+        <item>
             <title>0.19.5</title>
             <pubDate>Mon, 01 Jun 2026 02:11:38 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
