@@ -1524,6 +1524,7 @@
 
     },
     "Affects pause detection, wake word detection, and voice activity thresholds" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2314,6 +2315,12 @@
         }
       }
     },
+    "Applies to all voice modes: pause detection, wake word, and voice activity" : {
+
+    },
+    "Applies to both chat voice input and Transcription Mode" : {
+
+    },
     "Apply Theme" : {
       "localizations" : {
         "de" : {
@@ -2691,10 +2698,8 @@
     "Auto-discover relevant capabilities" : {
 
     },
-    "Auto-send disabled. You must manually send voice messages." : {
-
-    },
     "Auto-send is disabled in manual stop mode." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2711,6 +2716,7 @@
       }
     },
     "Auto-send or close voice input after this duration of silence" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -2782,6 +2788,15 @@
           }
         }
       }
+    },
+    "Auto-stop disabled. You must stop transcription manually." : {
+
+    },
+    "Auto-stop is disabled in manual stop mode." : {
+
+    },
+    "Auto-stop or close voice input after this duration of silence" : {
+
     },
     "Automate recurring AI tasks with custom schedules" : {
       "localizations" : {
@@ -4701,6 +4716,7 @@
       }
     },
     "Configure how voice messages are handled" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -11900,6 +11916,7 @@
       }
     },
     "Live Test" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -12786,9 +12803,6 @@
           }
         }
       }
-    },
-    "Message will prepare to send after %@ seconds of silence" : {
-
     },
     "Method" : {
       "localizations" : {
@@ -17787,6 +17801,7 @@
 
     },
     "RECORDING" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -21470,6 +21485,7 @@
       }
     },
     "Speak and see your words here..." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -21893,6 +21909,9 @@
           }
         }
       }
+    },
+    "Stops after %@ seconds of silence" : {
+
     },
     "Stops anyone from pretending to be you." : {
 
@@ -22522,6 +22541,7 @@
       }
     },
     "Test your audio settings with live voice transcription" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -22833,6 +22853,7 @@
 
     },
     "These settings apply to all voice modes: Voice Input, Transcription, and VAD Mode." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -23226,7 +23247,11 @@
         }
       }
     },
+    "Time to cancel before a chat message is automatically sent" : {
+
+    },
     "Time to cancel before message is automatically sent" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -23585,6 +23610,9 @@
           }
         }
       }
+    },
+    "Transcription Behavior" : {
+
     },
     "Transcription Mode" : {
       "localizations" : {
@@ -24840,6 +24868,7 @@
       }
     },
     "Voice Input" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -24888,6 +24917,7 @@
       }
     },
     "Voice Transcription" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
