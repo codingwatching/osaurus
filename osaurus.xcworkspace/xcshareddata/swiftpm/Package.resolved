@@ -1,5 +1,5 @@
 {
-  "originHash" : "ac68134596abba5a6e529bd492b568c57a1c0ba034e3fb2c930a90867fcb4c15",
+  "originHash" : "8ed5eda8cd4efdfbeb03eb738e6ef81dbc0e1ad329863a55a2bbc04c3cf62d92",
   "pins" : [
     {
       "identity" : "aachartkit-swift",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "b51e53c3b04372c1ed1906b0ec3ba45733953ef4",
         "version" : "9.5.0"
+      }
+    },
+    {
+      "identity" : "aptabase-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/aptabase/aptabase-swift.git",
+      "state" : {
+        "revision" : "cfd67fac2a228d448d9d2ac92ffc71589cc3ef00",
+        "version" : "0.3.11"
       }
     },
     {
@@ -98,6 +107,15 @@
       "state" : {
         "revision" : "0aeefadec459ce8e11a333769950fb86183aca43",
         "version" : "2.3.5"
+      }
+    },
+    {
+      "identity" : "sentry-cocoa",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/getsentry/sentry-cocoa.git",
+      "state" : {
+        "revision" : "cef29e94feb00b1b712514443d6d70b09ef20355",
+        "version" : "9.15.0"
       }
     },
     {

@@ -16,6 +16,16 @@ struct ConfigurationView: View {
     @State private var successMessage: String?
     @State private var isResetting = false
 
+    /// Usage-analytics consent. Mirrors `TelemetryService.shared.isEnabled`
+    /// (opt-in: true only once the user has granted it). Applied immediately on
+    /// change rather than via "Save Changes", like the notification toggles,
+    /// since it's a privacy switch.
+    @State private var tempTelemetryEnabled: Bool = false
+
+    /// Crash-reporting consent. Mirrors `CrashReportingService.shared.isEnabled`
+    /// (opt-out: defaults on). Applied immediately on change, as above.
+    @State private var tempCrashReportingEnabled: Bool = true
+
     // Chat settings state
     @State private var tempChatHotkey: Hotkey? = nil
     @State private var tempSystemPrompt: String = ""
@@ -221,6 +231,47 @@ struct ConfigurationView: View {
                                             }
                                             .buttonStyle(SettingsButtonStyle(isDestructive: true))
                                         }
+                                    }
+                                }
+                            }
+                        }
+
+                        // MARK: - Privacy Section
+                        if matchesSearch(
+                            "Privacy",
+                            "Telemetry",
+                            "Analytics",
+                            "Usage Data",
+                            "Tracking",
+                            "Diagnostics"
+                        ) {
+                            SettingsSection(title: "Privacy", icon: "hand.raised") {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    Text(
+                                        "Control what anonymous data Osaurus collects.",
+                                        bundle: .module
+                                    )
+                                    .font(.system(size: 12))
+                                    .foregroundColor(theme.secondaryText)
+
+                                    SettingsToggle(
+                                        title: L("Share Anonymous Usage Data"),
+                                        description:
+                                            "Send anonymous, aggregated usage analytics to help improve Osaurus. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                                        isOn: $tempTelemetryEnabled
+                                    )
+                                    .onChange(of: tempTelemetryEnabled) { _, newValue in
+                                        TelemetryService.shared.setEnabled(newValue)
+                                    }
+
+                                    SettingsToggle(
+                                        title: L("Send Crash Reports"),
+                                        description:
+                                            "Send anonymous crash and freeze reports so we can fix what breaks. Never includes your chats, prompts, files, or keys. Turn off any time.",
+                                        isOn: $tempCrashReportingEnabled
+                                    )
+                                    .onChange(of: tempCrashReportingEnabled) { _, newValue in
+                                        CrashReportingService.shared.setEnabled(newValue)
                                     }
                                 }
                             }
@@ -604,6 +655,8 @@ struct ConfigurationView: View {
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
             loadConfiguration()
+            tempTelemetryEnabled = TelemetryService.shared.isEnabled
+            tempCrashReportingEnabled = CrashReportingService.shared.isEnabled
             withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
                 hasAppeared = true
             }

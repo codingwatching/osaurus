@@ -172,6 +172,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // register call in `ConfigurationDomainBootstrap`.
         ConfigurationDomainBootstrap.registerBuiltIns()
 
+        // Bring up analytics early so the launch + onboarding funnel is
+        // captured. No-ops silently when no Aptabase key is configured.
+        TelemetryService.shared.configure()
+
+        // Install the crash + app-hang handler as early as possible so it
+        // covers the rest of launch. Crash reporting is opt-out (on unless the
+        // user turned it off, independent of analytics); no-ops only when
+        // disabled or when no Sentry DSN is configured.
+        CrashReportingService.shared.startIfConsented()
+
         // Detect repeated startup crashes and enter safe mode if needed
         LaunchGuard.checkOnLaunch()
 
@@ -479,6 +489,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 NotchWindowController.shared.setup()
             }
 
+            // Existing users who upgraded from a build without the onboarding
+            // consent step never made a telemetry choice, so nothing is sent
+            // for them. Ask once now (the toast overlay host is up) rather than
+            // silently deciding for them. New users / re-onboarders made the
+            // choice in onboarding, so this is gated to the no-onboarding path.
+            if !keychainDisabledTestMode && !presentOnboarding {
+                maybePromptForTelemetryConsent()
+            }
+
             // tear down the Tahoe placeholder observers
             if #available(macOS 26.0, *) {
                 for name in Self.swiftUISettingsPlaceholderNotifications {
@@ -516,6 +535,121 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         else { return }
         Task.detached(priority: .utility) { [agent, model = last.model] in
             await GenerativeGreetingPool.shared.warmUp(for: agent, model: model)
+        }
+    }
+
+    /// One-time telemetry consent prompt for users upgrading from a build that
+    /// predates the onboarding consent step. Their decision is `undecided`, so
+    /// nothing is sent yet; this asks explicitly rather than ever defaulting
+    /// them on. No-ops on keyless builds and once any choice is recorded
+    /// (`needsConsentDecision`), so it shows at most once and never to users
+    /// who already chose.
+    ///
+    /// Hosted in the user's landing app window (chat overlay, else management)
+    /// so it behaves like an app modal and recedes when Osaurus is deactivated,
+    /// falling back to the screen-level toast overlay only if no app window is
+    /// up. Any dismissal (the "Not Now" button or a tap outside) records a
+    /// decline: we treat "didn't say yes" as off.
+    @MainActor
+    private func maybePromptForTelemetryConsent() {
+        let telemetry = TelemetryService.shared
+        guard telemetry.needsConsentDecision else { return }
+
+        Task { @MainActor in
+            // Let the initial window settle so the alert has somewhere to
+            // render and isn't lost in the launch churn.
+            try? await Task.sleep(nanoseconds: 900_000_000)  // 900ms
+            guard telemetry.needsConsentDecision else { return }
+
+            // Host the prompt inside whatever app window the user landed on
+            // (chat overlay, else management) so it behaves like an app modal —
+            // recedes when Osaurus is deactivated — rather than the toast
+            // overlay panel, which sits at status-bar level across all spaces
+            // and would hover above other apps. The toast scope is only a
+            // last-resort fallback if no app window is up.
+            let scope: ThemedAlertScope
+            if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+                ChatWindowManager.shared.windowExists(id: chatId)
+            {
+                scope = .chat(chatId)
+            } else if WindowManager.shared.isVisible(.management) {
+                scope = .management
+            } else {
+                scope = .toastOverlay
+            }
+            let requestId = UUID()
+            ThemedAlertCenter.shared.present(
+                ThemedAlertRequest(
+                    id: requestId,
+                    title: "Help improve Osaurus",
+                    message: L(
+                        "Osaurus can send anonymous usage data to help us understand how it's used and improve it."
+                    ),
+                    accessory: AnyView(TelemetryConsentDetails()),
+                    buttons: [
+                        .cancel(L("Not Now")) {
+                            telemetry.setEnabled(false)
+                        },
+                        .primary(L("Share Anonymous Data")) {
+                            telemetry.setEnabled(true)
+                        },
+                    ],
+                    width: 420,
+                    onDismiss: {
+                        ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                    }
+                ),
+                scope: scope
+            )
+        }
+    }
+
+    /// The body of the consent prompt below its one-line summary: the privacy
+    /// guarantees as a scannable icon list (one per line) followed by a quiet
+    /// caption pointing to where the choice can be changed. Lifting these out
+    /// of a dense paragraph keeps each promise legible at a glance.
+    private struct TelemetryConsentDetails: View {
+        @Environment(\.theme) private var theme
+
+        private struct Point: Identifiable {
+            let id = UUID()
+            let icon: String
+            let text: LocalizedStringKey
+        }
+
+        private let points: [Point] = [
+            Point(icon: "lock.shield", text: "No chats, prompts, files, or keys"),
+            Point(icon: "person.crop.circle.badge.xmark", text: "No accounts or device profiles"),
+            Point(icon: "eye.slash", text: "Nothing is tied to you"),
+        ]
+
+        var body: some View {
+            VStack(spacing: 20) {
+                // Leading-aligned + fixed-width icons so the symbols form a
+                // tidy column; `fixedSize` shrinks the block to its widest row
+                // so the outer frame can center it as a unit.
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(points) { point in
+                        HStack(spacing: 12) {
+                            Image(systemName: point.icon)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                                .frame(width: 22)
+                            Text(point.text, bundle: .module)
+                                .font(.system(size: 12.5))
+                                .foregroundColor(theme.secondaryText)
+                        }
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+
+                Text("You can change this anytime in Settings → Privacy.", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 6)
         }
     }
 
