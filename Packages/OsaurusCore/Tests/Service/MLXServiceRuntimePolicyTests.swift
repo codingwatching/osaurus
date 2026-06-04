@@ -51,10 +51,13 @@ struct MLXServiceRuntimePolicyTests {
             ]
         )
 
+        // Dense text Gemma-4 (no `-it`): the `-it` instruct bundles are the
+        // Gemma-4 VLMs and map to image-only, while the dense LLM distillations
+        // such as `Gemma-4-31B-JANG_4M` are text-only and must reject images.
         #expect(throws: MLXService.RuntimePolicyError.self) {
             try MLXService.validateRuntimePolicy(
-                modelName: "gemma-4-31b-it-jang_4m",
-                modelId: "OsaurusAI/Gemma-4-31B-it-JANG_4M",
+                modelName: "gemma-4-31b-jang_4m",
+                modelId: "OsaurusAI/Gemma-4-31B-JANG_4M",
                 messages: [message],
                 parameters: GenerationParameters(temperature: nil, maxTokens: 16),
                 tools: [],
