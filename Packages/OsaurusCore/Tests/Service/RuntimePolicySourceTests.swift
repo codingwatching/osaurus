@@ -476,7 +476,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "24d5ac5251c24006cf209942441cf9ce9e25642e"
+        let expectedRuntimeHardenedRevision = "454f16efe6b867bc33cb74d6d5cb554227949445"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -784,8 +784,9 @@ struct RuntimePolicySourceTests {
             runtime.contains("ModelFamilyNames.isDSV4Family(modelName)")
                 && runtime.contains("ModelFamilyNames.isZayaFamily(modelName)")
                 && runtime.contains("ModelFamilyNames.isZayaVLFamily(modelName)")
+                && runtime.contains("ModelFamilyNames.isGemmaFamily(modelName)")
                 && runtime.contains("Self.isKnownHybridModel(name: modelName)"),
-            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, and hybrid topologies until exact rows prove it"
+            "Engine-selected TurboQuant must stay off by default for DSV4, ZAYA/ZAYA-VL, Gemma, and hybrid topologies until exact rows prove it"
         )
         #expect(
             runtime.contains("ModelFamilyNames.isStepFamily(modelName)")
