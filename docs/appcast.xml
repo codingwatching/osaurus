@@ -3,6 +3,39 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.10</title>
+            <pubDate>Fri, 05 Jun 2026 10:41:14 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.10</sparkle:version>
+            <sparkle:shortVersionString>0.19.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.10/Osaurus-0.19.10.dmg" length="51571282" type="application/octet-stream" sparkle:edSignature="VHy5OMEkCzjW9zs36M9jgvBQVLNnxXmz7sLQWiXBVXQzpN/baxFx9b8eLCX9H72Zcm7ezEhbQ0aw1Y4E4gnyCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- updated chinese translations (#1354) by @ftzahao
+- save chart as image (#1352) by @RaajeevChandran
+- added insights button to assistant responses (#1350) by @RaajeevChandran
+- Pin vMLX ZAYA CCA cache runtime (#1351) by @jjang-ai
+- Pin vMLX MiniMax parser runtime (#1349) by @jjang-ai
+- Pin Nemotron Ultra vMLX runtime contract (#1348) by @jjang-ai
+- Pin Gemma4 boolean schema vMLX runtime (#1347) by @jjang-ai
+- Pin Nemotron Ultra vMLX runtime (#1345) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- fixed crash with ModelDetailView (#1346) by @tpae
+
+## 🧰 Maintenance
+
+- fixed app hangs across permissions, model browsing, audio and chat launch (#1353) by @RaajeevChandran
+- updated feature flag logic and moved more features behind feature flags (#1344) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.9...0.19.10
+]]></description>
+        </item>
+        <item>
             <title>0.19.9</title>
             <pubDate>Fri, 05 Jun 2026 00:10:43 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
