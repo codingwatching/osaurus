@@ -3138,7 +3138,7 @@ final class ChatSession: ObservableObject {
                     assistantTurn.content = pfError.localizedDescription
                     lastStreamError = pfError.localizedDescription
                 } catch {
-                    assistantTurn.content = "Error: \(error.localizedDescription)"
+                    assistantTurn.content = ChatErrorMessages.assistantMessage(for: error)
                     lastStreamError = error.localizedDescription
                 }
             }  // ChatExecutionContext.$currentAgentId.withValue
