@@ -3,6 +3,39 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.9</title>
+            <pubDate>Fri, 05 Jun 2026 00:10:43 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.9</sparkle:version>
+            <sparkle:shortVersionString>0.19.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.9/Osaurus-0.19.9.dmg" length="51486509" type="application/octet-stream" sparkle:edSignature="XSnILg+X5GbA6p+id+MqcjagF6LDr2IZxlq9mwXENKp4w9+kZYXgdbFB+Xn/dat8xmNDZDMEyaMo2fATMKW2Bw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix Gemma4 reasoning, VL recognition, and tool schema rendering (#1342) by @jjang-ai
+- Pin Gemma4 nullable tool schema runtime (#1341) by @jjang-ai
+- Pin Gemma4 tool parser vMLX runtime (#1338) by @jjang-ai
+- Fix Gemma4 runtime CI guards (#1333) by @jjang-ai
+- [codex] Reject workbook targets in file\_write (#1332) by @mimeding
+- Fix Gemma4 chat image attachment routing (#1331) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- fixed minor issue with chat template (#1343) by @tpae
+- fixed main thread freeze (#1337) by @RaajeevChandran
+- added guards to prevent sentry from flagging false hangings (#1334) by @tpae
+
+## 🧰 Maintenance
+
+- remove unused sandbox features (#1340) by @tpae
+- remove old migrations and deprecated code (#1339) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.8...0.19.9
+]]></description>
+        </item>
+        <item>
             <title>0.19.8</title>
             <pubDate>Thu, 04 Jun 2026 00:55:53 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
