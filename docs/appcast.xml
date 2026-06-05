@@ -3,6 +3,33 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.11</title>
+            <pubDate>Fri, 05 Jun 2026 21:47:52 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.11</sparkle:version>
+            <sparkle:shortVersionString>0.19.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.11/Osaurus-0.19.11.dmg" length="51621054" type="application/octet-stream" sparkle:edSignature="yrujLdGL7EYA2FHrIJEv2iaxEfrhpcgQj05SxW+OfsDiWxfH30Y57OwHjoj6Fm6TzODIzHpNglR5Gntj5vL0Bg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix plugin tool-loop default iterations (#1361) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- disable generative greetings globally and moved to per agent configuration (#1362) by @tpae
+
+## 🧰 Maintenance
+
+- expanded telemetry scope and added telemetry doc (#1360) by @tpae
+- fixed fatal crashes \& freezes (#1359) by @RaajeevChandran
+- updated models details view, discover models from hugging face and LM studio (#1355) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.10...0.19.11
+]]></description>
+        </item>
+        <item>
             <title>0.19.10</title>
             <pubDate>Fri, 05 Jun 2026 10:41:14 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
