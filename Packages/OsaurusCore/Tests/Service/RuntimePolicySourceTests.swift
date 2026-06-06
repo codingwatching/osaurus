@@ -473,6 +473,26 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("HTTP server does not close long local inference for NIO idle timeout")
+    func osaurusServerDoesNotInstallNIOIdleTimeoutForInferenceChannels() throws {
+        let source = try Self.source("Networking/OsaurusServer.swift")
+        let initializerStart = try #require(source.range(of: ".childChannelInitializer { channel in"))
+        let initializerEnd = try #require(
+            source.range(of: ".childChannelOption", range: initializerStart.upperBound ..< source.endIndex)
+        )
+        let initializer = String(source[initializerStart.lowerBound ..< initializerEnd.lowerBound])
+
+        #expect(initializer.contains("ConnectionLimitHandler()"))
+        #expect(initializer.contains("HTTPHandler("))
+        #expect(!initializer.contains("IdleStateHandler("))
+        #expect(!initializer.contains("writeTimeout:"))
+        #expect(!initializer.contains("allTimeout:"))
+        #expect(
+            initializer.contains("long local non-streaming"),
+            "source comment should preserve why NIO idle timeouts break slow local /v1/chat/completions"
+        )
+    }
+
     @Test("vmlx pin uses consolidated package with runtime hardening")
     func vmlxPinIncludesRuntimeHardening() throws {
         let manifest = try Self.source("Package.swift")
@@ -524,7 +544,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "6fc0a55d3ac10e032aa12e6a7431983cad0d645d"
+        let expectedRuntimeHardenedRevision = "8619ab110a37cd62547994ed9f7cb625a044b508"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -532,7 +552,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, and Ultra no-load speed-gate boundary; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, Ultra no-load speed-gate boundary, and Osaurus MLXPress cold-tier opt-in policy; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
