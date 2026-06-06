@@ -801,6 +801,31 @@ struct MLXBatchAdapterTests {
         #expect(!key.contains("layers=hybrid-ssm"))
     }
 
+    @Test func nemotronUltraCacheCoordinatorKeyPreservesRealHybridTopology() {
+        let topology = ModelCacheTopologySnapshot(
+            layerCount: 60,
+            kvLayerCount: 12,
+            mambaLayerCount: 48
+        )
+
+        let key = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
+            kvModeTag: "fp16",
+            cacheTopology: topology
+        )
+
+        #expect(key.contains("layers=hybrid-ssm"))
+        #expect(key.contains("topology=real"))
+        #expect(key.contains("layers=60"))
+        #expect(key.contains("kvLayers=12"))
+        #expect(key.contains("mambaLayers=48"))
+        #expect(key.contains("companion=ssm"))
+        #expect(key.contains("restore=disk-backed"))
+        #expect(key.contains("kv=fp16"))
+        #expect(!key.contains("media=omni-audio-video"))
+        #expect(!key.contains("turbo("))
+    }
+
     @Test func cacheDiskDirectoryOverrideHonorsBlockDiskDirectory() {
         var settings = VMLXServerRuntimeSettings()
         settings.cache.prefix.enabled = true
