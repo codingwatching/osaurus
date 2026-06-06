@@ -17,6 +17,14 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
         return TokenizerBridge(upstream: upstream, modelType: modelType)
     }
 
+    static func normalizedToolsForChatTemplate(
+        _ tools: [[String: any Sendable]]?
+    ) -> [[String: any Sendable]]? {
+        // Tests call this wrapper so the final Jinja-boundary schema shape is
+        // pinned without exposing the private tokenizer bridge type.
+        TokenizerBridge.normalizedToolsForChatTemplate(tools)
+    }
+
     private static func modelType(in directory: URL) -> String? {
         let url = directory.appendingPathComponent("config.json")
         guard
@@ -643,48 +651,158 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         return ""
     }
 
-    private static func normalizedToolsForChatTemplate(
+    static func normalizedToolsForChatTemplate(
         _ tools: [[String: any Sendable]]?
     ) -> [[String: any Sendable]]? {
-        tools?.map { normalizeChatTemplateValue($0) as? [String: any Sendable] ?? $0 }
+        tools?.map { normalizeChatTemplateTool($0) }
     }
 
-    private static func normalizeChatTemplateValue(_ value: any Sendable) -> any Sendable {
-        if var object = value as? [String: any Sendable] {
+    private static func normalizeChatTemplateTool(
+        _ tool: [String: any Sendable]
+    ) -> [String: any Sendable] {
+        // Some callers already came through `Tool.toTokenizerToolSpec`, while
+        // plugin/host dictionaries can arrive pre-shaped. Normalize again at
+        // the Jinja boundary so Gemma-style string filters never see booleans
+        // or array-valued schema types.
+        var normalized = tool
+        guard var function = normalized["function"] as? [String: any Sendable] else {
+            return normalized
+        }
+
+        if let parameters = function["parameters"] {
+            function["parameters"] = normalizeChatTemplateSchemaValue(
+                parameters,
+                inSchemaPosition: true
+            )
+        }
+        if let response = function["response"] {
+            function["response"] = normalizeChatTemplateSchemaValue(
+                response,
+                inSchemaPosition: true
+            )
+        }
+        normalized["function"] = function
+        return normalized
+    }
+
+    private static func normalizeChatTemplateSchemaValue(
+        _ value: any Sendable,
+        inSchemaPosition: Bool
+    ) -> any Sendable {
+        if let object = value as? [String: any Sendable] {
+            var normalized: [String: any Sendable] = [:]
+            normalized.reserveCapacity(object.count)
+
             for (key, child) in object {
-                object[key] = normalizeChatTemplateValue(child)
+                switch key {
+                case "properties":
+                    if let properties = child as? [String: any Sendable] {
+                        var normalizedProperties: [String: any Sendable] = [:]
+                        normalizedProperties.reserveCapacity(properties.count)
+                        for (propertyName, propertySchema) in properties {
+                            normalizedProperties[propertyName] = normalizeChatTemplateSchemaValue(
+                                propertySchema,
+                                inSchemaPosition: true
+                            )
+                        }
+                        normalized[key] = normalizedProperties
+                    } else {
+                        normalized[key] = normalizeChatTemplateSchemaValue(
+                            child,
+                            inSchemaPosition: false
+                        )
+                    }
+                case "items", "response":
+                    normalized[key] = normalizeChatTemplateSchemaValue(
+                        child,
+                        inSchemaPosition: true
+                    )
+                case "additionalProperties":
+                    if isJSONBoolean(child) { continue }
+                    normalized[key] = normalizeChatTemplateSchemaValue(
+                        child,
+                        inSchemaPosition: true
+                    )
+                case "oneOf", "anyOf", "allOf":
+                    if let branches = child as? [any Sendable] {
+                        normalized[key] =
+                            branches.map {
+                                normalizeChatTemplateSchemaValue(
+                                    $0,
+                                    inSchemaPosition: true
+                                )
+                            } as [any Sendable]
+                    } else {
+                        normalized[key] = normalizeChatTemplateSchemaValue(
+                            child,
+                            inSchemaPosition: false
+                        )
+                    }
+                default:
+                    normalized[key] = normalizeChatTemplateSchemaValue(
+                        child,
+                        inSchemaPosition: false
+                    )
+                }
             }
-            normalizeNullableTypeUnion(&object)
-            return object
+
+            if inSchemaPosition {
+                normalizeTemplateRenderableSchemaType(&normalized)
+            }
+            return normalized
         }
 
         if let array = value as? [any Sendable] {
-            return array.map { normalizeChatTemplateValue($0) } as [any Sendable]
+            return array.map {
+                normalizeChatTemplateSchemaValue($0, inSchemaPosition: inSchemaPosition)
+            } as [any Sendable]
+        }
+
+        if inSchemaPosition, isJSONBoolean(value) {
+            return ["type": "string"] as [String: any Sendable]
         }
 
         return value
     }
 
-    private static func normalizeNullableTypeUnion(_ object: inout [String: any Sendable]) {
-        guard let entries = stringTypeArray(object["type"]) else { return }
+    private static func normalizeTemplateRenderableSchemaType(_ object: inout [String: any Sendable]) {
+        guard let typeValue = object["type"] else {
+            object["type"] = inferredFallbackType(for: object)
+            return
+        }
 
+        if typeValue is String { return }
+        if let entries = stringTypeArray(typeValue) {
+            normalizeTypeUnion(entries, in: &object)
+            return
+        }
+        object["type"] = inferredFallbackType(for: object)
+    }
+
+    private static func normalizeTypeUnion(
+        _ entries: [String],
+        in object: inout [String: any Sendable]
+    ) {
         var hasNull = false
-        var scalar: String?
+        var scalarTypes: [String] = []
         for entry in entries {
             if entry == "null" {
                 hasNull = true
-            } else if scalar == nil {
-                scalar = entry
-            } else {
-                return
+            } else if !scalarTypes.contains(entry) {
+                scalarTypes.append(entry)
             }
         }
 
-        guard let scalar else { return }
-        object["type"] = scalar
+        object["type"] = scalarTypes.first ?? "string"
         if hasNull {
             object["nullable"] = true
         }
+    }
+
+    private static func inferredFallbackType(for object: [String: any Sendable]) -> String {
+        if object["properties"] != nil { return "object" }
+        if object["items"] != nil { return "array" }
+        return "string"
     }
 
     private static func stringTypeArray(_ value: (any Sendable)?) -> [String]? {
@@ -702,6 +820,12 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         }
 
         return nil
+    }
+
+    private static func isJSONBoolean(_ value: Any) -> Bool {
+        if value is Bool { return true }
+        guard let number = value as? NSNumber else { return false }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 
     private static func contentContainsImage(_ content: Any?) -> Bool {

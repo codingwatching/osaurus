@@ -701,6 +701,76 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("capabilities_search"), "Decoded: \(decoded)")
     }
 
+    @Test func loaderNormalizesRawGemmaSensitiveToolSchemas() throws {
+        let parameters: [String: any Sendable] = [
+            "type": ["object", "null"] as [any Sendable],
+            "additionalProperties": false,
+            "properties": [
+                "set": [
+                    "type": "object",
+                    "additionalProperties": true,
+                ] as [String: any Sendable],
+                "metadata": [
+                    "type": ["object", "null"] as [any Sendable],
+                    "properties": [
+                        "type": [
+                            "type": "string",
+                            "description": "A real property named type.",
+                        ] as [String: any Sendable],
+                        "tags": [
+                            "type": ["array", "null"] as [any Sendable],
+                            "items": [
+                                "type": "string"
+                            ] as [String: any Sendable],
+                        ] as [String: any Sendable],
+                        "closed": false,
+                    ] as [String: any Sendable],
+                ] as [String: any Sendable],
+            ] as [String: any Sendable],
+            "required": ["set"] as [any Sendable],
+        ]
+        let rawTool: [String: any Sendable] = [
+            "type": "function",
+            "function": [
+                "name": "db_update",
+                "description": "Update rows.",
+                "parameters": parameters,
+            ] as [String: any Sendable],
+        ]
+
+        let tools = try #require(
+            SwiftTransformersTokenizerLoader.normalizedToolsForChatTemplate([rawTool])
+        )
+        let function = try #require(tools[0]["function"] as? [String: any Sendable])
+        let normalizedParameters = try #require(function["parameters"] as? [String: any Sendable])
+        let properties = try #require(normalizedParameters["properties"] as? [String: any Sendable])
+        let set = try #require(properties["set"] as? [String: any Sendable])
+        let metadata = try #require(properties["metadata"] as? [String: any Sendable])
+        let metadataProperties = try #require(metadata["properties"] as? [String: any Sendable])
+        let propertyNamedType = try #require(metadataProperties["type"] as? [String: any Sendable])
+        let tags = try #require(metadataProperties["tags"] as? [String: any Sendable])
+        let closed = try #require(metadataProperties["closed"] as? [String: any Sendable])
+
+        #expect(normalizedParameters["type"] as? String == "object")
+        #expect(normalizedParameters["nullable"] as? Bool == true)
+        #expect(normalizedParameters["additionalProperties"] == nil)
+        #expect(set["additionalProperties"] == nil)
+        #expect(metadata["type"] as? String == "object")
+        #expect(metadata["nullable"] as? Bool == true)
+        #expect(propertyNamedType["type"] as? String == "string")
+        #expect(tags["type"] as? String == "array")
+        #expect(tags["nullable"] as? Bool == true)
+        #expect(closed["type"] as? String == "string")
+        #expect(
+            collectArrayTypedSchemaPaths(tools as Any).isEmpty,
+            "Array-valued schema type paths: \(collectArrayTypedSchemaPaths(tools as Any))"
+        )
+        #expect(
+            collectBooleanAdditionalPropertiesPaths(tools as Any).isEmpty,
+            "Boolean additionalProperties paths: \(collectBooleanAdditionalPropertiesPaths(tools as Any))"
+        )
+    }
+
     @Test func dsv4LocalTokenizerUsesCanonicalNoChatTemplatePath() async throws {
         let defaultPath = "/Users/eric/models/JANGQ/DeepSeek-V4-Flash-JANGTQ-K"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_DSV4_TEST_MODEL"] ?? defaultPath
@@ -1488,4 +1558,56 @@ private func collectArrayTypedSchemaPaths(_ value: Any, path: String = "$") -> [
 
 private func isArrayValue(_ value: Any) -> Bool {
     value is [Any] || value is [any Sendable] || value is NSArray
+}
+
+private func collectBooleanAdditionalPropertiesPaths(_ value: Any, path: String = "$") -> [String] {
+    if let object = value as? [String: Any] {
+        var paths: [String] = []
+        if let additionalProperties = object["additionalProperties"],
+            isBooleanValue(additionalProperties)
+        {
+            paths.append("\(path).additionalProperties")
+        }
+        for (key, child) in object {
+            paths.append(
+                contentsOf: collectBooleanAdditionalPropertiesPaths(child, path: "\(path).\(key)")
+            )
+        }
+        return paths
+    }
+
+    if let object = value as? [String: any Sendable] {
+        var paths: [String] = []
+        if let additionalProperties = object["additionalProperties"],
+            isBooleanValue(additionalProperties)
+        {
+            paths.append("\(path).additionalProperties")
+        }
+        for (key, child) in object {
+            paths.append(
+                contentsOf: collectBooleanAdditionalPropertiesPaths(child, path: "\(path).\(key)")
+            )
+        }
+        return paths
+    }
+
+    if let array = value as? [Any] {
+        return array.enumerated().flatMap { index, child in
+            collectBooleanAdditionalPropertiesPaths(child, path: "\(path)[\(index)]")
+        }
+    }
+
+    if let array = value as? [any Sendable] {
+        return array.enumerated().flatMap { index, child in
+            collectBooleanAdditionalPropertiesPaths(child, path: "\(path)[\(index)]")
+        }
+    }
+
+    return []
+}
+
+private func isBooleanValue(_ value: Any) -> Bool {
+    if value is Bool { return true }
+    guard let number = value as? NSNumber else { return false }
+    return CFGetTypeID(number) == CFBooleanGetTypeID()
 }

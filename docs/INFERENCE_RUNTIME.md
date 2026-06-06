@@ -92,6 +92,15 @@ sliding-window attention layers (e.g. Gemma-4 with a fixed per-layer
 `[broadcast_shapes] (1,1,1,N) and (1,16,1,1024)` crashes on the first
 decode step.
 
+Before any local tool dictionary reaches a tokenizer chat template, Osaurus
+normalizes only the template-facing JSON Schema copy: array-valued `type`
+unions become a scalar `type` plus `nullable`, malformed or missing schema
+types and bare boolean schemas get conservative renderable fallbacks, and
+boolean `additionalProperties` is dropped. The original schema still drives
+tool argument validation. This protects Gemma-4/Jang templates that run string
+filters over schema metadata without adding hidden prompt repairs or parser
+coercion.
+
 For hybrid SSM families, osaurus eagerly calls `CacheCoordinator.setHybrid(_:)`
 for known model families and vmlx also auto-detects Mamba/Arrays caches on
 first slot admission. DSV4 is not an SSM hybrid; vmlx detects its
