@@ -138,10 +138,10 @@ public struct OnboardingView: View {
         }
     }
 
-    /// When a step has no caption we reserve the vertical footprint
-    /// with a transparent `Color.clear` block (hidden from VoiceOver)
-    /// so the action row's vertical position stays stable across
-    /// step transitions.
+    /// The action row is bottom-anchored, so a captionless step doesn't need a
+    /// reserved placeholder — collapsing it (no text, no spacing) reclaims the
+    /// dead gap above the CTA without shifting the CTA itself. The caption owns
+    /// its own bottom spacing so the empty case contributes nothing.
     @ViewBuilder
     private var stepFooterCaptionText: some View {
         if let caption = chromeFooterCaption {
@@ -150,17 +150,8 @@ public struct OnboardingView: View {
                 .foregroundColor(theme.tertiaryText)
                 .multilineTextAlignment(.center)
                 .lineLimit(1)
-        } else {
-            Color.clear
-                .frame(height: footerCaptionLineHeight)
-                .accessibilityHidden(true)
+                .padding(.bottom, OnboardingMetrics.footerCaptionToCTA)
         }
-    }
-
-    /// Approximate height of one caption line at
-    /// `OnboardingMetrics.captionSize`.
-    private var footerCaptionLineHeight: CGFloat {
-        OnboardingMetrics.captionSize + 4
     }
 
     @ViewBuilder
@@ -238,10 +229,16 @@ public struct OnboardingView: View {
                 Spacer(minLength: 0)
             }
         case .configureAI:
-            ConfigureAICTA(
-                state: configureAIState,
-                onComplete: { advance(to: .choosePlugins) }
-            )
+            // Centered (like Create Agent) with a content-hugging pill, so the
+            // CTA reads consistently across the two adjacent steps.
+            HStack {
+                Spacer(minLength: 0)
+                ConfigureAICTA(
+                    state: configureAIState,
+                    onComplete: { advance(to: .choosePlugins) }
+                )
+                Spacer(minLength: 0)
+            }
         case .identitySetup:
             IdentityCTA(
                 state: identityState,
@@ -253,26 +250,46 @@ public struct OnboardingView: View {
                 onComplete: { advance(to: .choosePlugins) }
             )
         case .choosePlugins:
-            ChoosePluginsCTA(
-                state: choosePluginsState,
-                onComplete: { advance(to: .walkthrough) }
-            )
+            // Centered, content-hugging pill. "Skip" is folded into this CTA
+            // when nothing is ticked, so there's no separate secondary link.
+            HStack {
+                Spacer(minLength: 0)
+                ChoosePluginsCTA(
+                    state: choosePluginsState,
+                    onComplete: { advance(to: .walkthrough) },
+                    onSkip: {
+                        OnboardingTelemetry.stepSkipped(.choosePlugins)
+                        advance(to: .walkthrough)
+                    }
+                )
+                Spacer(minLength: 0)
+            }
         case .walkthrough:
-            WalkthroughCTA(
-                state: walkthroughState,
-                onContinue: { advance(to: .consent) }
-            )
+            // Centered, content-hugging pill — consistent with the other steps.
+            HStack {
+                Spacer(minLength: 0)
+                WalkthroughCTA(
+                    state: walkthroughState,
+                    onContinue: { advance(to: .consent) }
+                )
+                Spacer(minLength: 0)
+            }
         case .consent:
-            ConsentCTA(onFinish: {
-                // Record both consent choices *before* finishing. For usage
-                // data, granting flushes the funnel events buffered during
-                // onboarding and declining drops them; `finishOnboarding` then
-                // fires `onboarding_completed`, sent or dropped per that choice.
-                // Crash reporting is independent (opt-out) and applied here too.
-                TelemetryService.shared.setEnabled(consentState.shareUsageData)
-                CrashReportingService.shared.setEnabled(consentState.shareCrashReports)
-                finishOnboarding(via: .finishButton)
-            })
+            // Centered, content-hugging pill — consistent with the other steps.
+            HStack {
+                Spacer(minLength: 0)
+                ConsentCTA(onFinish: {
+                    // Record both consent choices *before* finishing. For usage
+                    // data, granting flushes the funnel events buffered during
+                    // onboarding and declining drops them; `finishOnboarding` then
+                    // fires `onboarding_completed`, sent or dropped per that choice.
+                    // Crash reporting is independent (opt-out) and applied here too.
+                    TelemetryService.shared.setEnabled(consentState.shareUsageData)
+                    CrashReportingService.shared.setEnabled(consentState.shareCrashReports)
+                    finishOnboarding(via: .finishButton)
+                })
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -286,7 +303,9 @@ public struct OnboardingView: View {
             // this step, and the CTA is always enabled so it's a single tap.
             EmptyView()
         case .configureAI:
-            ConfigureAISecondary(state: configureAIState, onComplete: { advance(to: .choosePlugins) })
+            // The download escape hatch now lives in the primary CTA
+            // ("Continue in Background"), so there's no secondary slot.
+            EmptyView()
         case .identitySetup:
             IdentitySecondary(
                 state: identityState,
@@ -301,10 +320,8 @@ public struct OnboardingView: View {
                 advance(to: .choosePlugins)
             })
         case .choosePlugins:
-            ChoosePluginsSecondary(onSkip: {
-                OnboardingTelemetry.stepSkipped(.choosePlugins)
-                advance(to: .walkthrough)
-            })
+            // Skip is folded into the primary CTA when nothing is selected.
+            EmptyView()
         case .walkthrough:
             EmptyView()
         case .consent:

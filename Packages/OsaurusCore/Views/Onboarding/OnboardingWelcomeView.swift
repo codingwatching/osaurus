@@ -19,7 +19,7 @@ struct WelcomeBody: View {
             illustrationAsset: "osaurus-main",
             headline: "Own your AI.",
             subtitle:
-                "AI that runs on your Mac. Pick any brain, plug in your tools, and keep everything yours."
+                "Runs on your Mac. Your chats, files, and keys stay with you. No account, no cloud required."
         )
         .opacity(visible ? 1 : 0)
         .scaleEffect(visible ? 1 : 0.98)
@@ -35,7 +35,7 @@ struct WelcomeCTA: View {
 
     var body: some View {
         OnboardingBrandButton(title: "Get Started", action: onContinue)
-            .frame(width: OnboardingMetrics.ctaWidthCompact)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
