@@ -107,8 +107,9 @@ Built by [`FolderToolFactory`](../Packages/OsaurusCore/Folder/FolderTools.swift)
 | Tool            | Description                                                  |
 | --------------- | ------------------------------------------------------------ |
 | `file_read`     | Read a file (line ranges, `tail_lines`/`max_chars`, bounded XLSX sheet previews) **or** list a directory (with `max_depth`, project-aware ignore patterns) — the path decides. Use this instead of `cat`/`head`/`tail`/`ls`/`tree`. |
-| `file_write`    | Create or overwrite UTF-8 text files. Use this instead of `echo`/`cat` heredoc. Refuses `.xlsx`-family workbook targets; write CSV/TSV text or use a spreadsheet/XLSX tool for workbook output. |
-| `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. |
+| `file_write`    | Create or overwrite UTF-8 text files. Use this instead of `echo`/`cat` heredoc. Pass `dry_run: true` to preview the diff and risk warnings without writing. Refuses `.xlsx`, `.pdf`, and `.pptx`-family structured targets; write CSV/TSV/Markdown text or use a structured document tool. |
+| `file_edit`     | Surgical exact-string replacement. Use this instead of `sed`/`awk`. Pass `dry_run: true` to preview the diff without mutating. |
+| `file_operation_history` | Show recent file writes/edits made by the current chat session, optionally filtered to one path. |
 | `file_search`   | ripgrep-style content search, or `target="files"` filename-glob find. Use this instead of `grep`/`rg`/`find`. |
 | `shell_run`     | Execute a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs, and any work that can't be expressed via the dedicated `file_*` tools. |
 
@@ -124,7 +125,7 @@ The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, a
 | `git_diff`   | Show diffs                                        |
 | `git_commit` | Stage and commit (requires approval)              |
 
-Every write/exec/git-mutating call is logged in [`FileOperationLog`](../Packages/OsaurusCore/Folder/FileOperationLog.swift) so the user can review or undo individual operations.
+Every applied `file_write` / `file_edit` call is logged in [`FileOperationLog`](../Packages/OsaurusCore/Folder/FileOperationLog.swift) so the user can review or undo individual file operations. Dry-run write/edit previews do not log because they do not change the filesystem.
 
 ---
 

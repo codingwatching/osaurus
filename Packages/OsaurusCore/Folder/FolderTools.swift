@@ -147,10 +147,9 @@ enum FolderToolHelpers {
     static func detectProjectType(_ url: URL) -> ProjectType {
         let fm = FileManager.default
         for projectType in ProjectType.allCases where projectType != .unknown {
-            for manifestFile in projectType.manifestFiles {
-                if fm.fileExists(atPath: url.appendingPathComponent(manifestFile).path) {
-                    return projectType
-                }
+            for manifestFile in projectType.manifestFiles
+            where fm.fileExists(atPath: url.appendingPathComponent(manifestFile).path) {
+                return projectType
             }
         }
         return .unknown
@@ -1334,8 +1333,9 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         "Create a new UTF-8 text file or overwrite an existing text file with the provided content. "
         + "**Use this instead of `echo` / `cat` heredoc in `shell_run`.** Parent directories will "
         + "be created if they don't exist. You MUST provide the file contents in the `content` "
-        + "parameter. Do not use this for `.xlsx` workbooks; use a spreadsheet/XLSX tool or write "
-        + "CSV text instead."
+        + "parameter. Pass `dry_run: true` to preview the diff and risk warnings without writing. "
+        + "Do not use this for structured `.xlsx`, `.pdf`, or `.pptx` outputs; use a document "
+        + "creation tool or write text formats such as CSV/TSV/Markdown instead."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1350,6 +1350,12 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                     "Content to write to the file"
                 ),
             ]),
+            "dry_run": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Preview the write, diff, and risk warnings without modifying the filesystem (default: false)"
+                ),
+            ]),
         ]),
         "required": .array([.string("path"), .string("content")]),
     ])
@@ -1358,9 +1364,6 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
 
     private let rootPath: URL
-    private static let structuredWorkbookExtensions: Set<String> = [
-        "xlsx", "xlsm", "xltx", "xltm", "xlsb", "xls",
-    ]
 
     init(rootPath: URL) {
         self.rootPath = rootPath
@@ -1391,9 +1394,10 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         guard case .value(let content) = contentReq else {
             return contentReq.failureEnvelope ?? ""
         }
+        let dryRun = coerceBool(args["dry_run"]) ?? false
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
-        if let rejected = Self.structuredWorkbookWriteRejection(
+        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: relativePath,
             fileExtension: fileURL.pathExtension.lowercased(),
             toolName: name
@@ -1401,25 +1405,38 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
             return rejected
         }
 
-        // Capture previous state for undo
-        let existed = FileManager.default.fileExists(atPath: fileURL.path)
-        let previousContent = existed ? try? String(contentsOf: fileURL, encoding: .utf8) : nil
+        let previousContent: String?
+        switch WorkspaceWriteSafety.existingText(
+            at: fileURL,
+            relativePath: relativePath,
+            toolName: name
+        ) {
+        case .success(let content):
+            previousContent = content
+        case .failureEnvelope(let envelope):
+            return envelope
+        }
 
-        // Log operation before executing
-        if let sessionId = ChatExecutionContext.currentSessionId {
-            await FileOperationLog.shared.log(
-                FileOperation(
-                    type: existed ? .write : .create,
-                    path: relativePath,
-                    previousContent: previousContent,
-                    sessionId: sessionId,
-                    batchId: ChatExecutionContext.currentBatchId
-                )
+        let parentDir = fileURL.deletingLastPathComponent()
+        let createsParentDirectories = !FileManager.default.fileExists(atPath: parentDir.path)
+        var preview = WorkspaceWriteSafety.preview(
+            path: relativePath,
+            previousContent: previousContent,
+            proposedContent: content,
+            operation: name,
+            dryRun: dryRun,
+            createsParentDirectories: createsParentDirectories,
+            fileURL: fileURL
+        )
+        if dryRun {
+            return ToolEnvelope.success(
+                tool: name,
+                result: preview.payload,
+                warnings: preview.warnings
             )
         }
 
         // Create parent directories if needed
-        let parentDir = fileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(
             at: parentDir,
             withIntermediateDirectories: true,
@@ -1429,31 +1446,21 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         // Write content
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
 
-        let lineCount = content.components(separatedBy: .newlines).count
-        let action = existed ? "Updated" : "Created"
+        if let sessionId = ChatExecutionContext.currentSessionId {
+            let operation = FileOperation(
+                type: previousContent == nil ? .create : .write,
+                path: relativePath,
+                previousContent: previousContent,
+                sessionId: sessionId,
+                batchId: ChatExecutionContext.currentBatchId
+            )
+            await FileOperationLog.shared.log(operation)
+            preview.payload["operation_id"] = operation.id.uuidString
+        }
         return ToolEnvelope.success(
             tool: name,
-            text: "\(action) \(relativePath) (\(lineCount) lines, \(content.count) characters)"
-        )
-    }
-
-    private static func structuredWorkbookWriteRejection(
-        path: String,
-        fileExtension ext: String,
-        toolName: String
-    ) -> String? {
-        guard structuredWorkbookExtensions.contains(ext) else { return nil }
-        return ToolEnvelope.failure(
-            kind: .rejected,
-            message:
-                "Refused to write '\(path)' with file_write: .\(ext) is a structured workbook "
-                + "package, but file_write only writes UTF-8 text. Use a spreadsheet/XLSX "
-                + "tool for workbook output, or write CSV/TSV text instead.",
-            field: "path",
-            expected: "path for a UTF-8 text file; for .\(ext), use a workbook writer or CSV/TSV",
-            tool: toolName,
-            retryable: false,
-            metadata: ["extension": ext]
+            result: preview.payload,
+            warnings: preview.warnings
         )
     }
 }
@@ -1473,7 +1480,8 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         "Edit a file by replacing specific text. **Use this instead of `sed` / `awk` in "
         + "`shell_run`.** `old_string` must uniquely match exactly one location in the file — "
         + "include surrounding context lines if needed to ensure uniqueness. Fails if `old_string` "
-        + "is not found or matches multiple locations. You MUST provide the strings in the parameters."
+        + "is not found or matches multiple locations. Pass `dry_run: true` to preview the diff "
+        + "without modifying the file. You MUST provide the strings in the parameters."
     let parameters: JSONValue? = .object([
         "type": .string("object"),
         "additionalProperties": .bool(false),
@@ -1492,6 +1500,12 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
                 "type": .string("string"),
                 "description": .string(
                     "The replacement text"
+                ),
+            ]),
+            "dry_run": .object([
+                "type": .string("boolean"),
+                "description": .string(
+                    "Preview the edit and diff without modifying the filesystem (default: false)"
                 ),
             ]),
         ]),
@@ -1545,53 +1559,184 @@ struct FileEditTool: OsaurusTool, PermissionedTool {
         guard case .value(let newString) = newReq else {
             return newReq.failureEnvelope ?? ""
         }
+        let dryRun = coerceBool(args["dry_run"]) ?? false
 
         let fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
+        if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
+            path: relativePath,
+            fileExtension: fileURL.pathExtension.lowercased(),
+            toolName: name
+        ) {
+            return rejected
+        }
 
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw FolderToolError.fileNotFound(relativePath)
         }
 
         // Capture pre-edit contents for the operation log (undo support).
-        let originalContent = try String(contentsOf: fileURL, encoding: .utf8)
+        let originalContent: String
+        switch WorkspaceWriteSafety.existingText(
+            at: fileURL,
+            relativePath: relativePath,
+            toolName: name
+        ) {
+        case .success(let content):
+            originalContent = content ?? ""
+        case .failureEnvelope(let envelope):
+            return envelope
+        }
         var content = originalContent
 
         guard let range = content.range(of: oldString) else {
-            throw FolderToolError.operationFailed(
-                "Could not find the specified text in the file. Make sure old_string exactly matches the file content."
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Could not find `old_string` in \(relativePath). Make sure it exactly matches the file content.",
+                field: "old_string",
+                expected: "exact non-empty text present once in the target file",
+                tool: name
             )
         }
 
         let matches = content.ranges(of: oldString)
         if matches.count > 1 {
-            throw FolderToolError.operationFailed(
-                "Found \(matches.count) matches for old_string — include more context to uniquely identify the location."
+            return ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message:
+                    "Found \(matches.count) matches for `old_string` in \(relativePath); include more surrounding context to identify one location.",
+                field: "old_string",
+                expected: "exact text that matches exactly one location",
+                tool: name
             )
         }
 
         content.replaceSubrange(range, with: newString)
+        var preview = WorkspaceWriteSafety.preview(
+            path: relativePath,
+            previousContent: originalContent,
+            proposedContent: content,
+            operation: name,
+            dryRun: dryRun,
+            createsParentDirectories: false,
+            fileURL: fileURL
+        )
+        if dryRun {
+            return ToolEnvelope.success(
+                tool: name,
+                result: preview.payload,
+                warnings: preview.warnings
+            )
+        }
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
 
         // Log for undo parity with `file_write`. Skipped when no session.
         if let sid = ChatExecutionContext.currentSessionId {
-            await FileOperationLog.shared.log(
-                FileOperation(
-                    type: .fileEdit,
-                    path: relativePath,
-                    previousContent: originalContent,
-                    sessionId: sid,
-                    batchId: ChatExecutionContext.currentBatchId
-                )
+            let operation = FileOperation(
+                type: .fileEdit,
+                path: relativePath,
+                previousContent: originalContent,
+                sessionId: sid,
+                batchId: ChatExecutionContext.currentBatchId
             )
+            await FileOperationLog.shared.log(operation)
+            preview.payload["operation_id"] = operation.id.uuidString
         }
-
-        let beforeLines = oldString.components(separatedBy: .newlines).count
-        let afterLines = newString.components(separatedBy: .newlines).count
 
         return ToolEnvelope.success(
             tool: name,
-            text: "Edited \(relativePath): replaced \(beforeLines) line(s) with \(afterLines) line(s)"
+            result: preview.payload,
+            warnings: preview.warnings
         )
+    }
+}
+
+// MARK: File Operation History Tool
+
+struct FileOperationHistoryTool: OsaurusTool {
+    let name = "file_operation_history"
+    let description =
+        "Show recent file writes/edits made by this chat session. Use this before undo/review "
+        + "or after multi-file work to inspect what changed. Optional `path` filters to one file."
+    let parameters: JSONValue? = .object([
+        "type": .string("object"),
+        "additionalProperties": .bool(false),
+        "properties": .object([
+            "path": .object([
+                "type": .string("string"),
+                "description": .string("Optional relative file path to filter history"),
+            ]),
+            "limit": .object([
+                "type": .string("integer"),
+                "description": .string("Maximum entries to return (default: 20, max: 100)"),
+            ]),
+        ]),
+        "required": .array([]),
+    ])
+
+    private let rootPath: URL
+
+    init(rootPath: URL) {
+        self.rootPath = rootPath
+    }
+
+    func execute(argumentsJSON: String) async throws -> String {
+        guard let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty else {
+            return ToolEnvelope.failure(
+                kind: .unavailable,
+                message: "`file_operation_history` requires an active chat session.",
+                tool: name,
+                retryable: false
+            )
+        }
+
+        let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
+        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+
+        let rawPath = args["path"] as? String
+        let pathFilter: String?
+        if let rawPath {
+            let resolvedURL = try FolderToolHelpers.resolvePath(rawPath, rootPath: rootPath)
+            pathFilter = Self.relativePath(for: resolvedURL, rootPath: rootPath)
+        } else {
+            pathFilter = nil
+        }
+
+        let limit = min(max(coerceInt(args["limit"]) ?? 20, 1), 100)
+        let operations = await FileOperationLog.shared.operations(for: sessionId)
+        let filtered =
+            pathFilter.map { path in
+                operations.filter { $0.path == path || $0.destinationPath == path }
+            } ?? operations
+        let recent = Array(filtered.suffix(limit).reversed())
+        let entries = recent.map(WorkspaceWriteSafety.operationHistoryEntry)
+        var payload: [String: Any] = [
+            "kind": "file_operation_history",
+            "session_id": sessionId,
+            "entries": entries,
+            "operation_count": filtered.count,
+            "returned_count": entries.count,
+            "limit": limit,
+        ]
+        if let pathFilter {
+            payload["path"] = pathFilter
+        }
+
+        let warnings =
+            filtered.count > limit
+            ? ["History truncated to the \(limit) most recent matching operations."]
+            : nil
+        return ToolEnvelope.success(tool: name, result: payload, warnings: warnings)
+    }
+
+    private static func relativePath(for url: URL, rootPath: URL) -> String {
+        let root = rootPath.standardized.path
+        let path = url.standardized.path
+        if path == root { return "." }
+        if path.hasPrefix(root + "/") {
+            return String(path.dropFirst(root.count + 1))
+        }
+        return url.lastPathComponent
     }
 }
 
@@ -2596,6 +2741,7 @@ enum FolderToolFactory {
             FileReadTool(rootPath: rootPath),
             FileWriteTool(rootPath: rootPath),
             FileEditTool(rootPath: rootPath),
+            FileOperationHistoryTool(rootPath: rootPath),
             FileSearchTool(rootPath: rootPath),
             ShellRunTool(rootPath: rootPath),
         ]

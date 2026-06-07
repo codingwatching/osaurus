@@ -45,6 +45,15 @@ struct FolderToolsResilienceTests {
         EnvelopeAssertions.failureKind(result)
     }
 
+    private func withSession<T>(
+        _ sessionId: String = "folder-tools-\(UUID().uuidString)",
+        body: (String) async throws -> T
+    ) async throws -> T {
+        try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
+            try await body(sessionId)
+        }
+    }
+
     // MARK: - file_read
 
     @Test func fileRead_missingPath() async throws {
@@ -285,6 +294,104 @@ struct FolderToolsResilienceTests {
         #expect(written == "month,total\nJan,1200\n")
     }
 
+    @Test func fileWrite_rejectsPDFAndPresentationPackagesWithoutTouchingExistingFile() async throws {
+        let root = tmpRoot()
+        let cases: [(name: String, bytes: [UInt8])] = [
+            ("report.pdf", [0x25, 0x50, 0x44, 0x46]),
+            ("deck.pptx", [0x50, 0x4B, 0x03, 0x04]),
+        ]
+
+        let tool = FileWriteTool(rootPath: root)
+        for item in cases {
+            let target = root.appendingPathComponent(item.name)
+            let original = Data(item.bytes)
+            try original.write(to: target)
+
+            let result = try await tool.execute(
+                argumentsJSON: #"{"path": "\#(item.name)", "content": "fake structured output"}"#
+            )
+
+            #expect(ToolEnvelope.isError(result))
+            #expect(failureKind(result) == "rejected")
+            #expect(failureField(result) == "path")
+            let after = try Data(contentsOf: target)
+            #expect(after == original)
+        }
+    }
+
+    @Test func fileWrite_dryRunPreviewsDiffWithoutWritingOrLogging() async throws {
+        await FileOperationLog.shared.clearAll()
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("note.txt")
+        try "alpha\nbeta\n".write(to: path, atomically: true, encoding: .utf8)
+
+        try await withSession { sessionId in
+            let tool = FileWriteTool(rootPath: root)
+            let result = try await tool.execute(
+                argumentsJSON: #"{"path": "note.txt", "content": "alpha\ngamma\n", "dry_run": true}"#
+            )
+
+            #expect(ToolEnvelope.isSuccess(result))
+            let payload = try #require(EnvelopeAssertions.successPayload(result))
+            #expect(payload["kind"] as? String == "workspace_write_preview")
+            #expect(payload["dry_run"] as? Bool == true)
+            #expect(payload["applied"] as? Bool == false)
+            let diff = try #require(payload["diff"] as? String)
+            #expect(diff.contains("-beta"))
+            #expect(diff.contains("+gamma"))
+
+            let after = try String(contentsOf: path, encoding: .utf8)
+            #expect(after == "alpha\nbeta\n")
+            let operations = await FileOperationLog.shared.operations(for: sessionId)
+            #expect(operations.isEmpty)
+        }
+    }
+
+    @Test func fileWrite_applyLogsInspectableOperationHistory() async throws {
+        await FileOperationLog.shared.clearAll()
+        let root = tmpRoot()
+
+        try await withSession { _ in
+            let write = FileWriteTool(rootPath: root)
+            let writeResult = try await write.execute(
+                argumentsJSON: "{\"path\": \"nested/report.md\", \"content\": \"# Report\\n\"}"
+            )
+            #expect(ToolEnvelope.isSuccess(writeResult))
+            let writePayload = try #require(EnvelopeAssertions.successPayload(writeResult))
+            #expect(writePayload["kind"] as? String == "workspace_write_result")
+            #expect(writePayload["operation_id"] as? String != nil)
+            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("nested/report.md").path))
+
+            let history = FileOperationHistoryTool(rootPath: root)
+            let historyResult = try await history.execute(argumentsJSON: #"{"limit": 5}"#)
+            #expect(ToolEnvelope.isSuccess(historyResult))
+            let historyPayload = try #require(EnvelopeAssertions.successPayload(historyResult))
+            #expect(historyPayload["kind"] as? String == "file_operation_history")
+            let entries = try #require(historyPayload["entries"] as? [[String: Any]])
+            #expect(entries.count == 1)
+            #expect(entries.first?["type"] as? String == "create")
+            #expect(entries.first?["path"] as? String == "nested/report.md")
+        }
+    }
+
+    @Test func fileWrite_rejectsExistingNonUTF8TextTarget() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("blob.txt")
+        let original = Data([0xFF, 0x00, 0xAB])
+        try original.write(to: path)
+
+        let tool = FileWriteTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "blob.txt", "content": "replacement"}"#
+        )
+
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureKind(result) == "rejected")
+        #expect(failureField(result) == "path")
+        let after = try Data(contentsOf: path)
+        #expect(after == original)
+    }
+
     @Test @MainActor func fileWrite_unknownKeyIsRejected() {
         // `additionalProperties: false` kicks in during preflight
         // validation; the model gets a structured envelope pointing at
@@ -329,6 +436,57 @@ struct FolderToolsResilienceTests {
         #expect(ToolEnvelope.isSuccess(result))
         let after = try String(contentsOf: path, encoding: .utf8)
         #expect(after == "hello ")
+    }
+
+    @Test func fileEdit_dryRunPreviewsDiffWithoutMutatingOrLogging() async throws {
+        await FileOperationLog.shared.clearAll()
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("f.txt")
+        try "hello world\n".write(to: path, atomically: true, encoding: .utf8)
+
+        try await withSession { sessionId in
+            let tool = FileEditTool(rootPath: root)
+            let result = try await tool.execute(
+                argumentsJSON: #"{"path": "f.txt", "old_string": "world", "new_string": "mars", "dry_run": true}"#
+            )
+
+            #expect(ToolEnvelope.isSuccess(result))
+            let payload = try #require(EnvelopeAssertions.successPayload(result))
+            #expect(payload["kind"] as? String == "workspace_write_preview")
+            #expect(payload["operation"] as? String == "file_edit")
+            let diff = try #require(payload["diff"] as? String)
+            #expect(diff.contains("-hello world"))
+            #expect(diff.contains("+hello mars"))
+
+            let after = try String(contentsOf: path, encoding: .utf8)
+            #expect(after == "hello world\n")
+            let operations = await FileOperationLog.shared.operations(for: sessionId)
+            #expect(operations.isEmpty)
+        }
+    }
+
+    @Test func fileEdit_duplicateMatchReturnsStructuredArgumentError() async throws {
+        let root = tmpRoot()
+        let path = root.appendingPathComponent("f.txt")
+        try "same\nsame\n".write(to: path, atomically: true, encoding: .utf8)
+
+        let tool = FileEditTool(rootPath: root)
+        let result = try await tool.execute(
+            argumentsJSON: #"{"path": "f.txt", "old_string": "same", "new_string": "other"}"#
+        )
+
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureKind(result) == "invalid_args")
+        #expect(failureField(result) == "old_string")
+        let after = try String(contentsOf: path, encoding: .utf8)
+        #expect(after == "same\nsame\n")
+    }
+
+    @Test func fileOperationHistory_requiresSessionContext() async throws {
+        let tool = FileOperationHistoryTool(rootPath: tmpRoot())
+        let result = try await tool.execute(argumentsJSON: "{}")
+        #expect(ToolEnvelope.isError(result))
+        #expect(failureKind(result) == "unavailable")
     }
 
     // MARK: - file_tree
