@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MANIFEST="$ROOT/scripts/live-proof/family-runtime-chat-matrix.json"
 HARNESS="$ROOT/scripts/live-proof/run-local-family-multiturn-tool-cache-proof.py"
+CLASSIFIER="$ROOT/scripts/live-proof/classify-runtime-proof-summary.py"
 
 BASE_URL="${OSAURUS_BASE_URL:-http://127.0.0.1:1337}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-/tmp/osaurus-family-runtime-chat-matrix-$(date +%Y%m%d-%H%M%S)}"
@@ -181,4 +182,8 @@ print(json.dumps({"artifact_root": str(root), "passed": all(r.get("passed") is T
 PY
 
 cat "$ARTIFACT_ROOT/SUMMARY.json"
+"$CLASSIFIER" "$ARTIFACT_ROOT/SUMMARY.json" \
+  --manifest "$MANIFEST" \
+  --output "$ARTIFACT_ROOT/PROOF_CLASSIFICATION.json"
+echo "proof_classification=$ARTIFACT_ROOT/PROOF_CLASSIFICATION.json"
 exit "$fail"
