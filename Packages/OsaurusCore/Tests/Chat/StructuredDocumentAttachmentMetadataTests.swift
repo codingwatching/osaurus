@@ -36,6 +36,8 @@ struct StructuredDocumentAttachmentMetadataTests {
         #expect(fileSize == Int(document.fileSize))
         #expect(attachment.structuredDocumentMetadata?.formatId == "csv")
         #expect(attachment.structuredDocumentMetadata?.representationFormatId == "csv")
+        #expect(attachment.businessDocumentSummary?.kind == .table)
+        #expect(attachment.businessDocumentSummary?.chipDetailLabel == "Table - 42 bytes")
     }
 
     @Test func metadataSurvivesCodableRoundTrip() throws {
@@ -51,6 +53,7 @@ struct StructuredDocumentAttachmentMetadataTests {
         #expect(kind["type"] as? String == "document")
         #expect(kind["content"] as? String == "debit,credit")
         #expect(metadata["formatId"] as? String == "csv")
+        #expect(metadata["documentKind"] as? String == "table")
 
         let decoded = try JSONDecoder().decode(Attachment.self, from: encoded)
         #expect(decoded.documentContent == "debit,credit")
@@ -73,6 +76,55 @@ struct StructuredDocumentAttachmentMetadataTests {
         let decoded = try JSONDecoder().decode(Attachment.self, from: Data(json.utf8))
         #expect(decoded.documentContent == "plain fallback")
         #expect(decoded.structuredDocumentMetadata == nil)
+    }
+
+    @Test func legacyDocumentStillGetsDisplaySummaryFromExtension() {
+        let attachment = Attachment.document(
+            filename: "Budget.Q4.xlsx",
+            content: "fallback",
+            fileSize: 2_048
+        )
+
+        let summary = attachment.businessDocumentSummary
+        #expect(summary?.kind == .workbook)
+        #expect(summary?.isStructured == false)
+        #expect(summary?.chipDetailLabel == "Workbook - 2 KB")
+        #expect(attachment.fileIcon == "tablecells")
+    }
+
+    @Test func metadataCapturesStructureAndSecurityFacts() {
+        let security = DocumentSecurityMetadata(
+            inspectionStatus: .partiallyInspected,
+            formatId: "xlsx",
+            fileExtension: "xlsx",
+            activeContentTypes: [.formula],
+            findings: [
+                DocumentSecurityFinding(
+                    kind: .formula,
+                    severity: .medium,
+                    message: "Workbook contains formulas."
+                )
+            ]
+        )
+        let document = Self.sampleStructuredDocument(
+            formatId: "xlsx",
+            filename: "budget.xlsx",
+            text: "A1,B1",
+            fileSize: 4096,
+            structure: Self.workbookStructure(),
+            security: security
+        )
+        let attachment = Attachment.structuredDocument(document)
+
+        let metadata = attachment.structuredDocumentMetadata
+        #expect(metadata?.fileExtension == "xlsx")
+        #expect(metadata?.documentKind == .workbook)
+        #expect(metadata?.inspectionStatus == .partiallyInspected)
+        #expect(metadata?.maximumSeverity == .medium)
+        #expect(metadata?.hasActiveContent == true)
+        #expect(metadata?.structureSummary?.sheetCount == 1)
+        #expect(metadata?.structureSummary?.tableCount == 1)
+        #expect(attachment.businessDocumentSummary?.chipDetailLabel == "Workbook - 1 sheet - Review - 4 KB")
     }
 
     @Test func parseAllAttachesMetadataFromRegistryAdapter() throws {
@@ -106,21 +158,46 @@ struct StructuredDocumentAttachmentMetadataTests {
     }
 
     private static func sampleStructuredDocument(
+        formatId: String = "csv",
         filename: String = "sample.csv",
         text: String = "sample text",
-        fileSize: Int64 = 42
+        fileSize: Int64 = 42,
+        structure: DocumentStructure? = nil,
+        security: DocumentSecurityMetadata? = nil
     ) -> StructuredDocument {
         StructuredDocument(
-            formatId: "csv",
+            formatId: formatId,
             filename: filename,
             fileSize: fileSize,
             representation: AnyStructuredRepresentation(
-                formatId: "csv",
+                formatId: formatId,
                 underlying: PlainTextRepresentation(text: text)
             ),
+            structure: structure,
+            security: security,
             textFallback: text,
             createdAt: createdAt
         )
+    }
+
+    private static func workbookStructure() -> DocumentStructure {
+        let rootAnchor = DocumentAnchor.root(label: "budget.xlsx")
+        let sheetAnchor = DocumentAnchor(
+            kind: .sheet,
+            path: [.init(kind: .document), .init(kind: .sheet, identifier: "Sheet1")]
+        )
+        let tableAnchor = DocumentAnchor(
+            kind: .table,
+            path: [
+                .init(kind: .document),
+                .init(kind: .sheet, identifier: "Sheet1"),
+                .init(kind: .table, identifier: "A1:B2"),
+            ]
+        )
+        let table = DocumentElement(kind: .table, anchor: tableAnchor)
+        let sheet = DocumentElement(kind: .sheet, anchor: sheetAnchor, children: [table])
+        let root = DocumentElement(kind: .document, anchor: rootAnchor, children: [sheet])
+        return DocumentStructure(root: root, textLengthUTF16: 5)
     }
 
     private struct FixtureAdapter: DocumentFormatAdapter {

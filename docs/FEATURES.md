@@ -315,6 +315,8 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 **Components:**
 
 - `Managers/Documents/DocumentAdaptersBootstrap.swift` — registers built-in document adapters.
+- `Managers/Documents/DocumentFormatRegistry.swift` — routes read/write/stream registrations and exposes role snapshots for adapter compatibility checks.
+- `Models/Documents/BusinessDocumentSummary.swift` — stable workbook/table/PDF/slides summary metadata for chat chips and prompt context.
 - `Models/Documents/Workbook.swift` — typed workbook, sheet, row, and cell representation.
 - `Models/Documents/PDFDocumentRepresentation.swift` — typed PDF pages and heuristic table detections with source anchors.
 - `Models/Documents/PresentationDocument.swift` — typed deck, slide, note, table, and relationship representation.
@@ -334,6 +336,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - PPTX/POTX decks preserve slide grouping, text runs, notes, slide tables, and relationships.
 - PDFs preserve page boundaries, anchors, and simple text-layer tables so citations can point back to pages and detected table cells.
 - Rich documents preserve section boundaries, headings, links, and metadata.
+- Structured attachments keep legacy text fallback compatibility while carrying format kind, structure counts, and security inspection facts into chat chips and `<attached_document>` context attributes.
 
 ---
 

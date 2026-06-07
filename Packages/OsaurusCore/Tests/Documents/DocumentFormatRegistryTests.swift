@@ -76,6 +76,23 @@ struct DocumentFormatRegistryTests {
         #expect(registry.unregisterAll(formatId: "xlsx") == false)
     }
 
+    @Test func registrationSnapshotReportsAdapterEmitterAndStreamerRoles() {
+        let registry = DocumentFormatRegistry()
+        registry.register(adapter: FakeAdapter(formatId: "xlsx", extensions: ["xlsx"]))
+        registry.register(emitter: FakeEmitter(formatId: "xlsx"))
+        registry.register(adapter: FakeAdapter(formatId: "csv", extensions: ["csv"]))
+        registry.register(streamer: FakeStreamer(formatId: "csv"))
+
+        let snapshot = registry.registrationSnapshot()
+        #expect(
+            snapshot.first { $0.formatId == "xlsx" }?.roles == [.adapter, .emitter]
+        )
+        #expect(
+            snapshot.first { $0.formatId == "csv" }?.roles == [.adapter, .streamer]
+        )
+        #expect(registry.registrationRoles(forFormatId: "missing").isEmpty)
+    }
+
     // MARK: - Thread safety
 
     @Test func register_isThreadSafe() async {

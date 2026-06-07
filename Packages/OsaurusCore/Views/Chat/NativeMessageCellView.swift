@@ -2394,7 +2394,8 @@ private final class UserDocumentChipView: NSView {
     func configure(attachment: Attachment, theme: any ThemeProtocol) {
         layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.7).cgColor
 
-        let symbolName = attachment.fileIcon
+        let summary = attachment.businessDocumentSummary
+        let symbolName = summary?.systemImageName ?? attachment.fileIcon
         let config = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         iconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
             .withSymbolConfiguration(config)
@@ -2403,7 +2404,7 @@ private final class UserDocumentChipView: NSView {
         nameField.stringValue = attachment.filename ?? "Document"
         nameField.textColor = NSColor(theme.primaryText)
 
-        sizeField.stringValue = attachment.fileSizeFormatted ?? ""
+        sizeField.stringValue = summary?.chipDetailLabel ?? attachment.fileSizeFormatted ?? ""
         sizeField.textColor = NSColor(theme.tertiaryText)
 
         invalidateIntrinsicContentSize()

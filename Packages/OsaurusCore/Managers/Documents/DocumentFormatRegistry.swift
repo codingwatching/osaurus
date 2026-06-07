@@ -17,6 +17,22 @@
 
 import Foundation
 
+public enum DocumentFormatRegistrationRole: String, Codable, CaseIterable, Hashable, Sendable {
+    case adapter
+    case emitter
+    case streamer
+}
+
+public struct DocumentFormatRegistrationSnapshot: Codable, Equatable, Hashable, Sendable {
+    public let formatId: String
+    public let roles: Set<DocumentFormatRegistrationRole>
+
+    public init(formatId: String, roles: Set<DocumentFormatRegistrationRole>) {
+        self.formatId = formatId
+        self.roles = roles
+    }
+}
+
 public final class DocumentFormatRegistry: @unchecked Sendable {
     public static let shared = DocumentFormatRegistry()
 
@@ -104,5 +120,38 @@ public final class DocumentFormatRegistry: @unchecked Sendable {
         for emitter in emitters { ids.insert(emitter.formatId) }
         for id in streamersByFormatId.keys { ids.insert(id) }
         return ids
+    }
+
+    public func registrationSnapshot() -> [DocumentFormatRegistrationSnapshot] {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var rolesByFormat: [String: Set<DocumentFormatRegistrationRole>] = [:]
+        for adapter in adapters {
+            rolesByFormat[adapter.formatId, default: []].insert(.adapter)
+        }
+        for emitter in emitters {
+            rolesByFormat[emitter.formatId, default: []].insert(.emitter)
+        }
+        for formatId in streamersByFormatId.keys {
+            rolesByFormat[formatId, default: []].insert(.streamer)
+        }
+
+        return rolesByFormat.keys.sorted().map { formatId in
+            DocumentFormatRegistrationSnapshot(
+                formatId: formatId,
+                roles: rolesByFormat[formatId] ?? []
+            )
+        }
+    }
+
+    public func registrationRoles(forFormatId formatId: String) -> Set<DocumentFormatRegistrationRole> {
+        lock.lock()
+        defer { lock.unlock() }
+        var roles: Set<DocumentFormatRegistrationRole> = []
+        if adapters.contains(where: { $0.formatId == formatId }) { roles.insert(.adapter) }
+        if emitters.contains(where: { $0.formatId == formatId }) { roles.insert(.emitter) }
+        if streamersByFormatId[formatId] != nil { roles.insert(.streamer) }
+        return roles
     }
 }

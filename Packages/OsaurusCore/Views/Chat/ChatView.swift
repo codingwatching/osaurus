@@ -831,9 +831,9 @@ final class ChatSession: ObservableObject {
         var parts: [String] = []
         for doc in docs {
             if let name = doc.filename, let text = doc.documentContent {
-                let safeName = escapeAttachmentName(name)
+                let attributes = attachedDocumentAttributes(for: doc, rawName: name)
                 let safeText = xmlEscape(text)
-                parts.append("<attached_document name=\"\(safeName)\">\n\(safeText)\n</attached_document>")
+                parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
             }
         }
 
@@ -916,9 +916,28 @@ final class ChatSession: ObservableObject {
     }
 
     private static func escapeAttachmentName(_ raw: String) -> String {
+        xmlEscape(normalizedAttachmentName(raw))
+    }
+
+    private static func normalizedAttachmentName(_ raw: String) -> String {
         let basename = (raw as NSString).lastPathComponent
         let trimmed = basename.trimmingCharacters(in: .whitespacesAndNewlines)
-        return xmlEscape(trimmed.isEmpty ? "attachment" : trimmed)
+        return trimmed.isEmpty ? "attachment" : trimmed
+    }
+
+    private static func attachedDocumentAttributes(for attachment: Attachment, rawName: String) -> String {
+        var attributes: [(name: String, value: String)] = [
+            ("name", normalizedAttachmentName(rawName))
+        ]
+        if attachment.structuredDocumentMetadata != nil {
+            if let summary = attachment.businessDocumentSummary {
+                attributes.append(contentsOf: summary.contextAttributes)
+            }
+        }
+        return
+            attributes
+            .map { "\($0.name)=\"\(xmlEscape($0.value))\"" }
+            .joined(separator: " ")
     }
 
     private static func xmlEscape(_ s: String) -> String {

@@ -18,6 +18,17 @@ the registry that matches the data path they need, and code that supports both
 structured documents and plugin records should query both explicitly at its
 own boundary.
 
+Core `DocumentFormatRegistry` also exposes a registration snapshot that reports
+whether a format currently has an adapter, emitter, or streamer. UI and tests
+use that snapshot as compatibility proof; plugin adapters should not infer
+write support from read support alone.
+
+Structured chat attachments remain backwards-compatible `Attachment.document`
+values, but include a structured sidecar when a `DocumentFormatRegistry`
+adapter produced the fallback. That sidecar feeds `BusinessDocumentSummary`,
+so chips and model-facing `<attached_document>` wrappers can label workbooks,
+tables, PDFs, and slide decks without depending on the concrete representation.
+
 ## Adapter Contract
 
 Plugin packs register adapter factories at startup:

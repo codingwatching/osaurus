@@ -9,6 +9,7 @@
 //  the model should only ever see neutral, entity-escaped content.
 //
 
+import CryptoKit
 import Foundation
 import Testing
 
@@ -50,6 +51,30 @@ struct ChatAttachmentSecurityTests {
         let attachment = Attachment.document(filename: "", content: "data", fileSize: 4)
         let message = ChatSession.buildUserMessageText(content: "", attachments: [attachment])
         #expect(message.contains(#"<attached_document name="attachment">"#))
+    }
+
+    @Test func buildUserMessageText_addsStructuredDocumentAttributes() {
+        let document = StructuredDocument(
+            formatId: "xlsx",
+            filename: "budget.xlsx",
+            fileSize: 1024,
+            representation: AnyStructuredRepresentation(
+                formatId: "xlsx",
+                underlying: PlainTextRepresentation(text: "A,B\n1,2")
+            ),
+            textFallback: "A,B\n1,2"
+        )
+        let attachment = Attachment.structuredDocument(document)
+
+        let message = ChatSession.buildUserMessageText(content: "Summarize", attachments: [attachment])
+
+        #expect(
+            message.contains(
+                #"<attached_document name="budget.xlsx" type="workbook" format="xlsx" structured="true" security="notInspected">"#
+            )
+        )
+        #expect(message.contains("A,B\n1,2"))
+        #expect(message.contains("Summarize"))
     }
 
     @Test func buildUserChatMessage_forwardsAudioAndVideoWhenSupported() {
@@ -115,21 +140,39 @@ struct ChatAttachmentSecurityTests {
         #expect(forwarded.imageUrls[0].hasPrefix("data:image/png;base64,"))
     }
 
-    @Test func buildUserChatMessage_hydratesSpilledImagesWhenSupported() throws {
-        let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])
-        let hash = try AttachmentBlobStore.write(imageData)
-        let imageRef = Attachment(kind: .imageRef(hash: hash, byteCount: imageData.count))
+    @Test func buildUserChatMessage_hydratesSpilledImagesWhenSupported() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-chat-attachment-tests-\(UUID().uuidString)"
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            StorageKeyManager.shared._setKeyForTesting(
+                SymmetricKey(data: Data(repeating: 0x44, count: 32))
+            )
+            defer {
+                OsaurusPaths.overrideRoot = nil
+                try? FileManager.default.removeItem(at: root)
+                StorageKeyManager.shared.wipeCache()
+            }
 
-        let message = ChatSession.buildUserChatMessage(
-            content: "look",
-            attachments: [imageRef],
-            supportsImages: true,
-            supportsAudio: false,
-            supportsVideo: false
-        )
+            let imageData = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A])
+            let hash = try AttachmentBlobStore.write(imageData)
+            let imageRef = Attachment(kind: .imageRef(hash: hash, byteCount: imageData.count))
 
-        #expect(message.imageUrls.count == 1)
-        #expect(message.imageDataFromParts == [imageData])
+            let message = await MainActor.run {
+                ChatSession.buildUserChatMessage(
+                    content: "look",
+                    attachments: [imageRef],
+                    supportsImages: true,
+                    supportsAudio: false,
+                    supportsVideo: false
+                )
+            }
+
+            #expect(message.imageUrls.count == 1)
+            #expect(message.imageDataFromParts == [imageData])
+        }
     }
 
     @Test func buildUserChatMessage_alignsLocalLiveAudioSamplesWithAudioInputs() {

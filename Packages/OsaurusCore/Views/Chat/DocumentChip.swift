@@ -22,6 +22,7 @@ struct DocumentChip: View {
     @State private var isHovered = false
 
     private var isPasted: Bool { attachment.isPastedContent }
+    private var businessSummary: BusinessDocumentSummary? { attachment.businessDocumentSummary }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -71,7 +72,7 @@ struct DocumentChip: View {
 
     private var labelStack: some View {
         HStack(spacing: 5) {
-            Image(systemName: isPasted ? "doc.on.clipboard" : attachment.fileIcon)
+            Image(systemName: isPasted ? "doc.on.clipboard" : businessSummary?.systemImageName ?? attachment.fileIcon)
                 .font(.system(size: 11, weight: .medium))
                 .foregroundColor(theme.accentColor)
 
@@ -90,10 +91,11 @@ struct DocumentChip: View {
                         .font(theme.font(size: 9, weight: .regular))
                         .foregroundColor(onRemove != nil ? theme.secondaryText : theme.tertiaryText)
                 }
-            } else if let size = attachment.fileSizeFormatted {
-                Text(size)
+            } else if let detail = businessSummary?.chipDetailLabel ?? attachment.fileSizeFormatted {
+                Text(detail)
                     .font(theme.font(size: 9, weight: .regular))
                     .foregroundColor(onRemove != nil ? theme.secondaryText : theme.tertiaryText)
+                    .lineLimit(1)
             }
         }
     }

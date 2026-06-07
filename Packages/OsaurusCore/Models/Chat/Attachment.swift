@@ -375,8 +375,9 @@ public struct Attachment: Codable, Sendable, Equatable, Identifiable {
         switch ext {
         case "pdf": return "doc.richtext"
         case "docx", "doc": return "doc.text"
+        case "xlsx", "xlsm", "xltx", "xltm", "xlsb", "xls", "csv", "tsv": return "tablecells"
+        case "pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppt": return "rectangle.on.rectangle"
         case "md", "markdown": return "text.document"
-        case "csv": return "tablecells"
         case "json": return "curlybraces"
         case "xml", "html", "htm": return "chevron.left.forwardslash.chevron.right"
         case "rtf": return "doc.richtext"
@@ -445,28 +446,61 @@ public struct StructuredDocumentAttachmentMetadata: Codable, Sendable, Equatable
     public let filename: String
     public let fileSize: Int64
     public let createdAt: Date
+    public let fileExtension: String?
+    public let documentKind: BusinessDocumentKind?
+    public let structureSummary: DocumentStructureSummary?
+    public let inspectionStatus: DocumentSecurityMetadata.InspectionStatus?
+    public let maximumSeverity: DocumentSecurityFinding.Severity?
+    // Optional preserves metadata decoded from attachments saved before this field existed.
+    // swiftlint:disable:next discouraged_optional_boolean
+    public let hasActiveContent: Bool?
 
     public init(
         formatId: String,
         representationFormatId: String,
         filename: String,
         fileSize: Int64,
-        createdAt: Date
+        createdAt: Date,
+        fileExtension: String? = nil,
+        documentKind: BusinessDocumentKind? = nil,
+        structureSummary: DocumentStructureSummary? = nil,
+        inspectionStatus: DocumentSecurityMetadata.InspectionStatus? = nil,
+        maximumSeverity: DocumentSecurityFinding.Severity? = nil,
+        // swiftlint:disable:next discouraged_optional_boolean
+        hasActiveContent: Bool? = nil
     ) {
         self.formatId = formatId
         self.representationFormatId = representationFormatId
         self.filename = filename
         self.fileSize = fileSize
         self.createdAt = createdAt
+        self.fileExtension = fileExtension
+        self.documentKind = documentKind
+        self.structureSummary = structureSummary
+        self.inspectionStatus = inspectionStatus
+        self.maximumSeverity = maximumSeverity
+        self.hasActiveContent = hasActiveContent
     }
 
     public init(_ document: StructuredDocument) {
+        let fileExtension =
+            document.security.fileExtension
+            ?? URL(fileURLWithPath: document.filename).pathExtension.lowercasedNonEmpty
         self.init(
             formatId: document.formatId,
             representationFormatId: document.representation.formatId,
             filename: document.filename,
             fileSize: document.fileSize,
-            createdAt: document.createdAt
+            createdAt: document.createdAt,
+            fileExtension: fileExtension,
+            documentKind: BusinessDocumentKind.infer(
+                formatId: document.formatId,
+                fileExtension: fileExtension
+            ),
+            structureSummary: document.structure.businessSummary,
+            inspectionStatus: document.security.inspectionStatus,
+            maximumSeverity: document.security.maximumSeverity,
+            hasActiveContent: document.security.hasActiveContent
         )
     }
 }
@@ -476,6 +510,13 @@ extension StructuredDocument {
         if fileSize < 0 { return 0 }
         if fileSize > Int64(Int.max) { return Int.max }
         return Int(fileSize)
+    }
+}
+
+private extension String {
+    var lowercasedNonEmpty: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value.isEmpty ? nil : value
     }
 }
 
