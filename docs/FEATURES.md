@@ -326,6 +326,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - `Services/Documents/XLSXEmitter.swift` — XLSX workbook emission for round-trip workflows.
 - `Services/Documents/PPTXAdapter.swift` — PPTX/POTX deck parsing from Office Open XML packages.
 - `Services/Documents/PDFAdapter.swift` — PDF extraction with page-level anchors and layout-aware text-layer table detection.
+- `Services/Documents/PDFPPTXWorkflowService.swift` — bounded PDF/PPTX previews plus structured creation availability diagnostics.
 - `Services/Documents/RichDocumentAdapter.swift` — DOCX/RTF/HTML-style rich document structure extraction.
 - `Services/Documents/ExternalOfficeRuntimeDetector.swift` — optional LibreOffice/OpenOffice discovery for future conversion flows; detection reads version metadata only and does not send document bytes to a runtime.
 
@@ -335,6 +336,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - XLSX workbooks preserve sheets, cells, shared strings, relationships, and can emit a minimal valid `.xlsx` package.
 - PPTX/POTX decks preserve slide grouping, text runs, notes, slide tables, and relationships.
 - PDFs preserve page boundaries, anchors, and simple text-layer tables so citations can point back to pages and detected table cells.
+- PDF/PPTX workflow previews expose page/slide/table/notes metadata and report missing structured emitters instead of treating text writes as valid binary output.
 - Rich documents preserve section boundaries, headings, links, and metadata.
 - Structured attachments keep legacy text fallback compatibility while carrying format kind, structure counts, and security inspection facts into chat chips and `<attached_document>` context attributes.
 

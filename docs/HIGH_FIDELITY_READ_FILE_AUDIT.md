@@ -28,8 +28,8 @@ weight because core `file_read` already owns their read path.
 | --- | --- | --- |
 | CSV/TSV | Raw line-numbered `file_read`; structured adapter remains available for document parsing | `FileReadDocumentFormatsTests.fileReadCSVStaysRawLineNumbered`, `CSVAdapterTests` |
 | XLSX | Bounded workbook preview through `file_read`, with sheet, row, row-cap, column-cap, formula, merged-range, and security summary controls | `FileReadWorkbookTests`, `XLSXAdapterTests` |
-| PPTX | Text extraction through `file_read` and the in-tree PPTX adapter | `FileReadDocumentFormatsTests.fileReadExtractsPPTXSlideText`, `PPTXAdapterTests` |
-| PDF | Text-layer extraction through `file_read` and the in-tree PDF adapter | `FileReadDocumentFormatsTests.fileReadExtractsPDFTextLayerPages`, `PDFAdapterTests` |
+| PPTX | Text extraction through `file_read` and the in-tree PPTX adapter; typed workflow previews expose slide, hidden-slide, notes, and table metadata | `FileReadDocumentFormatsTests.fileReadExtractsPPTXSlideText`, `PPTXAdapterTests`, `PDFPPTXWorkflowServiceTests` |
+| PDF | Text-layer extraction through `file_read` and the in-tree PDF adapter; typed workflow previews expose page, text-layer table, cell, and bounding-box metadata | `FileReadDocumentFormatsTests.fileReadExtractsPDFTextLayerPages`, `PDFAdapterTests`, `PDFPPTXWorkflowServiceTests` |
 | Images / scanned PDF | Refused by `file_read` with a pivot to attachment, OCR, or vision workflow | `FileReadDocumentFormatsTests.fileReadRefusesImagesWithImagePivot`, `PDFAdapterTests.parse_throwsEmptyContentForPDFWithNoTextLayer` |
 
 ## Follow-Up Lanes

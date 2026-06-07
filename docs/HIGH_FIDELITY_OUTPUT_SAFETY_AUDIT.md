@@ -18,6 +18,11 @@ bounds before writing, rejects formulas instead of flattening them, rejects
 workbooks with no renderable cells, rejects overlong cell text and invalid XML,
 and only then writes the package atomically.
 
+PDF/PPTX creation remains diagnostic-only in core. `PDFPPTXWorkflowService`
+reports whether a structured emitter is registered for a typed PDF/PPTX
+document; on current main it returns `missingEmitter`, keeping fake binary
+packages off the text-only `file_write` path.
+
 Tool exposure stays narrow. Folder plugin hints only bias installed spreadsheet
 plugins, preflight injection respects installed plugin ids and per-agent
 allowlists, and default-agent `capabilities_load` cannot load plugin tools.
@@ -34,6 +39,7 @@ No workbook writer is added to the default schema.
 | XLSX emitter | Valid scalar workbooks round-trip through the XLSX adapter | `XLSXEmitterTests.emit_roundTripsScalarWorkbookThroughXLSXAdapter` |
 | XLSX formula safety | Formula cells are rejected, while formula-looking strings stay inert shared strings | `XLSXEmitterTests.emit_rejectsFormulaCellsWithoutFlatteningThem`, `XLSXEmitterTests.emit_keepsFormulaLookingTextInert` |
 | XLSX bounds | Empty exports, whitespace-only exports, overlong cell text, invalid names/references, non-finite numbers, and ZIP32 overflows are rejected before package write | `XLSXEmitterTests`, `XLSXAdapterTests` |
+| PDF/PPTX creation diagnostics | Typed PDF/PPTX workflows report registered emitters or `missingEmitter` and do not route creation through text writes | `PDFPPTXWorkflowServiceTests` |
 | Tool exposure | XLSX plugin injection is bias-only, installed-plugin gated, and allowlist-respecting | `PreflightCapabilitySearchTests.folderInjection_*`, `FolderPluginHintsTests` |
 
 ## Follow-Up Lanes
