@@ -5,10 +5,11 @@
 //  Verifies the contract of `SystemPromptComposer.resolveTools` across the
 //  matrix of (toolMode: auto|manual) x (executionMode: none|sandbox) x
 //  (manualNames empty|set). These tests pin down the user-facing spec:
-//   - Auto mode = always-loaded built-ins + preflight additions.
+//   - Auto mode = always-loaded built-ins (the fixed hot set) plus tools
+//     loaded mid-session via `capabilities_load` (`additionalToolNames`).
+//     Under Design C there is no per-turn preflight injection.
 //   - Manual mode (pragmatic) = always-loaded built-ins + sandbox/folder
-//     runtime when active + user-picked names. Same shape as auto, minus
-//     the LLM-driven preflight specs (manual mode is opt-in).
+//     runtime when active + user-picked names.
 //
 
 import Foundation
@@ -78,16 +79,14 @@ struct SystemPromptComposerToolResolutionTests {
     // MARK: - Auto mode
 
     @Test
-    func autoMode_includesAlwaysLoadedAndPreflightAdditions() async {
+    func autoMode_includesAlwaysLoadedBuiltins() async {
         await withSandboxAgent(autonomous: false) { agentId in
-            let preflight = PreflightResult(toolSpecs: [], items: [])
             let tools = SystemPromptComposer.resolveTools(
                 agentId: agentId,
-                executionMode: .none,
-                preflight: preflight
+                executionMode: .none
             )
-            // Built-ins like capabilities_search must be present in auto mode.
-            #expect(tools.contains { $0.function.name == "capabilities_search" })
+            // Built-ins like capabilities_discover must be present in auto mode.
+            #expect(tools.contains { $0.function.name == "capabilities_discover" })
         }
     }
 
@@ -110,7 +109,7 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(names.contains("complete"))
             #expect(names.contains("clarify"))
             #expect(names.contains("share_artifact"))
-            #expect(names.contains("capabilities_search"))
+            #expect(names.contains("capabilities_discover"))
             #expect(names.contains("capabilities_load"))
             #expect(names.contains("search_memory"))
         }
@@ -149,7 +148,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(names.contains("todo"))
                 #expect(names.contains("share_artifact"))
                 #expect(names.contains("sandbox_exec"))
-                #expect(names.contains("capabilities_search"))
+                #expect(names.contains("capabilities_discover"))
             }
         }
     }
@@ -388,14 +387,14 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
-    // MARK: - Auto-mode preflight query fallback
+    // MARK: - Effective-query fallback
 
     @Test
-    func resolvePreflightQuery_prefersExplicitQuery() {
+    func resolveEffectiveQuery_prefersExplicitQuery() {
         let messages: [ChatMessage] = [
             ChatMessage(role: "user", content: "old question")
         ]
-        let resolved = SystemPromptComposer.resolvePreflightQuery(
+        let resolved = SystemPromptComposer.resolveEffectiveQuery(
             query: "fresh question",
             messages: messages
         )
@@ -403,13 +402,13 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func resolvePreflightQuery_fallsBackToLastUserMessageWhenQueryEmpty() {
+    func resolveEffectiveQuery_fallsBackToLastUserMessageWhenQueryEmpty() {
         let messages: [ChatMessage] = [
             ChatMessage(role: "user", content: "first"),
             ChatMessage(role: "assistant", content: "ok"),
             ChatMessage(role: "user", content: "second"),
         ]
-        let resolved = SystemPromptComposer.resolvePreflightQuery(
+        let resolved = SystemPromptComposer.resolveEffectiveQuery(
             query: "",
             messages: messages
         )
@@ -417,8 +416,8 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func resolvePreflightQuery_returnsEmptyWhenNothingAvailable() {
-        let resolved = SystemPromptComposer.resolvePreflightQuery(
+    func resolveEffectiveQuery_returnsEmptyWhenNothingAvailable() {
+        let resolved = SystemPromptComposer.resolveEffectiveQuery(
             query: "",
             messages: []
         )
@@ -541,7 +540,7 @@ struct SystemPromptComposerToolResolutionTests {
 
                 // Sandbox built-ins must come first, capability tools next.
                 if let firstSandbox = aNames.firstIndex(where: { $0.hasPrefix("sandbox_") }),
-                    let firstCapability = aNames.firstIndex(of: "capabilities_search")
+                    let firstCapability = aNames.firstIndex(of: "capabilities_discover")
                 {
                     #expect(firstSandbox < firstCapability)
                 }

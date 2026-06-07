@@ -5,31 +5,32 @@
 //  JSON schema for a single behaviour case. Cases live as small JSON
 //  files under `Suites/<domain>/` so non-Swift contributors can add new
 //  ones with a text editor. Schema design:
-//    - `domain` is the eval family (today: "preflight"). It selects
-//      which runner code-path executes the case.
+//    - `domain` is the eval family (e.g. "capability_search",
+//      "capability_claims", "schema"). It selects which runner
+//      code-path executes the case.
 //    - `fixtures` describes the world the case should run against
-//      (preflight mode, required plugins). The runner uses
-//      `requirePlugins` to skip cases the local install can't satisfy
-//      instead of failing them — a contributor without `osaurus.browser`
-//      should still be able to run the rest of the suite.
+//      (required plugins, seeded methods, enabled skills/tools). The
+//      runner uses `requirePlugins` to skip cases the local install
+//      can't satisfy instead of failing them — a contributor without
+//      `osaurus.browser` should still be able to run the rest of the suite.
 //    - `expect` is what we'd score against. All matchers are optional
-//      so a case can scope to just tools, just companions, or both.
+//      so a case can scope to just the components it cares about.
 //
 
 import Foundation
 import OsaurusCore
 
 public struct EvalCase: Sendable, Codable, Identifiable {
-    /// Unique slug, e.g. `preflight.browser.amazon-orders`. Surfaced in
+    /// Unique slug, e.g. `capability_search.browser-prefix`. Surfaced in
     /// reports for diffing across runs.
     public let id: String
-    /// Selects the runner code path. Exactly one domain is supported
-    /// today (`preflight`); future domains will live under sibling
-    /// directories (`Suites/AgentLoop/`, `Suites/ToolCalling/`, ...).
+    /// Selects the runner code path (`capability_search`,
+    /// `capability_claims`, `schema`, ...). Each domain's cases live
+    /// under a sibling directory (`Suites/CapabilitySearch/`, ...).
     public let domain: String
     /// Optional human label for reports — falls back to `id` when nil.
     public let label: String?
-    /// User message the case sends through preflight.
+    /// User message the case sends through the runner.
     public let query: String
     /// Free-form per-case explanatory text. Echoed into the report's
     /// per-case `notes` array so a reader sees WHY a case is shaped the
@@ -61,11 +62,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
     }
 
     public struct Fixtures: Sendable, Codable {
-        /// Preflight aggressiveness for the case. Default `.balanced`
-        /// matches the production default — over-narrow cases should
-        /// opt down explicitly so the picker behaviour they're asserting
-        /// is the same one users see.
-        public let preflightMode: PreflightMode?
         /// Plugin ids the case needs in the local registry. Cases with
         /// missing requirements are SKIPPED in the report (not failed)
         /// so an incomplete local setup doesn't mask real regressions.
@@ -97,17 +93,33 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// can leave a built-in skill flipped on. Re-running any
         /// case that names the same skill converges the state back.
         public let enableSkills: [String]?
+        /// Tool names to grant the agent for the duration of a
+        /// `capability_claims` case (and restore afterwards). The agent's
+        /// enabled set is what the enabled-capabilities manifest is built
+        /// from, so a "confirm you have list_messages" case has to enable
+        /// `list_messages` first. No-op when the agent is in legacy
+        /// global-enabled mode (nil allowlist already grants everything).
+        public let enableTools: [String]?
+        /// Tool names that must NOT be enabled for the case to be valid —
+        /// used by the "impossible-but-distinct" case so a host that
+        /// happens to have a matching tool installed skips instead of
+        /// silently changing what the case proves. The runner can't
+        /// safely disable a globally-enabled tool, so it SKIPS the case
+        /// (with a note) when any of these are currently enabled.
+        public let ensureToolsDisabled: [String]?
 
         public init(
-            preflightMode: PreflightMode? = nil,
             requirePlugins: [String]? = nil,
             seedMethods: [SeedMethod]? = nil,
-            enableSkills: [String]? = nil
+            enableSkills: [String]? = nil,
+            enableTools: [String]? = nil,
+            ensureToolsDisabled: [String]? = nil
         ) {
-            self.preflightMode = preflightMode
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
             self.enableSkills = enableSkills
+            self.enableTools = enableTools
+            self.ensureToolsDisabled = ensureToolsDisabled
         }
     }
 
@@ -150,30 +162,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
-    /// Mirror of `OsaurusCore.PreflightSearchMode` decoded from JSON.
-    /// We don't import the OsaurusCore enum directly because we want
-    /// the JSON to use lowercase strings (`"balanced"`) and don't want
-    /// the schema to break if the upstream enum gains cases.
-    public enum PreflightMode: String, Sendable, Codable {
-        case off, narrow, balanced, wide
-    }
-
     /// What we score against. All sub-fields are optional so a case can
     /// scope its assertions narrowly. An empty `Expectations` is valid
-    /// — it acts as a smoke-test that just records what preflight did
-    /// without scoring anything (useful while bootstrapping a new case).
-    ///
-    /// TODO(eval-shape-unification): `tools.mustInclude` (preflight)
-    /// and `capabilitySearch.expectedTools.anyOf` are two different
-    /// shapes for asserting on tool sets across two sibling domains.
-    /// Worth one cleanup pass once both runners have stabilised — pick
-    /// the union (`mustInclude` + `mustNotInclude` + `anyOf` +
-    /// `minMatches`) and have both domains use it. Don't block the
-    /// hybrid PR on this; surfacing the divergence here so the next
-    /// contributor sees it.
+    /// — it acts as a smoke-test that just records the case without
+    /// scoring anything (useful while bootstrapping a new case).
     public struct Expectations: Sendable, Codable {
-        public let tools: ToolExpectations?
-        public let companions: CompanionExpectations?
         /// Schema-validation expectation for `domain == "schema"` cases.
         /// Lets us pin the SchemaValidator's behaviour against canned
         /// schema/arg pairs — extremely useful for keeping the new
@@ -188,17 +181,22 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// Recall expectation for `domain == "capability_search"` cases.
         /// Drives the index-only path through `CapabilitySearchEvaluator`
         /// — no LLM, fast, deterministic. Used to lock in recall floors
-        /// against the embedder + threshold layer that feeds preflight.
+        /// against the embedder + threshold layer that backs
+        /// `capabilities_discover`.
         public let capabilitySearch: CapabilitySearchExpectations?
         /// Detection expectation for `domain == "sandbox_diagnostics"`
         /// cases. Pins `inlineCodeEscapeHint` — the self-heal hint that
         /// catches multi-line code mis-escaped into a shell `-c`/`-e`
         /// string — against canned `(command, exit, stderr)` tuples.
         public let sandboxDiagnostics: SandboxDiagnosticsExpectations?
+        /// Behaviour expectation for `domain == "capability_claims"`
+        /// cases. Combines deterministic transcript assertions (which
+        /// tools the agent loop must / must not call, skill-first
+        /// ordering) with an LLM-judge rubric the final answer is graded
+        /// against. Drives `CapabilityClaimsEvaluator`.
+        public let capabilityClaims: CapabilityClaimsExpectations?
 
         public init(
-            tools: ToolExpectations? = nil,
-            companions: CompanionExpectations? = nil,
             schema: SchemaExpectations? = nil,
             toolEnvelope: ToolEnvelopeExpectations? = nil,
             streamingHint: StreamingHintExpectations? = nil,
@@ -206,10 +204,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             argumentCoercion: ArgumentCoercionExpectations? = nil,
             requestValidation: RequestValidationExpectations? = nil,
             capabilitySearch: CapabilitySearchExpectations? = nil,
-            sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil
+            sandboxDiagnostics: SandboxDiagnosticsExpectations? = nil,
+            capabilityClaims: CapabilityClaimsExpectations? = nil
         ) {
-            self.tools = tools
-            self.companions = companions
             self.schema = schema
             self.toolEnvelope = toolEnvelope
             self.streamingHint = streamingHint
@@ -218,6 +215,59 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.requestValidation = requestValidation
             self.capabilitySearch = capabilitySearch
             self.sandboxDiagnostics = sandboxDiagnostics
+            self.capabilityClaims = capabilityClaims
+        }
+    }
+
+    /// Expectation for `domain == "capability_claims"` cases. The runner
+    /// runs the multi-turn agent loop via `CapabilityClaimsEvaluator`,
+    /// then scores two ways:
+    ///   1. **Deterministic** transcript checks — `mustCallTools` /
+    ///      `mustNotCallTools` and the optional skill-first ordering.
+    ///   2. **LLM judge** — every `rubric` condition graded against the
+    ///      final assistant text. ALL must pass.
+    /// A case passes only when both layers pass.
+    public struct CapabilityClaimsExpectations: Sendable, Codable {
+        /// Natural-language conditions the final answer must satisfy,
+        /// graded by the LLM judge. e.g. "Confirms it has a
+        /// list_messages tool", "Does not claim it can trade stocks".
+        public let rubric: [String]
+        /// Tool names that MUST be called somewhere in the loop.
+        public let mustCallTools: [String]?
+        /// Tool names that must NOT be called anywhere in the loop.
+        public let mustNotCallTools: [String]?
+        /// Skill-first ordering assertion: `skill` must be loaded (via a
+        /// `capabilities_load` call carrying `skill/<name>`) before any
+        /// tool in `beforeTools` is called.
+        public let loadSkillFirst: SkillFirstMatcher?
+        /// Cap on model round-trips. nil → evaluator default.
+        public let maxIterations: Int?
+
+        public init(
+            rubric: [String],
+            mustCallTools: [String]? = nil,
+            mustNotCallTools: [String]? = nil,
+            loadSkillFirst: SkillFirstMatcher? = nil,
+            maxIterations: Int? = nil
+        ) {
+            self.rubric = rubric
+            self.mustCallTools = mustCallTools
+            self.mustNotCallTools = mustNotCallTools
+            self.loadSkillFirst = loadSkillFirst
+            self.maxIterations = maxIterations
+        }
+
+        public struct SkillFirstMatcher: Sendable, Codable {
+            /// Skill name expected in a `capabilities_load` call's
+            /// `skill/<name>` id before any gated tool runs.
+            public let skill: String
+            /// Tool names that must only run after the skill is loaded.
+            public let beforeTools: [String]
+
+            public init(skill: String, beforeTools: [String]) {
+                self.skill = skill
+                self.beforeTools = beforeTools
+            }
         }
     }
 
@@ -485,44 +535,4 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
-    public struct ToolExpectations: Sendable, Codable {
-        /// Tool names that MUST appear in the picked set. Each missing
-        /// name costs a fixed weight (see `Scorers.scoreTools`).
-        public let mustInclude: [String]?
-        /// Tool names that must NOT appear. Each spurious pick fails
-        /// the contract.
-        public let mustNotInclude: [String]?
-
-        public init(mustInclude: [String]? = nil, mustNotInclude: [String]? = nil) {
-            self.mustInclude = mustInclude
-            self.mustNotInclude = mustNotInclude
-        }
-    }
-
-    public struct CompanionExpectations: Sendable, Codable {
-        /// Plugin skills (by name) that should surface in the teaser.
-        /// A case asserts on names rather than the full skill object so
-        /// the schema stays compact.
-        public let skills: [String]?
-        /// Sibling-tool overlap matcher: AT LEAST `minOverlap` of these
-        /// candidates should appear in the teaser. Captures "the right
-        /// SHAPE of siblings showed up" without pinning the exact list,
-        /// which is helpful when sibling ordering is query-dependent.
-        public let siblings: SiblingMatcher?
-
-        public init(skills: [String]? = nil, siblings: SiblingMatcher? = nil) {
-            self.skills = skills
-            self.siblings = siblings
-        }
-
-        public struct SiblingMatcher: Sendable, Codable {
-            public let minOverlap: Int
-            public let candidates: [String]
-
-            public init(minOverlap: Int, candidates: [String]) {
-                self.minOverlap = minOverlap
-                self.candidates = candidates
-            }
-        }
-    }
 }

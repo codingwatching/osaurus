@@ -2,7 +2,7 @@
 //  CapabilityTools.swift
 //  osaurus
 //
-//  Unified capability search and load tools. capabilities_search queries
+//  Unified capability search and load tools. capabilities_discover queries
 //  methods, skills, and tools in one call. capabilities_load injects the
 //  selected items into the active session with cascading dependencies.
 //
@@ -30,14 +30,14 @@ actor CapabilityLoadBuffer {
     }
 }
 
-// MARK: - capabilities_search
+// MARK: - capabilities_discover
 
-final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
-    let name = "capabilities_search"
+final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
+    let name = "capabilities_discover"
     let description =
         "Find additional tools or skills the current schema does not include. "
-        + "Your initial set was pre-selected for relevance, so check it first; "
-        + "but when no listed tool fits the request, use this to find one rather than giving up or guessing. "
+        + "Use this to discover or confirm any capability, including whether a named tool exists in the enabled set. "
+        + "Your current tool list is a fixed subset, not the full set. "
         + "Returns ranked IDs (e.g. `tool/sandbox_exec`, `skill/plot-data`) you then pass to `capabilities_load`. "
         + "Example: `{\"query\": \"convert csv to json\"}`."
 
@@ -47,18 +47,18 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
         self.agentId = agentId
     }
 
+    // `additionalProperties` stays permissive (not `false`) so the central
+    // preflight does not reject a legacy `queries` payload before
+    // `requireQueries` can absorb it. `queries` is intentionally absent from
+    // `properties` so small models only ever see the single `query` field.
     let parameters: JSONValue? = .object([
         "type": .string("object"),
-        "additionalProperties": .bool(false),
+        "additionalProperties": .bool(true),
         "properties": .object([
             "query": .object([
                 "type": .string("string"),
                 "description": .string("Single search query describing what you need"),
-            ]),
-            "queries": .object([
-                "type": .string("string"),
-                "description": .string("Compatibility alias for a single search query. Prefer `query`."),
-            ]),
+            ])
         ]),
     ])
 
@@ -256,7 +256,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
 
     /// The enabled-tool allowlist is nil for legacy/unseeded agents,
     /// which deliberately means "use the global enabled registry." A
-    /// non-nil set is authoritative: `capabilities_search` must not
+    /// non-nil set is authoritative: `capabilities_discover` must not
     /// return a dynamic tool the current agent has not been granted.
     private static func allowedToolNames(for agentId: UUID?) async -> Set<String>? {
         guard let agentId else { return nil }
@@ -270,7 +270,7 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
     /// other array arguments keep the stricter validator behavior.
     private static func requireQueries(
         _ args: [String: Any],
-        tool: CapabilitiesSearchTool
+        tool: CapabilitiesDiscoverTool
     ) -> ArgumentRequirement<[String]> {
         if args["queries"] != nil {
             if let stringified = args["queries"] as? String {
@@ -400,9 +400,9 @@ final class CapabilitiesSearchTool: OsaurusTool, @unchecked Sendable {
 final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     let name = "capabilities_load"
     let description =
-        "Load capabilities into the current session by ID. IDs MUST come from `capabilities_search` results — "
-        + "do not invent IDs. After loading, the named tools are callable for the rest of the session and named "
-        + "skills are appended to your instructions. "
+        "Load capabilities into the current session by ID. IDs come from the Enabled-capabilities list "
+        + "or from `capabilities_discover` results — do not invent IDs. After loading, the named tools are "
+        + "callable for the rest of the session and named skills are appended to your instructions. "
         + "Example: `{\"ids\": [\"tool/sandbox_exec\", \"skill/plot-data\"]}`."
 
     let parameters: JSONValue? = .object([
@@ -413,7 +413,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("array"),
                 "items": .object(["type": .string("string")]),
                 "description": .string(
-                    "IDs from capabilities_search results (e.g. 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
+                    "IDs from the Enabled-capabilities list or capabilities_discover results (e.g. 'method/abc', 'tool/sandbox_exec', 'skill/swift-best-practices')"
                 ),
             ])
         ]),
@@ -427,7 +427,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let idsReq = requireStringArray(
             args,
             "ids",
-            expected: "non-empty array of `<type>/<id>` strings from `capabilities_search` results",
+            expected:
+                "non-empty array of `<type>/<id>` strings from the Enabled-capabilities list or `capabilities_discover` results",
             tool: name
         )
         guard case .value(let ids) = idsReq else { return idsReq.failureEnvelope ?? "" }
@@ -438,7 +439,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             guard let slashIdx = id.firstIndex(of: "/") else {
                 output +=
                     "Warning: Invalid ID format '\(id)' — expected `<type>/<id>` "
-                    + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Get IDs from `capabilities_search`.\n"
+                    + "(e.g. `tool/sandbox_exec`, `skill/plot-data`). Use IDs from the Enabled-capabilities list or `capabilities_discover`.\n"
                 continue
             }
 
@@ -469,7 +470,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
             return
                 "Error: Method loading is disabled for the configuration agent. "
-                + "Use `capabilities_search` to find a configuration tool (osaurus_*_<verb>) "
+                + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
                 + "and load it directly.\n"
         }
         do {
@@ -496,7 +497,8 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
             if !method.toolsUsed.isEmpty {
                 let allowedNames = await grantedToolNamesForCurrentAgent()
-                let (loadableToolNames, blockedToolNames, toolSpecs) = await MainActor.run {
+                let (loadableToolNames, blockedToolNames) = await MainActor.run {
+                    () -> ([String], [String]) in
                     var allowed: [String] = []
                     var blocked: [String] = []
                     for name in method.toolsUsed {
@@ -507,18 +509,9 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                             blocked.append(name)
                         }
                     }
-                    return (
-                        allowed,
-                        blocked,
-                        ToolRegistry.shared.specs(forTools: allowed)
-                    )
+                    return (allowed, blocked)
                 }
-                for spec in toolSpecs {
-                    await CapabilityLoadBuffer.shared.add(spec)
-                }
-                if !loadableToolNames.isEmpty {
-                    output += "Auto-loaded tools: \(loadableToolNames.joined(separator: ", "))\n"
-                }
+                output += await bufferToolSpecs(named: loadableToolNames)
                 if !blockedToolNames.isEmpty {
                     output += "Skipped tools not enabled for this agent: \(blockedToolNames.joined(separator: ", "))\n"
                 }
@@ -586,7 +579,7 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
     /// yet, so the historical global-enabled behavior remains in force.
     /// A concrete set is the user's grant boundary and is enforced even
     /// if the model invents a `tool/<name>` ID instead of receiving it
-    /// from `capabilities_search`.
+    /// from `capabilities_discover`.
     private func grantedToolNamesForCurrentAgent() async -> Set<String>? {
         let id: UUID
         if let contextId = ChatExecutionContext.currentAgentId {
@@ -599,11 +592,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         }
     }
 
+    /// Buffer the named tools' specs into the session load buffer so they
+    /// become callable after the next drain. Returns the `Auto-loaded tools`
+    /// summary line, or an empty string when there is nothing to load. Shared
+    /// by the method `toolsUsed` cascade and the skill tool-group auto-load.
+    private func bufferToolSpecs(named names: [String]) async -> String {
+        guard !names.isEmpty else { return "" }
+        let specs = await MainActor.run { ToolRegistry.shared.specs(forTools: names) }
+        for spec in specs {
+            await CapabilityLoadBuffer.shared.add(spec)
+        }
+        return "Auto-loaded tools: \(names.joined(separator: ", "))\n"
+    }
+
     private func loadSkill(_ skillName: String) async -> String {
         if ChatExecutionContext.currentAgentId == Agent.defaultId {
             return
                 "Error: Skill loading is disabled for the configuration agent. "
-                + "Use `capabilities_search` to find a configuration tool (osaurus_*_<verb>) "
+                + "Use `capabilities_discover` to find a configuration tool (osaurus_*_<verb>) "
                 + "and load it directly.\n"
         }
         let skill = await MainActor.run {
@@ -618,6 +624,20 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         }
         output += skill.instructions
         output += "\n\n"
+
+        // A plugin skill governs its sibling tools, so auto-load the plugin's
+        // whole dynamic tool group (agent-scoped) instead of forcing a
+        // separate `capabilities_load` per tool.
+        if let pluginId = skill.pluginId, !pluginId.isEmpty {
+            let allowedNames = await grantedToolNamesForCurrentAgent()
+            let groupToolNames = await MainActor.run {
+                ToolRegistry.shared.listDynamicTools()
+                    .filter { ToolRegistry.shared.groupName(for: $0.name) == pluginId }
+                    .map(\.name)
+                    .filter { allowedNames?.contains($0) ?? true }
+            }
+            output += await bufferToolSpecs(named: groupToolNames)
+        }
         return output
     }
 }

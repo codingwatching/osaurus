@@ -2,7 +2,7 @@
 //  CapabilityToolsTests.swift
 //  osaurus
 //
-//  Tests for capabilities_search, capabilities_load, and CapabilityLoadBuffer.
+//  Tests for capabilities_discover, capabilities_load, and CapabilityLoadBuffer.
 //
 
 import Foundation
@@ -44,20 +44,20 @@ struct CapabilityLoadBufferTests {
     }
 }
 
-// MARK: - CapabilitiesSearchTool
+// MARK: - CapabilitiesDiscoverTool
 
 @Suite(.serialized)
-struct CapabilitiesSearchToolTests {
+struct CapabilitiesDiscoverToolTests {
 
     @Test func rejectsEmptyQueries() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{\"queries\": []}")
         #expect(ToolEnvelope.isError(result))
         #expect(result.contains("queries"))
     }
 
     @Test func rejectsMissingQueries() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(argumentsJSON: "{}")
         #expect(ToolEnvelope.isError(result))
         #expect(result.contains("queries"))
@@ -66,7 +66,7 @@ struct CapabilitiesSearchToolTests {
     @Test @MainActor
     func registryAcceptsLegacySingularQueryAlias() async throws {
         let result = try await ToolRegistry.shared.execute(
-            name: "capabilities_search",
+            name: "capabilities_discover",
             argumentsJSON: "{\"query\": \"zzz_capability_alias_probe_\(UUID().uuidString)\"}"
         )
         #expect(!ToolEnvelope.isError(result))
@@ -74,24 +74,25 @@ struct CapabilitiesSearchToolTests {
     }
 
     @Test func capabilitiesSearchSchemaIsGemmaRenderable() throws {
-        let spec = CapabilitiesSearchTool().asOpenAITool().toTokenizerToolSpec()
+        let spec = CapabilitiesDiscoverTool().asOpenAITool().toTokenizerToolSpec()
         let fn = try #require(spec["function"] as? [String: any Sendable])
         let parameters = try #require(fn["parameters"] as? [String: any Sendable])
         let properties = try #require(parameters["properties"] as? [String: any Sendable])
         let query = try #require(properties["query"] as? [String: any Sendable])
-        let queries = try #require(properties["queries"] as? [String: any Sendable])
 
         #expect(query["type"] as? String == "string")
-        #expect(queries["type"] as? String == "string")
-        #expect(queries["anyOf"] == nil)
-        #expect(queries["oneOf"] == nil)
-        #expect(queries["items"] == nil)
+        #expect(query["anyOf"] == nil)
+        #expect(query["oneOf"] == nil)
+        #expect(query["items"] == nil)
+        // Legacy `queries` is dropped from the schema so small models only see
+        // one input field; `requireQueries` still accepts it server-side.
+        #expect(properties["queries"] == nil)
     }
 
     @Test @MainActor
     func registryAcceptsStringifiedQueriesFromSmallModels() async throws {
         let result = try await ToolRegistry.shared.execute(
-            name: "capabilities_search",
+            name: "capabilities_discover",
             argumentsJSON:
                 "{\"queries\": \"[<|\\\"|>zzz_capability_string_probe_\(UUID().uuidString)<|\\\"|>]\"}"
         )
@@ -100,7 +101,7 @@ struct CapabilitiesSearchToolTests {
     }
 
     @Test func returnsNoMatchMessage() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await tool.execute(
             argumentsJSON: "{\"queries\": [\"zzz_completely_nonexistent_capability_xyz\"]}"
         )
@@ -200,7 +201,7 @@ struct CapabilitiesSearchToolTests {
                 #expect(diagnostic.filteredByAllowlist.count == 1)
                 #expect(diagnostic.filteredByAllowlist.contains(denied.name))
 
-                let tool = CapabilitiesSearchTool(agentId: agent.id)
+                let tool = CapabilitiesDiscoverTool(agentId: agent.id)
                 let result = try await tool.execute(
                     argumentsJSON: "{\"queries\": [\"current headline web search\"]}"
                 )
@@ -209,14 +210,14 @@ struct CapabilitiesSearchToolTests {
 
                 AgentManager.shared.setActiveAgent(agent.id)
                 defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
-                let unscopedTool = CapabilitiesSearchTool()
+                let unscopedTool = CapabilitiesDiscoverTool()
                 let unscopedResult = try await unscopedTool.execute(
                     argumentsJSON: "{\"queries\": [\"current headline web search\"]}"
                 )
                 #expect(unscopedResult.contains(allowed.name))
                 #expect(
                     unscopedResult.contains(denied.name),
-                    "Direct capabilities_search calls without explicit/task-local agent context must keep global-enabled results"
+                    "Direct capabilities_discover calls without explicit/task-local agent context must keep global-enabled results"
                 )
 
                 _ = await AgentManager.shared.delete(id: agent.id)
@@ -296,18 +297,18 @@ struct CapabilitiesLoadToolTests {
 
     @Test func toolLoadBuffersSpec() async throws {
         await MainActor.run {
-            ToolRegistry.shared.setEnabled(true, for: "capabilities_search")
+            ToolRegistry.shared.setEnabled(true, for: "capabilities_discover")
         }
 
         let tool = CapabilitiesLoadTool()
         let result = try await tool.execute(
-            argumentsJSON: "{\"ids\": [\"tool/capabilities_search\"]}"
+            argumentsJSON: "{\"ids\": [\"tool/capabilities_discover\"]}"
         )
 
         #expect(result.contains("loaded") || result.contains("available"))
 
         let buffered = await CapabilityLoadBuffer.shared.drain()
-        #expect(buffered.contains(where: { $0.function.name == "capabilities_search" }))
+        #expect(buffered.contains(where: { $0.function.name == "capabilities_discover" }))
     }
 
     @Test @MainActor
@@ -363,6 +364,85 @@ struct CapabilitiesLoadToolTests {
                 let buffered = await CapabilityLoadBuffer.shared.drain()
                 #expect(!buffered.contains(where: { $0.function.name == denied.name }))
 
+                _ = await AgentManager.shared.delete(id: agent.id)
+            }
+        }
+    }
+
+    @Test @MainActor
+    func skillLoadAutoLoadsPluginToolGroup() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await DynamicCatalogTestLock.shared.run {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                    "osaurus-skill-autoload-root-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+                try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                let previousRoot = OsaurusPaths.overrideRoot
+                OsaurusPaths.overrideRoot = root
+                AgentManager.shared.refresh()
+                defer {
+                    OsaurusPaths.overrideRoot = previousRoot
+                    AgentManager.shared.refresh()
+                    try? FileManager.default.removeItem(at: root)
+                }
+
+                // A plugin tool whose group (plugin id) matches the skill below.
+                let plugin = SandboxPlugin(
+                    name: "AutoGroup \(UUID().uuidString.prefix(6))",
+                    description: "Auto-load fixture plugin"
+                )
+                let groupTool = SandboxPluginTool(
+                    spec: SandboxToolSpec(
+                        id: "probe",
+                        description: "Probe tool governed by the skill",
+                        run: "echo hi"
+                    ),
+                    plugin: plugin
+                )
+                ToolRegistry.shared.registerPluginTool(groupTool)
+                ToolRegistry.shared.setEnabled(true, for: groupTool.name)
+                defer { ToolRegistry.shared.unregister(names: [groupTool.name]) }
+
+                // The governing skill, tagged with the plugin id.
+                let skill = Skill(
+                    id: UUID(),
+                    name: "AutoGroup Skill \(UUID().uuidString.prefix(6))",
+                    description: "Governs the AutoGroup tool group",
+                    version: "1.0.0",
+                    keywords: [],
+                    enabled: true,
+                    instructions: "Use the AutoGroup tools.",
+                    isBuiltIn: false,
+                    pluginId: plugin.id
+                )
+                await SkillManager.shared.registerPluginSkill(skill)
+
+                let agent = Agent(
+                    name: "SkillAutoLoad-\(UUID().uuidString.prefix(6))",
+                    agentAddress: "skill-autoload-\(UUID().uuidString)",
+                    manualToolNames: [groupTool.name]
+                )
+                AgentManager.shared.add(agent)
+                _ = await CapabilityLoadBuffer.shared.drain()
+
+                let tool = CapabilitiesLoadTool()
+                let result = try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                    try await tool.execute(
+                        argumentsJSON: "{\"ids\": [\"skill/\(skill.name)\"]}"
+                    )
+                }
+
+                // The display name may be re-derived on store round-trip, so
+                // assert on the auto-load behavior (the point of the test)
+                // rather than the exact skill name.
+                #expect(result.contains("## Skill:"))
+                #expect(result.contains("Auto-loaded tools"))
+                #expect(result.contains(groupTool.name))
+                let buffered = await CapabilityLoadBuffer.shared.drain()
+                #expect(buffered.contains(where: { $0.function.name == groupTool.name }))
+
+                await SkillManager.shared.unregisterPluginSkills(pluginId: plugin.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
         }

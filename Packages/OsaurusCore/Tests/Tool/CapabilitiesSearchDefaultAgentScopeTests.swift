@@ -2,15 +2,14 @@
 //  CapabilitiesSearchDefaultAgentScopeTests.swift
 //  OsaurusCoreTests
 //
-//  Default-agent scoping for `capabilities_search` and the
-//  composer-level preflight gate that complements it:
+//  Default-agent scoping for `capabilities_discover` and the
+//  composer-level schema gate that complements it:
 //
 //   * Search results from the default agent never carry method/skill
 //     hits — the tools-only fast path skips those lanes entirely.
-//   * `composeChatContext` with `Agent.defaultId` returns
-//     `preflightItems.isEmpty` even for a non-trivial query, because
-//     the preflight LLM selector is short-circuited (any picks would
-//     be stripped by `resolveTools` anyway).
+//   * `composeChatContext` with `Agent.defaultId` keeps the fixed
+//     baseline schema regardless of query — no non-baseline tool can
+//     leak into the default-agent schema.
 //
 
 import Foundation
@@ -23,7 +22,7 @@ struct CapabilitiesSearchDefaultAgentScopeTests {
 
     @Test
     func defaultAgent_searchReturnsOnlyConfigureWrites() async throws {
-        let tool = CapabilitiesSearchTool()
+        let tool = CapabilitiesDiscoverTool()
         let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
             try await tool.execute(
                 argumentsJSON: "{\"queries\": [\"add provider\", \"download model\"]}"
@@ -44,30 +43,16 @@ struct CapabilitiesSearchDefaultAgentScopeTests {
 
 @Suite(.serialized)
 @MainActor
-struct DefaultAgentPreflightSkipTests {
+struct DefaultAgentSchemaScopeTests {
 
     private static func ensureBootstrapped() {
         ConfigurationDomainBootstrap.registerBuiltIns()
     }
 
-    /// The composer must short-circuit the preflight LLM call for the
-    /// default agent. Even with a non-trivial query that would normally
-    /// trigger a search, `preflightItems` stays empty.
+    /// The schema for the default agent remains the fixed baseline (no
+    /// non-baseline tool leaks in) regardless of what the user asks.
     @Test
-    func defaultAgent_skipsPreflightOnNonTrivialQuery() async {
-        Self.ensureBootstrapped()
-        let context = await SystemPromptComposer.composeChatContext(
-            agentId: Agent.defaultId,
-            executionMode: .none,
-            query: "help me add an Anthropic API key"
-        )
-        #expect(context.preflightItems.isEmpty)
-    }
-
-    /// Sanity check: the schema for the default agent remains the
-    /// 8-tool baseline (no preflight picks ever leak in).
-    @Test
-    func defaultAgent_keepsEightToolBaselineRegardlessOfQuery() async {
+    func defaultAgent_keepsBaselineRegardlessOfQuery() async {
         Self.ensureBootstrapped()
         let context = await SystemPromptComposer.composeChatContext(
             agentId: Agent.defaultId,
@@ -79,7 +64,7 @@ struct DefaultAgentPreflightSkipTests {
         for name in names {
             #expect(
                 ToolRegistry.defaultAgentAllowedToolNames.contains(name),
-                "non-baseline tool \(name) leaked into default-agent schema via preflight"
+                "non-baseline tool \(name) leaked into default-agent schema"
             )
         }
     }
