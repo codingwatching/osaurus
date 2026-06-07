@@ -14,9 +14,9 @@ requests:
 - [#833](https://github.com/osaurus-ai/osaurus/issues/833) - tensor
   parallelism
 
-The immediate deliverable is design and review material only. Runtime
-changes should land later in smaller implementation PRs after the boundaries
-below are accepted.
+The current deliverable is host-side discovery and diagnostics only. Runtime
+family enablement still belongs in vmlx-backed PRs with live proof; Osaurus
+surfaces unsupported or unproven states instead of coercing model configs.
 
 ## Current Boundary
 
@@ -33,10 +33,14 @@ that prove the right boundary is being crossed.
 
 Current source map:
 
-- `ModelManager` and `HuggingFaceService` discover Hugging Face repos and
-  local Osaurus model folders.
+- `ModelManager`, `HuggingFaceService`, and `ExternalModelLocator` discover
+  Hugging Face repos, local Osaurus model folders, Hugging Face cache
+  snapshots, and LM Studio-style external bundles.
 - `MLXModel.isDownloaded` accepts a directory with `config.json`, tokenizer
   assets, and at least one `*.safetensors` file.
+- `ModelCompatibilityDiagnostics` reports local source, bundle completeness,
+  unsupported Hunyuan/LongCat families, benchmark proof status, and future
+  DFlash/tensor-parallel hooks without attempting a model load.
 - `ModelRuntime` loads the selected directory into a vmlx `ModelContainer`
   and submits through `MLXBatchAdapter`.
 - `docs/INFERENCE_RUNTIME.md` documents that vmlx owns KV topology,
@@ -46,10 +50,10 @@ Current source map:
 
 | Request | Current status | First shippable step | Runtime boundary |
 | --- | --- | --- | --- |
-| Hugging Face local cache (#443) | Not surfaced in the model picker; users can manually copy files into the Osaurus model directory. | Add a read-only HF cache scanner that registers verified snapshot directories as local models. | Host-only discovery/storage work; no vmlx change if the snapshot already loads as MLX. |
-| Hunyuan `hunyuan_v1_dense` (#358) | `mlx-community/HY-MT1.5-7B-bf16` advertises `model_type: hunyuan_v1_dense`; Osaurus should treat it as unsupported until vmlx has a native factory. | Add an unsupported-family diagnostic and a no-load fixture test; enable catalog entry only after vmlx support lands. | vmlx must own config mapping, weights, tokenizer/template behavior, and generation tests. |
+| Hugging Face local cache (#443) | Read-only HF cache and LM Studio discovery are implemented for verified MLX safetensors bundles; skipped candidates now have Settings diagnostics. | Add optional manifest/digest verification before load if mutation protection is required. | Host-only discovery/storage work; no vmlx change if the snapshot already loads as MLX. |
+| Hunyuan `hunyuan_v1_dense` (#358) | `mlx-community/HY-MT1.5-7B-bf16` advertises `model_type: hunyuan_v1_dense`; Osaurus now reports it as unsupported until vmlx has a native factory. | Enable catalog/runtime only after vmlx support and live validation land. | vmlx must own config mapping, weights, tokenizer/template behavior, and generation tests. |
 | DFlash speculative decoding (#1065) | Osaurus has one target model per local generation request and no draft-model contract. | Design a feature-flagged draft/target request shape plus benchmark evidence requirements. | vmlx or a dedicated MLX adapter must own the speculative loop and acceptance verification. |
-| LongCat Flash/Next (#886) | LongCat repos use custom code and new LongCat config shapes; LongCat-Next is a 74B any-to-any model that documents at least three 80GB GPUs for Transformers usage. | Track as unsupported locally with exact reason strings and keep remote-provider usage out of this lane. | Native LongCat model classes, multimodal processors, lazy decoder paths, and cache geometry belong upstream. |
+| LongCat Flash/Next (#886) | LongCat repos use custom code and new LongCat config shapes; LongCat-Next is a 74B any-to-any model that documents at least three 80GB GPUs for Transformers usage. Osaurus now reports LongCat local bundles as unsupported. | Keep local catalog entries hidden or blocked until native support and multimodal proof exist. | Native LongCat model classes, multimodal processors, lazy decoder paths, and cache geometry belong upstream. |
 | Tensor parallelism (#833) | Osaurus runs one local MLX process and one local `BatchEngine` per resident model. | Produce a cluster design behind explicit auth and network policy; do not auto-discover or auto-join peers. | Distributed execution belongs in vmlx/external cluster runtime; host owns identity, policy, and UI only. |
 
 ## Hugging Face Cache Import
@@ -204,14 +208,12 @@ Security checks for the later implementation:
 
 ## Implementation Order
 
-1. HF cache scanner, because it is host-side and benefits existing MLX users
-   without new model-family risk.
-2. Unsupported-family diagnostics for Hunyuan and LongCat, because this turns
-   current load failures into actionable messages.
-3. Hunyuan vmlx support, if upstream scope is accepted and real-model evidence
+1. Optional manifest/digest verification for external cache entries, if the
+   project wants stronger mutation detection before load.
+2. Hunyuan vmlx support, if upstream scope is accepted and real-model evidence
    is available.
-4. DFlash API boundary and benchmark harness, still feature-flagged.
-5. Tensor-parallel cluster design after model artifact integrity and network
+3. DFlash API boundary and benchmark harness, still feature-flagged.
+4. Tensor-parallel cluster design after model artifact integrity and network
    identity are reviewed together.
 
 ## Validation Standard

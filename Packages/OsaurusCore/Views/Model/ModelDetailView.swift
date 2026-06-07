@@ -93,6 +93,8 @@ struct ModelDetailView: View, Identifiable {
                 VStack(spacing: 14) {
                     compatibilityLine
 
+                    runtimeDiagnosticsCard
+
                     modelCardSection
 
                     detailsCard
@@ -266,6 +268,98 @@ struct ModelDetailView: View, Identifiable {
             return VLMDetection.isVLM(modelType: mt)
         }
         return model.isVLM
+    }
+
+    private var diagnosticsReport: ModelCompatibilityDiagnostics.Report {
+        ModelCompatibilityDiagnostics.report(for: model)
+    }
+
+    private var runtimeDiagnosticsCard: some View {
+        let report = diagnosticsReport
+        let tint = runtimeDiagnosticTint(report.runtime.kind)
+
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: runtimeDiagnosticIcon(report.runtime.kind))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(tint)
+                    .frame(width: 18, height: 18)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(report.primaryTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+
+                    Text(report.primaryDetail)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 0)
+            }
+
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: 14, alignment: .topLeading),
+                    GridItem(.flexible(), spacing: 14, alignment: .topLeading),
+                ],
+                alignment: .leading,
+                spacing: 10
+            ) {
+                DiagnosticFact(label: L("Source"), value: report.source.title)
+                DiagnosticFact(label: L("Bundle"), value: report.localBundle.title)
+                if let modelType = report.localBundle.config?.displayModelType {
+                    DiagnosticFact(label: L("Model Type"), value: modelType)
+                }
+                DiagnosticFact(label: L("Benchmark proof"), value: report.benchmark.title)
+            }
+
+            if !report.featureHooks.isEmpty {
+                Divider()
+                    .background(theme.cardBorder)
+
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(report.featureHooks) { hook in
+                        HStack(spacing: 6) {
+                            Image(systemName: "circle.dashed")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundColor(theme.tertiaryText)
+                            Text(hook.title)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.secondaryText)
+                            Text("#\(hook.issue)")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(theme.tertiaryText)
+                        }
+                        Text(hook.detail)
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .detailCardSurface()
+    }
+
+    private func runtimeDiagnosticTint(_ kind: ModelCompatibilityDiagnostics.RuntimeStatus.Kind) -> Color {
+        switch kind {
+        case .ready: return theme.successColor
+        case .blocked: return theme.errorColor
+        case .needsDownload, .unproven: return theme.warningColor
+        }
+    }
+
+    private func runtimeDiagnosticIcon(_ kind: ModelCompatibilityDiagnostics.RuntimeStatus.Kind) -> String {
+        switch kind {
+        case .ready: return "checkmark.shield.fill"
+        case .blocked: return "xmark.octagon.fill"
+        case .needsDownload: return "arrow.down.circle.fill"
+        case .unproven: return "exclamationmark.triangle.fill"
+        }
     }
 
     // MARK: - Details Card
@@ -894,6 +988,29 @@ private struct MetaItem: View {
 
             Text(value)
                 .font(.system(size: 13, weight: .medium))
+                .foregroundColor(theme.primaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct DiagnosticFact: View {
+    @Environment(\.theme) private var theme
+
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
                 .foregroundColor(theme.primaryText)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)

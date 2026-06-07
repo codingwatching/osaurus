@@ -6379,6 +6379,22 @@
         }
       }
     },
+    "Benchmark proof" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benchmark-Nachweis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "基准验证"
+          }
+        }
+      }
+    },
     "Bearer Token" : {
       "localizations" : {
         "de" : {
@@ -7057,6 +7073,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "内置的确定性检测器与设备端模型一同运行。关闭某个类别后，Osaurus 将不再标记它，也不再在其绕过脱敏泄露时阻止发送。"
+          }
+        }
+      }
+    },
+    "Bundle" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bundle"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "包"
           }
         }
       }

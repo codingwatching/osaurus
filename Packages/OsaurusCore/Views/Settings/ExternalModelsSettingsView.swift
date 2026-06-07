@@ -21,6 +21,7 @@ struct ExternalModelsSettingsView: View {
 
     @State private var hfCount: Int = 0
     @State private var lmStudioCount: Int = 0
+    @State private var scanReport: ExternalModelLocator.ScanReport?
     @State private var isScanning: Bool = false
 
     var body: some View {
@@ -65,16 +66,41 @@ struct ExternalModelsSettingsView: View {
 
                 Spacer()
 
-                Button(action: { rescan() }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Rescan", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
+                Button(
+                    action: { rescan() },
+                    label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("Rescan", bundle: .module)
+                                .font(.system(size: 12, weight: .semibold))
+                        }
                     }
-                }
+                )
                 .buttonStyle(PlainButtonStyle())
                 .disabled(isScanning)
+            }
+
+            if let scanReport, !scanReport.skipped.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(theme.warningColor)
+                        Text("\(scanReport.skipped.count) external candidate(s) skipped", bundle: .module)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                    }
+
+                    ForEach(Array(scanReport.skipped.prefix(3).enumerated()), id: \.offset) { _, item in
+                        Text(skippedSummary(item))
+                            .font(.system(size: 10))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .onAppear { refreshCounts() }
@@ -87,6 +113,7 @@ struct ExternalModelsSettingsView: View {
 
     private func refreshCounts() {
         let models = ExternalModelLocator.models()
+        scanReport = ExternalModelLocator.lastScanReport()
         hfCount =
             models.filter {
                 $0.externalSource == ExternalModelLocator.Source.huggingFaceCache.rawValue
@@ -107,5 +134,10 @@ struct ExternalModelsSettingsView: View {
                 self.refreshCounts()
             }
         }
+    }
+
+    private func skippedSummary(_ item: ExternalModelLocator.Skipped) -> String {
+        let name = item.repoId ?? URL(fileURLWithPath: item.path).lastPathComponent
+        return "\(name): \(item.reason.title)"
     }
 }

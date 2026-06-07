@@ -132,6 +132,29 @@ struct ExternalModelLocatorTests {
         #expect(found.isEmpty)
     }
 
+    @Test func scanReport_explainsSkippedCandidates() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missingTokenizer = root.appendingPathComponent("publisher/repo", isDirectory: true)
+        writeBundle(at: missingTokenizer, tokenizer: false)
+        let ggufOnly = root.appendingPathComponent("publisher/gguf", isDirectory: true)
+        writeBundle(at: ggufOnly, ggufOnly: true)
+
+        let report = ExternalModelLocator.scanReport(root: root, source: .lmStudio)
+
+        #expect(report.discovered.isEmpty)
+        #expect(
+            report.skipped.contains {
+                $0.repoId == "publisher/repo" && $0.reason == .missingTokenizer
+            }
+        )
+        #expect(
+            report.skipped.contains {
+                $0.repoId == "publisher/gguf" && $0.reason == .ggufOnly
+            }
+        )
+    }
+
     // MARK: - HF cache scan + resolution (via test override)
 
     @Test func rescan_resolvesHFCacheSnapshotAndPath() {
@@ -182,5 +205,46 @@ struct ExternalModelLocatorTests {
         let entry = models.first { $0.id == "org/repo" }
         #expect(entry?.bundleDirectory?.standardizedFileURL.path == snapshot.standardizedFileURL.path)
         #expect(entry?.isDownloaded == true)
+
+        let report = ExternalModelLocator.lastScanReport()
+        #expect(report?.discovered.contains { $0.id == "org/repo" } == true)
+        #expect(report?.skipped.isEmpty == true)
+    }
+
+    @Test func rescan_reportsHFCacheSnapshotSkipReason() {
+        OsaurusTestGlobals.withPathsLock {
+            rescan_reportsHFCacheSnapshotSkipReason_body()
+        }
+    }
+
+    private func rescan_reportsHFCacheSnapshotSkipReason_body() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousOverride = ExternalModelLocator.testRootsOverride
+        let manifestRoot = makeTempDir()
+        let hfRoot = makeTempDir()
+        OsaurusPaths.overrideRoot = manifestRoot
+        ExternalModelLocator.invalidateInMemory()
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.testRootsOverride = previousOverride
+            ExternalModelLocator.invalidateInMemory()
+            try? FileManager.default.removeItem(at: manifestRoot)
+            try? FileManager.default.removeItem(at: hfRoot)
+        }
+
+        let fm = FileManager.default
+        let modelDir = hfRoot.appendingPathComponent("models--org--repo", isDirectory: true)
+        try? fm.createDirectory(at: modelDir, withIntermediateDirectories: true)
+
+        ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
+        ExternalModelLocator.rescan()
+
+        let report = ExternalModelLocator.lastScanReport()
+        #expect(report?.discovered.isEmpty == true)
+        #expect(
+            report?.skipped.contains {
+                $0.repoId == "org/repo" && $0.reason == .missingSnapshot
+            } == true
+        )
     }
 }
