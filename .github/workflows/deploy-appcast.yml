@@ -38,3 +38,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           PUBLIC_REPO: ${{ github.repository }}
         run: bash scripts/release/generate_and_deploy_appcast.sh
+
+      - name: Download release assets for artifact upload
+        run: |
+          mkdir -p build_output
+          curl -L -f -o "build_output/Osaurus-${VERSION}.dmg" \
+            "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus-${VERSION}.dmg"
+          curl -L -f -o build_output/Osaurus.dmg \
+            "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus.dmg"
+          curl -L -f -o "build_output/Osaurus-${VERSION}-dSYMs.zip" \
+            "https://github.com/${{ github.repository }}/releases/download/${VERSION}/Osaurus-${VERSION}-dSYMs.zip" \
+            || echo "::warning::dSYM zip not found on release; skipping."
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: osaurus-release-${{ env.VERSION }}
+          path: |
+            build_output/Osaurus-${{ env.VERSION }}.dmg
+            build_output/Osaurus.dmg
+            build_output/Osaurus-${{ env.VERSION }}-dSYMs.zip
+            updates/appcast.xml
+          if-no-files-found: warn
+
+      - name: Post to Discord
+        if: inputs.channel == 'release'
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+        run: bash scripts/release/discord_notify.sh
