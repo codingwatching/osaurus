@@ -497,7 +497,7 @@ public final class MCPProviderManager: ObservableObject {
         }
 
         // Create temporary transport
-        let configuration = URLSessionConfiguration.default
+        let configuration = GlobalProxySettings.makeConfiguration(base: .default)
         var allHeaders: [String: String] = headers
         if let token = token, !token.isEmpty {
             allHeaders["Authorization"] = "Bearer \(token)"
@@ -672,7 +672,7 @@ public final class MCPProviderManager: ObservableObject {
             throw MCPProviderError.invalidURL
         }
 
-        let urlConfig = URLSessionConfiguration.default
+        let urlConfig = GlobalProxySettings.makeConfiguration(base: .default)
 
         // Build headers
         var headers = provider.resolvedHeaders()
@@ -769,7 +769,7 @@ public final class MCPProviderManager: ObservableObject {
         request.timeoutInterval = 10
 
         do {
-            let (_, response) = try await URLSession.shared.data(for: request)
+            let (_, response) = try await GlobalProxySettings.sharedSession().data(for: request)
             guard let http = response as? HTTPURLResponse else { return nil }
             guard http.statusCode == 401 || http.statusCode == 403 else { return nil }
             let header =

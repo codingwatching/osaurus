@@ -4,7 +4,11 @@ Remote MCP Providers connect Osaurus to external MCP (Model Context Protocol) se
 
 This is different from [Remote Providers](REMOTE_PROVIDERS.md) (which provide _inference_ endpoints). Remote MCP Providers provide **tools**.
 
-Remote MCP Providers are URL-based client connections. The current app connects to HTTP/SSE MCP endpoints and does not launch local `command`/`args` stdio provider processes. Command-based stdio is supported in the opposite direction: external MCP clients can launch Osaurus with `osaurus mcp` to use Osaurus as their MCP server.
+Remote MCP Providers are client connections to MCP tool servers. Osaurus can
+connect to HTTP/SSE MCP endpoints and can also launch configured stdio MCP
+subprocesses. Command-based stdio is supported in the opposite direction too:
+external MCP clients can launch Osaurus with `osaurus mcp` to use Osaurus as
+their MCP server.
 
 ---
 
@@ -16,9 +20,14 @@ Remote MCP Providers are URL-based client connections. The current app connects 
 | External MCP client -> Osaurus | HTTP endpoints | Supported | Use `GET /mcp/tools` and `POST /mcp/call` on the local Osaurus server. |
 | Osaurus -> remote MCP provider | HTTP endpoint | Supported | Add a provider URL in **Custom Server** or choose a catalog template. |
 | Osaurus -> remote MCP provider | HTTP streaming / SSE | Supported when the server supports it | Enable **Streaming Enabled** in Advanced. |
-| Osaurus -> third-party local MCP provider | Stdio command | Not supported in Remote MCP Providers | The provider config has no `command`, `args`, `env`, or working-directory fields. |
+| Osaurus -> third-party local MCP provider | Stdio command | Supported | Choose **Stdio** in Custom Server and configure command, args, env, execution host, and working directory. |
 
-If a vendor only publishes a stdio config such as `{"command": "npx", "args": [...]}`, it is not directly usable in Remote MCP Providers today. Use an HTTP/SSE deployment of that MCP server, a bridge that exposes it over HTTP, or implement the integration as an Osaurus plugin.
+If a vendor publishes a stdio config such as `{"command": "npx", "args": [...]}`,
+enter that command in the Stdio editor. The **Test** button launches the
+subprocess, runs the MCP initialize/listTools flow, reports the tool count or
+spawn/protocol error, and tears the subprocess down. For host-executed stdio
+providers, GUI apps may not inherit your shell `PATH`; use a full executable
+path such as `/opt/homebrew/bin/npx` when a command-not-found diagnostic appears.
 
 ---
 
@@ -88,7 +97,9 @@ Google Workspace doesn't ship a hosted remote MCP. Tapping the card opens the [c
 
 The freeform editor — Name, URL, Auth picker (None / Bearer Token / OAuth), Custom Headers, Advanced (timeouts, streaming, auto-connect). Use this for any URL-reachable MCP server not in the catalog, or to override fine-grained settings on one that is.
 
-Custom Server is still HTTP/SSE only. It does not accept stdio `command`, `args`, environment variables, or working-directory settings.
+Custom Server supports both HTTP/SSE and stdio. HTTP/SSE providers use the
+global proxy policy when one is configured. Stdio providers run a local
+subprocess and therefore do not send traffic through URLSession's proxy path.
 
 ---
 
@@ -143,6 +154,19 @@ Providers requiring multi-step manual OAuth-app registration with no PAT fallbac
 ## Editing an Existing Provider
 
 Click the row's edit menu. Edit-mode skips the catalog and opens the freeform editor directly so you can change anything (name, URL, auth, headers, timeouts) regardless of whether the provider was originally added from a template.
+
+## Provider Diagnostics
+
+Each provider row has a copyable diagnostics section in the expanded details.
+It reports connection state, auth mode, transport, proxy policy, and the best
+repro path. The copied text is safe to paste in an issue or Discord thread; it
+does not include bearer tokens, OAuth tokens, request bodies, env values, or raw
+headers.
+
+For stdio providers, diagnostics distinguish sandbox vs host execution and point
+command-not-found failures at the executable path/PATH fix. For HTTP/SSE
+providers, diagnostics show whether the global proxy is active, disabled, or
+ignored because the saved URL failed validation.
 
 ---
 
@@ -298,7 +322,12 @@ When connected, the provider card shows tool count, last connected timestamp, an
 
 ## Testing Connections
 
-The freeform Custom Server form has a **Test** button that runs `tools/list` against the configured URL and reports the tool count. The OAuth and API-key catalog screens skip this — saving and connecting is the test. The test path only validates HTTP/SSE providers; it does not start or validate stdio command providers.
+The freeform Custom Server form has a **Test** button. For HTTP/SSE providers it
+runs `tools/list` against the configured URL and reports the tool count. For
+stdio providers it launches the configured command, completes the MCP
+initialize/listTools flow, reports the tool count or spawn/protocol error, and
+then tears the subprocess down. The OAuth and API-key catalog screens skip this
+button — saving and connecting is the test.
 
 ---
 
@@ -312,7 +341,10 @@ The freeform Custom Server form has a **Test** button that runs `tools/list` aga
 
 ### "My provider config has `command` and `args`"
 
-That is a stdio MCP provider config. Remote MCP Providers currently require a URL and do not spawn local commands. `command: "osaurus"` with `args: ["mcp"]` is for external MCP clients that want to use Osaurus as a server, not for adding third-party providers inside Osaurus.
+That is a stdio MCP provider config. Choose **Custom Server**, switch the
+transport to **Stdio**, and enter the command/args there. `command: "osaurus"`
+with `args: ["mcp"]` is still the opposite direction: external MCP clients use
+that to launch Osaurus as their MCP server.
 
 ### "Authentication failed" / `401 Unauthorized`
 
@@ -369,7 +401,12 @@ Non-secret configuration is stored at:
 ~/.osaurus/providers/mcp.json
 ```
 
-Each provider record carries its `name`, `url`, `enabled`, headers (non-secret only), timeouts, `authType` (`none` | `bearerToken` | `oauth`), and — for OAuth — non-secret discovery metadata (`oauth.clientId`, `oauth.scopes`, `oauth.authorizationEndpoint`, etc.). Provider records do not carry stdio `command`, `args`, `env`, or working-directory fields.
+Each provider record carries its `name`, `url`, `enabled`, headers (non-secret
+only), timeouts, `authType` (`none` | `bearerToken` | `oauth`), `transport`
+(`http` | `stdio`), and — for OAuth — non-secret discovery metadata
+(`oauth.clientId`, `oauth.scopes`, `oauth.authorizationEndpoint`, etc.). Stdio
+records also carry non-secret `command`, `args`, `env`, execution host, and
+working-directory fields. Secret stdio env values live in Keychain.
 
 Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields default to `bearerToken` for backwards compatibility.
 

@@ -203,6 +203,8 @@ private struct ProviderCard: View {
     @State private var showDeleteConfirm = false
     /// Inline secure-field text for the bearer-token 401 banner. Cleared on submit.
     @State private var inlineBearerToken: String = ""
+    @State private var bearerTokenPresent = false
+    @State private var oauthTokensPresent = false
 
     private var isConnected: Bool {
         state?.isConnected ?? false
@@ -214,6 +216,29 @@ private struct ProviderCard: View {
 
     private var requiresAuth: Bool {
         state?.requiresAuth ?? false
+    }
+
+    private var diagnosticsReport: ProviderDiagnosticReport {
+        ProviderNetworkDiagnostics.mcpProviderReport(
+            provider: provider,
+            state: state,
+            proxy: GlobalProxySettings.currentDiagnostic(),
+            bearerTokenPresent: bearerTokenPresent,
+            oauthTokensPresent: oauthTokensPresent
+        )
+    }
+
+    @MainActor
+    private func refreshCredentialState() async {
+        let providerID = provider.id
+        let credentials = await Task.detached(priority: .utility) {
+            (
+                MCPProviderKeychain.hasToken(for: providerID),
+                MCPProviderKeychain.hasOAuthTokens(for: providerID)
+            )
+        }.value
+        bearerTokenPresent = credentials.0
+        oauthTokensPresent = credentials.1
     }
 
     var body: some View {
@@ -420,6 +445,12 @@ private struct ProviderCard: View {
         .background(cardBackground)
         .animation(.easeOut(duration: 0.15), value: isHovering)
         .onHover { hovering in isHovering = hovering }
+        .task(id: provider.id) {
+            await refreshCredentialState()
+        }
+        .onChange(of: provider.authType) { _, _ in
+            Task { await refreshCredentialState() }
+        }
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
             let delay = Double(animationIndex) * 0.03
@@ -697,6 +728,9 @@ private struct ProviderCard: View {
                     value: provider.autoConnect ? "Yes" : "No"
                 )
             }
+
+            ProviderDiagnosticsRowsView(report: diagnosticsReport, maxRows: nil)
+                .padding(.horizontal, -16)
 
             // Custom headers summary
             if !provider.customHeaders.isEmpty || !provider.secretHeaderKeys.isEmpty {

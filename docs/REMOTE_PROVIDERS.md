@@ -150,6 +150,28 @@ Providers can be in the following states:
 4. **Check network** — Ensure no firewall is blocking the connection
 5. **Review error message** — The provider card shows detailed error info
 
+### Provider Diagnostics
+
+Each provider card includes a compact diagnostics section with a copy button.
+The copied report is safe to paste in GitHub or Discord: it lists connection
+state, authentication state, model-discovery path, request format, and global
+proxy state without including API keys, OAuth tokens, request bodies, callback
+URLs, or raw headers.
+
+Useful rows:
+
+- **Authentication** shows whether the provider has a Keychain API key, a
+  custom/secret credential header, ChatGPT/Codex OAuth tokens, or a missing
+  sign-in/key.
+- **Model discovery** shows whether Osaurus requires `/models`, can use manual
+  model IDs as a fallback, uses Azure deployment IDs, or reads the
+  ChatGPT/Codex catalog.
+- **Request format** shows the outbound API format and endpoint family. Local
+  OpenAI-compatible API validation returns typed 400 errors for unsupported
+  sampler settings such as `n > 1` or `response_format=json_schema`.
+- **Global proxy** shows whether provider requests use a validated proxy, use
+  direct networking, or ignore an invalid saved proxy URL.
+
 ---
 
 ## Provider-Specific Notes

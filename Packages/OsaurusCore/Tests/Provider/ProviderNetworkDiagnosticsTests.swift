@@ -1,0 +1,160 @@
+//
+//  ProviderNetworkDiagnosticsTests.swift
+//  osaurusTests
+//
+//  Regression coverage for copyable provider/auth/network diagnostics.
+//
+
+import Foundation
+import Testing
+
+@testable import OsaurusCore
+
+@Suite("Provider network diagnostics")
+struct ProviderNetworkDiagnosticsTests {
+    @Test func codexOAuthReportFlagsMissingTokensWithoutLeakingSecrets() {
+        let provider = OpenAICodexOAuthService.makeProvider(id: UUID())
+        var state = RemoteProviderState(providerId: provider.id)
+        state.lastError = #"HTTP 401: {"access_token":"secret-token"}"#
+
+        let report = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: state,
+            proxy: .disabled,
+            apiKeyPresent: false,
+            oauthTokensPresent: false
+        )
+
+        let auth = row("auth", in: report)
+        #expect(auth.severity == .blocked)
+        #expect(auth.value == "ChatGPT sign-in required")
+        #expect(report.pasteboardText.contains("ChatGPT sign-in required"))
+        #expect(!report.pasteboardText.contains("secret-token"))
+    }
+
+    @Test func xaiOAuthReportFlagsMissingTokensWithoutLeakingSecrets() {
+        let provider = XAIOAuthService.makeProvider(id: UUID())
+        var state = RemoteProviderState(providerId: provider.id)
+        state.lastError = #"HTTP 401: {"access_token":"secret-token"}"#
+
+        let report = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: state,
+            proxy: .disabled,
+            apiKeyPresent: false,
+            oauthTokensPresent: false
+        )
+
+        let auth = row("auth", in: report)
+        #expect(auth.severity == .blocked)
+        #expect(auth.value == "xAI sign-in required")
+        #expect(report.pasteboardText.contains("xAI sign-in required"))
+        #expect(!report.pasteboardText.contains("secret-token"))
+    }
+
+    @Test func openAICompatibleReportExplainsManualModelFallbackAndRequestValidation() {
+        let provider = RemoteProvider(
+            name: "Lemonade",
+            host: "127.0.0.1",
+            providerProtocol: .http,
+            port: 8000,
+            basePath: "/api/v1",
+            authType: .none,
+            providerType: .openaiLegacy,
+            manualModelIds: ["local-chat"]
+        )
+
+        let report = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: nil,
+            proxy: .disabled,
+            apiKeyPresent: false,
+            oauthTokensPresent: false
+        )
+
+        #expect(row("models", in: report).value == "Fallback available")
+        #expect(row("models", in: report).detail?.contains("Manual IDs") == true)
+        #expect(row("format", in: report).detail?.contains("response_format=json_schema") == true)
+    }
+
+    @Test func proxyDiagnosticDistinguishesInvalidConfiguredProxy() {
+        var configuration = ServerConfiguration.default
+        configuration.globalProxyURL = "http://localhost:8080"
+
+        let diagnostic = GlobalProxySettings.diagnostic(from: configuration)
+
+        #expect(diagnostic == .invalid("Proxy host 'localhost' is reserved for local networking."))
+
+        let provider = RemoteProvider(
+            name: "Remote",
+            host: "api.example.com",
+            authType: .none
+        )
+        let report = ProviderNetworkDiagnostics.remoteProviderReport(
+            provider: provider,
+            state: nil,
+            proxy: diagnostic,
+            apiKeyPresent: false,
+            oauthTokensPresent: false
+        )
+
+        #expect(row("proxy", in: report).value == "Ignored")
+        #expect(row("proxy", in: report).severity == .warning)
+    }
+
+    @Test func mcpStdioReportShowsExecutionHostAndProbeGuidance() {
+        let provider = MCPProvider(
+            name: "Local MCP",
+            url: "",
+            authType: .none,
+            transport: .stdio,
+            executionHost: .host,
+            command: "npx",
+            args: ["-y", "@modelcontextprotocol/server-filesystem"]
+        )
+
+        let report = ProviderNetworkDiagnostics.mcpProviderReport(
+            provider: provider,
+            state: nil,
+            proxy: .active("socks://proxy.example.com:1080"),
+            bearerTokenPresent: false,
+            oauthTokensPresent: false
+        )
+
+        #expect(row("transport", in: report).value == "Stdio host")
+        #expect(row("transport", in: report).severity == .warning)
+        #expect(row("proxy", in: report).value == "Not used for stdio")
+        #expect(row("repro", in: report).detail?.contains("listTools") == true)
+    }
+
+    @Test func mcpHTTPReportShowsProxyAppliesToDiscovery() {
+        let provider = MCPProvider(
+            name: "Linear",
+            url: "https://mcp.linear.app/mcp",
+            streamingEnabled: true,
+            authType: .oauth,
+            transport: .http
+        )
+
+        let report = ProviderNetworkDiagnostics.mcpProviderReport(
+            provider: provider,
+            state: nil,
+            proxy: .active("https://proxy.example.com:8443"),
+            bearerTokenPresent: false,
+            oauthTokensPresent: true
+        )
+
+        #expect(row("transport", in: report).value == "HTTP/SSE")
+        #expect(row("proxy", in: report).value == "https://proxy.example.com:8443")
+        #expect(row("proxy", in: report).detail?.contains("MCP HTTP/SSE") == true)
+        #expect(row("auth", in: report).severity == .ok)
+    }
+
+    private func row(_ id: String, in report: ProviderDiagnosticReport) -> ProviderDiagnosticRow {
+        guard let found = report.rows.first(where: { $0.id == id }) else {
+            Issue.record("Missing diagnostics row \(id)")
+            return ProviderDiagnosticRow(id: id, title: "missing", value: "missing", severity: .blocked)
+        }
+        return found
+    }
+}

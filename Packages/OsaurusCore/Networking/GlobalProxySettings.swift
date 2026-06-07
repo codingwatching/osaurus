@@ -54,6 +54,13 @@ public enum GlobalProxySettings {
         configuration(from: diskBackedServerConfiguration())
     }
 
+    /// Human-readable state for settings and provider diagnostics. Unlike
+    /// `currentConfiguration()`, this distinguishes "not configured" from
+    /// "configured but invalid and therefore ignored."
+    public static func currentDiagnostic() -> GlobalProxyDiagnosticState {
+        diagnostic(from: diskBackedServerConfiguration())
+    }
+
     /// Shape a copied session configuration with the current proxy endpoint.
     public static func makeConfiguration(
         base: URLSessionConfiguration = .default
@@ -92,6 +99,26 @@ public enum GlobalProxySettings {
         return try? GlobalProxyConfiguration(urlString: rawURL)
     }
 
+    /// Testable adapter from persisted settings to a copyable diagnostic row.
+    public static func diagnostic(from serverConfiguration: ServerConfiguration?) -> GlobalProxyDiagnosticState {
+        guard
+            let rawURL = serverConfiguration?.globalProxyURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !rawURL.isEmpty
+        else {
+            return .disabled
+        }
+
+        do {
+            let proxy = try GlobalProxyConfiguration(urlString: rawURL)
+            return .active(proxy.redactedDescription)
+        } catch {
+            let reason =
+                (error as? LocalizedError)?.errorDescription
+                ?? "Proxy URL could not be validated."
+            return .invalid(reason)
+        }
+    }
+
     /// Network services are frequently initialized off the main actor, while
     /// `ServerConfigurationStore` is main-actor isolated because it is also
     /// used by SwiftUI state. Reading the same JSON file directly keeps
@@ -104,4 +131,11 @@ public enum GlobalProxySettings {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(ServerConfiguration.self, from: data)
     }
+}
+
+/// Safe, display-oriented summary of the persisted global proxy setting.
+public enum GlobalProxyDiagnosticState: Equatable, Sendable {
+    case disabled
+    case active(String)
+    case invalid(String)
 }

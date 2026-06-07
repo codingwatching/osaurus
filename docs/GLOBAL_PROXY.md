@@ -10,11 +10,17 @@ boundaries.
 ## Status
 
 The current rollout adds the validated URL format, URLSession factory, settings
-persistence, and first call-site wiring for remote provider traffic plus model
-and Hugging Face downloads. Plugin HTTP, MCP OAuth, relay, theme sharing, GitHub
-skill import, sandbox provisioning, local health checks, and per-provider
-overrides remain follow-up work so the shared network policy can be reviewed in
-bounded steps.
+persistence, and call-site wiring for remote provider traffic, HTTP/SSE MCP
+provider discovery, MCP auth-challenge probes, model downloads, and Hugging Face
+lookups. Plugin HTTP, relay, theme sharing, GitHub skill import, sandbox
+provisioning, local health checks, and per-provider overrides remain follow-up
+work so the shared network policy can be reviewed in bounded steps.
+
+Provider and MCP provider cards now expose a copyable **Global proxy**
+diagnostic row. A valid proxy row shows the redacted endpoint. A missing proxy
+row says requests use direct networking. An invalid saved proxy URL is shown as
+ignored with the validation reason, instead of silently looking like a network
+failure.
 
 ## Proxy Policy
 
@@ -57,9 +63,9 @@ store boundary.
 ## Rollout Plan
 
 1. Migrate the remaining URLSession call sites in small PRs. Known affected
-   paths include plugin fetch/search traffic, MCP HTTP/SSE and OAuth traffic,
-   GitHub skill requests, relay traffic, theme sharing, sandbox provisioning,
-   and remote agent HTTP traffic.
+   paths include plugin fetch/search traffic, GitHub skill requests, relay
+   traffic, theme sharing, sandbox provisioning, local health checks, and
+   per-provider override flows.
 2. Add smoke coverage with a stub proxy that records CONNECT/HTTP/SOCKS attempts
    for provider and model-download flows. Include a DNS-leak check before
    marking #1091 complete.
