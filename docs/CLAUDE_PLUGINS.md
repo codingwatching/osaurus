@@ -52,7 +52,7 @@ All fetches are gated through a shared concurrency limiter (8 in-flight at a tim
 
 ### Not Imported
 
-- **Stdio MCP servers** — Osaurus's remote MCP transport is HTTP/SSE only. Stdio entries in `.mcp.json` are listed in the install summary as "skipped"; configure them manually if needed.
+- **Stdio MCP servers without sandbox support** — stdio entries are imported disabled into the Osaurus sandbox when available. If the sandbox is unavailable, they are listed in the install summary as skipped.
 - **Skill-local scripts at run time** — Python helpers and similar are attached so the operator can read or re-use them, but Osaurus does not execute them; the agent reads the source text only.
 - **Hooks** — Claude Code-style hook scripts are ignored.
 
@@ -178,7 +178,7 @@ After install, the sheet shows a per-plugin summary including:
 - **Schedules needing cron** — agent markdown files where no recurrence could be inferred. Click a row to deep-link into the schedule editor with the cron field focused.
 - **MCP providers with placeholder tokens** — when `.mcp.json` uses `${VAR}`, `$VAR`, or `<token>` style env references, the provider is created without a token. Paste a real one in Management → Providers before enabling.
 - **MCP servers needing OAuth sign-in** — `.mcp.json` entries with an `oauth` block (e.g. Slack, Notion in `anthropics/knowledge-work-plugins`) are imported with `authType: .oauth` and the declared `clientId` + `callbackPort` pre-populated. Open Management → Providers and click "Sign in" on each one before enabling.
-- **Skipped stdio MCP servers** — listed for manual configuration.
+- **Skipped stdio / malformed MCP entries** — listed with names so the user can tell which components did not land.
 - **Errors** — any per-artifact failures (one bad skill does not abort the import).
 
 ---
@@ -214,11 +214,13 @@ Imported Claude plugins render as cards in the **Plugins → Installed** grid al
 - Display name, optional version pill, and an `Imported` badge
 - Per-artifact chips for skill / schedule / command / MCP counts (live from the underlying managers)
 - An `Update` capsule when the source's `plugin.json.version` (or marketplace entry / source SHA) is newer than what's installed
+- A `Needs setup` capsule when the last install recorded follow-up work or declared component counts exceed the live imported artifacts
 - Ellipsis menu: **View Details**, **Open on GitHub**, **Configure Settings…** (when `userConfig` is declared), **Update** (when newer), **Uninstall**
 
 Tapping a card opens **Claude Plugin Detail** with the full hero (icon, displayName, version, license, author/homepage/repository badges, description), keyword chips, per-artifact list (skills, schedules, slash commands, MCP servers with inline Restart for stdio servers), a **CHANGELOG** section fetched lazily from `<source>/CHANGELOG.md`, and external link badges. The same view exposes:
 
 - A **Configure plugin settings** action that re-opens the userConfig sheet.
+- An **Import needs attention** banner persisted from the last install report, including skipped MCP names, OAuth sign-in needs, placeholder-token/env-var setup, install errors, and declared-but-not-imported component counts.
 - A "components declared but not yet honored" notice for unsupported manifest sections (hooks, output styles, monitors, themes, channels, LSP servers).
 
 Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including any Keychain-stored MCP tokens, the persisted manifest snapshot, the per-plugin userConfig file, the cache directory, and the per-plugin `${CLAUDE_PLUGIN_DATA}` directory.
@@ -280,7 +282,7 @@ The installer reads `.mcp.json` and classifies each server entry:
 | `{ url, env: { API_KEY: "${VAR}" } }`                    | No-auth provider, flagged as needing token   |
 | `{ url, oauth: { clientId, callbackPort } }`             | OAuth provider (`authType: .oauth`), disabled, flagged as needing sign-in |
 | `{ url: "" }` (placeholder)                              | Skipped (manual setup)                       |
-| `{ command, args }` (stdio)                              | Skipped (manual setup)                       |
+| `{ command, args }` (stdio)                              | Disabled sandbox stdio provider when sandbox is available; otherwise skipped |
 
 For OAuth providers, the declared `clientId` and a `http://127.0.0.1:<callbackPort>/callback` `redirectURI` are stashed on the provider so the existing MCP OAuth service can complete the discovery + Dynamic Client Registration + PKCE handshake when the user clicks "Sign in". The provider stays disabled until that completes.
 

@@ -133,6 +133,12 @@ struct ClaudePluginCard: View {
     private var statusBadge: some View {
         if plugin.hasUpdate {
             StatusCapsuleBadge(icon: "arrow.up.circle.fill", text: "Update", color: .orange)
+        } else if plugin.needsPostInstallAttention {
+            StatusCapsuleBadge(
+                icon: "exclamationmark.circle.fill",
+                text: "Needs setup",
+                color: .orange
+            )
         }
     }
 

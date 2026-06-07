@@ -102,6 +102,9 @@ public struct ClaudePluginInstallReport: Sendable {
         public var importedAgentCount: Int = 0
         public var importedCommandCount: Int = 0
         public var importedMCPProviderCount: Int = 0
+        /// Components declared by the resolved manifest. Kept separate from
+        /// imported counts so the UI can explain skipped or blocked artifacts.
+        public var declaredCounts = ClaudePluginArtifactCounts()
         /// Total co-located asset files (Python helpers, references, etc.)
         /// attached to imported skills.
         public var importedSkillAssetCount: Int = 0
@@ -134,6 +137,16 @@ public struct ClaudePluginInstallReport: Sendable {
         /// UI can deep-link to the editor.
         public var schedulesNeedingCron: [PendingSchedule] = []
         public var errors: [String] = []
+
+        public var attentionItemCount: Int {
+            schedulesNeedingCron.count
+                + skippedStdioMCPServers.count
+                + stdioProvidersNeedingConfiguration.count
+                + stdioProvidersBlockedNoSandbox.count
+                + placeholderTokensSkipped.count
+                + oauthProvidersNeedingSignIn.count
+                + errors.count
+        }
     }
 
     public var perPlugin: [PluginSummary] = []
@@ -172,6 +185,10 @@ public struct ClaudePluginInstallReport: Sendable {
     public var allErrors: [String] {
         perPlugin.flatMap { $0.errors }
     }
+    public var totalAttentionItems: Int {
+        perPlugin.reduce(0) { $0 + $1.attentionItemCount }
+    }
+    public var requiresAttention: Bool { totalAttentionItems > 0 }
 }
 
 // MARK: - Installer
@@ -223,6 +240,12 @@ public final class ClaudePluginInstaller {
             var summary = ClaudePluginInstallReport.PluginSummary(
                 pluginId: pluginId,
                 pluginName: manifest.name
+            )
+            summary.declaredCounts = ClaudePluginArtifactCounts(
+                skill: manifest.skills.count,
+                schedule: manifest.agents.count,
+                command: manifest.commands.count,
+                mcp: manifest.mcpJsonPath == nil ? 0 : 1
             )
 
             // Load any previously persisted user_config so substitutions
@@ -475,6 +498,10 @@ public final class ClaudePluginInstaller {
                 defer { tick() }
                 if let content = fetched.mcpJson {
                     let parsed = MCPJSONParser.parse(content)
+                    summary.declaredCounts.mcp = max(
+                        parsed.servers.count,
+                        summary.declaredCounts.mcp
+                    )
                     // Precompute sandbox availability once per install run so a
                     // batch of stdio servers in the same plugin doesn't kick
                     // off the macOS-version probe N times.
@@ -706,11 +733,12 @@ public final class ClaudePluginInstaller {
                 declaresHooks: manifest.declaresHooks,
                 declaresUnsupportedComponents: manifest.declaresUnsupportedComponents,
                 declaredCounts: ClaudePluginManifestSnapshot.DeclaredCounts(
-                    skills: summary.importedSkillCount,
-                    agents: summary.importedAgentCount,
-                    commands: summary.importedCommandCount,
-                    mcp: summary.importedMCPProviderCount
-                )
+                    skills: summary.declaredCounts.skill,
+                    agents: summary.declaredCounts.schedule,
+                    commands: summary.declaredCounts.command,
+                    mcp: summary.declaredCounts.mcp
+                ),
+                installOutcome: ClaudePluginManifestSnapshot.InstallOutcome(summary: summary)
             )
             ClaudePluginManifestStore.save(snapshot)
 

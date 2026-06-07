@@ -61,6 +61,10 @@ struct ClaudePluginDetailView: View {
                         userConfigBanner(onConfigure: onConfigure)
                     }
 
+                    if plugin.needsPostInstallAttention {
+                        installOutcomeNotice
+                    }
+
                     if let snap = snapshot, !snap.keywords.isEmpty {
                         keywordsSection(snap.keywords)
                     }
@@ -327,6 +331,120 @@ struct ClaudePluginDetailView: View {
         )
     }
 
+    private var installOutcomeNotice: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.circle")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(theme.warningColor)
+                Text("Import needs attention", bundle: .module)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundColor(theme.primaryText)
+                Spacer()
+            }
+            Text(
+                "Some declared components require setup, sign-in, or were skipped during import.",
+                bundle: .module
+            )
+            .font(.system(size: 11.5))
+            .foregroundColor(theme.secondaryText)
+            VStack(alignment: .leading, spacing: 3) {
+                ForEach(installOutcomeMessages, id: \.self) { message in
+                    Text("• \(message)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(theme.secondaryText)
+                        .lineLimit(2)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.warningColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.warningColor.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    private var installOutcomeMessages: [String] {
+        var messages: [String] = []
+        if let outcome = snapshot?.installOutcome {
+            messages.append(
+                contentsOf: outcome.schedulesNeedingCron.map {
+                    "Schedule needs review: \($0)"
+                }
+            )
+            messages.append(
+                contentsOf: outcome.stdioProvidersNeedingConfiguration.map {
+                    providerMessage(
+                        prefix: "Stdio MCP needs env vars",
+                        provider: $0
+                    )
+                }
+            )
+            messages.append(
+                contentsOf: outcome.placeholderTokensSkipped.map {
+                    providerMessage(
+                        prefix: "MCP needs token",
+                        provider: $0
+                    )
+                }
+            )
+            messages.append(
+                contentsOf: outcome.oauthProvidersNeedingSignIn.map {
+                    "OAuth sign-in required: \($0)"
+                }
+            )
+            messages.append(
+                contentsOf: outcome.stdioProvidersBlockedNoSandbox.map {
+                    "Stdio MCP skipped, sandbox unavailable: \($0)"
+                }
+            )
+            messages.append(
+                contentsOf: outcome.skippedStdioMCPServers.map {
+                    "MCP entry skipped: \($0)"
+                }
+            )
+            messages.append(contentsOf: outcome.errors.map { "Install error: \($0)" })
+        }
+
+        if messages.isEmpty, plugin.hasPartialImport {
+            let missing = plugin.missingDeclaredCounts
+            if missing.skill > 0 {
+                messages.append("\(missing.skill) skill\(missing.skill == 1 ? "" : "s") declared but not imported")
+            }
+            if missing.schedule > 0 {
+                messages.append(
+                    "\(missing.schedule) schedule\(missing.schedule == 1 ? "" : "s") declared but not imported"
+                )
+            }
+            if missing.command > 0 {
+                messages.append(
+                    "\(missing.command) command\(missing.command == 1 ? "" : "s") declared but not imported"
+                )
+            }
+            if missing.mcp > 0 {
+                messages.append("\(missing.mcp) MCP provider\(missing.mcp == 1 ? "" : "s") declared but not imported")
+            }
+        }
+
+        return messages.isEmpty
+            ? ["Declared components differ from imported artifacts."]
+            : messages
+    }
+
+    private func providerMessage(
+        prefix: String,
+        provider: ClaudePluginManifestSnapshot.PendingProvider
+    ) -> String {
+        guard !provider.missingKeys.isEmpty else {
+            return "\(prefix): \(provider.name)"
+        }
+        return "\(prefix): \(provider.name) (\(provider.missingKeys.joined(separator: ", ")))"
+    }
+
     private func keywordsSection(_ keywords: [String]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader(title: "Keywords", icon: "tag")
@@ -442,15 +560,29 @@ struct ClaudePluginDetailView: View {
     /// have none.
     @ViewBuilder
     private func groupEmptyPlaceholder(kind: ClaudePluginArtifactKind) -> some View {
-        let message: LocalizedStringKey = {
-            switch kind {
-            case .skill: return "No skills shipped with this plugin."
-            case .schedule: return "No schedules shipped with this plugin."
-            case .command: return "No slash commands shipped with this plugin."
-            case .mcp: return "No MCP providers shipped with this plugin."
+        let message: String = {
+            let declared = plugin.declaredCount(for: kind)
+            if declared > 0 {
+                switch kind {
+                case .skill:
+                    return "No skills imported; \(declared) declared."
+                case .schedule:
+                    return "No schedules imported; \(declared) declared."
+                case .command:
+                    return "No slash commands imported; \(declared) declared."
+                case .mcp:
+                    return "No MCP providers imported; \(declared) declared."
+                }
+            } else {
+                switch kind {
+                case .skill: return "No skills shipped with this plugin."
+                case .schedule: return "No schedules shipped with this plugin."
+                case .command: return "No slash commands shipped with this plugin."
+                case .mcp: return "No MCP providers shipped with this plugin."
+                }
             }
         }()
-        Text(message, bundle: .module)
+        Text(message)
             .font(.system(size: 11).italic())
             .foregroundColor(theme.tertiaryText)
             .padding(.leading, 4)

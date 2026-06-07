@@ -363,6 +363,36 @@ public struct ClaudePluginInstalled: Identifiable, Equatable, Sendable {
 
     public var version: String? { snapshot?.version }
 
+    public var declaredCounts: ClaudePluginArtifactCounts {
+        guard let declared = snapshot?.declaredCounts else { return counts }
+        return ClaudePluginArtifactCounts(
+            skill: declared.skills,
+            schedule: declared.agents,
+            command: declared.commands,
+            mcp: declared.mcp
+        )
+    }
+
+    public var missingDeclaredCounts: ClaudePluginArtifactCounts {
+        let declared = declaredCounts
+        return ClaudePluginArtifactCounts(
+            skill: max(declared.skill - counts.skill, 0),
+            schedule: max(declared.schedule - counts.schedule, 0),
+            command: max(declared.command - counts.command, 0),
+            mcp: max(declared.mcp - counts.mcp, 0)
+        )
+    }
+
+    public var hasPartialImport: Bool { missingDeclaredCounts.total > 0 }
+
+    public var needsPostInstallAttention: Bool {
+        snapshot?.installOutcome?.requiresAttention == true || hasPartialImport
+    }
+
+    public func declaredCount(for kind: ClaudePluginArtifactKind) -> Int {
+        declaredCounts[kind]
+    }
+
     public var hasUpdate: Bool {
         GitHubSkillService.ClaudePluginVersionResolver.hasUpdate(
             installed: snapshot?.version,

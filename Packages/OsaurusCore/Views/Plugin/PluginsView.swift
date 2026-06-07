@@ -372,11 +372,15 @@ struct PluginsView: View {
             let total =
                 report.totalImportedSkills + report.totalImportedAgents
                 + report.totalImportedCommands + report.totalImportedMCPProviders
-            showSuccess(
+            let baseMessage =
                 total > 0
-                    ? L("Installed \(total) items from \(entry.name)")
-                    : L("Installed \(entry.name)")
-            )
+                ? L("Installed \(total) items from \(entry.name)")
+                : L("Installed \(entry.name)")
+            let message =
+                report.requiresAttention
+                ? "\(baseMessage); \(report.totalAttentionItems) need review"
+                : baseMessage
+            showSuccess(message)
         }
     }
 

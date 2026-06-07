@@ -650,7 +650,18 @@ struct ClaudePluginSpecTests {
                 ],
                 declaresHooks: true,
                 declaresUnsupportedComponents: ["channels"],
-                declaredCounts: .init(skills: 2, agents: 1, commands: 0, mcp: 1)
+                declaredCounts: .init(skills: 2, agents: 1, commands: 0, mcp: 1),
+                installOutcome: .init(
+                    schedulesNeedingCron: ["Renewals:Weekly Review"],
+                    stdioProvidersNeedingConfiguration: [
+                        .init(name: "local-crm", missingKeys: ["CRM_TOKEN"])
+                    ],
+                    placeholderTokensSkipped: [
+                        .init(name: "vault", missingKeys: ["Authorization"])
+                    ],
+                    oauthProvidersNeedingSignIn: ["notion"],
+                    errors: ["skill renewals/skills/audit: missing SKILL.md"]
+                )
             )
 
             #expect(ClaudePluginManifestStore.save(snap) == true)
@@ -658,6 +669,81 @@ struct ClaudePluginSpecTests {
             #expect(loaded != nil)
             #expect(loaded == snap)
         }
+    }
+
+    /// Snapshots written before install outcome persistence did not contain the
+    /// optional `installOutcome` key. They must keep loading so existing users
+    /// don't lose installed Claude plugin cards after upgrade.
+    @Test func manifestStoreLoadsLegacySnapshotWithoutInstallOutcome() async {
+        await Self.withIsolatedRoot(label: "manifest-store-legacy-outcome") { _ in
+            let pluginId = "github:o/r/legacy"
+            let json = #"""
+                {
+                  "pluginId" : "github:o/r/legacy",
+                  "name" : "legacy",
+                  "displayName" : "Legacy",
+                  "sourceOwner" : "o",
+                  "sourceRepo" : "r",
+                  "installedAt" : "2023-11-14T22:13:20Z",
+                  "keywords" : [],
+                  "userConfigSpec" : [],
+                  "declaresHooks" : false,
+                  "declaresUnsupportedComponents" : [],
+                  "declaredCounts" : {
+                    "skills" : 1,
+                    "agents" : 0,
+                    "commands" : 0,
+                    "mcp" : 0
+                  }
+                }
+                """#
+            let file = OsaurusPaths.claudePluginManifestFile(for: pluginId)
+            OsaurusPaths.ensureExistsSilent(file.deletingLastPathComponent())
+            try? Data(json.utf8).write(to: file)
+
+            let loaded = ClaudePluginManifestStore.load(pluginId: pluginId)
+            #expect(loaded?.displayName == "Legacy")
+            #expect(loaded?.installOutcome == nil)
+            #expect(loaded?.declaredCounts.skills == 1)
+        }
+    }
+
+    /// The install outcome snapshot keeps names and missing-key hints from the
+    /// live install report without persisting provider ids that can change
+    /// across restarts.
+    @Test func installOutcomeCapturesReportFollowUps() {
+        var summary = ClaudePluginInstallReport.PluginSummary(
+            pluginId: "github:o/r/p",
+            pluginName: "p"
+        )
+        summary.schedulesNeedingCron = [
+            .init(id: UUID(), name: "p:Daily Agent")
+        ]
+        summary.skippedStdioMCPServers = ["broken"]
+        summary.stdioProvidersNeedingConfiguration = [
+            .init(id: UUID(), name: "stdio", missingKeys: ["API_KEY"])
+        ]
+        summary.stdioProvidersBlockedNoSandbox = ["local-shell"]
+        summary.placeholderTokensSkipped = [
+            .init(id: UUID(), name: "remote", missingKeys: ["Authorization"])
+        ]
+        summary.oauthProvidersNeedingSignIn = [
+            .init(id: UUID(), name: "notion")
+        ]
+        summary.errors = ["command p/commands/run.md: 404"]
+
+        let outcome = ClaudePluginManifestSnapshot.InstallOutcome(summary: summary)
+
+        #expect(outcome.requiresAttention)
+        #expect(outcome.attentionCount == 7)
+        #expect(outcome.schedulesNeedingCron == ["p:Daily Agent"])
+        #expect(outcome.skippedStdioMCPServers == ["broken"])
+        #expect(outcome.stdioProvidersNeedingConfiguration.first?.name == "stdio")
+        #expect(
+            outcome.stdioProvidersNeedingConfiguration.first?.missingKeys == ["API_KEY"]
+        )
+        #expect(outcome.oauthProvidersNeedingSignIn == ["notion"])
+        #expect(outcome.errors == ["command p/commands/run.md: 404"])
     }
 
     /// `all()` should sort by displayName and tolerate corrupt files —
@@ -977,6 +1063,46 @@ struct ClaudePluginSpecTests {
         #expect(p.commands == [])
         #expect(p.mcps == [])
         #expect(p.counts.total == 0)
+    }
+
+    /// Declared counts from the manifest snapshot are separate from live
+    /// imported counts. This lets the installed detail flag partial imports
+    /// such as MCP providers skipped because they need OAuth, env vars, or a
+    /// sandbox that is unavailable on the current machine.
+    @Test func aggregatorFlagsPartialImportFromDeclaredCounts() {
+        let pluginId = "github:owner/repo/partial"
+        let snapshot = ClaudePluginManifestSnapshot(
+            pluginId: pluginId,
+            name: "partial",
+            displayName: "Partial",
+            description: nil,
+            version: nil,
+            sourceOwner: "owner",
+            sourceRepo: "repo",
+            installedAt: Date(),
+            declaredCounts: .init(skills: 1, agents: 0, commands: 0, mcp: 2),
+            installOutcome: .init(
+                skippedStdioMCPServers: ["broken"],
+                oauthProvidersNeedingSignIn: ["notion"]
+            )
+        )
+
+        let result = InstalledClaudePluginsAggregator.buildPlugins(
+            snapshots: [snapshot],
+            skills: [Skill(name: "Imported", pluginId: pluginId)],
+            schedules: [],
+            commands: [],
+            providers: []
+        )
+
+        #expect(result.count == 1)
+        let plugin = result[0]
+        #expect(plugin.counts.skill == 1)
+        #expect(plugin.counts.mcp == 0)
+        #expect(plugin.declaredCounts.mcp == 2)
+        #expect(plugin.missingDeclaredCounts.mcp == 2)
+        #expect(plugin.hasPartialImport)
+        #expect(plugin.needsPostInstallAttention)
     }
 
     // MARK: - Helpers

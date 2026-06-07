@@ -38,6 +38,9 @@ public struct ClaudePluginManifestSnapshot: Codable, Sendable, Hashable {
     public let userConfigSpec: [ClaudePluginUserConfigField]
     public let declaresHooks: Bool
     public let declaresUnsupportedComponents: [String]
+    /// Follow-up state captured from the install report. Optional so snapshots
+    /// written by older Osaurus builds still decode.
+    public let installOutcome: InstallOutcome?
 
     /// Declared artifact counts captured at install. Used to seed the card
     /// before the manager-side counts settle (e.g. on cold launch right
@@ -56,6 +59,75 @@ public struct ClaudePluginManifestSnapshot: Codable, Sendable, Hashable {
             self.commands = commands
             self.mcp = mcp
         }
+    }
+
+    public struct PendingProvider: Codable, Sendable, Hashable {
+        public let name: String
+        public let missingKeys: [String]
+
+        public init(name: String, missingKeys: [String] = []) {
+            self.name = name
+            self.missingKeys = missingKeys
+        }
+    }
+
+    /// Compact install outcome persisted with the manifest snapshot so the
+    /// installed-plugin detail can explain partial imports after app restart.
+    public struct InstallOutcome: Codable, Sendable, Hashable {
+        public let schedulesNeedingCron: [String]
+        public let skippedStdioMCPServers: [String]
+        public let stdioProvidersNeedingConfiguration: [PendingProvider]
+        public let stdioProvidersBlockedNoSandbox: [String]
+        public let placeholderTokensSkipped: [PendingProvider]
+        public let oauthProvidersNeedingSignIn: [String]
+        public let errors: [String]
+
+        public init(
+            schedulesNeedingCron: [String] = [],
+            skippedStdioMCPServers: [String] = [],
+            stdioProvidersNeedingConfiguration: [PendingProvider] = [],
+            stdioProvidersBlockedNoSandbox: [String] = [],
+            placeholderTokensSkipped: [PendingProvider] = [],
+            oauthProvidersNeedingSignIn: [String] = [],
+            errors: [String] = []
+        ) {
+            self.schedulesNeedingCron = schedulesNeedingCron
+            self.skippedStdioMCPServers = skippedStdioMCPServers
+            self.stdioProvidersNeedingConfiguration = stdioProvidersNeedingConfiguration
+            self.stdioProvidersBlockedNoSandbox = stdioProvidersBlockedNoSandbox
+            self.placeholderTokensSkipped = placeholderTokensSkipped
+            self.oauthProvidersNeedingSignIn = oauthProvidersNeedingSignIn
+            self.errors = errors
+        }
+
+        public init(summary: ClaudePluginInstallReport.PluginSummary) {
+            self.init(
+                schedulesNeedingCron: summary.schedulesNeedingCron.map(\.name),
+                skippedStdioMCPServers: summary.skippedStdioMCPServers,
+                stdioProvidersNeedingConfiguration: summary.stdioProvidersNeedingConfiguration
+                    .map {
+                        PendingProvider(name: $0.name, missingKeys: $0.missingKeys)
+                    },
+                stdioProvidersBlockedNoSandbox: summary.stdioProvidersBlockedNoSandbox,
+                placeholderTokensSkipped: summary.placeholderTokensSkipped.map {
+                    PendingProvider(name: $0.name, missingKeys: $0.missingKeys)
+                },
+                oauthProvidersNeedingSignIn: summary.oauthProvidersNeedingSignIn.map(\.name),
+                errors: summary.errors
+            )
+        }
+
+        public var attentionCount: Int {
+            schedulesNeedingCron.count
+                + skippedStdioMCPServers.count
+                + stdioProvidersNeedingConfiguration.count
+                + stdioProvidersBlockedNoSandbox.count
+                + placeholderTokensSkipped.count
+                + oauthProvidersNeedingSignIn.count
+                + errors.count
+        }
+
+        public var requiresAttention: Bool { attentionCount > 0 }
     }
 
     public init(
@@ -79,7 +151,8 @@ public struct ClaudePluginManifestSnapshot: Codable, Sendable, Hashable {
         userConfigSpec: [ClaudePluginUserConfigField] = [],
         declaresHooks: Bool = false,
         declaresUnsupportedComponents: [String] = [],
-        declaredCounts: DeclaredCounts
+        declaredCounts: DeclaredCounts,
+        installOutcome: InstallOutcome? = nil
     ) {
         self.pluginId = pluginId
         self.name = name
@@ -102,6 +175,7 @@ public struct ClaudePluginManifestSnapshot: Codable, Sendable, Hashable {
         self.declaresHooks = declaresHooks
         self.declaresUnsupportedComponents = declaresUnsupportedComponents
         self.declaredCounts = declaredCounts
+        self.installOutcome = installOutcome
     }
 
     /// Convenience GitHub URL pointing at the plugin's source tree. Used
