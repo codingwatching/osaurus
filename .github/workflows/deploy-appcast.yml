@@ -21,7 +21,9 @@ permissions:
 
 jobs:
   deploy-appcast:
-    runs-on: ubuntu-latest
+    # Sparkle's generate_appcast/sign_update binaries are macOS Mach-O; they
+    # cannot run on ubuntu-latest (Exec format error / exit 126).
+    runs-on: macos-26
     timeout-minutes: 10
     env:
       VERSION: ${{ inputs.version }}
