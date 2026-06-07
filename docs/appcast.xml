@@ -3,6 +3,57 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.13</title>
+            <pubDate>Sun, 07 Jun 2026 04:30:20 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.13</sparkle:version>
+            <sparkle:shortVersionString>0.19.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.13/Osaurus-0.19.13.dmg" length="51692444" type="application/octet-stream" sparkle:edSignature="F9LPrT0FRh+iueaXb4VawcH04cXcuVjMcTaclfg8+V3loObTDNu/VG2/Lw/+L2uyGrupDzUVm4Iwfeq5b25qBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin vMLX hybrid SSM cache fix (#1398) by @jjang-ai
+- Pin vMLX Nemotron auto BF16 runtime (#1397) by @jjang-ai
+- Pin vMLX Nemotron decode conv runtime (#1394) by @jjang-ai
+- Pin vMLX cold-tier opt-in runtime (#1393) by @jjang-ai
+- Fix Gemma4 chat-template schema normalization (#1357) by @mimeding
+- Pin vMLX Ultra no-load speed gate (#1392) by @jjang-ai
+- updated chinese translations (#1380) by @ftzahao
+- Pin vMLX Nemotron Ultra release boundary (#1391) by @jjang-ai
+- Pin vMLX Nemotron Ultra loader hardening (#1387) by @jjang-ai
+- Harden Nemotron Ultra media and cache wiring (#1386) by @jjang-ai
+- Pin vMLX Nemotron graph evidence runtime (#1385) by @jjang-ai
+- auto split full urls pasted into provider host fields (#1384) by @RaajeevChandran
+- Pin vMLX Nemotron live proof runtime (#1381) by @jjang-ai
+- Pin vMLX Nemotron parser alias runtime (#1379) by @jjang-ai
+- Pin Nemotron fallback macro runtime (#1378) by @jjang-ai
+- Budget routed JANGTQ load footprint (#1376) by @jjang-ai
+- Use Osaurus production vMLX load policy (#1375) by @jjang-ai
+- Gate local model loads on available memory (#1371) by @jjang-ai
+- updated chinese translations (#1373) by @ftzahao
+
+## 🚀 Features
+
+- added grok oauth (#1382) by @tpae
+
+## 🐛 Bug Fixes
+
+- moved identity keychain reads off the main thread (#1388) by @RaajeevChandran
+- fixed main thread hangs when connecting MCP providers and rebuilding the model picker (#1377) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- updated onboarding screens (#1396) by @tpae
+- improved onboarding create agent view (#1390) by @tpae
+- updated remote provider cards for improved UX (#1389) by @tpae
+- fixed hangs (#1374) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.11...0.19.12
+]]></description>
+        </item>
+        <item>
             <title>0.19.11</title>
             <pubDate>Fri, 05 Jun 2026 21:47:52 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
