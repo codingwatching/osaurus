@@ -540,13 +540,20 @@ struct RuntimePolicySourceTests {
         // keeps TQ tensors raw while promoting non-TQ tensors out of fp16
         // AsType-heavy decode, plus streamed DSV4 request-tool prefix
         // buffering, the Gemma4 native tool-call parser regression pin,
-        // generation-config suppress_tokens propagation, and seed-boundary
-        // hybrid SSM full-hit restore.
+        // generation-config suppress_tokens propagation, seed-boundary
+        // hybrid SSM full-hit restore, Nemotron-H Mamba cache-offset and
+        // SSM dtype parity, the stacked Nemotron JANGTQ scored
+        // down-projection kernel kept opt-in after live Ultra rows showed it
+        // regresses the default decode path, and the Gemma native tool-call
+        // parser/cache hardening plus LFM/ZAYA cache proof pins carried by
+        // the current vMLX runtime branch, including stale ZAYA tool-template
+        // shim detection so tagged but non-choice-aware local templates do not
+        // bypass required-tool handling.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "046c48fc9848f00f4221ea3308be99cd45de410d"
+        let expectedRuntimeHardenedRevision = "edcef93f6a0147d3e568aa512adf94a42cf212e9"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -554,7 +561,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, exact-boundary hybrid SSM snapshot rederive avoidance, Ultra no-load speed-gate boundary, Nemotron-H JANGTQ mmap auto-BF16 load proof, Osaurus MLXPress cold-tier opt-in policy, streamed DSV4 request-tool prefix buffering, Gemma4 native tool-call parser regression pin, and hybrid SSM companion rederive boundary pin; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Gemma4 file-backed required-tool template grounding, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, exact-boundary hybrid SSM snapshot rederive avoidance, Ultra no-load speed-gate boundary, Nemotron-H JANGTQ mmap auto-BF16 load proof, Osaurus MLXPress cold-tier opt-in policy, streamed DSV4 request-tool prefix buffering, Gemma4 native tool-call parser regression pin, hybrid SSM companion rederive boundary pin, Nemotron-H Mamba cache-offset and dtype parity, the stacked Nemotron JANGTQ scored down-projection kernel kept opt-in after live Ultra rows showed it regresses the default decode path, default-off Nemotron Mamba subprofile diagnostics, the Nemotron Omni activation BF16 default-off fix, LFM2 exact required-tool text grounding for preserving-newlines prompts, schema-checked LFM bracket-array tool parsing, LFM2.5 MXFP8 required-tool warm disk-restore bypass, LFM2 OpenAI tool_call JSON envelope parsing, LFM2 required-tool prompt preface ordering, and DSV4 required-tool reminder placement before the current tail user turn; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -891,10 +898,12 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains(#""disk_l2_hits""#))
         #expect(httpHandler.contains(#""prefix_hits""#))
         #expect(httpHandler.contains(#""companion_cache""#))
-        #expect(httpHandler.contains(#""zaya_cca_companion_cache""#))
-        #expect(httpHandler.contains(#""zaya_cca_companion_hits""#))
+        #expect(httpHandler.contains(#""zaya_cca_disk_payload_restore""#))
+        #expect(httpHandler.contains(#""zaya_cca_disk_payload_hits""#))
         #expect(httpHandler.contains(#"let hasSSMCompanion = companionKinds.contains("companion=ssm")"#))
         #expect(httpHandler.contains("if hasSSMCompanion"))
+        #expect(!httpHandler.contains(#""zaya_cca_companion_cache""#))
+        #expect(!httpHandler.contains(#""zaya_cca_companion_hits""#))
         #expect(httpHandler.contains(#""cache_topology""#))
         #expect(httpHandler.contains("hybrid_pool_layer_count"))
         #expect(httpHandler.contains("zaya_cca_layer_count"))
@@ -2382,7 +2391,12 @@ struct RuntimePolicySourceTests {
     @Test("Sentry inference breadcrumbs expose token count without prompt-content filtering")
     func sentryInferenceBreadcrumbsExposeTokenCountWithoutPromptFilter() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
+        let crashReporting = try Self.source("Services/CrashReportingService.swift")
 
+        #expect(
+            crashReporting.contains("guard SentrySDK.isEnabled else { return }"),
+            "Breadcrumb recording must no-op before Sentry starts; otherwise keychain-free/dev runs log SDK-disabled breadcrumb errors."
+        )
         #expect(adapter.contains("input_tokens=\\(prepared.promptTokens.count)"))
         #expect(
             !adapter.contains("message: \"begin model=\\(modelName) promptTokens="),

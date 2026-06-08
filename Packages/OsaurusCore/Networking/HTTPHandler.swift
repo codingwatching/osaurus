@@ -700,9 +700,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "ssm_companion_hits": 0,
                 "ssm_companion_misses": 0,
                 "ssm_companion_rederives": 0,
-                "zaya_cca_companion_hits": 0,
-                "zaya_cca_companion_misses": 0,
-                "zaya_cca_companion_rederives": 0,
+                "zaya_cca_disk_payload_hits": 0,
+                "zaya_cca_disk_payload_misses": 0,
+                "zaya_cca_disk_payload_stores": 0,
             ]
 
             let models: [[String: Any]] = cached.map { summary in
@@ -802,6 +802,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let hasSSMCompanion = companionKinds.contains("companion=ssm")
                 let hasZayaCCACompanion =
                     (summary.cacheTopology?.zayaCCALayerCount ?? 0) > 0
+                if hasZayaCCACompanion, let diskStats = stats.diskStats {
+                    row["zaya_cca_disk_payload_restore"] = [
+                        "hits": diskStats.hits,
+                        "misses": diskStats.misses,
+                        "stores": diskStats.stores,
+                        "embedded_state": true,
+                    ] as [String: Any]
+                    aggregate["zaya_cca_disk_payload_hits", default: 0] += diskStats.hits
+                    aggregate["zaya_cca_disk_payload_misses", default: 0] += diskStats.misses
+                    aggregate["zaya_cca_disk_payload_stores", default: 0] += diskStats.stores
+                }
                 row["companion_cache"] = [
                     "hits": ssm.hits,
                     "misses": ssm.misses,
@@ -815,13 +826,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         "rederives": ssm.reDerives,
                     ]
                 }
-                if hasZayaCCACompanion {
-                    row["zaya_cca_companion_cache"] = [
-                        "hits": ssm.hits,
-                        "misses": ssm.misses,
-                        "rederives": ssm.reDerives,
-                    ]
-                }
                 aggregate["companion_hits", default: 0] += ssm.hits
                 aggregate["companion_misses", default: 0] += ssm.misses
                 aggregate["companion_rederives", default: 0] += ssm.reDerives
@@ -829,11 +833,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     aggregate["ssm_companion_hits", default: 0] += ssm.hits
                     aggregate["ssm_companion_misses", default: 0] += ssm.misses
                     aggregate["ssm_companion_rederives", default: 0] += ssm.reDerives
-                }
-                if hasZayaCCACompanion {
-                    aggregate["zaya_cca_companion_hits", default: 0] += ssm.hits
-                    aggregate["zaya_cca_companion_misses", default: 0] += ssm.misses
-                    aggregate["zaya_cca_companion_rederives", default: 0] += ssm.reDerives
                 }
                 return row
             }
@@ -4393,9 +4392,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             } catch {
                 let message = error.localizedDescription
-                let status: HTTPResponseStatus =
-                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
-                let body = Self.errorBody(.openai(type: "internal_error"), message: message)
+                let status = Self.localRuntimeHTTPStatus(for: error)
+                let body = Self.errorBody(.openai(type: Self.openAIErrorType(for: error)), message: message)
                 hop {
                     Self.writeFullResponse(
                         ctx: ctx,
@@ -5151,13 +5149,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             engineError.httpStatus == 404
                             ? "invalid_request_error" : "service_unavailable"
                         message = engineError.errorDescription ?? error.localizedDescription
-                    } else if error is MLXService.RuntimePolicyError {
-                        status = .badRequest
-                        errorType = "invalid_request_error"
-                        message = error.localizedDescription
                     } else {
-                        status = .internalServerError
-                        errorType = "internal_error"
+                        status = Self.localRuntimeHTTPStatus(for: error)
+                        errorType = Self.openAIErrorType(for: error)
                         message = error.localizedDescription
                     }
                     let body = Self.errorBody(.openai(type: errorType), message: message)
@@ -5542,10 +5536,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
-                let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
+                let body = Self.ollamaGenerateErrorJSON(
+                    error.localizedDescription,
+                    type: Self.ollamaErrorType(for: error)
+                )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
-                let status: HTTPResponseStatus =
-                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
+                let status = Self.localRuntimeHTTPStatus(for: error)
                 hop {
                     logSelf.sendResponse(
                         context: ctx.value,
@@ -5560,7 +5556,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/chat",
                     userAgent: userAgent,
                     requestBody: requestBodyString,
-                    responseStatus: error is MLXService.RuntimePolicyError ? 400 : 500,
+                    responseStatus: Int(status.code),
                     startTime: startTime,
                     model: request.model,
                     errorMessage: error.localizedDescription
@@ -5830,10 +5826,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .stop
                 )
             } catch {
-                let body = Self.ollamaGenerateErrorJSON(error.localizedDescription)
+                let body = Self.ollamaGenerateErrorJSON(
+                    error.localizedDescription,
+                    type: Self.ollamaErrorType(for: error)
+                )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
-                let status: HTTPResponseStatus =
-                    error is MLXService.RuntimePolicyError ? .badRequest : .internalServerError
+                let status = Self.localRuntimeHTTPStatus(for: error)
                 hop {
                     logSelf.sendResponse(
                         context: ctx.value,
@@ -5848,7 +5846,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/generate",
                     userAgent: userAgent,
                     requestBody: requestBodyString,
-                    responseStatus: error is MLXService.RuntimePolicyError ? 400 : 500,
+                    responseStatus: Int(status.code),
                     startTime: startTime,
                     model: request.model,
                     errorMessage: error.localizedDescription
@@ -5937,11 +5935,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return object
     }
 
-    private static func ollamaGenerateErrorJSON(_ message: String) -> String {
+    private static func ollamaGenerateErrorJSON(_ message: String, type: String = "internal_error") -> String {
         let object: [String: Any] = [
             "error": [
                 "message": message,
-                "type": "internal_error",
+                "type": type,
             ],
             "done": true,
         ]
@@ -7404,10 +7402,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
-                let isPolicyError = error is MLXService.RuntimePolicyError
                 let errorResp = AnthropicError(
                     message: error.localizedDescription,
-                    errorType: isPolicyError ? "invalid_request_error" : "api_error"
+                    errorType: Self.anthropicErrorType(for: error)
                 )
                 let errorJson =
                     (try? JSONEncoder.osaurusCanonical().encode(errorResp))
@@ -7417,11 +7414,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 let headersCopy = headers
                 let body = errorJson
+                let status = Self.localRuntimeHTTPStatus(for: error)
 
                 hop {
                     var responseHead = HTTPResponseHead(
                         version: head.version,
-                        status: isPolicyError ? .badRequest : .internalServerError
+                        status: status
                     )
                     var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                     buffer.writeString(body)
@@ -7443,7 +7441,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/messages",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: isPolicyError ? 400 : 500,
+                    responseStatus: Int(status.code),
                     startTime: logStartTime,
                     model: logModel,
                     errorMessage: error.localizedDescription
@@ -8415,9 +8413,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     finishReason: .toolCalls
                 )
             } catch {
-                let isPolicyError = error is MLXService.RuntimePolicyError
                 let errorResp = OpenResponsesErrorResponse(
-                    code: isPolicyError ? "invalid_request_error" : "api_error",
+                    code: Self.openResponsesErrorCode(for: error),
                     message: error.localizedDescription
                 )
                 let errorJson =
@@ -8428,11 +8425,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 let headersCopy = headers
                 let body = errorJson
+                let status = Self.localRuntimeHTTPStatus(for: error)
 
                 hop {
                     var responseHead = HTTPResponseHead(
                         version: head.version,
-                        status: isPolicyError ? .badRequest : .internalServerError
+                        status: status
                     )
                     var buffer = ctx.value.channel.allocator.buffer(capacity: body.utf8.count)
                     buffer.writeString(body)
@@ -8454,7 +8452,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     path: "/responses",
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
-                    responseStatus: isPolicyError ? 400 : 500,
+                    responseStatus: Int(status.code),
                     startTime: logStartTime,
                     model: logModel,
                     errorMessage: error.localizedDescription

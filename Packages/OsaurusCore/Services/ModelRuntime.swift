@@ -32,6 +32,13 @@ private let _llmFactory = MLXLLM.LLMModelFactory.shared
 public actor ModelRuntime {
     // MARK: - Types
 
+    struct LoadRefusedError: Error, LocalizedError, Sendable {
+        let modelName: String
+        let message: String
+
+        var errorDescription: String? { message }
+    }
+
     struct ModelCacheSummary: Sendable {
         let name: String
         let bytes: Int64
@@ -856,13 +863,10 @@ public actor ModelRuntime {
             let physGB = String(format: "%.1f", Double(physical) / 1_073_741_824)
             let availGB = String(format: "%.1f", Double(max(available, 0)) / 1_073_741_824)
             let requiredGB = String(format: "%.1f", Double(requiredAvailable) / 1_073_741_824)
-            throw NSError(
-                domain: "ModelRuntime",
-                code: 2,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "Not enough memory to load \(modelName): needs ~\(requiredGB) GB available now (~\(projGB) GB projected with resident models), but this Mac has \(availGB) GB currently available out of \(physGB) GB. Clear memory, unload other models, or choose a smaller/more-quantized model."
-                ]
+            throw LoadRefusedError(
+                modelName: modelName,
+                message:
+                    "Not enough memory to load \(modelName): needs ~\(requiredGB) GB available now (~\(projGB) GB projected with resident models), but this Mac has \(availGB) GB currently available out of \(physGB) GB. Clear memory, unload other models, or choose a smaller/more-quantized model."
             )
         }
     }
@@ -3021,12 +3025,10 @@ public actor ModelRuntime {
 
         guard isAffine, (routedExperts ?? 0) >= 128 else { return }
 
-        throw NSError(
-            domain: "ModelRuntime",
-            code: 5,
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
+        throw MLXService.RuntimePolicyError(
+            modelName: name,
+            issues: [
+                "Model '\(name)' is a plain affine DeepSeek V4 Flash JANG bundle. "
                     + "That path is not production-supported in this Osaurus build because "
                     + "it loads through the generic SwitchGLU route and can consume very high "
                     + "memory while decoding at unusable speed. Use the JANGTQ2 or JANGTQ-K "
