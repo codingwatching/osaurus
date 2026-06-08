@@ -25527,6 +25527,9 @@
         }
       }
     },
+    "No providers to reorder." : {
+
+    },
     "No Remote Providers" : {
       "localizations" : {
         "de" : {
@@ -34334,6 +34337,12 @@
           }
         }
       }
+    },
+    "Reorder providers" : {
+
+    },
+    "Reorder Providers" : {
+
     },
     "Repair" : {
       "localizations" : {
