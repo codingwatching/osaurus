@@ -51,9 +51,8 @@ public struct XLSXEmitter: DocumentFormatEmitter {
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
 
     private static func packageData(for workbook: Workbook) throws -> Data {
-        let sheets = try validatedSheets(workbook.sheets)
-        try rejectFormulaCells(in: sheets)
-        try requireRenderableContent(in: sheets)
+        try validateForExport(workbook)
+        let sheets = workbook.sheets
 
         var sharedStrings = SharedStringTable()
         var worksheetEntries: [(path: String, xml: String)] = []
@@ -94,6 +93,17 @@ public struct XLSXEmitter: DocumentFormatEmitter {
             try archive.append(path: entry.path, data: entry.data)
         }
         return try archive.finalize()
+    }
+
+    private static func validateForExport(_ workbook: Workbook) throws {
+        let issues = WorkbookWorkflowService.validationIssues(for: workbook, policy: .xlsxExport)
+        guard let firstIssue = issues.first(where: { $0.severity == .error }) else { return }
+        switch firstIssue.code {
+        case .noRenderableCells, .noSheets:
+            throw DocumentAdapterError.emptyContent
+        default:
+            throw DocumentAdapterError.writeFailed(underlying: firstIssue.message)
+        }
     }
 
     private static func contentTypesXML(sheetCount: Int, hasSharedStrings: Bool) throws -> String {
@@ -274,102 +284,6 @@ public struct XLSXEmitter: DocumentFormatEmitter {
 
     private static let maxRows = 1_048_576
     private static let maxColumns = 16_384
-    private static let maxCellTextUTF16Units = 32_767
-    private static let invalidSheetNameCharacters = CharacterSet(charactersIn: "[]:*?/\\")
-
-    private static func validatedSheets(_ sheets: [Workbook.Sheet]) throws -> [Workbook.Sheet] {
-        guard !sheets.isEmpty else { throw DocumentAdapterError.emptyContent }
-
-        var names: Set<String> = []
-        for (offset, sheet) in sheets.enumerated() {
-            guard sheet.index == offset else {
-                throw writeFailed("Sheet '\(sheet.name)' has index \(sheet.index), expected \(offset)")
-            }
-            try validateSheetName(sheet.name)
-            let normalizedName = sheet.name.lowercased()
-            guard names.insert(normalizedName).inserted else {
-                throw writeFailed("Duplicate sheet name '\(sheet.name)'")
-            }
-            try validateRows(sheet.rows, sheetName: sheet.name)
-            for range in sheet.mergedRanges where !isValidCellRangeReference(range.reference) {
-                throw writeFailed("Invalid merged range '\(range.reference)'")
-            }
-        }
-        return sheets
-    }
-
-    private static func validateSheetName(_ name: String) throws {
-        guard !name.isEmpty else { throw writeFailed("Sheet name cannot be empty") }
-        guard name.utf16.count <= 31 else {
-            throw writeFailed("Sheet name '\(name)' exceeds the XLSX 31-character limit")
-        }
-        guard name.rangeOfCharacter(from: invalidSheetNameCharacters) == nil else {
-            throw writeFailed("Sheet name '\(name)' contains characters XLSX does not allow")
-        }
-        guard name.first != "'", name.last != "'" else {
-            throw writeFailed("Sheet name '\(name)' cannot start or end with apostrophe")
-        }
-    }
-
-    private static func validateRows(_ rows: [Workbook.Row], sheetName: String) throws {
-        var rowNumbers: Set<Int> = []
-        var cellReferences: Set<String> = []
-        for row in rows {
-            guard row.number >= 1, row.number <= maxRows else {
-                throw writeFailed("\(sheetName) row \(row.number) is outside XLSX row bounds")
-            }
-            guard rowNumbers.insert(row.number).inserted else {
-                throw writeFailed("\(sheetName) contains duplicate row \(row.number)")
-            }
-
-            for cell in row.cells {
-                guard cell.columnNumber >= 1, cell.columnNumber <= maxColumns else {
-                    throw writeFailed("\(sheetName)!\(cell.reference) is outside XLSX column bounds")
-                }
-                guard cell.rowNumber >= 1, cell.rowNumber <= maxRows else {
-                    throw writeFailed("\(sheetName)!\(cell.reference) is outside XLSX row bounds")
-                }
-                if case .string(let value) = cell.value {
-                    try validateCellText(value, reference: "\(sheetName)!\(cell.reference)")
-                }
-                let normalizedReference = cell.reference.uppercased()
-                guard cellReferences.insert(normalizedReference).inserted else {
-                    throw writeFailed("\(sheetName) contains duplicate cell \(cell.reference)")
-                }
-            }
-        }
-    }
-
-    private static func validateCellText(_ value: String, reference: String) throws {
-        guard value.utf16.count <= maxCellTextUTF16Units else {
-            throw writeFailed(
-                "\(reference) text exceeds Excel's \(maxCellTextUTF16Units)-character cell limit"
-            )
-        }
-    }
-
-    private static func rejectFormulaCells(in sheets: [Workbook.Sheet]) throws {
-        for sheet in sheets {
-            for row in sheet.rows {
-                for cell in row.cells where cell.formula != nil {
-                    throw writeFailed("XLSX emitter does not write formulas yet (\(sheet.name)!\(cell.reference))")
-                }
-            }
-        }
-    }
-
-    private static func requireRenderableContent(in sheets: [Workbook.Sheet]) throws {
-        let hasRenderableCell = sheets.contains { sheet in
-            sheet.rows.contains { row in
-                row.cells.contains { cell in
-                    !cell.value.fallbackText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-            }
-        }
-        guard hasRenderableCell else {
-            throw DocumentAdapterError.emptyContent
-        }
-    }
 
     private static func validatedCellReference(for cell: Workbook.Cell, sheetName: String) throws -> String {
         let expected = cellReference(columnNumber: cell.columnNumber, rowNumber: cell.rowNumber)
@@ -436,10 +350,11 @@ public struct XLSXEmitter: DocumentFormatEmitter {
         guard value.isFinite else {
             throw writeFailed("XLSX emitter cannot write non-finite numbers")
         }
-        if value >= Double(Int64.min),
-            value <= Double(Int64.max),
-            value.rounded(.towardZero) == value
-        {
+        let isIntegerInInt64Range =
+            value >= Double(Int64.min)
+            && value <= Double(Int64.max)
+            && value.rounded(.towardZero) == value
+        if isIntegerInInt64Range {
             return String(Int64(value))
         }
         return String(value)

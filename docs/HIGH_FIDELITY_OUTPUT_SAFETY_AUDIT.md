@@ -13,10 +13,12 @@ writing plain text with a package extension. For tabular text output, agents
 should write CSV/TSV.
 
 Structured workbook output stays on the document-emitter/plugin path.
-`XLSXEmitter` assembles an OOXML ZIP package in memory, validates workbook
-bounds before writing, rejects formulas instead of flattening them, rejects
-workbooks with no renderable cells, rejects overlong cell text and invalid XML,
-and only then writes the package atomically.
+`WorkbookWorkflowService` inspects typed workbooks, reports validation issues
+and emitter availability, and exports only through a registered document
+emitter. `XLSXEmitter` assembles an OOXML ZIP package in memory, validates
+workbook bounds before writing, rejects formulas instead of flattening them,
+rejects workbooks with no renderable cells, rejects overlong cell text and
+invalid XML, and only then writes the package atomically.
 
 PDF/PPTX creation remains diagnostic-only in core. `PDFPPTXWorkflowService`
 reports whether a structured emitter is registered for a typed PDF/PPTX
@@ -40,12 +42,14 @@ No workbook writer is added to the default schema.
 | XLSX formula safety | Formula cells are rejected, while formula-looking strings stay inert shared strings | `XLSXEmitterTests.emit_rejectsFormulaCellsWithoutFlatteningThem`, `XLSXEmitterTests.emit_keepsFormulaLookingTextInert` |
 | XLSX bounds | Empty exports, whitespace-only exports, overlong cell text, invalid names/references, non-finite numbers, and ZIP32 overflows are rejected before package write | `XLSXEmitterTests`, `XLSXAdapterTests` |
 | PDF/PPTX creation diagnostics | Typed PDF/PPTX workflows report registered emitters or `missingEmitter` and do not route creation through text writes | `PDFPPTXWorkflowServiceTests` |
+| Workbook workflow | Workbook inspection reports sheet/cell/formula/merged-range counts, validation reason codes, and missing-emitter state before export | `WorkbookWorkflowServiceTests` |
 | Tool exposure | XLSX plugin injection is bias-only, installed-plugin gated, and allowlist-respecting | `PreflightCapabilitySearchTests.folderInjection_*`, `FolderPluginHintsTests` |
 
 ## Follow-Up Lanes
 
-1. Add first-party workbook write UI/tooling only when it can call the
-   structured emitter directly and surface save/share state as an artifact.
+1. Add first-party workbook write UI/tooling only when it can call
+   `WorkbookWorkflowService.export` and surface save/share state as an
+   artifact.
 2. Keep extending structured creation only through real emitters, artifact
    surfacing, and validation errors; do not add package-shaped text writes.
 3. Keep sandbox write parity separate: `sandbox_write_file` has a different

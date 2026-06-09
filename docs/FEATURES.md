@@ -324,6 +324,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 - `Services/Documents/CSVAdapter.swift` — CSV and TSV table parsing with bounded input handling.
 - `Services/Documents/XLSXAdapter.swift` — XLSX workbook parsing from Office Open XML packages.
 - `Services/Documents/XLSXEmitter.swift` — XLSX workbook emission for round-trip workflows.
+- `Services/Documents/WorkbookWorkflowService.swift` — workbook inspection, export availability, validation issues, and explicit emitter-backed save flow.
 - `Services/Documents/PPTXAdapter.swift` — PPTX/POTX deck parsing from Office Open XML packages.
 - `Services/Documents/PDFAdapter.swift` — PDF extraction with page-level anchors and layout-aware text-layer table detection.
 - `Services/Documents/PDFPPTXWorkflowService.swift` — bounded PDF/PPTX previews plus structured creation availability diagnostics.
@@ -333,7 +334,7 @@ This command bridge is for external clients connecting to Osaurus. It is separat
 **Supported format surface:**
 
 - CSV and TSV tables preserve headers, rows, delimiters, and source metadata.
-- XLSX workbooks preserve sheets, cells, shared strings, relationships, and can emit a minimal valid `.xlsx` package.
+- XLSX workbooks preserve sheets, cells, formulas, merged ranges, shared strings, relationships, and export availability metadata. Explicit workbook save flows validate bounds, formulas, non-finite numbers, XML-safe text, merged ranges, and emitter availability before writing a minimal valid `.xlsx` package.
 - PPTX/POTX decks preserve slide grouping, text runs, notes, slide tables, and relationships.
 - PDFs preserve page boundaries, anchors, and simple text-layer tables so citations can point back to pages and detected table cells.
 - PDF/PPTX workflow previews expose page/slide/table/notes metadata and report missing structured emitters instead of treating text writes as valid binary output.
