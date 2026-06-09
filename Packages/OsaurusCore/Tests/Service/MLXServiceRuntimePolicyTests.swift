@@ -109,6 +109,35 @@ struct MLXServiceRuntimePolicyTests {
         }
     }
 
+    @Test func modelCapabilityRejectsGemma4AudioAsProofRequired() {
+        let message = ChatMessage(
+            role: "user",
+            content: "hear this",
+            contentParts: [
+                .text("hear this"),
+                .audioInput(data: "AAAA", format: "wav"),
+            ]
+        )
+
+        do {
+            try MLXService.validateRuntimePolicy(
+                modelName: "gemma-4-12b-it-mxfp4",
+                modelId: "OsaurusAI/Gemma-4-12B-it-MXFP4",
+                messages: [message],
+                parameters: GenerationParameters(temperature: nil, maxTokens: 16),
+                tools: [],
+                runtime: VMLXServerRuntimeSettings()
+            )
+            Issue.record("Gemma4 audio should remain blocked until live proof exists.")
+        } catch let error as MLXService.RuntimePolicyError {
+            let description = error.errorDescription ?? ""
+            #expect(description.contains("Gemma4 audio input is not enabled"))
+            #expect(description.contains("live model proof"))
+        } catch {
+            Issue.record("Unexpected error type: \(error)")
+        }
+    }
+
     @Test func policyRejectsKnownBadZayaVLJANGTQKDiagnosticArtifact() {
         #expect(throws: MLXService.RuntimePolicyError.self) {
             try MLXService.validateRuntimePolicy(

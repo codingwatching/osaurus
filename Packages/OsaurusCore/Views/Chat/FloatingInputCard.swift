@@ -2618,11 +2618,15 @@ extension FloatingInputCard {
     /// See `Models/Configuration/ModelMediaCapabilities.swift` for the
     /// substring/regex matcher; tests pin the boundary at
     /// `ModelMediaCapabilitiesMCDCTests`.
-    private var mediaCapabilities: ModelMediaCapabilities.Capabilities {
-        ModelMediaCapabilities.composerCapabilities(
+    private var mediaCapabilityDescriptor: ModelMediaCapabilities.Descriptor {
+        ModelMediaCapabilities.composerDescriptor(
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages
         )
+    }
+
+    private var mediaCapabilities: ModelMediaCapabilities.Capabilities {
+        mediaCapabilityDescriptor.capabilities
     }
 
     /// UTTypes the drop zone advertises. `fileURL` stays enabled for
@@ -2702,17 +2706,15 @@ extension FloatingInputCard {
     /// them as opaque documents.
     private func attachIfAllowed(url: URL) {
         let ext = url.pathExtension.lowercased()
-        let cap = mediaCapabilities
+        let descriptor = mediaCapabilityDescriptor
+        let cap = descriptor.capabilities
 
         // Image fast path — only for image-capable models.
         if DocumentParser.isImageFile(url: url) {
             guard cap.supportsImage else {
                 ToastManager.shared.error(
                     L("Cannot attach \(url.lastPathComponent)"),
-                    message:
-                        cap.anyMedia
-                        ? L("The current model supports \(cap.summary) only.")
-                        : L("The current model is text-only.")
+                    message: descriptor.rejectionMessage(for: .image)
                 )
                 return
             }
@@ -2736,13 +2738,27 @@ extension FloatingInputCard {
         }
 
         // Audio path — only for omni models.
-        if cap.supportsAudio, audioExtensions.contains(ext) {
+        if audioExtensions.contains(ext) {
+            guard cap.supportsAudio else {
+                ToastManager.shared.error(
+                    L("Cannot attach \(url.lastPathComponent)"),
+                    message: descriptor.rejectionMessage(for: .audio)
+                )
+                return
+            }
             attachAudio(url: url, ext: ext)
             return
         }
 
         // Video path — Qwen-VL family + SmolVLM 2 + Nemotron-Omni.
-        if cap.supportsVideo, videoExtensions.contains(ext) {
+        if videoExtensions.contains(ext) {
+            guard cap.supportsVideo else {
+                ToastManager.shared.error(
+                    L("Cannot attach \(url.lastPathComponent)"),
+                    message: descriptor.rejectionMessage(for: .video)
+                )
+                return
+            }
             attachVideo(url: url)
             return
         }

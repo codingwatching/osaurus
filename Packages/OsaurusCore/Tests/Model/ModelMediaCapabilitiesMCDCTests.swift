@@ -310,6 +310,30 @@ struct ModelMediaCapabilitiesMCDCTests {
         #expect(ModelMediaCapabilities.Capabilities.omni.anyMedia)
     }
 
+    @Test("Descriptor marks Gemma4 audio as proof-required, not supported")
+    func descriptor_gemma4AudioProofRequired() {
+        let descriptor = ModelMediaCapabilities.descriptor(
+            modelId: "OsaurusAI/Gemma-4-12B-it-MXFP4"
+        )
+
+        #expect(descriptor.capabilities == .imageOnly)
+        #expect(descriptor.image.status == .supported)
+        #expect(descriptor.audio.status == .unproven)
+        #expect(!descriptor.audio.isUsable)
+        #expect(descriptor.rejectionMessage(for: .audio).contains("live model proof"))
+    }
+
+    @Test("Descriptor keeps Nemotron Omni audio supported")
+    func descriptor_nemotronOmniAudioSupported() {
+        let descriptor = ModelMediaCapabilities.descriptor(
+            modelId: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4"
+        )
+
+        #expect(descriptor.capabilities == .omni)
+        #expect(descriptor.audio.status == .supported)
+        #expect(descriptor.audio.isUsable)
+    }
+
     @Test("Composer capabilities merge image fallback only")
     func composerCapabilities_mergeImageFallbackOnly() {
         #expect(

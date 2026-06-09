@@ -257,15 +257,16 @@ actor MLXService: ToolCapableService {
         )
 
         var issues = serverResult.issues.map { $0.message }
-        let media = mediaCapabilities(modelId: modelId)
+        let mediaDescriptor = mediaCapabilityDescriptor(modelId: modelId)
+        let media = mediaDescriptor.capabilities
         if modalities.contains(.vision), !media.supportsImage {
-            issues.append("Model capability detection reports vision as unsupported.")
+            issues.append(mediaDescriptor.descriptor(for: .image).reason)
         }
         if modalities.contains(.video), !media.supportsVideo {
-            issues.append("Model capability detection reports video as unsupported.")
+            issues.append(mediaDescriptor.descriptor(for: .video).reason)
         }
         if modalities.contains(.audio), !media.supportsAudio {
-            issues.append("Model capability detection reports audio as unsupported.")
+            issues.append(mediaDescriptor.descriptor(for: .audio).reason)
         }
         if !tools.isEmpty,
             !supportsLocalToolCalling(modelName: modelName, modelId: modelId)
@@ -444,12 +445,36 @@ actor MLXService: ToolCapableService {
     private nonisolated static func mediaCapabilities(
         modelId: String
     ) -> ModelMediaCapabilities.Capabilities {
+        mediaCapabilityDescriptor(modelId: modelId).capabilities
+    }
+
+    private nonisolated static func mediaCapabilityDescriptor(
+        modelId: String
+    ) -> ModelMediaCapabilities.Descriptor {
         if isKnownTextOnlyJANGRuntimeFamily(modelId: modelId) {
             // MiMo/N2 JANG and JANGTQ rows are text/tool runtimes in this
             // Osaurus lane. Avoid synchronous directory/VLM probing on large
             // or symlinked external bundles during request preflight; vMLX
             // still owns the real model/template/tool load path.
-            return .textOnly
+            return ModelMediaCapabilities.Descriptor(
+                modelId: modelId,
+                capabilities: .textOnly,
+                image: .init(
+                    modality: .image,
+                    status: .unsupported,
+                    reason: "Image input is not advertised for this text/tool runtime family."
+                ),
+                video: .init(
+                    modality: .video,
+                    status: .unsupported,
+                    reason: "Video input is not advertised for this text/tool runtime family."
+                ),
+                audio: .init(
+                    modality: .audio,
+                    status: .unsupported,
+                    reason: "Audio input is not advertised for this text/tool runtime family."
+                )
+            )
         }
         if ModelFamilyNames.isStepFamily(modelId) {
             // Step 3.7 currently runs through vMLX's Step text runtime in
@@ -457,16 +482,16 @@ actor MLXService: ToolCapableService {
             // Step VLM path is not wired or proven here; keep request gating
             // text-only and avoid blocking runtime preflight on large
             // external-bundle metadata reads.
-            return ModelMediaCapabilities.from(modelId: modelId)
+            return ModelMediaCapabilities.descriptor(modelId: modelId)
         }
         let parts = modelId.split(separator: "/").map(String.init)
         let localDirectory = parts.reduce(DirectoryPickerService.effectiveModelsDirectory()) {
             $0.appendingPathComponent($1, isDirectory: true)
         }
         if FileManager.default.fileExists(atPath: localDirectory.path) {
-            return ModelMediaCapabilities.from(directory: localDirectory, modelId: modelId)
+            return ModelMediaCapabilities.descriptor(directory: localDirectory, modelId: modelId)
         }
-        return ModelMediaCapabilities.from(modelId: modelId)
+        return ModelMediaCapabilities.descriptor(modelId: modelId)
     }
 
     private nonisolated static func isKnownTextOnlyJANGRuntimeFamily(modelId: String) -> Bool {

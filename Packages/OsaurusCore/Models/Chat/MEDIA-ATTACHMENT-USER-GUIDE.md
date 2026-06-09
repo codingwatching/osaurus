@@ -50,7 +50,9 @@ Pinned to the regex/substring matcher in
 - PaliGemma, Idefics 3, FastVLM, Llava-Qwen2
 - Pixtral standalone (NOT the Mistral 3 wrapper — that's matched separately)
 - GLM-OCR, LFM2-VL
-- Gemma 3, Gemma 4 (the `-it` VLM variants)
+- Gemma 3, Gemma 4 (the `-it` VLM variants). Gemma4 audio is a
+  proof-required status, not a supported status, until live model routing
+  evidence exists.
 - Mistral 3 / Mistral 3.5 (image only via Pixtral wrapper) — regex `mistral[-_](3|medium-3)`
 - Mistral 4 VL — regex `mistral[-_]?4.*[-_]vl`
 
@@ -249,6 +251,7 @@ let message = ChatMessage(
 import OsaurusCore
 
 let caps = ModelMediaCapabilities.from(modelId: currentModelId)
+let descriptor = ModelMediaCapabilities.descriptor(modelId: currentModelId)
 
 if caps.supportsAudio {
     // show audio picker / drop zone
@@ -263,6 +266,11 @@ print(caps.summary)
 // → "image + video"          (Qwen-VL family)
 // → "image"                   (image-only VLMs)
 // → "text-only"               (dense LLMs)
+
+print(descriptor.audio.status.rawValue)
+// → "supported"  (Nemotron Omni)
+// → "unproven"   (Gemma4 VLM audio before live proof)
+// → "unsupported" (text/image/video-only families)
 ```
 
 For accuracy after model load, prefer:
@@ -284,7 +292,7 @@ community-renamed bundles) resolve correctly via the on-disk config.
 
 | Layer | Test file | Cases |
 |---|---|---|
-| Capability detection (regex/substring) | `Tests/Model/ModelMediaCapabilitiesMCDCTests.swift` | 27 MC/DC-shaped |
+| Capability detection (regex/substring + modality status) | `Tests/Model/ModelMediaCapabilitiesMCDCTests.swift` | MC/DC-shaped + descriptor cases |
 | API content-part round-trip | `Tests/Model/MultimodalContentPartTests.swift` | 9 |
 | Data URL materialization audit fix | `Tests/Model/MaterializeMediaDataUrlMCDCTests.swift` | 11 MC/DC |
 | Hybrid-cache substring matcher | `Tests/Service/IsKnownHybridModelMCDCTests.swift` | 14 MC/DC |

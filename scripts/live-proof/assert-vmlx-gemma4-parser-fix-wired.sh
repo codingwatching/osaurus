@@ -146,18 +146,21 @@ if [[ -f "$VLM" ]]; then
   else
     fail_msg "Gemma4 processor does not preserve tool schemas into LMInput"
   fi
-  if rg -Fq 'LMInput.audio and LMInput.video must be nil' "$VLM" \
+  if rg -Fq 'Gemma4 VLM does not implement video inputs; LMInput.video must be nil' "$VLM" \
     && rg -Fq 'featuresList.append(embedVision(unifiedVisionEmbedder(singleImage)))' "$VLM" \
-    && rg -Fq 'hidden = patchNorm2(hidden)' "$VLM" \
-    && rg -Fq 'hidden = posNorm(hidden + posHidden.asType(hidden.dtype))' "$VLM" \
-    && rg -Fq 'func callAsFunction(_ x: MLXArray) -> MLXArray { proj(rmsNormNoScale(x)) }' "$VLM" \
+    && rg -Fq '@ModuleInfo(key: "embed_audio") private var embedAudio: MultimodalEmbedder' "$VLM" \
+    && rg -Fq 'Gemma4 audio requires pre-encoded 640-dim audio features' "$VLM" \
+    && rg -Fq 'let projectedAudio = embedAudio(audioFeatures).asType(emb.dtype)' "$VLM" \
+    && rg -Fq 'Raw waveform feature extraction is not implemented for Gemma4 yet' "$VLM" \
     && rg -Fq 'var softTokenCounts: [Int] = []' "$VLM" \
     && rg -Fq 'softTokenCounts.append(patchCount / (config.poolingKernelSize * config.poolingKernelSize))' "$VLM" \
     && rg -Fq 'tokenizer.convertTokenToId("<|image>")' "$VLM" \
-    && rg -Fq 'tokenizer.convertTokenToId("<image|>")' "$VLM"; then
-    pass "Gemma4 unified image path uses upstream embedder order and exact soft-token expansion"
+    && rg -Fq 'tokenizer.convertTokenToId("<image|>")' "$VLM" \
+    && rg -Fq 'tokenizer.convertTokenToId("<|audio>")' "$VLM" \
+    && rg -Fq 'tokenizer.convertTokenToId("<audio|>")' "$VLM"; then
+    pass "Gemma4 unified image/pre-encoded-audio path and video/raw-audio boundary are wired"
   else
-    fail_msg "Gemma4 unified image/audio boundary or image embedder wiring is incomplete"
+    fail_msg "Gemma4 unified image/pre-encoded-audio boundary or embedder wiring is incomplete"
   fi
   if rg -Fq 'Gemma4 unified image inputs are not production-supported yet' "$VLM"; then
     fail_msg "Gemma4 unified image path is still guarded as unsupported in the pinned checkout"

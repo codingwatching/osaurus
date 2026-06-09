@@ -29,6 +29,74 @@ import Foundation
 
 public enum ModelMediaCapabilities {
 
+    public enum Modality: String, CaseIterable, Sendable {
+        case image
+        case video
+        case audio
+
+        public var label: String { rawValue }
+    }
+
+    public enum ModalityStatus: String, Sendable {
+        case supported
+        case unsupported
+        case unproven
+        case disabled
+
+        public var isUsable: Bool {
+            self == .supported
+        }
+    }
+
+    public struct ModalityDescriptor: Equatable, Sendable {
+        public let modality: Modality
+        public let status: ModalityStatus
+        public let reason: String
+
+        public var isUsable: Bool { status.isUsable }
+
+        public var summary: String {
+            switch status {
+            case .supported:
+                return "\(modality.label): supported"
+            case .unsupported:
+                return "\(modality.label): unsupported"
+            case .unproven:
+                return "\(modality.label): proof required"
+            case .disabled:
+                return "\(modality.label): disabled"
+            }
+        }
+    }
+
+    public struct Descriptor: Equatable, Sendable {
+        public let modelId: String
+        public let capabilities: Capabilities
+        public let image: ModalityDescriptor
+        public let video: ModalityDescriptor
+        public let audio: ModalityDescriptor
+
+        public func descriptor(for modality: Modality) -> ModalityDescriptor {
+            switch modality {
+            case .image: return image
+            case .video: return video
+            case .audio: return audio
+            }
+        }
+
+        public var statusSummary: String {
+            [image, video, audio].map(\.summary).joined(separator: "; ")
+        }
+
+        public func rejectionMessage(for modality: Modality) -> String {
+            let target = descriptor(for: modality)
+            if capabilities.anyMedia {
+                return "\(target.reason) The current model supports \(capabilities.summary) only."
+            }
+            return "\(target.reason) The current model is text-only."
+        }
+    }
+
     /// Per-modality capability flags for a single model. Drives the
     /// chat composer's drag/drop allowlist + the file-picker's
     /// `allowedContentTypes`.
@@ -210,6 +278,36 @@ public enum ModelMediaCapabilities {
         )
     }
 
+    public static func descriptor(modelId: String) -> Descriptor {
+        buildDescriptor(
+            modelId: modelId,
+            capabilities: from(modelId: modelId),
+            source: "model id"
+        )
+    }
+
+    public static func composerDescriptor(
+        modelId: String?,
+        fallbackSupportsImages: Bool
+    ) -> Descriptor {
+        let normalized = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let displayId = normalized.isEmpty ? "unspecified model" : normalized
+        let capabilities = composerCapabilities(
+            modelId: modelId,
+            fallbackSupportsImages: fallbackSupportsImages
+        )
+        let detected = normalized.isEmpty ? Capabilities.textOnly : from(modelId: normalized)
+        let source =
+            fallbackSupportsImages && capabilities.supportsImage && !detected.supportsImage
+            ? "composer fallback"
+            : "model id"
+        return buildDescriptor(
+            modelId: displayId,
+            capabilities: capabilities,
+            source: source
+        )
+    }
+
     /// Resolve capabilities by inspecting the locally-installed bundle.
     /// Use after the model is downloaded for the most accurate signal.
     /// Falls back to `from(modelId:)` if config.json is unreadable.
@@ -264,7 +362,86 @@ public enum ModelMediaCapabilities {
         return .imageOnly
     }
 
+    public static func descriptor(directory: URL, modelId: String) -> Descriptor {
+        buildDescriptor(
+            modelId: modelId,
+            capabilities: from(directory: directory, modelId: modelId),
+            source: "bundle config"
+        )
+    }
+
     // MARK: - Helpers
+
+    private static func buildDescriptor(
+        modelId: String,
+        capabilities: Capabilities,
+        source: String
+    ) -> Descriptor {
+        Descriptor(
+            modelId: modelId,
+            capabilities: capabilities,
+            image: ModalityDescriptor(
+                modality: .image,
+                status: capabilities.supportsImage ? .supported : .unsupported,
+                reason: capabilities.supportsImage
+                    ? "Image input is enabled by \(source)."
+                    : "Image input is not advertised for \(modelId)."
+            ),
+            video: ModalityDescriptor(
+                modality: .video,
+                status: capabilities.supportsVideo ? .supported : .unsupported,
+                reason: capabilities.supportsVideo
+                    ? "Video input is enabled by \(source)."
+                    : "Video input is not advertised for \(modelId)."
+            ),
+            audio: audioDescriptor(
+                modelId: modelId,
+                capabilities: capabilities,
+                source: source
+            )
+        )
+    }
+
+    private static func audioDescriptor(
+        modelId: String,
+        capabilities: Capabilities,
+        source: String
+    ) -> ModalityDescriptor {
+        if capabilities.supportsAudio {
+            return ModalityDescriptor(
+                modality: .audio,
+                status: .supported,
+                reason: "Audio input is enabled by \(source)."
+            )
+        }
+        if isGemma4VisionFamily(modelId, capabilities: capabilities) {
+            return ModalityDescriptor(
+                modality: .audio,
+                status: .unproven,
+                reason:
+                    "Gemma4 audio input is not enabled because native audio routing still needs live model proof."
+            )
+        }
+        return ModalityDescriptor(
+            modality: .audio,
+            status: .unsupported,
+            reason: "Audio input is not advertised for \(modelId)."
+        )
+    }
+
+    private static func isGemma4VisionFamily(
+        _ modelId: String,
+        capabilities: Capabilities? = nil
+    ) -> Bool {
+        let lower = modelId.lowercased()
+        guard lower.contains("gemma-4") || lower.contains("gemma4") else {
+            return false
+        }
+        if let capabilities {
+            return capabilities.supportsImage
+        }
+        return lower.contains("-it") || lower.contains("_it")
+    }
 
     private static func regexMatches(_ s: String, pattern: String) -> Bool {
         guard let re = try? NSRegularExpression(pattern: pattern) else { return false }
