@@ -82,8 +82,9 @@ struct ToolsManagerView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toolsListChanged)) { _ in
             reload()
         }
-        .onReceive(NotificationCenter.default.publisher(for: Foundation.Notification.Name.mcpProviderStatusChanged)) {
-            _ in
+        .onReceive(
+            NotificationCenter.default.publisher(for: Foundation.Notification.Name.mcpProviderStatusChanged)
+        ) { _ in
             remoteProviderCount = providerManager.configuration.providers.count
             reload()
         }
@@ -1338,6 +1339,10 @@ private struct RuntimeManagedToolEntryRow: View {
         return info.systemPermissionStates.values.contains(false)
     }
 
+    private var availability: ToolAvailability {
+        ToolRegistry.shared.availability(forTool: entry.name)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             toolIcon
@@ -1352,11 +1357,17 @@ private struct RuntimeManagedToolEntryRow: View {
                             .font(.system(size: 9))
                             .foregroundColor(theme.warningColor)
                     }
+
+                    ToolAvailabilityBadge(availability: availability)
                 }
 
                 Text(entry.description)
                     .font(.system(size: 11))
                     .foregroundColor(theme.secondaryText)
+                    .lineLimit(1)
+                Text(availability.displayDetail)
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.tertiaryText)
                     .lineLimit(1)
             }
 
@@ -1419,6 +1430,10 @@ struct ToolEntryRow: View {
         return info.systemPermissionStates.values.contains(false)
     }
 
+    private var availability: ToolAvailability {
+        ToolRegistry.shared.availability(forTool: entry.name)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             toolIcon
@@ -1470,20 +1485,14 @@ struct ToolEntryRow: View {
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundColor(theme.primaryText)
 
-                if hasMissingSystemPermissions {
-                    Text("Needs Permission", bundle: .module)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.warningColor)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(theme.warningColor.opacity(0.12))
-                        )
-                }
+                ToolAvailabilityBadge(availability: availability)
             }
             Text(entry.description)
                 .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .lineLimit(1)
+            Text(availability.displayDetail)
+                .font(.system(size: 10))
                 .foregroundColor(theme.tertiaryText)
                 .lineLimit(1)
         }
@@ -1513,6 +1522,10 @@ private struct RemoteToolRow: View {
         return entry.name
     }
 
+    private var availability: ToolAvailability {
+        ToolRegistry.shared.availability(forTool: entry.name)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             ZStack {
@@ -1525,11 +1538,19 @@ private struct RemoteToolRow: View {
             .frame(width: 28, height: 28)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(displayName)
-                    .font(.system(size: 13, weight: .medium, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                HStack(spacing: 4) {
+                    Text(displayName)
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundColor(theme.primaryText)
+
+                    ToolAvailabilityBadge(availability: availability)
+                }
                 Text(entry.description)
                     .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
+                Text(availability.displayDetail)
+                    .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(1)
             }

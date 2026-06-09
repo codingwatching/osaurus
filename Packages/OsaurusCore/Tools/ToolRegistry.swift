@@ -71,7 +71,7 @@ private final class ToolBodyRaceState: @unchecked Sendable {
 /// must price the spec that will be sent this turn, not the registry's
 /// canonical full schema, because the prompt composer can now ship compact
 /// bootstrap schemas and hot-load full ones later.
-fileprivate enum ToolSpecTokenEstimator {
+private enum ToolSpecTokenEstimator {
     static func estimate(name: String, description: String?, parameters: JSONValue?) -> Int {
         var total = name.count + (description?.count ?? 0)
         if let parameters {
@@ -560,7 +560,7 @@ final class ToolRegistry: ObservableObject {
     /// wall-clock race. Cancellation still propagates: when the calling
     /// task is cancelled, the body's own `Task.isCancelled` checks (or
     /// the underlying process signals) tear it down.
-    internal nonisolated static func runToolBodyUntimed(
+    nonisolated internal static func runToolBodyUntimed(
         _ tool: OsaurusTool,
         argumentsJSON: String
     ) async throws -> String {
@@ -603,7 +603,7 @@ final class ToolRegistry: ObservableObject {
     /// fall through unchanged: parsing is best-effort, and tool bodies
     /// keep their richer `requireXxx` helpers as the second line of
     /// defence.
-    private nonisolated static func preflight(
+    nonisolated private static func preflight(
         argumentsJSON: String,
         schema: JSONValue?,
         toolName: String
@@ -663,7 +663,7 @@ final class ToolRegistry: ObservableObject {
     /// The timeout branch also uses a dedicated GCD timer queue rather than
     /// `Task.sleep`, because a saturated Swift executor can otherwise delay
     /// the "wall-clock" timeout behind unrelated async work.
-    internal nonisolated static func runToolBody(
+    nonisolated internal static func runToolBody(
         _ tool: OsaurusTool,
         argumentsJSON: String,
         timeoutSeconds: TimeInterval
@@ -1165,6 +1165,94 @@ final class ToolRegistry: ObservableObject {
         listDynamicTools().isEmpty
     }
 
+    /// Explain why a tool is callable now, loadable through
+    /// `capabilities_load`, or unavailable. This is read-only diagnostic
+    /// state: callers still enforce visibility/loading through the existing
+    /// toolset and `capabilities_load` gates.
+    func availability(
+        forTool toolName: String,
+        agentAllowedNames: Set<String>? = nil,
+        executionMode: ExecutionMode? = nil,
+        selectedPreflightNames: Set<String>? = nil
+    ) -> ToolAvailability {
+        guard let entry = listTools().first(where: { $0.name == toolName }) else {
+            return ToolAvailability(
+                toolName: toolName,
+                runtime: nil,
+                groupName: nil,
+                reasonCodes: [.notRegistered],
+                detail: "tool is not registered; install or enable the plugin/provider that owns it"
+            )
+        }
+
+        let builtIn = builtInToolNames.contains(toolName)
+        let runtimeManaged = runtimeManagedToolNames.contains(toolName)
+        let dynamic = !builtIn && !runtimeManaged
+        let runtime = availabilityRuntimeLabel(for: toolName, builtIn: builtIn)
+        let group = groupName(for: toolName)
+        var reasons: [ToolAvailabilityReasonCode] = []
+        var details: [String] = []
+
+        func appendReason(_ reason: ToolAvailabilityReasonCode) {
+            if !reasons.contains(reason) {
+                reasons.append(reason)
+            }
+        }
+
+        if dynamic, !entry.enabled {
+            appendReason(.disabled)
+            details.append("globally disabled")
+        }
+
+        if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {
+            appendReason(.hiddenByAgentScope)
+            details.append("not enabled for this agent")
+        }
+
+        if let executionMode, excludedToolNames(for: executionMode).contains(toolName) {
+            appendReason(.hiddenByExecutionMode)
+            details.append("hidden in \(String(describing: executionMode)) mode")
+        }
+
+        if let policy = policyInfo(for: toolName) {
+            if policy.effectivePolicy == .deny {
+                appendReason(.permissionBlocked)
+                details.append("permission policy is deny")
+            }
+            let missingPermissions = policy.systemPermissionStates
+                .filter { !$0.value }
+                .map { $0.key.displayName }
+                .sorted()
+            if !missingPermissions.isEmpty {
+                appendReason(.missingPermission)
+                details.append("missing system permission(s): \(missingPermissions.joined(separator: ", "))")
+            }
+        }
+
+        if dynamic, let selectedPreflightNames, !selectedPreflightNames.contains(toolName) {
+            appendReason(.notSelectedByPreflight)
+            details.append("not selected by preflight for this turn")
+        }
+
+        if reasons.isEmpty {
+            if dynamic {
+                appendReason(.loadableViaCapabilitiesLoad)
+                details.append("registered \(runtime) tool; load with capabilities_load")
+            } else {
+                appendReason(.alreadyLoaded)
+                details.append("registered \(runtime) tool; already in the active baseline")
+            }
+        }
+
+        return ToolAvailability(
+            toolName: toolName,
+            runtime: runtime,
+            groupName: group,
+            reasonCodes: reasons,
+            detail: details.joined(separator: "; ")
+        )
+    }
+
     /// Returns the plugin or provider name that a tool belongs to, if any.
     func groupName(for toolName: String) -> String? {
         guard let tool = toolsByName[toolName] else { return nil }
@@ -1172,6 +1260,14 @@ final class ToolRegistry: ObservableObject {
         if let mcp = tool as? MCPProviderTool { return mcp.providerName }
         if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
         return nil
+    }
+
+    private func availabilityRuntimeLabel(for toolName: String, builtIn: Bool) -> String {
+        if isSandboxTool(toolName) { return "sandbox" }
+        if isMCPTool(toolName) { return "mcp" }
+        if isPluginTool(toolName) { return "plugin" }
+        if builtIn { return "builtin" }
+        return "native"
     }
 
     static let capabilityToolNames: Set<String> = [

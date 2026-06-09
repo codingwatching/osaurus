@@ -169,6 +169,17 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         }
 
         let hits = Self.mergeHits(perQueryResults)
+        let toolAvailabilityByName: [String: ToolAvailability] = await MainActor.run {
+            var result: [String: ToolAvailability] = [:]
+            result.reserveCapacity(hits.tools.count)
+            for hit in hits.tools {
+                result[hit.entry.id] = ToolRegistry.shared.availability(
+                    forTool: hit.entry.id,
+                    agentAllowedNames: effectiveAllowedToolNames
+                )
+            }
+            return result
+        }
 
         if hits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
@@ -192,7 +203,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
             let type: String
             let description: String
             let score: Double
-            let extra: String?
+            let extraLines: [String]
         }
 
         let results: [ScoredResult] =
@@ -202,16 +213,23 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                     type: "method",
                     description: "\($0.method.name): \($0.method.description)",
                     score: $0.score,
-                    extra: "tools_used: \($0.method.toolsUsed.joined(separator: ", "))"
+                    extraLines: ["tools_used: \($0.method.toolsUsed.joined(separator: ", "))"]
                 )
             }
             + hits.tools.map {
-                ScoredResult(
+                var extraLines = ["runtime: \($0.entry.runtime.rawValue)"]
+                if let availability = toolAvailabilityByName[$0.entry.id] {
+                    extraLines.append("availability: \(availability.compactSummary)")
+                    if let groupName = availability.groupName {
+                        extraLines.append("provider: \(groupName)")
+                    }
+                }
+                return ScoredResult(
                     id: "tool/\($0.entry.id)",
                     type: "tool",
                     description: "\($0.entry.name): \($0.entry.description)",
                     score: Double($0.searchScore),
-                    extra: "runtime: \($0.entry.runtime.rawValue)"
+                    extraLines: extraLines
                 )
             }
             + hits.skills.map {
@@ -220,7 +238,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                     type: "skill",
                     description: "\($0.skill.name): \($0.skill.description)",
                     score: Double($0.searchScore),
-                    extra: nil
+                    extraLines: []
                 )
             }).sorted { $0.score > $1.score }
 
@@ -228,7 +246,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         for r in results {
             output += "- **\(r.id)** [\(r.type)]\n"
             output += "  \(r.description)\n"
-            if let extra = r.extra {
+            for extra in r.extraLines {
                 output += "  \(extra)\n"
             }
             output += "\n"
@@ -553,23 +571,31 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
             }
         }
         let allowedNames = await grantedToolNamesForCurrentAgent()
-        let (isEnabled, isBuiltIn, toolSpec) = await MainActor.run {
+        let (availability, isEnabled, isBuiltIn, toolSpec) = await MainActor.run {
             (
+                ToolRegistry.shared.availability(
+                    forTool: toolId,
+                    agentAllowedNames: allowedNames
+                ),
                 ToolRegistry.shared.isGlobalEnabled(toolId),
                 ToolRegistry.shared.builtInToolNames.contains(toolId),
                 ToolRegistry.shared.specs(forTools: [toolId])
             )
         }
+        guard !availability.reasonCodes.contains(.notRegistered) else {
+            return "Error: Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)\n"
+        }
         guard isBuiltIn || (allowedNames?.contains(toolId) ?? true) else {
-            return "Error: Tool '\(toolId)' is not enabled for this agent.\n"
+            return
+                "Error: Tool '\(toolId)' is not enabled for this agent. availability: \(availability.compactSummary)\n"
         }
         // Built-in tools are always loaded via alwaysLoadedSpecs, so skip the
         // enabled check — rejecting them here is misleading since they're callable.
         guard isEnabled || isBuiltIn else {
-            return "Error: Tool '\(toolId)' is disabled.\n"
+            return "Error: Tool '\(toolId)' is disabled. availability: \(availability.compactSummary)\n"
         }
         guard let spec = toolSpec.first else {
-            return "Error: Tool '\(toolId)' not found or not registered.\n"
+            return "Error: Tool '\(toolId)' not found or not registered. availability: \(availability.compactSummary)\n"
         }
         await CapabilityLoadBuffer.shared.add(spec)
         return "Tool '\(toolId)' loaded and available.\n"

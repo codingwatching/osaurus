@@ -111,6 +111,7 @@ struct AgentCapabilityRowBuilderTests {
             plugins: [],
             enabledToolNames: [],
             enabledSkillNames: [],
+            toolMode: .auto,
             searchQuery: "",
             filter: .all,
             // Force every group to expand so build emits child rows we can
@@ -165,6 +166,7 @@ struct AgentCapabilityRowBuilderTests {
             plugins: [],
             enabledToolNames: [],
             enabledSkillNames: [],
+            toolMode: .auto,
             searchQuery: "",
             filter: .all,
             expandedGroups: []
@@ -204,6 +206,7 @@ struct AgentCapabilityRowBuilderTests {
             plugins: [],
             enabledToolNames: [],
             enabledSkillNames: [],
+            toolMode: .auto,
             searchQuery: "",
             filter: .all,
             // Even with the group force-expanded, the row builder must
@@ -218,7 +221,7 @@ struct AgentCapabilityRowBuilderTests {
             switch row {
             case .groupHeader(let id, _, _, _, _, _, _, _, _):
                 #expect(id != "src:builtin", "Informational built-in group leaked into rows")
-            case .tool(let id, _, _, _, _, _, _):
+            case .tool(let id, _, _, _, _, _, _, _):
                 #expect(
                     !id.hasPrefix("src:builtin::"),
                     "Tool \(id) under the hidden built-in group leaked into rows"

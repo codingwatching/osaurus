@@ -207,6 +207,7 @@ struct CapabilitiesDiscoverToolTests {
                 )
                 #expect(result.contains(allowed.name))
                 #expect(!result.contains(denied.name))
+                #expect(result.contains("availability: loadable_via_capabilities_load"))
 
                 AgentManager.shared.setActiveAgent(agent.id)
                 defer { AgentManager.shared.setActiveAgent(Agent.defaultId) }
@@ -269,10 +270,13 @@ struct CapabilitiesLoadToolTests {
 
     @Test func toolNotFoundReturnsError() async throws {
         let tool = CapabilitiesLoadTool()
-        let result = try await tool.execute(
-            argumentsJSON: "{\"ids\": [\"tool/zzz_nonexistent_tool\"]}"
-        )
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+            try await tool.execute(
+                argumentsJSON: "{\"ids\": [\"tool/zzz_nonexistent_tool\"]}"
+            )
+        }
         #expect(result.contains("Error") || result.contains("not found"))
+        #expect(result.contains("availability: not_registered"))
     }
 
     @Test func skillNotFoundReturnsError() async throws {
@@ -361,6 +365,7 @@ struct CapabilitiesLoadToolTests {
                     )
                 }
                 #expect(result.contains("not enabled for this agent"))
+                #expect(result.contains("availability: hidden_by_agent_scope"))
                 let buffered = await CapabilityLoadBuffer.shared.drain()
                 #expect(!buffered.contains(where: { $0.function.name == denied.name }))
 
@@ -445,6 +450,44 @@ struct CapabilitiesLoadToolTests {
                 await SkillManager.shared.unregisterPluginSkills(pluginId: plugin.id)
                 _ = await AgentManager.shared.delete(id: agent.id)
             }
+        }
+    }
+
+    @Test @MainActor
+    func toolLoadReportsDisabledAvailability() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-capability-load-disabled-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            let previousOverride = ToolConfigurationStore.overrideDirectory
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+            defer {
+                ToolConfigurationStore.overrideDirectory = previousOverride
+                try? FileManager.default.removeItem(at: tempDir)
+            }
+
+            let toolName = "lane_b_disabled_search_tool_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
+            let disabled = CapabilityPolicyFixtureTool(
+                name: toolName,
+                description: "Search the web for current headlines and online results"
+            )
+            ToolRegistry.shared.registerPluginTool(disabled)
+            ToolRegistry.shared.setEnabled(false, for: disabled.name)
+            defer { ToolRegistry.shared.unregister(names: [disabled.name]) }
+
+            let tool = CapabilitiesLoadTool()
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
+                try await tool.execute(
+                    argumentsJSON: "{\"ids\": [\"tool/\(disabled.name)\"]}"
+                )
+            }
+
+            #expect(result.contains("disabled"))
+            #expect(result.contains("availability: disabled"))
+            let buffered = await CapabilityLoadBuffer.shared.drain()
+            #expect(!buffered.contains(where: { $0.function.name == disabled.name }))
         }
     }
 }

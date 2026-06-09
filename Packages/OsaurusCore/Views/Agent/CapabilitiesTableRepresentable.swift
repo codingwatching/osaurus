@@ -47,6 +47,7 @@ enum CapabilityRow: Equatable, Identifiable {
         name: String,
         description: String,
         enabled: Bool,
+        availability: ToolAvailability,
         isAgentRestricted: Bool,
         catalogTokens: Int,
         estimatedTokens: Int
@@ -64,7 +65,7 @@ enum CapabilityRow: Equatable, Identifiable {
     var id: String {
         switch self {
         case .groupHeader(let id, _, _, _, _, _, _, _, _): return "gh-\(id)"
-        case .tool(let id, _, _, _, _, _, _): return "tool-\(id)"
+        case .tool(let id, _, _, _, _, _, _, _): return "tool-\(id)"
         case .skill(let id, _, _, _, _, _, _): return "skill-\(id)"
         }
     }
@@ -263,8 +264,8 @@ extension CapabilitiesTableRepresentable {
         // MARK: - Update Paths (Private)
 
         private func hasContentChanges(newLookup: [String: CapabilityRow]) -> Bool {
-            for id in rowIds {
-                if newLookup[id] != rowLookup[id] { return true }
+            for id in rowIds where newLookup[id] != rowLookup[id] {
+                return true
             }
             return false
         }
@@ -417,6 +418,7 @@ extension CapabilitiesTableRepresentable {
                     let name,
                     let description,
                     let enabled,
+                    let availability,
                     let isAgentRestricted,
                     let catalogTokens,
                     let estimatedTokens
@@ -428,6 +430,7 @@ extension CapabilitiesTableRepresentable {
                     name: name,
                     description: description,
                     enabled: enabled,
+                    availability: availability,
                     isAgentRestricted: isAgentRestricted,
                     catalogTokens: catalogTokens,
                     estimatedTokens: estimatedTokens,
@@ -541,7 +544,7 @@ extension CapabilitiesTableRepresentable {
         private static func estimatedHeight(for row: CapabilityRow) -> CGFloat {
             switch row {
             case .groupHeader: return 44
-            case .tool: return 56
+            case .tool: return 70
             case .skill: return 56
             }
         }
@@ -697,6 +700,7 @@ struct ToolRowCell: View {
     let name: String
     let description: String
     let enabled: Bool
+    let availability: ToolAvailability
     let isAgentRestricted: Bool
     let catalogTokens: Int
     let estimatedTokens: Int
@@ -729,11 +733,17 @@ struct ToolRowCell: View {
                     if isAgentRestricted {
                         SmallCapsuleBadge(text: "Chat Mode only")
                     }
+
+                    ToolAvailabilityBadge(availability: availability)
                 }
                 Text(description)
                     .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
                     .lineLimit(2)
+                Text(availability.displayDetail)
+                    .font(.system(size: 9))
+                    .foregroundColor(theme.tertiaryText)
+                    .lineLimit(1)
             }
 
             Spacer()
@@ -758,7 +768,7 @@ struct ToolRowCell: View {
         .help(
             isAgentRestricted
                 ? "Restricted for this agent."
-                : ""
+                : availability.compactSummary
         )
     }
 }

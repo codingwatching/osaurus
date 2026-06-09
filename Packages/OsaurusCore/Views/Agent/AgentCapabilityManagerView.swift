@@ -114,6 +114,7 @@ enum CapabilityRowBuilder {
         let plugins: [PluginManager.LoadedPlugin]
         let enabledToolNames: Set<String>
         let enabledSkillNames: Set<String>
+        let toolMode: ToolSelectionMode
         let searchQuery: String
         let filter: CapabilityFilter
         let expandedGroups: Set<String>
@@ -264,12 +265,14 @@ enum CapabilityRowBuilder {
             guard isExpanded else { continue }
 
             for tool in toolsForRows {
+                let availability = availability(forTool: tool, input: input)
                 rows.append(
                     .tool(
                         id: "\(groupId)::tool::\(tool.name)",
                         name: tool.name,
                         description: tool.description,
                         enabled: input.enabledToolNames.contains(tool.name),
+                        availability: availability,
                         // Informational sources were filtered above; every
                         // tool that reaches this point is freely toggleable.
                         isAgentRestricted: false,
@@ -293,6 +296,25 @@ enum CapabilityRowBuilder {
             }
         }
         return rows
+    }
+
+    private static func availability(forTool tool: ToolRegistry.ToolEntry, input: Input) -> ToolAvailability {
+        let base = ToolRegistry.shared.availability(
+            forTool: tool.name,
+            agentAllowedNames: input.enabledToolNames
+        )
+        guard input.toolMode == .manual,
+            input.enabledToolNames.contains(tool.name),
+            base.reasonCodes == [.loadableViaCapabilitiesLoad]
+        else { return base }
+
+        return ToolAvailability(
+            toolName: tool.name,
+            runtime: base.runtime,
+            groupName: base.groupName,
+            reasonCodes: [.available],
+            detail: "enabled for this agent; sent every turn in manual mode"
+        )
     }
 
     private static func sortRank(_ source: CapabilitySource) -> Int {
@@ -699,6 +721,7 @@ struct AgentCapabilityManagerView: View {
                 plugins: plugins,
                 enabledToolNames: enabledToolNames,
                 enabledSkillNames: enabledSkillNames,
+                toolMode: toolMode,
                 searchQuery: searchText,
                 filter: filter,
                 expandedGroups: expandedGroups
