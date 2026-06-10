@@ -9,6 +9,18 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Decodes a theme background's base64 image data off the main actor.
+/// Decoding a multi-megabyte string and parsing the image inline in a view
+/// body blocks the UI on every layout pass, so callers run this once and
+/// cache the result in view state.
+private func decodeThemeBackgroundImage(_ base64: String?) async -> NSImage? {
+    guard let base64 else { return nil }
+    return await Task.detached(priority: .userInitiated) {
+        guard let data = Data(base64Encoded: base64) else { return nil }
+        return NSImage(data: data)
+    }.value
+}
+
 struct ThemeEditorView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
@@ -25,6 +37,9 @@ struct ThemeEditorView: View {
     /// performance-warning alert. Captured as a closure so the same alert
     /// can serve any of the three independent glass toggles.
     @State private var pendingGlassRevert: (() -> Void)?
+    /// Decoded copy of `editingTheme.background.imageData`, refreshed off
+    /// the main actor whenever the base64 string changes.
+    @State private var backgroundPreviewImage: NSImage?
 
     let onDismiss: () -> Void
 
@@ -44,6 +59,9 @@ struct ThemeEditorView: View {
         }
         .frame(minWidth: 900, minHeight: 650)
         .background(currentTheme.primaryBackground)
+        .task(id: editingTheme.background.imageData) {
+            backgroundPreviewImage = await decodeThemeBackgroundImage(editingTheme.background.imageData)
+        }
         .fileImporter(
             isPresented: $showImagePicker,
             allowedContentTypes: [.image],
@@ -436,19 +454,18 @@ struct ThemeEditorView: View {
                     currentTheme.tertiaryText
                 ).textCase(.uppercase)
 
-            if let imageData = editingTheme.background.imageData,
-                let data = Data(base64Encoded: imageData),
-                let nsImage = NSImage(data: data)
-            {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-                    .frame(height: 100)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(currentTheme.primaryBorder, lineWidth: 1)
-                    )
+            if editingTheme.background.imageData != nil {
+                if let nsImage = backgroundPreviewImage {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(height: 100)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(currentTheme.primaryBorder, lineWidth: 1)
+                        )
+                }
 
                 HStack(spacing: 8) {
                     Button {
@@ -967,26 +984,36 @@ struct ThemeEditorView: View {
         }
     }
 
-    private static let maxImageDimension: CGFloat = 2048
+    nonisolated private static let maxImageDimension: CGFloat = 2048
 
     private func handleImageImport(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-            do {
-                let data = try Data(contentsOf: url)
-                let resizedData = Self.resizeImageData(data, maxDimension: Self.maxImageDimension) ?? data
-                editingTheme.background.imageData = resizedData.base64EncodedString()
+            // Reading, resizing, and PNG-encoding a large image takes long
+            // enough to hang the UI, so the whole pipeline runs off the
+            // main actor; only the state update hops back.
+            Task {
+                let encoded = await Task.detached(priority: .userInitiated) { () -> String? in
+                    guard let data = try? Data(contentsOf: url) else { return nil }
+                    let resized = Self.resizeImageData(data, maxDimension: Self.maxImageDimension) ?? data
+                    return resized.base64EncodedString()
+                }.value
+                guard let encoded else {
+                    print("[Osaurus] Failed to import image")
+                    return
+                }
+                editingTheme.background.imageData = encoded
                 editingTheme.background.type = .image
-            } catch {
-                print("[Osaurus] Failed to import image: \(error)")
             }
         case .failure(let error):
             print("[Osaurus] Image import failed: \(error)")
         }
     }
 
-    private static func resizeImageData(_ data: Data, maxDimension: CGFloat) -> Data? {
+    /// Off-main-actor helper: drawing into an offscreen `NSImage` and
+    /// producing the PNG representation are safe on a background thread.
+    nonisolated private static func resizeImageData(_ data: Data, maxDimension: CGFloat) -> Data? {
         guard let image = NSImage(data: data) else { return nil }
         let size = image.size
         guard size.width > maxDimension || size.height > maxDimension else { return nil }
@@ -1017,6 +1044,10 @@ struct ThemeEditorView: View {
 
 struct ThemeChatPreview: View {
     let theme: CustomTheme
+
+    /// Decoded copy of the theme's background image, refreshed off the
+    /// main actor whenever the base64 string changes.
+    @State private var backgroundImage: NSImage?
 
     // MARK: - Font Helpers
 
@@ -1072,6 +1103,9 @@ struct ThemeChatPreview: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(c(theme.colors.primaryBorder).opacity(0.5), lineWidth: 0.5)
         )
+        .task(id: theme.background.imageData) {
+            backgroundImage = await decodeThemeBackgroundImage(theme.background.imageData)
+        }
     }
 
     // MARK: - Messages
@@ -1235,10 +1269,7 @@ struct ThemeChatPreview: View {
                     endPoint: .bottom
                 )
             case .image:
-                if let imageData = theme.background.imageData,
-                    let data = Data(base64Encoded: imageData),
-                    let nsImage = NSImage(data: data)
-                {
+                if let nsImage = backgroundImage {
                     GeometryReader { geo in
                         imageView(nsImage: nsImage, fit: theme.background.imageFit ?? .fill, size: geo.size)
                             .opacity(theme.background.imageOpacity ?? 1.0)
