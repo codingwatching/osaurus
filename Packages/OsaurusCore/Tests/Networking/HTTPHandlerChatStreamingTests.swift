@@ -805,7 +805,10 @@ struct HTTPHandlerChatStreamingTests {
             }
 
             let engine = AgentToolLoopEngine()
-            let server = try await startTestServer(with: engine)
+            // Loopback-trusted: remote plaintext `/agents/{id}/run` is now
+            // refused with 426 (Secure Channel hard-require); this test is
+            // about tool-loop sentinel scrubbing, not transport security.
+            let server = try await startTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             // The built-in Default agent UUID is locked to in-app surfaces
@@ -923,7 +926,10 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     /// Non-loopback (remote) callers remain blocked from the built-in agent
-    /// even with a valid API key.
+    /// even with a valid API key. With the Secure Channel hard-require in
+    /// place, remote plaintext is stopped even earlier: at the 426 gate,
+    /// before the built-in guard runs. (The guard itself is exercised for
+    /// encrypted remote callers in `SecureChannelE2ETests`.)
     @Test func builtInAgentRun_remote_isRejected() async throws {
         struct UnusedEngine: ChatEngineProtocol {
             func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
@@ -957,8 +963,8 @@ struct HTTPHandlerChatStreamingTests {
         let (data, resp) = try await URLSession.shared.data(for: request)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
         let body = String(decoding: data, as: UTF8.self)
-        #expect(status == 403)
-        #expect(body.contains("built_in_agent_not_exposable"))
+        #expect(status == 426)
+        #expect(body.contains("secure_channel_required"))
     }
 
     // MARK: - Anthropic streaming (`/messages?stream=true`)
