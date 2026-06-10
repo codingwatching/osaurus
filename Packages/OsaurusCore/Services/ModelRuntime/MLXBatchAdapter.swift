@@ -821,6 +821,19 @@ struct MLXBatchAdapter {
             }
             return context
         }
+        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+            if directRailReasoningEffort {
+                context["enable_thinking"] = false
+                return context
+            }
+            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+                context["enable_thinking"] = true
+                context["reasoning_effort"] = normalizedReasoningEffort
+            } else {
+                context["enable_thinking"] = false
+            }
+            return context
+        }
         if ModelFamilyNames.isGemmaFamily(modelName) {
             if directRailReasoningEffort {
                 context["enable_thinking"] = false

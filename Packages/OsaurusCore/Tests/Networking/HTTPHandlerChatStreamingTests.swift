@@ -152,6 +152,57 @@ struct HTTPHandlerChatStreamingTests {
         }
     }
 
+    @Test func nonStreamingChatCompletions_preservesTokensPerSecondInUsage() async throws {
+        struct StatsEngine: ChatEngineProtocol {
+            func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                fatalError("not used")
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                ChatCompletionResponse(
+                    id: "chatcmpl-test",
+                    created: 0,
+                    model: request.model,
+                    choices: [
+                        ChatChoice(
+                            index: 0,
+                            message: ChatMessage(role: "assistant", content: "ok"),
+                            finish_reason: "stop"
+                        )
+                    ],
+                    usage: Usage(
+                        prompt_tokens: 3,
+                        completion_tokens: 4,
+                        total_tokens: 7,
+                        tokens_per_second: 88.25
+                    ),
+                    system_fingerprint: nil
+                )
+            }
+        }
+
+        let server = try await startTestServer(with: StatsEngine())
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":false,"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let body = String(decoding: data, as: UTF8.self)
+        #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+        #expect(body.contains("\"tokens_per_second\":88.25"))
+    }
+
     @Test func sse_path_writes_role_content_finish_done() async throws {
         let server = try await startTestServer(
             with: MockChatEngine(deltas: ["a", "b", "c"], completeText: "", model: "fake")

@@ -388,6 +388,7 @@ struct ChatEngineTests {
         #expect(resp.choices.first?.finish_reason == "length")
         #expect(resp.usage.completion_tokens == 180)
         #expect(resp.usage.total_tokens == resp.usage.prompt_tokens + 180)
+        #expect(resp.usage.tokens_per_second == 52.5)
     }
 
     @Test func completeChat_omittedMaxTokensPreservesModelDefaultContract() async throws {
@@ -1077,6 +1078,7 @@ struct ChatEngineTests {
         let resp = try await engine.completeChat(request: req)
         #expect(resp.choices.first?.message.content == "truncated")
         #expect(resp.choices.first?.finish_reason == "length")
+        #expect(resp.usage.tokens_per_second == 12.5)
     }
 
     @Test func completeChat_preservesReasoningContentForToolCapableNonStreamingCompletion() async throws {

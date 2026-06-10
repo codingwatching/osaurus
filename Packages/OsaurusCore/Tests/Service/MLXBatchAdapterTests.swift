@@ -1322,6 +1322,73 @@ struct MLXBatchAdapterTests {
         #expect(stepJang2LRequired["enable_thinking"] as? Bool == false)
     }
 
+    @Test func additionalContext_defaultsMiMoN2JANGThinkingOffButHonorsExplicitOptIn() {
+        let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
+        let userEnabled = GenerationParameters(
+            temperature: nil,
+            maxTokens: 16,
+            modelOptions: ["disableThinking": .bool(false)]
+        )
+
+        for modelName in [
+            "mimo-v2.5-jangtq_2",
+            "JANGQ-AI/MiMo-V2.5-JANG_2L",
+            "nex-n2-pro-jangtq2",
+            "Nex-N2-Pro-JANG_1L",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == false,
+                "MiMo/N2 JANG text/tool rows should default to the no-thinking rail: \(modelName)"
+            )
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: userEnabled,
+                    modelName: modelName
+                )["enable_thinking"] as? Bool == true,
+                "MiMo/N2 must honor explicit thinking opt-in: \(modelName)"
+            )
+
+            let directOff = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("no_think")]
+                ),
+                modelName: modelName
+            )
+            #expect(directOff["enable_thinking"] as? Bool == false)
+            #expect(directOff["reasoning_effort"] == nil)
+
+            let apiReasoning = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["reasoningEffort": .string("high")]
+                ),
+                modelName: modelName
+            )
+            #expect(apiReasoning["enable_thinking"] as? Bool == true)
+            #expect(apiReasoning["reasoning_effort"] as? String == "high")
+        }
+
+        for modelName in [
+            "mimo-v2.5-bf16",
+            "nex-n2-pro-source",
+            "dataset/mimosa-jangtq",
+        ] {
+            #expect(
+                MLXBatchAdapter.additionalContext(
+                    for: unspecified,
+                    modelName: modelName
+                )["enable_thinking"] == nil,
+                "Non-JANG or boundary-mismatched MiMo/N2 names must not get a synthetic thinking kwarg: \(modelName)"
+            )
+        }
+    }
+
     @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(

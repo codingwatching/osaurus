@@ -926,9 +926,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     var text = ""
                     var reasoning = ""
                     var terminalStopReason = "stop"
+                    var authoritativeTokensPerSecond: Double?
                     for try await delta in stream {
                         try Task.checkCancellation()
                         if let stats = StreamingStatsHint.decode(delta) {
+                            authoritativeTokensPerSecond = stats.tokensPerSecond
                             if let stopReason = stats.stopReason, !stopReason.isEmpty {
                                 terminalStopReason = stopReason
                             }
@@ -961,7 +963,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                     let usage = Usage(
                         prompt_tokens: inputTokens,
                         completion_tokens: outputTokens,
-                        total_tokens: inputTokens + outputTokens
+                        total_tokens: inputTokens + outputTokens,
+                        tokens_per_second: authoritativeTokensPerSecond
                     )
 
                     let response = ChatCompletionResponse(
@@ -1038,10 +1041,12 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             var reasoning = ""
             var terminalStopReason = "stop"
             var authoritativeOutputTokens: Int?
+            var authoritativeTokensPerSecond: Double?
             for try await delta in stream {
                 try Task.checkCancellation()
                 if let stats = StreamingStatsHint.decode(delta) {
                     authoritativeOutputTokens = stats.tokenCount
+                    authoritativeTokensPerSecond = stats.tokensPerSecond
                     if let stopReason = stats.stopReason, !stopReason.isEmpty {
                         terminalStopReason = stopReason
                     }
@@ -1074,7 +1079,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let usage = Usage(
                 prompt_tokens: inputTokens,
                 completion_tokens: outputTokens,
-                total_tokens: inputTokens + outputTokens
+                total_tokens: inputTokens + outputTokens,
+                tokens_per_second: authoritativeTokensPerSecond
             )
 
             let response = ChatCompletionResponse(

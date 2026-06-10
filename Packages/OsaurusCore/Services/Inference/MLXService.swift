@@ -242,7 +242,8 @@ actor MLXService: ToolCapableService {
         messages: [ChatMessage],
         parameters: GenerationParameters,
         tools: [Tool],
-        runtime: VMLXServerRuntimeSettings
+        runtime: VMLXServerRuntimeSettings,
+        modelDirectory: URL? = nil
     ) throws {
         let modalities = requestedModalities(
             messages: messages,
@@ -257,7 +258,10 @@ actor MLXService: ToolCapableService {
         )
 
         var issues = serverResult.issues.map { $0.message }
-        let mediaDescriptor = mediaCapabilityDescriptor(modelId: modelId)
+        let mediaDescriptor = mediaCapabilityDescriptor(
+            modelId: modelId,
+            modelDirectory: modelDirectory
+        )
         let media = mediaDescriptor.capabilities
         if modalities.contains(.vision), !media.supportsImage {
             issues.append(mediaDescriptor.descriptor(for: .image).reason)
@@ -269,7 +273,11 @@ actor MLXService: ToolCapableService {
             issues.append(mediaDescriptor.descriptor(for: .audio).reason)
         }
         if !tools.isEmpty,
-            !supportsLocalToolCalling(modelName: modelName, modelId: modelId)
+            !supportsLocalToolCalling(
+                modelName: modelName,
+                modelId: modelId,
+                modelDirectory: modelDirectory
+            )
         {
             issues.append("Model capability detection reports tool calling as unsupported.")
         }
@@ -449,13 +457,14 @@ actor MLXService: ToolCapableService {
     }
 
     private nonisolated static func mediaCapabilityDescriptor(
-        modelId: String
+        modelId: String,
+        modelDirectory: URL? = nil
     ) -> ModelMediaCapabilities.Descriptor {
-        if isKnownTextOnlyJANGRuntimeFamily(modelId: modelId) {
-            // MiMo/N2 JANG and JANGTQ rows are text/tool runtimes in this
-            // Osaurus lane. Avoid synchronous directory/VLM probing on large
-            // or symlinked external bundles during request preflight; vMLX
-            // still owns the real model/template/tool load path.
+        if isKnownMediaTextOnlyJANGRuntimeFamily(modelId: modelId) {
+            // MiMo JANG/JANGTQ text/tool rows are supported through the vMLX
+            // text runtime. The bundle carries visual/audio weights, but vMLX
+            // has no MiMo VLM/omni factory yet and the text loader drops those
+            // weights. Keep media disabled until that real path exists.
             return ModelMediaCapabilities.Descriptor(
                 modelId: modelId,
                 capabilities: .textOnly,
@@ -484,10 +493,13 @@ actor MLXService: ToolCapableService {
             // external-bundle metadata reads.
             return ModelMediaCapabilities.descriptor(modelId: modelId)
         }
-        let parts = modelId.split(separator: "/").map(String.init)
-        let localDirectory = parts.reduce(DirectoryPickerService.effectiveModelsDirectory()) {
-            $0.appendingPathComponent($1, isDirectory: true)
-        }
+        let localDirectory =
+            modelDirectory
+            ?? modelId.split(separator: "/").map(String.init).reduce(
+                DirectoryPickerService.effectiveModelsDirectory()
+            ) {
+                $0.appendingPathComponent($1, isDirectory: true)
+            }
         if FileManager.default.fileExists(atPath: localDirectory.path) {
             return ModelMediaCapabilities.descriptor(directory: localDirectory, modelId: modelId)
         }
@@ -502,5 +514,14 @@ actor MLXService: ToolCapableService {
         }
         return normalized.contains("mimo-v2.5")
             || normalized.contains("nex-n2-pro")
+    }
+
+    private nonisolated static func isKnownMediaTextOnlyJANGRuntimeFamily(modelId: String) -> Bool {
+        let normalized = modelId.lowercased().replacingOccurrences(of: "_", with: "-")
+        guard normalized.contains("jang") else { return false }
+        if normalized.contains("-vl") || normalized.contains("omni") {
+            return false
+        }
+        return normalized.contains("mimo-v2.5")
     }
 }

@@ -8717,17 +8717,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func chatCompletionResponseJSONObject(_ response: ChatCompletionResponse) -> [String: Any] {
+        var usage: [String: Any] = [
+            "prompt_tokens": response.usage.prompt_tokens,
+            "completion_tokens": response.usage.completion_tokens,
+            "total_tokens": response.usage.total_tokens,
+        ]
+        if let tokensPerSecond = response.usage.tokens_per_second {
+            usage["tokens_per_second"] = tokensPerSecond
+        }
+
         var object: [String: Any] = [
             "id": response.id,
             "object": response.object,
             "created": response.created,
             "model": response.model,
             "choices": response.choices.map(chatChoiceJSONObject(_:)),
-            "usage": [
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            ],
+            "usage": usage,
         ]
         if let fingerprint = response.system_fingerprint {
             object["system_fingerprint"] = fingerprint
