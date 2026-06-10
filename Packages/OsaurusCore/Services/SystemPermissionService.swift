@@ -770,10 +770,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
 
         if let resultValue = result?.stringValue {
-            return "SUCCESS: \(resultValue)"
+            return L("SUCCESS: \(resultValue)")
         }
 
-        return "NO RESULT"
+        return L("NO RESULT")
     }
 
     // MARK: - Debug: Test Accessibility Access
@@ -782,10 +782,12 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     nonisolated static func debugTestAccessibilityAccess() -> String {
         let isTrusted = AXIsProcessTrusted()
         if isTrusted {
-            return "SUCCESS: Process is trusted for Accessibility."
+            return L("SUCCESS: Process is trusted for Accessibility.")
         } else {
             return
-                "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
+                L(
+                    "ERROR: Process is NOT trusted for Accessibility. If enabled in System Settings, try removing and re-adding Osaurus to the list."
+                )
         }
     }
 
@@ -843,10 +845,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
 
         if let resultValue = result?.stringValue {
-            return "SUCCESS: \(resultValue)"
+            return L("SUCCESS: \(resultValue)")
         }
 
-        return "NO RESULT"
+        return L("NO RESULT")
     }
 
     // MARK: - Debug: Test Contacts Access
@@ -868,18 +870,18 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                     count += 1
                     stop.pointee = true
                 }
-                return "SUCCESS: Authorized (Found \(count)+ contacts)"
+                return L("SUCCESS: Authorized (Found \(count)+ contacts)")
             } catch {
-                return "ERROR: Authorized but fetch failed: \(error.localizedDescription)"
+                return L("ERROR: Authorized but fetch failed: \(error.localizedDescription)")
             }
         case .denied:
-            return "ERROR: Access Denied"
+            return L("ERROR: Access Denied")
         case .restricted:
-            return "ERROR: Access Restricted"
+            return L("ERROR: Access Restricted")
         case .notDetermined:
-            return "WARNING: Access Not Determined"
+            return L("WARNING: Access Not Determined")
         @unknown default:
-            return "ERROR: Unknown Status"
+            return L("ERROR: Unknown Status")
         }
     }
 
@@ -894,18 +896,18 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             // Try to fetch calendars to verify
             let calendars = store.calendars(for: .event)
             if !calendars.isEmpty {
-                return "SUCCESS: Authorized (Found \(calendars.count) calendars)"
+                return L("SUCCESS: Authorized (Found \(calendars.count) calendars)")
             } else {
-                return "SUCCESS: Authorized (No calendars found)"
+                return L("SUCCESS: Authorized (No calendars found)")
             }
         case .denied:
-            return "ERROR: Access Denied"
+            return L("ERROR: Access Denied")
         case .restricted:
-            return "ERROR: Access Restricted"
+            return L("ERROR: Access Restricted")
         case .notDetermined:
-            return "WARNING: Access Not Determined"
+            return L("WARNING: Access Not Determined")
         @unknown default:
-            return "ERROR: Unknown Status"
+            return L("ERROR: Unknown Status")
         }
     }
 
@@ -919,18 +921,18 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             let store = EKEventStore()
             let calendars = store.calendars(for: .reminder)
             if !calendars.isEmpty {
-                return "SUCCESS: Authorized (Found \(calendars.count) lists)"
+                return L("SUCCESS: Authorized (Found \(calendars.count) lists)")
             } else {
-                return "SUCCESS: Authorized (No lists found)"
+                return L("SUCCESS: Authorized (No lists found)")
             }
         case .denied:
-            return "ERROR: Access Denied"
+            return L("ERROR: Access Denied")
         case .restricted:
-            return "ERROR: Access Restricted"
+            return L("ERROR: Access Restricted")
         case .notDetermined:
-            return "WARNING: Access Not Determined"
+            return L("WARNING: Access Not Determined")
         @unknown default:
-            return "ERROR: Unknown Status"
+            return L("ERROR: Unknown Status")
         }
     }
 
@@ -945,15 +947,15 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
 
         switch status {
         case .authorizedAlways:
-            return "SUCCESS: Authorized"
+            return L("SUCCESS: Authorized")
         case .denied:
-            return "ERROR: Access Denied"
+            return L("ERROR: Access Denied")
         case .restricted:
-            return "ERROR: Access Restricted"
+            return L("ERROR: Access Restricted")
         case .notDetermined:
-            return "WARNING: Access Not Determined"
+            return L("WARNING: Access Not Determined")
         @unknown default:
-            return "ERROR: Unknown Status"
+            return L("ERROR: Unknown Status")
         }
     }
 
@@ -985,10 +987,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
 
         if let resultValue = result?.stringValue {
-            return "SUCCESS: Connected to \(resultValue)"
+            return L("SUCCESS: Connected to \(resultValue)")
         }
 
-        return "NO RESULT"
+        return L("NO RESULT")
     }
 
     // MARK: - Debug: Test Maps Access
@@ -1019,10 +1021,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
 
         if let resultValue = result?.stringValue {
-            return "SUCCESS: Connected to \(resultValue)"
+            return L("SUCCESS: Connected to \(resultValue)")
         }
 
-        return "NO RESULT"
+        return L("NO RESULT")
     }
 
     // MARK: - Debug: Test Mail Access
@@ -1053,10 +1055,10 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         }
 
         if let resultValue = result?.stringValue {
-            return "SUCCESS: Connected to \(resultValue)"
+            return L("SUCCESS: Connected to \(resultValue)")
         }
 
-        return "NO RESULT"
+        return L("NO RESULT")
     }
 
     /// Simple error wrapper for osascript results
