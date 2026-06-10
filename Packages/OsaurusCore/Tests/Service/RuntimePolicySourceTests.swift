@@ -551,12 +551,15 @@ struct RuntimePolicySourceTests {
         // bypass required-tool handling, the LFM required-tool solo
         // disk-restore skip plus schema-validated Pythonic parser hardening,
         // and the cross-target MLX test lock that prevents the Gemma4
-        // audio/media/cache source proof from crashing under Swift Testing.
+        // audio/media/cache source proof from crashing under Swift Testing,
+        // and the Gemma4 required-tool template ordering fix that keeps
+        // preserving-newlines user content as the final model-visible copy
+        // target before generation.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "9167ec771d22fd08c92caf97e431a1fe8e206fd7"
+        let expectedRuntimeHardenedRevision = "980e4051948b25ee3ba39914d6e01b0365a8f265"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -564,7 +567,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Gemma4 file-backed required-tool template grounding, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, exact-boundary hybrid SSM snapshot rederive avoidance, Ultra no-load speed-gate boundary, Nemotron-H JANGTQ mmap auto-BF16 load proof, Osaurus MLXPress cold-tier opt-in policy, streamed DSV4 request-tool prefix buffering, Gemma4 native tool-call parser regression pin, hybrid SSM companion rederive boundary pin, Nemotron-H Mamba cache-offset and dtype parity, the stacked Nemotron JANGTQ scored down-projection kernel kept opt-in after live Ultra rows showed it regresses the default decode path, default-off Nemotron Mamba subprofile diagnostics, the Nemotron Omni activation BF16 default-off fix, LFM2 exact required-tool text grounding for preserving-newlines prompts, schema-checked LFM bracket-array tool parsing, LFM2.5 MXFP8 required-tool warm disk-restore bypass, LFM2 Pythonic parser schema validation, LFM2 OpenAI tool_call JSON envelope parsing, LFM2 required-tool prompt preface ordering, DSV4 required-tool reminder placement before the current tail user turn, and the Gemma4 audio/media/cache Swift Testing crash fix; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Gemma4 file-backed required-tool template grounding, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, exact-boundary hybrid SSM snapshot rederive avoidance, Ultra no-load speed-gate boundary, Nemotron-H JANGTQ mmap auto-BF16 load proof, Osaurus MLXPress cold-tier opt-in policy, streamed DSV4 request-tool prefix buffering, Gemma4 native tool-call parser regression pin, hybrid SSM companion rederive boundary pin, Nemotron-H Mamba cache-offset and dtype parity, the stacked Nemotron JANGTQ scored down-projection kernel kept opt-in after live Ultra rows showed it regresses the default decode path, default-off Nemotron Mamba subprofile diagnostics, the Nemotron Omni activation BF16 default-off fix, LFM2 exact required-tool text grounding for preserving-newlines prompts, schema-checked LFM bracket-array tool parsing, LFM2.5 MXFP8 required-tool warm disk-restore bypass, LFM2 Pythonic parser schema validation, LFM2 OpenAI tool_call JSON envelope parsing, LFM2 required-tool prompt preface ordering, DSV4 required-tool reminder placement before the current tail user turn, the Gemma4 audio/media/cache Swift Testing crash fix, and the Gemma4 required-tool template ordering fix that preserves multiline user arguments; an internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -1033,13 +1036,13 @@ struct RuntimePolicySourceTests {
     }
 
     /// With the default `maxBatchSize == 1`, vmlx can use its solo
-    /// TokenIterator-backed fast path. Osaurus must not let a second same-model
+    /// TokenIterator-backed fast path. Osaurus must not let a second solo
     /// request run prompt tokenization / `MLXArray.asArray(...)` while that
     /// decode is still active. vmlx emits `.info` before its post-generation
     /// cache store finishes, so Osaurus also must not release the solo lease
     /// at `.info`; otherwise a second request can enter `prepareInput` while
     /// the first one is still materializing safetensors cache tensors on Metal.
-    @Test("MLXBatchAdapter gates same-model solo generation and propagates stream cancellation")
+    @Test("MLXBatchAdapter gates solo generation and propagates stream cancellation")
     func mlxBatchAdapterGatesSoloGenerationAndCancelsProducer() throws {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
@@ -1779,6 +1782,14 @@ struct RuntimePolicySourceTests {
             "Cold loads must reserve their footprint before the feasibility gate so a parallel load of another model can't double-book unified memory."
         )
         #expect(
+            runtime.contains("private var coldLoadActive = false")
+                && runtime.contains("private func acquireColdLoadSlot() async")
+                && runtime.contains("private func releaseColdLoadSlot()")
+                && loadPreflight.contains("await acquireColdLoadSlot()")
+                && loadPreflight.contains("defer { releaseColdLoadSlot() }"),
+            "Cold loads must serialize before vmlx model materialization; RAM accounting alone does not prevent concurrent MLX/Metal command-buffer setup."
+        )
+        #expect(
             loadPreflight.contains("checkRAMFeasibility("),
             "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
         )
@@ -2173,6 +2184,8 @@ struct RuntimePolicySourceTests {
 
     @Test("local decode loop keeps tool schemas for parser-side argument validation")
     func localDecodeLoopKeepsToolSchemasForParserValidation() throws {
+        let chatEngine = try Self.source("Services/Chat/ChatEngine.swift")
+        let protocolErrors = try Self.source("Networking/HTTPProtocolErrors.swift")
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
         let registry = try Self.source("Tools/ToolRegistry.swift")
 
@@ -2220,6 +2233,19 @@ struct RuntimePolicySourceTests {
             registry.contains("invalidToolArgumentsEnvelope")
                 && registry.contains("\"invalid_tool_arguments\""),
             "ToolRegistry must turn parser-side invalid tool arguments into a structured invalid_args envelope instead of executing the tool body."
+        )
+        #expect(
+            chatEngine.contains("private static func requiresLocalToolCall")
+                && chatEngine.contains("case .required, .function")
+                && chatEngine.contains("The model did not produce a valid required tool call.")
+                && chatEngine.contains("suppressed_content_preview"),
+            "Required/named local tool_choice turns must fail closed if vMLX reaches EOS without a parsed tool invocation; malformed model prose must not leak as a normal assistant response."
+        )
+        #expect(
+            protocolErrors.contains(#"(error as NSError).domain == "OsaurusToolChoice""#)
+                && protocolErrors.contains("return .badRequest")
+                && protocolErrors.contains(#"return "invalid_request_error""#),
+            "Fail-closed required-tool turns are client/request errors, not generic server crashes."
         )
     }
 

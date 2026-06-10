@@ -46,50 +46,80 @@ extension HTTPHandler {
     }
 
     static func localRuntimeHTTPStatus(for error: Error) -> HTTPResponseStatus {
+        if error is CancellationError {
+            return HTTPResponseStatus(statusCode: 499, reasonPhrase: "Client Closed Request")
+        }
         if error is ModelRuntime.LoadRefusedError {
             return .serviceUnavailable
         }
         if error is MLXService.RuntimePolicyError {
             return .badRequest
         }
+        if (error as NSError).domain == "OsaurusToolChoice" {
+            return .badRequest
+        }
         return .internalServerError
     }
 
     static func openAIErrorType(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        if (error as NSError).domain == "OsaurusToolChoice" {
             return "invalid_request_error"
         }
         return "internal_error"
     }
 
     static func anthropicErrorType(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "overloaded_error"
         }
         if error is MLXService.RuntimePolicyError {
             return "invalid_request_error"
         }
+        if (error as NSError).domain == "OsaurusToolChoice" {
+            return "invalid_request_error"
+        }
         return "api_error"
     }
 
     static func openResponsesErrorCode(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError {
             return "invalid_request_error"
         }
+        if (error as NSError).domain == "OsaurusToolChoice" {
+            return "invalid_request_error"
+        }
         return "api_error"
     }
 
     static func ollamaErrorType(for error: Error) -> String {
+        if error is CancellationError {
+            return "request_cancelled"
+        }
         if error is ModelRuntime.LoadRefusedError {
             return "insufficient_resources"
         }
         if error is MLXService.RuntimePolicyError {
+            return "invalid_request_error"
+        }
+        if (error as NSError).domain == "OsaurusToolChoice" {
             return "invalid_request_error"
         }
         return "internal_error"
