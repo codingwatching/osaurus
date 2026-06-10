@@ -994,9 +994,13 @@ struct RuntimePolicySourceTests {
     @Test("Flexible model residency respects load-time memory budget")
     func flexibleModelResidencyEvictsBeforeOversizedLoads() throws {
         let runtime = try Self.source("Services/ModelRuntime.swift")
+        let serverConfig = try Self.source("Models/Configuration/ServerConfiguration.swift")
+        let runtimeSettings = try Self.source("Models/Configuration/ServerRuntimeSettingsStore.swift")
 
         #expect(runtime.contains("flexibleResidentBudgetBytes"))
-        #expect(runtime.contains("ProcessInfo.processInfo.physicalMemory) * 0.70"))
+        #expect(serverConfig.contains("defaultModelLoadRAMSoftThreshold"))
+        #expect(serverConfig.contains("defaultModelLoadRAMHardThreshold"))
+        #expect(runtimeSettings.contains("modelLoadRAMThresholds()"))
         #expect(runtime.contains("unloadForFlexibleResidentBudget"))
         #expect(runtime.contains("policy == .manualMultiModel"))
         #expect(runtime.contains("flexible budget eviction"))
@@ -1794,6 +1798,12 @@ struct RuntimePolicySourceTests {
             "All policies must pass the pre-load RAM feasibility gate before vmlx starts loading."
         )
         #expect(
+            runtime.contains("ServerRuntimeSettingsStore.modelLoadRAMThresholds()")
+                && !runtime.contains("ramHardThreshold = 0.90")
+                && !runtime.contains("ramSoftThreshold = 0.70"),
+            "RAM load thresholds must come from persisted server configuration, not hidden hardcoded ModelRuntime constants."
+        )
+        #expect(
             runtime.contains("availableMemoryBytes()")
                 && runtime.contains("requiredAvailable > available")
                 && runtime.contains("incomingLoadFootprintBytes")
@@ -2380,13 +2390,9 @@ struct RuntimePolicySourceTests {
             "Gemma-family native template runtime errors must not silently fall back to Gemma4 tool/minimal templates."
         )
         #expect(
-            tokenizerLoader.contains("normalizedModelType == \"gemma4_unified\"")
-                && tokenizerLoader.contains("let hasGemma4NativeToolSentinels =")
-                && tokenizerLoader.contains("upstream.convertTokenToId(\"<|tool_call>\") != nil")
-                && tokenizerLoader.contains("upstream.convertTokenToId(\"<|turn>\") != nil")
-                && tokenizerLoader.contains("Self.requiresToolChoice(adjustedContext)")
-                && tokenizerLoader.contains("label: \"Gemma4RequiredTool\""),
-            "Gemma4 unified required/named tool turns must route through the strict Gemma4WithTools fallback in Osaurus's production SwiftTransformersTokenizerLoader; the vMLX macro bridge is not the production path here."
+            !tokenizerLoader.contains("label: \"Gemma4RequiredTool\"")
+                && !tokenizerLoader.contains("Self.requiresToolChoice(adjustedContext),\n            (env[\"VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE\"] ?? \"0\") != \"1\"\n        {\n            return try fallback(\n                label: \"Gemma4"),
+            "Gemma4 required/named tool turns must not bypass the model-bundled native template with an Osaurus-forced Gemma4WithTools fallback."
         )
         #expect(
             reasoningCapability.contains("runtime code must not synthesize")
