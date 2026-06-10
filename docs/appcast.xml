@@ -3,6 +3,44 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.17</title>
+            <pubDate>Wed, 10 Jun 2026 15:22:40 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.17</sparkle:version>
+            <sparkle:shortVersionString>0.19.17</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.17/Osaurus-0.19.17.dmg" length="52283033" type="application/octet-stream" sparkle:edSignature="9Xn9DdsHacTLEWxtF7w2RO+9SmtY5Z3wUTOcX0d7S6k5bt4oBq3g/gBFfb/yqfC2xweh6V//+XP/VKoQAVh5Cg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- updated chinese translations (#1437) by @ftzahao
+- import third party skills (#1439) by @RaajeevChandran
+- Fix MiMo JANG telemetry and N2 media preflight (#1443) by @jjang-ai
+- Resolve indexed sharded local model bundles (#1441) by @jjang-ai
+- Pin vMLX Gemma4 tool recovery (#1440) by @jjang-ai
+- Pin vMLX Gemma4 RoPE and MoE fixes (#1429) by @jjang-ai
+- added agent slash command (#1436) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix instant OOM error refusing local model loads (#1451) by @RaajeevChandran
+- fixed fatal crashes (#1449) by @RaajeevChandran
+- fixed memory repair that silently kept failing on affected installs (#1444) by @RaajeevChandran
+- Fix QuickTime video data URL materialization (#1446) by @jjang-ai
+- fixed main thread hangs in watcher and theme editor (#1435) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- p2p network hardening, added e2e encryption over secure channel (#1442) by @tpae
+- add first time chat shown and used telemetry events (#1445) by @RaajeevChandran
+- harness hardening with tools and evals (#1438) by @tpae
+- harness improvements (#1433) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.16...0.19.17
+]]></description>
+        </item>
+        <item>
             <title>0.19.16</title>
             <pubDate>Tue, 09 Jun 2026 16:33:43 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
