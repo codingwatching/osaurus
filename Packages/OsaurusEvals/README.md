@@ -16,6 +16,7 @@ Packages/OsaurusEvals/
     OsaurusEvalsKit/    — library (case schema, runner, scorers, model override)
     OsaurusEvalsCLI/    — `osaurus-evals` executable
   Suites/
+    AgentLoop/          — E2E agentic outcomes in a seeded workspace (LLM)
     ArgumentCoercion/   — ArgumentCoercion.{stringArray,int,bool} pinning
     CapabilityClaims/   — agent-loop "do you have X" behaviour + LLM judge (LLM)
     CapabilitySearch/   — index-only recall measurements (no LLM)
@@ -74,10 +75,11 @@ Exit codes:
 
 ## Case schema
 
-Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Nine domains exist today:
+Every case file shares a top-level shape: `id`, `domain`, optional `label` and `notes`, `query`, `fixtures`, `expect`. The `domain` field selects which runner branch handles the case and which `expect.<sub>` block is required. Ten domains exist today:
 
 | Domain | Hits LLM? | Runner branch | Required expectation block |
 |---|---|---|---|
+| `agent_loop` | yes | `runAgentLoopCase` | `expect.agentLoop` |
 | `capability_claims` | yes | `runCapabilityClaimsCase` | `expect.capabilityClaims` |
 | `capability_search` | no | `runCapabilitySearchCase` | `expect.capabilitySearch` |
 | `schema` | no | `runSchemaCase` | `expect.schema` |
@@ -165,6 +167,59 @@ The suite covers six scenarios under `Suites/CapabilityClaims/`: `confirm` (conf
 
 The judge model defaults to the run `--model`; export `JUDGE_MODEL=...` to grade small-model output with a stronger evaluator.
 
+### `agent_loop` domain
+
+End-to-end agentic evals over the canonical `AgentToolLoop` — the same driver the chat UI, HTTP `/agents/{id}/run`, and plugin host run on (`AgentTaskState` dedupe, next-step bias, budget notices, sticky compaction included). The evaluator mirrors the production loop's shape: streaming model steps by default, a stable per-run `session_id` for KV-prefix reuse, the parallel batch executor for multi-call steps (with the chat surface's serial fallback for `complete`/`clarify` intercepts), and `max_tokens` resolved from the user's chat configuration. The deliberate divergences from a live chat session: tool approval prompts are auto-approved (headless), the judge runs out-of-loop, and the workspace is a temp directory.
+
+The runner seeds a fresh temp workspace from `fixtures.workspaceFiles`, drives `AgentLoopEvaluator` in `executionMode: .hostFolder(...)` (so the model gets the real `file_read` / `file_write` / `file_search` / `shell_run` folder tools), then scores **outcomes**: file contents on disk, post-run command exit codes, transcript assertions, and an optional LLM-judge rubric. The workspace is deleted after each case.
+
+> **Blast radius**: `shell_run` and post-run `commands` execute with the HOST process's full privileges via `/bin/zsh -c`, with only the working directory pointed at the temp workspace — nothing sandboxes a model that emits `rm -rf ~`. That is inherent to E2E evals over the real folder tools. Run this suite with models you trust, keep it off CI, and never point it at a workspace containing anything you care about.
+
+```json
+{
+  "id": "agent_loop.edit-file-then-verify",
+  "domain": "agent_loop",
+  "label": "agent loop • edit a file then verify the change",
+  "query": "The file greeting.txt contains a typo: 'wrold' should be 'world'. Fix it, then read the file back to confirm the fix.",
+  "notes": "The canonical write-path smoke: read → edit → re-read. Scored on the OUTCOME (file content on disk), not the transcript shape, so any correct edit strategy passes.",
+  "fixtures": {
+    "workspaceFiles": [{ "path": "greeting.txt", "contents": "Hello, wrold!\n" }]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 8,
+      "files": [{ "path": "greeting.txt", "contains": "world" }],
+      "commands": [{ "command": "grep -q wrold greeting.txt", "expectExitCode": 1 }]
+    }
+  }
+}
+```
+
+Field notes:
+
+- `fixtures.workspaceFiles` — `{ path, contents }` entries written into the per-case temp workspace (intermediate directories created). `path` is workspace-relative.
+- `expect.agentLoop.files` — `{ path, exists?, contains?, equals? }` assertions on the workspace after the loop ends. `exists` defaults to true; set `false` to pin that a file was NOT created.
+- `expect.agentLoop.commands` — `{ command, expectExitCode }` verification commands run in the workspace after the loop ends (e.g. `grep`, a test runner).
+- `expect.agentLoop.mustCallTools` / `mustNotCallTools` / `maxToolCalls` — deterministic transcript assertions. `maxToolCalls` counts processed calls (executed + deduped) and pins navigation discipline.
+- `expect.agentLoop.noDuplicateExecutedCalls` — no identical `(name, arguments)` pair may *execute* twice; dedupe replays are fine (that's the loop's dedupe working). Duplicate keys use the loop's own argument canonicalisation (sorted-key JSON), so the scorer and the dedupe agree on what "identical" means.
+- `expect.agentLoop.minDedupedReplays` — minimum number of dedupe replays (`wasDeduped`) the transcript must contain. Asserts the replay mechanism actually FIRED, not just that nothing executed twice.
+- `expect.agentLoop.noToolErrors` — opt-in: no processed call may return an error envelope. Off by default; recovery cases legitimately route through tool errors.
+- `expect.agentLoop.noticesContain` — substrings that must appear in at least one driver-staged notice (budget warning, dedupe notice, next-step nudge). Asserts a nudge fired, independent of whether the model obeyed it.
+- `expect.agentLoop.expectCompaction` — the run must have actually compacted history (the sticky watermark recorded a summarize/drop). Keeps compaction-stress honest when windows grow.
+- `expect.agentLoop.allowedExits` — accepted loop exits (default `["finalResponse"]`; a run ended by a successful `complete` tool reports `finalResponse`, a successful `clarify` reports `clarifyRequested`). A wrap-up-on-budget case keeps the default to assert the budget-warning notice actually lands.
+- `expect.agentLoop.contextWindowOverride` — build the loop's budget manager against this window instead of the model's real one. The compaction-stress lever: long tool outputs on an 8K override force the sticky-watermark trimming path mid-run.
+- `expect.agentLoop.finalTextContains` / `rubric` — cheap substring checks vs. LLM-judge grading of the final answer (same `JUDGE_MODEL` override as `capability_claims`).
+
+Reported `latencyMs` for this domain is **loop-only** wall time (model steps + tool execution), excluding workspace setup and judge calls.
+
+The suite covers eleven scenarios under `Suites/AgentLoop/`: `edit-file-then-verify`, `search-then-multi-file-edit`, `write-new-file`, `recover-from-failing-command`, `listing-navigation-discipline`, `duplicate-call-avoidance`, `dedupe-replay-fires`, `repeated-call-nudge`, `parallel-batch-reads`, `compaction-stress`, and `wrap-up-on-budget`. This suite is the proof lane for "small local → frontier": run it per model family, e.g.
+
+```bash
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=foundation
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=mlx-community/Qwen3-4B-MLX-4bit
+make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/AgentLoop MODEL=openai/gpt-4o-mini JUDGE_MODEL=openai/gpt-4o
+```
+
 ### Other domains
 
 The five pure-data domains (`schema`, `tool_envelope`, `streaming_hint`, `prefix_hash`, `argument_coercion`, `request_validation`) follow the same shape — pick one of the existing `Suites/<domain>/*.json` cases as a template and copy it.
@@ -198,4 +253,4 @@ This package is a **separate Swift package**. CI / Xcode builds run `swift build
 - `osaurus-evals diff baseline.json current.json` — regression check against a stored baseline.
 - Per-model scoreboards under `reports/<model>/<date>.json`.
 - Auto-run on new model release (CI workflow listening for HF releases).
-- Domain growth: `Suites/AgentLoop/`, `Suites/ToolCalling/`, `Suites/SkillInjection/`.
+- Domain growth: `Suites/ToolCalling/`, `Suites/SkillInjection/`.

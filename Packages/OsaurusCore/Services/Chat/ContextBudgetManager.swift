@@ -278,6 +278,154 @@ public struct ContextBudgetManager: Sendable {
 
     // MARK: - Message Trimming
 
+    /// Sticky trim: like `trimMessages(_:recentPairsToKeep:)` but compaction
+    /// decisions persist in `watermark` so the trimmed transcript is
+    /// MONOTONIC across successive calls — once a message is summarized its
+    /// summary is replayed byte-identically, and once a message is dropped
+    /// it stays dropped. The stateless variant recomputes from scratch each
+    /// call, which can rewrite the middle of the message array between
+    /// iterations and bust paged-KV prefix reuse.
+    ///
+    /// The watermark is keyed by index into the caller's UNTRIMMED history,
+    /// which must be append-only between calls (chat turns / HTTP / plugin
+    /// message arrays all are). If a recorded message's identity no longer
+    /// matches (e.g. regeneration rewrote history), the watermark resets and
+    /// decisions are recomputed fresh.
+    func trimMessages(
+        _ messages: [ChatMessage],
+        recentPairsToKeep: Int = 3,
+        watermark: CompactionWatermark
+    ) -> [ChatMessage] {
+        trimMessagesReportingOverflow(
+            messages,
+            recentPairsToKeep: recentPairsToKeep,
+            watermark: watermark
+        ).messages
+    }
+
+    /// The byte-stable context note inserted once messages have been
+    /// dropped. Deliberately COUNT-FREE: a live count would rewrite the
+    /// note's bytes on every additional drop, busting the KV prefix the
+    /// watermark exists to protect.
+    public static let trimmedHistoryNote =
+        "[Note: Earlier messages were trimmed to fit the context window. The original task and recent actions are preserved.]"
+
+    /// Sticky trim variant that also reports whether the transcript STILL
+    /// exceeds the history budget after every compaction lever (summaries,
+    /// drops) is exhausted — i.e. the protected first message + tail alone
+    /// are over budget. Callers can surface that instead of silently
+    /// sending an over-budget request.
+    func trimMessagesReportingOverflow(
+        _ messages: [ChatMessage],
+        recentPairsToKeep: Int = 3,
+        watermark: CompactionWatermark
+    ) -> (messages: [ChatMessage], overBudget: Bool) {
+        watermark.validate(against: messages)
+
+        // Assemble the visible transcript: replay frozen summaries, skip
+        // dropped indices. Original indices ride along so new decisions key
+        // back to the caller's array.
+        var visible: [(origIndex: Int, message: ChatMessage)] = []
+        visible.reserveCapacity(messages.count)
+        for (i, msg) in messages.enumerated() {
+            switch watermark.decision(at: i) {
+            case .dropped:
+                continue
+            case .summarized(let summary):
+                visible.append(
+                    (
+                        i,
+                        ChatMessage(
+                            role: "tool",
+                            content: summary,
+                            tool_calls: nil,
+                            tool_call_id: msg.tool_call_id
+                        )
+                    )
+                )
+            case .verbatim, .none:
+                visible.append((i, msg))
+            }
+        }
+
+        func render() -> [ChatMessage] {
+            var result = visible.map { $0.message }
+            if watermark.droppedCount > 0, !result.isEmpty {
+                // Count-free so the note's bytes never change once emitted.
+                result.insert(ChatMessage(role: "user", content: Self.trimmedHistoryNote), at: 1)
+            }
+            return result
+        }
+
+        // Everything in the returned transcript is about to be sent to the
+        // model verbatim (frozen summaries excepted — they carry their own
+        // decision). Record that so later trims DROP these messages when
+        // space is needed instead of newly summarizing them — a summary of
+        // a previously-sent message is a mid-transcript rewrite the KV
+        // cache can't reuse past.
+        func markVisibleAsSent() {
+            for (origIndex, _) in visible where watermark.decision(at: origIndex) == nil {
+                watermark.recordVerbatim(at: origIndex, original: messages[origIndex])
+            }
+        }
+
+        let budget = historyBudget
+        if Self.estimateTokens(for: render()) <= budget {
+            markVisibleAsSent()
+            return (render(), false)
+        }
+
+        // Identify protected regions on the VISIBLE transcript: first
+        // message (original task) + recent pairs.
+        let visibleMessages = visible.map { $0.message }
+        let recentCount = countRecentMessages(in: visibleMessages, pairs: recentPairsToKeep)
+        let protectedTailStart = visible.count - recentCount
+        guard protectedTailStart > 1 else {
+            // Protected regions cover everything — nothing left to trim.
+            markVisibleAsSent()
+            return (render(), Self.estimateTokens(for: render()) > budget)
+        }
+
+        // Phase 1: freeze summaries for middle tool results that were never
+        // sent verbatim. Messages already sent verbatim are skipped — once
+        // their bytes were part of the token stream, rewriting them as
+        // summaries would invalidate the KV prefix at that point; phase 2
+        // drops them instead (a pure truncation).
+        for slot in 1 ..< protectedTailStart {
+            let (origIndex, msg) = visible[slot]
+            guard msg.role == "tool", let content = msg.content,
+                watermark.decision(at: origIndex) == nil
+            else { continue }
+            let summary = Self.summarizeToolResult(content, toolCallId: msg.tool_call_id)
+            watermark.recordSummary(summary, at: origIndex, original: messages[origIndex])
+            visible[slot] = (
+                origIndex,
+                ChatMessage(role: "tool", content: summary, tool_calls: nil, tool_call_id: msg.tool_call_id)
+            )
+        }
+        if Self.estimateTokens(for: render()) <= budget {
+            markVisibleAsSent()
+            return (render(), false)
+        }
+
+        // Phase 2: drop oldest middle messages (never the first message,
+        // never the protected tail) until the transcript fits. Drops are
+        // recorded so they persist on every later call. The oldest middle
+        // message always sits at visible[1] (visible[0] is the protected
+        // first message); the protected tail boundary shrinks with each
+        // removal.
+        var tailStart = protectedTailStart
+        while tailStart > 1, Self.estimateTokens(for: render()) > budget {
+            let origIndex = visible[1].origIndex
+            watermark.recordDrop(at: origIndex, original: messages[origIndex])
+            visible.remove(at: 1)
+            tailStart -= 1
+        }
+
+        markVisibleAsSent()
+        return (render(), Self.estimateTokens(for: render()) > budget)
+    }
+
     /// Trims messages to fit within the history budget.
     ///
     /// Strategy:
@@ -504,6 +652,19 @@ final class ContextBudgetTracker {
             cumulativeOutputTokens += ContextBudgetManager.estimateOutputTokens(for: turn)
         }
         breakdown?.setTokens(for: "conversation", in: \.messages, tokens: tokens, label: "Conversation", tint: .gray)
+    }
+
+    /// Surface history compaction in the context popover: `savedTokens` is
+    /// the estimate trimmed away from the conversation this iteration.
+    func updateCompaction(savedTokens: Int) {
+        guard savedTokens > 0 else { return }
+        breakdown?.setTokens(
+            for: "compacted",
+            in: \.messages,
+            tokens: savedTokens,
+            label: "Compacted (saved)",
+            tint: .teal
+        )
     }
 
     /// Returns the snapshot with live output tokens, or nil if no snapshot is active.

@@ -1,9 +1,14 @@
 # Reduction Subagent (Design)
 
-> Status: **design only — not implemented.** This document captures the
-> problem, the gap in the current architecture, and a proposed design for a
-> "reduction subagent" to replace the context-reduction use case of the
-> removed `sandbox_execute_code` tool. No code in this document ships yet.
+> Status: **implemented.** The shared loop primitive ships as
+> `AgentToolLoop` (`Packages/OsaurusCore/Services/Chat/AgentToolLoop.swift`),
+> adopted by all three loop surfaces, and `sandbox_reduce`
+> (`Packages/OsaurusCore/Tools/SandboxReduceTool.swift`) is registered with
+> the other exec-gated sandbox tools. This document remains as the design
+> rationale; details below describe the original proposal. The driver's
+> current behavior — policy knobs, two-phase parallel batches, KV-stable
+> compaction, and the eval proof lane — is documented in
+> [AGENT_LOOP.md — The Canonical Loop Driver](AGENT_LOOP.md#the-canonical-loop-driver-agenttoolloop).
 
 ## Problem
 
