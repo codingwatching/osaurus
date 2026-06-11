@@ -570,12 +570,15 @@ struct RuntimePolicySourceTests {
         // audio/media/cache source proof from crashing under Swift Testing,
         // and the Gemma4 required-tool template ordering fix that keeps
         // preserving-newlines user content as the final model-visible copy
-        // target before generation.
+        // target before generation, plus the memory-safety resolver fix that
+        // preserves explicit disabled prefix-cache settings and disables
+        // dependent paged-KV/block-disk cache topology instead of forcing the
+        // default cache stack back on.
         // That avoids Xcode PIF
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "ef025f2556978d033131f745c00dd8128c8d5151"
+        let expectedRuntimeHardenedRevision = "76047f3b4492d4fae316267a30fba55163b1c5cd"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1957,6 +1960,21 @@ struct RuntimePolicySourceTests {
         #expect(httpHandler.contains("\"native_mtp_status\""))
         #expect(httpHandler.contains("\"native_mtp_reason\""))
         #expect(httpHandler.contains("\"mlx_press\""))
+        #expect(httpHandler.contains("\"generation_defaults\""))
+        #expect(httpHandler.contains("\"last_effective_generation\""))
+        #expect(httpHandler.contains("\"stage\": settings.stage"))
+        #expect(httpHandler.contains("LocalGenerationDefaults.defaults(forModelId: summary.name)"))
+        #expect(httpHandler.contains("lastEffectiveGenerationSettingsSnapshot()"))
+        #expect(httpHandler.contains("path == \"/admin/generation-settings\""))
+        #expect(httpHandler.contains("handleGenerationSettingsEndpoint("))
+        #expect(httpHandler.contains("\"generation_defaults_by_model\""))
+        #expect(httpHandler.contains("\"last_effective_generation_by_model\""))
+        #expect(httpHandler.contains("It intentionally avoids `ModelRuntime`"))
+
+        #expect(adapter.contains("recordPendingEffectiveGenerationSettings("))
+        #expect(adapter.contains("stage: \"pending_preload\""))
+        #expect(adapter.contains("stage: \"submitted_to_batch_engine\""))
+        #expect(runtime.contains("MLXBatchAdapter.recordPendingEffectiveGenerationSettings("))
     }
 
     @Test("admin cache stats exposes resolved memory safety status without load refusal")
@@ -2134,6 +2152,27 @@ struct RuntimePolicySourceTests {
                 && windows.contains("return found.name"),
             "Chat UI active-model cleanup must use ModelRuntime's canonical repo-tail cache key, not the raw picker id."
         )
+    }
+
+    @Test("Local bundle config readers preserve discovered bundle paths")
+    func localBundleConfigReadersPreserveDiscoveredBundlePaths() throws {
+        let defaults = try Self.source("Services/LocalGenerationDefaults.swift")
+        let reasoning = try Self.source("Services/LocalReasoningCapability.swift")
+        let manager = try Self.source("Managers/Model/ModelManager.swift")
+
+        #expect(manager.contains("findInstalledMLXModel(named name: String) -> MLXModel?"))
+        #expect(manager.contains("MLXModel.localDirectory"))
+        #expect(defaults.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
+        #expect(defaults.contains("return found.localDirectory"))
+        #expect(defaults.contains("readSmallConfigFile"))
+        #expect(!defaults.contains("Data(contentsOf:"))
+        #expect(!defaults.contains("parts.reduce(base)"))
+        #expect(reasoning.contains("ModelManager.findInstalledMLXModel(named: modelId)"))
+        #expect(reasoning.contains("return found.localDirectory"))
+        #expect(reasoning.contains("readSmallConfigFile"))
+        #expect(!reasoning.contains("Data(contentsOf:"))
+        #expect(!reasoning.contains("String(contentsOf:"))
+        #expect(!reasoning.contains("parts.reduce(base)"))
     }
 
     @Test("Resident same-model turns do not flash model-loading UI")
@@ -2497,6 +2536,37 @@ struct RuntimePolicySourceTests {
         #expect(
             jangFastPath.lowerBound < bundleLookup.lowerBound,
             "MiMo/N2 JANG tool preflight must short-circuit before external bundle metadata lookup."
+        )
+    }
+
+    @Test("Gemma text tool preflight avoids media bundle reads")
+    func gemmaTextToolPreflightAvoidsMediaBundleReads() throws {
+        let service = try Self.source("Services/Inference/MLXService.swift")
+        let validate = try #require(service.range(of: "static func validateRuntimePolicy"))
+        let support = try #require(service.range(of: "nonisolated static func supportsLocalToolCalling"))
+
+        let validateEnd =
+            service.range(
+                of: "nonisolated static func supportsLocalToolCalling",
+                range: validate.lowerBound ..< service.endIndex
+            )
+            .map(\.lowerBound) ?? service.endIndex
+        let validateBody = String(service[validate.lowerBound ..< validateEnd])
+        #expect(validateBody.contains("let mediaModalities: Set<ModelRuntimeRequestModality> = [.vision, .video, .audio]"))
+        #expect(validateBody.contains("if !modalities.isDisjoint(with: mediaModalities)"))
+
+        let supportEnd =
+            service.range(
+                of: "private nonisolated static func localModelDirectory",
+                range: support.lowerBound ..< service.endIndex
+            )
+            .map(\.lowerBound) ?? service.endIndex
+        let supportBody = String(service[support.lowerBound ..< supportEnd])
+        let gemmaFastPath = try #require(supportBody.range(of: "ModelFamilyNames.isGemmaFamily"))
+        let bundleLookup = try #require(supportBody.range(of: "localModelDirectory(modelId: modelId)"))
+        #expect(
+            gemmaFastPath.lowerBound < bundleLookup.lowerBound,
+            "Gemma tool preflight must not synchronously read external bundle metadata."
         )
     }
 

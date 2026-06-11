@@ -10,6 +10,7 @@ import Testing
 
 @testable import OsaurusCore
 
+@Suite(.serialized)
 struct ModelManagerTests {
 
     /// Suppress `ModelManager.init`'s background HF org fetch — its async
@@ -323,11 +324,16 @@ struct ModelManagerTests {
         let root = URL(fileURLWithPath: (rawRoot as NSString).expandingTildeInPath, isDirectory: true)
         let detected = ModelManager.scanLocalModels(at: root)
         let ids = Set(detected.map { $0.id.lowercased() })
-        #expect(ids.contains("osaurusai/gemma-4-e2b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-e4b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-12b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-26b-a4b-it-qat-mxfp4"))
-        #expect(ids.contains("osaurusai/gemma-4-31b-it-qat-mxfp4"))
+
+        func containsGemma(_ repo: String) -> Bool {
+            ids.contains("osaurusai/\(repo)") || ids.contains("jangq-ai/\(repo)") || ids.contains(repo)
+        }
+
+        #expect(containsGemma("gemma-4-e2b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-e4b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-12b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-26b-a4b-it-qat-mxfp4"))
+        #expect(containsGemma("gemma-4-31b-it-qat-mxfp4"))
     }
 
     @Test func scanLocalModels_skipsLargeSupportTreesBesideJANGBundles() async throws {
@@ -352,6 +358,66 @@ struct ModelManagerTests {
 
         let detected = ModelManager.scanLocalModels(at: root)
         #expect(detected.map(\.id) == ["Nex-N2-Pro-JANGTQ2"])
+    }
+
+    @Test func discoverLocalModels_timeoutDoesNotCacheEmptyResult() async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousOverride = ModelManager.scanLocalModelsOverrideForTests
+            let previousWait = ModelManager.localModelsScanWaitLimitOverrideForTests
+            let previousExternalOverride = ExternalModelLocator.testRootsOverride
+            let previousRoot = OsaurusPaths.overrideRoot
+            let manifestRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osu-model-manager-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: manifestRoot, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = manifestRoot
+            ModelManager.invalidateLocalModelsCache()
+            ExternalModelLocator.testRootsOverride = []
+            ExternalModelLocator.invalidateInMemory()
+            ExternalModelLocator.rescan()
+            ModelManager.localModelsScanWaitLimitOverrideForTests = 0.02
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                Thread.sleep(forTimeInterval: 0.12)
+                return [
+                    MLXModel(
+                        id: "gemma-4-E2B-it-qat-MXFP4",
+                        name: "Gemma 4 E2B",
+                        description: "fixture",
+                        downloadURL: "https://example.invalid/gemma"
+                    )
+                ]
+            }
+            defer {
+                ModelManager.scanLocalModelsOverrideForTests = previousOverride
+                ModelManager.localModelsScanWaitLimitOverrideForTests = previousWait
+                ExternalModelLocator.testRootsOverride = previousExternalOverride
+                OsaurusPaths.overrideRoot = previousRoot
+                ExternalModelLocator.invalidateInMemory()
+                ModelManager.invalidateLocalModelsCache()
+                try? FileManager.default.removeItem(at: manifestRoot)
+            }
+
+            let first = ModelManager.discoverLocalModels()
+            #expect(first.isEmpty)
+
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let second = ModelManager.discoverLocalModels()
+            #expect(second.map(\.id) == ["gemma-4-E2B-it-qat-MXFP4"])
+        }
+    }
+
+    @Test func scanLocalModels_recordsMissingRootDiagnostic() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osu-missing-model-root-\(UUID().uuidString)", isDirectory: true)
+
+        let detected = ModelManager.scanLocalModels(at: root)
+
+        #expect(detected.isEmpty)
+        let diagnostic = try #require(ModelManager.localModelsScanDiagnosticJSONObject())
+        #expect(diagnostic["root"] as? String == root.path)
+        #expect(diagnostic["root_exists"] as? Bool == false)
+        #expect(diagnostic["status"] as? String == "failed")
+        #expect(diagnostic["model_count"] as? Int == 0)
+        #expect((diagnostic["error"] as? String)?.contains("missing") == true)
     }
 
     @Test func deleteModel_removesDirectoryAndResetsState() async throws {

@@ -585,6 +585,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     method: method,
                     path: path
                 )
+            } else if head.method == .GET, path == "/admin/generation-settings" {
+                handleGenerationSettingsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
+            } else if (head.method == .GET || head.method == .PUT), path == "/admin/runtime-settings" {
+                handleRuntimeSettingsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -763,6 +781,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             let cached = await ModelRuntime.shared.cachedModelSummaries()
             let diagnostics = await MLXBatchAdapter.snapshotDiagnostics()
+            let lastEffectiveGenerationSettings =
+                await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             var aggregate: [String: Int] = [
                 "prefix_hits": 0,
                 "prefix_misses": 0,
@@ -800,6 +820,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
                 row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
+                row["generation_defaults"] = Self.generationDefaultsJSONObject(
+                    LocalGenerationDefaults.defaults(forModelId: summary.name)
+                )
+                if let effective = lastEffectiveGenerationSettings[summary.name] {
+                    row["last_effective_generation"] = Self.effectiveGenerationSettingsJSONObject(effective)
+                } else {
+                    row["last_effective_generation"] = NSNull()
+                }
                 let mlxPress = summary.mlxPressStatus
                 var mlxPressStatus: [String: Any] = [
                     "enabled": mlxPress.enabled,
@@ -991,6 +1019,337 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// `/admin/generation-settings` exposes the bundle-derived defaults and
+    /// the last effective generation settings that were actually submitted to
+    /// vmlx. It intentionally avoids `ModelRuntime` so it remains responsive
+    /// when an in-flight MLX prepare/decode path is blocked.
+    private func handleGenerationSettingsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+
+        runRequestTask(priority: .userInitiated) {
+            let lastEffectiveGenerationSettings =
+                await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
+            var defaultsByModel: [String: Any] = [:]
+            var effectiveByModel: [String: Any] = [:]
+            for modelName in lastEffectiveGenerationSettings.keys.sorted() {
+                defaultsByModel[modelName] = Self.generationDefaultsJSONObject(
+                    LocalGenerationDefaults.defaults(forModelId: modelName)
+                )
+                if let effective = lastEffectiveGenerationSettings[modelName] {
+                    effectiveByModel[modelName] = Self.effectiveGenerationSettingsJSONObject(effective)
+                }
+            }
+
+            let obj: [String: Any] = [
+                "status": "ok",
+                "timestamp": Date().ISO8601Format(),
+                "source": "last effective settings resolved by Osaurus; stage indicates whether they are pending preload or submitted to vmlx BatchEngine",
+                "models": lastEffectiveGenerationSettings.keys.sorted(),
+                "generation_defaults_by_model": defaultsByModel,
+                "last_effective_generation_by_model": effectiveByModel,
+            ]
+            let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    /// `/admin/runtime-settings` is the automation companion for the Server
+    /// Settings panel. GET returns the exact persisted vMLX runtime settings.
+    /// PUT accepts a full `VMLXServerRuntimeSettings` JSON document and applies
+    /// only runtime-scoped changes; network rebinding still belongs to the
+    /// SwiftUI panel / `ServerController` path so an HTTP request cannot
+    /// restart the server out from under itself.
+    private func handleRuntimeSettingsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let parsedBody = head.method == .PUT ? readRequestBody() : nil
+
+        runRequestTask(priority: .userInitiated) {
+            let previous = ServerRuntimeSettingsStore.snapshot()
+
+            if head.method == .GET {
+                let body = Self.runtimeSettingsResponseBody(
+                    settings: previous,
+                    previous: nil,
+                    effects: [:]
+                )
+                let headers: [(String, String)] =
+                    [("Content-Type", "application/json; charset=utf-8")]
+                    + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: version,
+                        status: .ok,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: logMethod,
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: nil,
+                    responseBody: body,
+                    responseStatus: 200,
+                    startTime: logStartTime
+                )
+                return
+            }
+
+            guard let parsedBody, !parsedBody.data.isEmpty else {
+                let body = Self.errorBody(
+                    .openai(type: "invalid_request_error"),
+                    message: "Runtime settings PUT requires a JSON VMLXServerRuntimeSettings body."
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: logMethod,
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: parsedBody?.text,
+                    responseBody: body,
+                    responseStatus: 400,
+                    startTime: logStartTime
+                )
+                return
+            }
+
+            let next: VMLXServerRuntimeSettings
+            do {
+                next = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: parsedBody.data)
+            } catch {
+                let body = Self.errorBody(
+                    .openai(type: "invalid_request_error"),
+                    message: "Invalid runtime settings JSON: \(error.localizedDescription)"
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: logMethod,
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: parsedBody.text,
+                    responseBody: body,
+                    responseStatus: 400,
+                    startTime: logStartTime
+                )
+                return
+            }
+
+            if previous.network != next.network {
+                let body = Self.errorBody(
+                    .openai(type: "invalid_request_error"),
+                    message: "Network runtime settings require the Server Settings panel because they can restart/rebind the HTTP server. Keep network unchanged for /admin/runtime-settings."
+                )
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: logMethod,
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: parsedBody.text,
+                    responseBody: body,
+                    responseStatus: 400,
+                    startTime: logStartTime
+                )
+                return
+            }
+
+            let validationIssues = next.validationIssues()
+            let blockingIssues = validationIssues.filter { $0.severity == .error }
+            guard blockingIssues.isEmpty else {
+                let obj: [String: Any] = [
+                    "error": [
+                        "message": "Runtime settings contain validation errors.",
+                        "type": "invalid_request_error",
+                        "issues": blockingIssues.map(Self.settingsIssueJSONObject),
+                    ] as [String: Any]
+                ]
+                let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
+                let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
+                hop {
+                    logSelf.sendResponse(
+                        context: ctx.value,
+                        version: version,
+                        status: .badRequest,
+                        headers: headers,
+                        body: body
+                    )
+                }
+                logSelf.logRequest(
+                    method: logMethod,
+                    path: logPath,
+                    userAgent: logUserAgent,
+                    requestBody: parsedBody.text,
+                    responseBody: body,
+                    responseStatus: 400,
+                    startTime: logStartTime
+                )
+                return
+            }
+
+            let loadedModelRefreshNeeded =
+                previous.cache != next.cache
+                || previous.multimodal != next.multimodal
+                || previous.mtp != next.mtp
+            let runtimeConfigInvalidated =
+                previous.generation != next.generation
+                || previous.concurrency != next.concurrency
+
+            ServerRuntimeSettingsStore.save(next)
+            if loadedModelRefreshNeeded {
+                await ModelRuntime.shared.clearAll()
+            }
+            if runtimeConfigInvalidated {
+                await ModelRuntime.shared.invalidateConfig()
+            }
+
+            let effects: [String: Any] = [
+                "loaded_model_refresh_needed": loadedModelRefreshNeeded,
+                "runtime_config_invalidated": runtimeConfigInvalidated,
+                "network_restart_rejected": false,
+                "validation_warnings": validationIssues
+                    .filter { $0.severity == .warning }
+                    .map(Self.settingsIssueJSONObject),
+            ]
+            let body = Self.runtimeSettingsResponseBody(
+                settings: next,
+                previous: previous,
+                effects: effects
+            )
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: .ok,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: parsedBody.text,
+                responseBody: body,
+                responseStatus: 200,
+                startTime: logStartTime
+            )
+        }
+    }
+
+    private static func runtimeSettingsResponseBody(
+        settings: VMLXServerRuntimeSettings,
+        previous: VMLXServerRuntimeSettings?,
+        effects: [String: Any]
+    ) -> String {
+        var obj: [String: Any] = [
+            "status": "ok",
+            "timestamp": Date().ISO8601Format(),
+            "settings": runtimeSettingsJSONObject(settings),
+            "effects": effects,
+        ]
+        if let previous {
+            obj["previous_settings"] = runtimeSettingsJSONObject(previous)
+        }
+        let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
+        return data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    private static func runtimeSettingsJSONObject(
+        _ settings: VMLXServerRuntimeSettings
+    ) -> Any {
+        guard let data = try? JSONEncoder().encode(settings),
+            let object = try? JSONSerialization.jsonObject(with: data)
+        else {
+            return [:]
+        }
+        return object
+    }
+
     private static func memorySafetyJSONObject(
         settings: VMLXServerRuntimeSettings,
         plan: VMLXResolvedMemorySafetyPlan,
@@ -1051,6 +1410,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "default_max_kv_size": cache.defaultMaxKVSize as Any? ?? NSNull(),
             "long_prompt_multiplier": cache.longPromptMultiplier,
             "enable_ssm_rederive": cache.enableSSMReDerive,
+        ]
+    }
+
+    private static func generationDefaultsJSONObject(
+        _ defaults: LocalGenerationDefaults.Defaults
+    ) -> [String: Any] {
+        [
+            "max_tokens": defaults.maxTokens as Any? ?? NSNull(),
+            "temperature": defaults.temperature as Any? ?? NSNull(),
+            "top_p": defaults.topP as Any? ?? NSNull(),
+            "top_k": defaults.topK as Any? ?? NSNull(),
+            "min_p": defaults.minP as Any? ?? NSNull(),
+            "repetition_penalty": defaults.repetitionPenalty as Any? ?? NSNull(),
+            "do_sample": defaults.doSample as Any? ?? NSNull(),
+        ]
+    }
+
+    private static func effectiveGenerationSettingsJSONObject(
+        _ settings: MLXBatchAdapter.EffectiveGenerationSettings
+    ) -> [String: Any] {
+        [
+            "stage": settings.stage,
+            "temperature": settings.temperature,
+            "max_tokens": settings.maxTokens,
+            "top_p": settings.topP,
+            "top_k": settings.topK,
+            "min_p": settings.minP,
+            "repetition_penalty": settings.repetitionPenalty as Any? ?? NSNull(),
+            "compiled_batch_decode": settings.compiledBatchDecode,
         ]
     }
 
@@ -5165,7 +5553,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             temperature: req.temperature,
             maxTokens: req.resolvedMaxTokens,
             maxTokensExplicit: req.maxTokens != nil,
-            topPOverride: req.topP
+            topPOverride: req.topP,
+            topKOverride: req.topK
         )
         let promptTokens = TokenEstimator.estimate(prompt)
         let cors = stateRef.value.corsHeaders
@@ -7087,6 +7476,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
 
             let memoryConfig = MemoryConfigurationStore.load()
+            let localModelScan: Any = ModelManager.localModelsScanDiagnosticJSONObject() as Any? ?? NSNull()
             let obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
@@ -7103,6 +7493,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 "sandbox_status": sandboxStatus,
                 "mlx_last_error": mlxLastError,
                 "index_failures": indexFailures,
+                "local_model_scan": localModelScan,
                 "ram_feasibility": ramFeasibility,
                 "persistence": PersistenceHealth.shared.snapshot(),
             ]

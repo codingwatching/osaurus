@@ -44,6 +44,10 @@ struct MLXBatchAdapter {
         await Registry.shared.snapshotDiagnostics()
     }
 
+    static func lastEffectiveGenerationSettingsSnapshot() async -> [String: EffectiveGenerationSettings] {
+        await Registry.shared.lastEffectiveGenerationSettingsSnapshot()
+    }
+
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
     /// consumed by `GenerationEventMapper`, which translates the upstream
     /// events into `ModelRuntimeEvent`. The producer task exists so callers
@@ -63,6 +67,7 @@ struct MLXBatchAdapter {
     }
 
     struct EffectiveGenerationSettings: Equatable, Sendable {
+        let stage: String
         let temperature: Float
         let maxTokens: Int
         let topP: Float
@@ -79,7 +84,8 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        nativeMTPExplicitSamplingFallback: Bool = false
+        nativeMTPExplicitSamplingFallback: Bool = false,
+        stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
@@ -106,6 +112,7 @@ struct MLXBatchAdapter {
         )
 
         return EffectiveGenerationSettings(
+            stage: stage,
             temperature: generation.temperature
                 ?? defaultTemperature
                 ?? runtimeTemperature
@@ -114,7 +121,7 @@ struct MLXBatchAdapter {
                 ? generation.maxTokens
                 : (modelDefaults.maxTokens ?? runtimeMaxTokens ?? generation.maxTokens),
             topP: generation.topPOverride ?? modelDefaults.topP ?? runtimeTopP ?? engineDefaults.topP,
-            topK: modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
+            topK: generation.topKOverride ?? modelDefaults.topK ?? runtimeTopK ?? engineDefaults.topK,
             minP: generation.minPOverride ?? modelDefaults.minP ?? runtimeMinP ?? engineDefaults.minP,
             repetitionPenalty: repetitionPenalty,
             compiledBatchDecode: nativeMTPExplicitSamplingFallback
@@ -123,6 +130,27 @@ struct MLXBatchAdapter {
                     modelName: modelName,
                     maxBatchSize: maxBatchSize
                 )
+        )
+    }
+
+    static func recordPendingEffectiveGenerationSettings(
+        modelName: String,
+        generation: GenerationParameters,
+        runtimeDefaults: VMLXServerGenerationDefaults,
+        maxBatchSize: Int
+    ) async {
+        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let effective = Self.effectiveGenerationSettings(
+            modelName: modelName,
+            generation: generation,
+            runtimeDefaults: runtimeDefaults,
+            maxBatchSize: maxBatchSize,
+            modelDefaults: modelDefaults,
+            stage: "pending_preload"
+        )
+        await Registry.shared.recordEffectiveGenerationSettings(
+            modelName: modelName,
+            settings: effective
         )
     }
 
@@ -184,6 +212,7 @@ struct MLXBatchAdapter {
         }
         guard generation.temperature == 0 else { return false }
         if let topP = generation.topPOverride, topP < 1 { return false }
+        if let topK = generation.topKOverride, topK != 0 { return false }
         if let minP = generation.minPOverride, minP != 0 { return false }
         if let repetitionPenalty = generation.repetitionPenalty,
             repetitionPenalty != 0,
@@ -271,6 +300,7 @@ struct MLXBatchAdapter {
         /// invariant the coalescer enforces.
         private let coalescer = TaskCoalescer<BatchEngine>()
         private var nativeMTPWarmModels: Set<String> = []
+        private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
 
         /// Returns the cached engine for `modelName`, creating it on first
         /// use from the supplied `ModelContainer`. The container's existing
@@ -372,6 +402,17 @@ struct MLXBatchAdapter {
         /// has not yet completed.
         internal func registrySnapshot() async -> (resolved: Int, inFlight: Int, draining: Int) {
             await coalescer.snapshot()
+        }
+
+        func recordEffectiveGenerationSettings(
+            modelName: String,
+            settings: EffectiveGenerationSettings
+        ) {
+            lastEffectiveGenerationSettings[modelName] = settings
+        }
+
+        func lastEffectiveGenerationSettingsSnapshot() -> [String: EffectiveGenerationSettings] {
+            lastEffectiveGenerationSettings
         }
 
         /// Aggregate live BatchEngine diagnostics across every resolved
@@ -820,14 +861,20 @@ struct MLXBatchAdapter {
             return context
         }
         if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                context["enable_thinking"] = false
+                return context
+            }
             if directRailReasoningEffort {
                 context["enable_thinking"] = false
                 return context
             }
-            if hasPositiveReasoningEffort, let normalizedReasoningEffort {
+            if let disableThinking {
+                context["enable_thinking"] = !disableThinking
+            } else if hasPositiveReasoningEffort, let normalizedReasoningEffort {
                 context["enable_thinking"] = true
                 context["reasoning_effort"] = normalizedReasoningEffort
-            } else {
+            } else if normalizedReasoningEffort != nil {
                 context["enable_thinking"] = false
             }
             return context
@@ -993,7 +1040,12 @@ struct MLXBatchAdapter {
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback
+            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            stage: "submitted_to_batch_engine"
+        )
+        await Registry.shared.recordEffectiveGenerationSettings(
+            modelName: modelName,
+            settings: effective
         )
         var mlxParams = ModelRuntime.makeGenerateParameters(
             temperature: effective.temperature,

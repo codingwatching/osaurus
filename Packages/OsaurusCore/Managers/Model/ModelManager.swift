@@ -1075,7 +1075,7 @@ extension ModelManager {
 
     /// Find an installed model by user-provided name.
     /// Accepts repo name (case-insensitive) or full id (case-insensitive).
-    nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
+    nonisolated static func findInstalledMLXModel(named name: String) -> MLXModel? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let models = discoverLocalModels()
@@ -1084,18 +1084,26 @@ extension ModelManager {
         if let match = models.first(where: { m in
             m.id.split(separator: "/").last.map(String.init)?.lowercased() == trimmed.lowercased()
         }) {
-            let repo =
-                match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
-            return (repo, match.id)
+            return match
         }
 
         // Try full id match
         if let match = models.first(where: { m in m.id.lowercased() == trimmed.lowercased() }) {
-            let repo =
-                match.id.split(separator: "/").last.map(String.init)?.lowercased() ?? trimmed.lowercased()
-            return (repo, match.id)
+            return match
         }
         return nil
+    }
+
+    /// Find an installed model by user-provided name, returning the canonical
+    /// picker key and model id. Callers that need files inside the bundle must
+    /// use `findInstalledMLXModel(named:)` and `MLXModel.localDirectory` so
+    /// externally-discovered and symlinked bundles keep their real path.
+    nonisolated static func findInstalledModel(named name: String) -> (name: String, id: String)? {
+        guard let match = findInstalledMLXModel(named: name) else { return nil }
+        let repo =
+            match.id.split(separator: "/").last.map(String.init)?.lowercased()
+                ?? name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return (repo, match.id)
     }
 }
 
@@ -1432,6 +1440,9 @@ extension ModelManager {
     private static nonisolated(unsafe) var cachedLocalModels: [MLXModel]?
     private static nonisolated(unsafe) var localModelsScanInFlight = false
     private static nonisolated let localModelsScanWaitLimit: TimeInterval = 10
+    private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
+    nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
+    nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
 
     nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1441,6 +1452,13 @@ extension ModelManager {
         localModelsCacheCondition.unlock()
         LocalReasoningCapability.invalidate()
         LocalGenerationDefaults.invalidate()
+    }
+
+    nonisolated static func localModelsScanDiagnosticJSONObject() -> [String: Any]? {
+        localModelsCacheCondition.lock()
+        let diagnostic = lastLocalModelsScanDiagnostic
+        localModelsCacheCondition.unlock()
+        return diagnostic
     }
 
     /// Run the blocking local-model discovery off the main actor.
@@ -1476,12 +1494,14 @@ extension ModelManager {
         }
 
         if localModelsScanInFlight {
-            let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(localModelsScanWaitLimit)) ?? []
+            let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+            let cached = waitForLocalModelsScan(until: Date().addingTimeInterval(waitLimit)) ?? []
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         }
 
-        let deadline = Date().addingTimeInterval(localModelsScanWaitLimit)
+        let waitLimit = localModelsScanWaitLimitOverrideForTests ?? localModelsScanWaitLimit
+        let deadline = Date().addingTimeInterval(waitLimit)
         localModelsScanInFlight = true
         DispatchQueue.global(qos: .utility).async {
             let scanned = scanLocalModels()
@@ -1497,9 +1517,6 @@ extension ModelManager {
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
         } else {
-            if cachedLocalModels == nil {
-                cachedLocalModels = []
-            }
             let cached = cachedLocalModels ?? []
             localModelsCacheCondition.unlock()
             return mergeExternalModels(into: cached)
@@ -1518,7 +1535,11 @@ extension ModelManager {
     }
 
     private nonisolated static func scanLocalModels() -> [MLXModel] {
-        return scanLocalModels(at: DirectoryPickerService.effectiveModelsDirectory())
+        let root = DirectoryPickerService.effectiveModelsDirectory()
+        if let override = scanLocalModelsOverrideForTests {
+            return override(root)
+        }
+        return scanLocalModels(at: root)
     }
 
     /// Internal entry point used by tests so they can supply a fixture root.
@@ -1527,17 +1548,41 @@ extension ModelManager {
     internal nonisolated static func scanLocalModels(at root: URL) -> [MLXModel] {
         let fm = FileManager.default
         var rootIsDir: ObjCBool = false
-        guard fm.fileExists(atPath: root.path, isDirectory: &rootIsDir), rootIsDir.boolValue else {
+        let rootExists = fm.fileExists(atPath: root.path, isDirectory: &rootIsDir)
+        let rootReadable = access(root.path, R_OK | X_OK) == 0
+
+        func publishDiagnostic(status: String, modelCount: Int, error: String?, currentPath: String? = nil) {
+            let diagnostic: [String: Any] = [
+                "root": root.path,
+                "root_exists": rootExists,
+                "root_is_directory": rootExists && rootIsDir.boolValue,
+                "root_readable": rootReadable,
+                "status": status,
+                "current_path": currentPath as Any? ?? NSNull(),
+                "model_count": modelCount,
+                "error": error as Any? ?? NSNull(),
+                "scanned_at": Date().ISO8601Format(),
+            ]
+            localModelsCacheCondition.lock()
+            lastLocalModelsScanDiagnostic = diagnostic
+            localModelsCacheCondition.unlock()
+        }
+        publishDiagnostic(status: "started", modelCount: 0, error: nil)
+
+        guard rootExists, rootIsDir.boolValue else {
+            publishDiagnostic(status: "failed", modelCount: 0, error: "Model root is missing or is not a directory.")
             return []
         }
 
         var models: [MLXModel] = []
+        var scanError: String?
 
         func exists(_ base: URL, _ name: String) -> Bool {
             access(base.appendingPathComponent(name).path, F_OK) == 0
         }
 
         func directoryEntryNames(_ dir: URL) -> [String]? {
+            errno = 0
             guard let handle = opendir(dir.path) else { return nil }
             defer { closedir(handle) }
 
@@ -1646,9 +1691,20 @@ extension ModelManager {
         // and try the same heuristic at the next level. Maximum depth of 3 keeps the scan bounded
         // — anything deeper is treated as not-a-bundle.
         func scanDir(_ root: URL, prefix: [String], maxDepth: Int) {
+            publishDiagnostic(status: "enumerating", modelCount: models.count, error: nil, currentPath: root.path)
             guard maxDepth > 0,
                 let entryNames = directoryEntryNames(root)
-            else { return }
+            else {
+                if prefix.isEmpty {
+                    let code = errno
+                    let message =
+                        code == 0
+                        ? "Unable to enumerate model root."
+                        : String(cString: strerror(code))
+                    scanError = "Unable to enumerate model root: \(message)"
+                }
+                return
+            }
 
             let modelCountBeforeDirectPass = models.count
             for entryName in entryNames where !entryName.hasPrefix(".") {
@@ -1698,6 +1754,7 @@ extension ModelManager {
                 unique.append(m)
             }
         }
+        publishDiagnostic(status: scanError == nil ? "finished" : "failed", modelCount: unique.count, error: scanError)
         return unique
     }
 }

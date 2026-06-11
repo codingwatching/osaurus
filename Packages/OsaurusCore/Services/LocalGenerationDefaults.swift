@@ -46,6 +46,7 @@
 //
 
 import Foundation
+import Darwin
 
 enum LocalGenerationDefaults {
 
@@ -129,9 +130,7 @@ enum LocalGenerationDefaults {
 
     private static func loadJangConfigDefaults(at dir: URL) -> Defaults {
         let url = dir.appendingPathComponent("jang_config.json")
-        guard FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url)
-        else {
+        guard let data = readSmallConfigFile(url) else {
             return .empty
         }
         return parseJangConfig(data: data)
@@ -139,21 +138,44 @@ enum LocalGenerationDefaults {
 
     private static func loadHuggingFaceGenerationDefaults(at dir: URL) -> Defaults {
         let url = dir.appendingPathComponent("generation_config.json")
-        guard FileManager.default.fileExists(atPath: url.path),
-            let data = try? Data(contentsOf: url)
-        else {
+        guard let data = readSmallConfigFile(url) else {
             return .empty
         }
         return parse(data: data)
     }
 
+    private static func readSmallConfigFile(_ url: URL, maxBytes: Int = 1_048_576) -> Data? {
+        let path = url.path
+        return path.withCString { rawPath in
+            let fd = Darwin.open(rawPath, O_RDONLY | O_CLOEXEC)
+            guard fd >= 0 else { return nil }
+            defer { Darwin.close(fd) }
+
+            var statBuffer = stat()
+            guard Darwin.fstat(fd, &statBuffer) == 0,
+                (statBuffer.st_mode & S_IFMT) == S_IFREG,
+                statBuffer.st_size >= 0,
+                statBuffer.st_size <= maxBytes
+            else {
+                return nil
+            }
+
+            var data = Data(count: Int(statBuffer.st_size))
+            let count = data.count
+            guard count > 0 else { return Data() }
+            let readCount = data.withUnsafeMutableBytes { bytes in
+                Darwin.read(fd, bytes.baseAddress, count)
+            }
+            guard readCount == count else { return nil }
+            return data
+        }
+    }
+
     private static func localDirectory(forModelId modelId: String) -> URL? {
-        guard let found = ModelManager.findInstalledModel(named: modelId) else {
+        guard let found = ModelManager.findInstalledMLXModel(named: modelId) else {
             return nil
         }
-        let parts = found.id.split(separator: "/").map(String.init)
-        let base = DirectoryPickerService.effectiveModelsDirectory()
-        return parts.reduce(base) { $0.appendingPathComponent($1, isDirectory: true) }
+        return found.localDirectory
     }
 
     // MARK: - Parsers

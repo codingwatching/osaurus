@@ -270,6 +270,7 @@ struct MLXBatchAdapterTests {
             maxTokens: 128,
             maxTokensExplicit: true,
             topPOverride: 0.5,
+            topKOverride: 32,
             minPOverride: 0.01,
             repetitionPenalty: 1.02
         )
@@ -294,7 +295,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.temperature == 0.2)
         #expect(effective.maxTokens == 128)
         #expect(effective.topP == 0.5)
-        #expect(effective.topK == 40)
+        #expect(effective.topK == 32)
         #expect(effective.minP == 0.01)
         #expect(effective.repetitionPenalty == 1.02)
     }
@@ -375,6 +376,7 @@ struct MLXBatchAdapterTests {
             maxTokens: 128,
             maxTokensExplicit: true,
             topPOverride: nil,
+            topKOverride: 32,
             minPOverride: nil,
             repetitionPenalty: nil
         )
@@ -405,7 +407,7 @@ struct MLXBatchAdapterTests {
         #expect(effectiveDraftStrategy == nil)
         #expect(effective.temperature == 0.7)
         #expect(effective.topP == 0.95)
-        #expect(effective.topK == 20)
+        #expect(effective.topK == 32)
         #expect(effective.repetitionPenalty == nil)
         #expect(effective.compiledBatchDecode == false)
     }
@@ -1373,7 +1375,7 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    @Test func additionalContext_defaultsMiMoN2JANGThinkingOffButHonorsExplicitOptIn() {
+    @Test func additionalContext_letsMiMoN2JANGUseBundleDefaultButControlsRequiredTools() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -1391,8 +1393,34 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "MiMo/N2 JANG text/tool rows should default to the no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "MiMo/N2 JANG follow-ups must use the bundle default unless the user or tool-choice contract overrides it: \(modelName)"
+            )
+
+            let required = MLXBatchAdapter.additionalContext(
+                for: unspecified,
+                modelName: modelName,
+                toolChoice: .required,
+                toolChoiceName: "line_count"
+            )
+            #expect(
+                required["enable_thinking"] as? Bool == false,
+                "MiMo/N2 required tool turns still use the direct tool-call rail: \(modelName)"
+            )
+            #expect(required["tool_choice"] as? String == "required")
+            #expect(required["tool_choice_name"] as? String == "line_count")
+
+            let userDisabled = MLXBatchAdapter.additionalContext(
+                for: GenerationParameters(
+                    temperature: nil,
+                    maxTokens: 16,
+                    modelOptions: ["disableThinking": .bool(true)]
+                ),
+                modelName: modelName
+            )
+            #expect(
+                userDisabled["enable_thinking"] as? Bool == false,
+                "MiMo/N2 must honor explicit thinking-off requests: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
