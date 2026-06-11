@@ -556,6 +556,13 @@ final class ExternalPlugin: @unchecked Sendable {
     /// `dbOpenLogLock` in `PluginHostContext`.
     private let isShutDown = OSAllocatedUnfairLock<Bool>(initialState: false)
 
+    /// One-shot latch guarding `destroy(ctx)`. `isShutDown` is flipped mid-drain
+    /// (on `configEventQueue`) rather than once at the end, so it can no longer
+    /// double as the "have we destroyed yet" dedup — concurrent shutdown
+    /// attempts (PluginManager hot reload, etc.) each drain and await, but only
+    /// the winner of this latch frees `ctx`.
+    private let didDestroy = OSAllocatedUnfairLock<Bool>(initialState: false)
+
     /// Per-plugin concurrent queue for C ABI calls. Each plugin gets its own
     /// queue so that long-running operations (e.g. agentic inference) in one
     /// plugin don't block other plugins or additional requests to the same plugin.
@@ -695,19 +702,31 @@ final class ExternalPlugin: @unchecked Sendable {
             }
             // configEventQueue is serial, so a plain async tail-blocks
             // until every queued on_config_changed callback has returned.
+            // Flip `isShutDown` from *inside* this drain marker rather than
+            // synchronously at the top of `shutdown()`. Because the queue is
+            // serial and in-order, every delivery enqueued before teardown
+            // runs first (latch still false → delivered, `ctx` still valid),
+            // and only a delivery enqueued *after* this marker — a
+            // `notifyConfigBatch` racing teardown — sees the latch and
+            // early-returns at its guard. That closes the use-after-free
+            // (a late `configFn(freed ctx)` after `destroy` runs on
+            // `invokeQueue`) without dropping deliveries that were already
+            // in flight, which the queue drain is here to guarantee.
             group.enter()
-            configEventQueue.async { group.leave() }
+            configEventQueue.async { [self] in
+                self.isShutDown.withLock { $0 = true }
+                group.leave()
+            }
             group.notify(flags: .barrier, queue: self.invokeQueue) { [self] in
-                // Flip the latch atomically. `firstShutdown` is true only
-                // for the caller that won the race; all other concurrent
-                // shutdown attempts (re-entry from PluginManager hot
-                // reload, etc.) become no-ops. Pre-existing behavior.
-                let firstShutdown = self.isShutDown.withLock { wasDown -> Bool in
-                    if wasDown { return false }
-                    wasDown = true
+                // Destroy exactly once. Concurrent shutdown attempts (re-entry
+                // from PluginManager hot reload, etc.) all drain and await here,
+                // but only the winner of `didDestroy` frees `ctx`.
+                let shouldDestroy = self.didDestroy.withLock { done -> Bool in
+                    if done { return false }
+                    done = true
                     return true
                 }
-                guard firstShutdown else {
+                guard shouldDestroy else {
                     continuation.resume()
                     return
                 }
