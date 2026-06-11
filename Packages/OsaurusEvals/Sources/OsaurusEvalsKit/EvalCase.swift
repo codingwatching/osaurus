@@ -114,6 +114,26 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `expect.agentLoop` assertions against the resulting tree, and
         /// deletes the directory afterwards. Other domains ignore this.
         public let workspaceFiles: [WorkspaceFile]?
+        /// Per-case agent capability flags for `agent_loop` cases. When
+        /// present, the runner registers a TEMPORARY agent carrying these
+        /// flags (and a `reactive` schedule preset so self-scheduling
+        /// isn't quiet-hours-clamped mid-eval), runs the loop under that
+        /// agent's id so `AgentConfigSnapshot` / prompt gating / tool
+        /// resolution see the flags exactly as production would, then
+        /// deletes the agent — including its per-agent database and
+        /// scheduler rows (`AgentStore.delete` cleans both). Other
+        /// domains ignore this.
+        public let agentCapabilities: AgentCapabilitiesFixture?
+        /// Live-sandbox fixture for `agent_loop` cases. PRESENCE of this
+        /// block switches the case into sandbox execution mode: the
+        /// runner installs a temporary eval agent with `autonomousExec`
+        /// built from these flags, boots/provisions the Linux VM, seeds
+        /// the agent's VM home + secrets, and the evaluator composes with
+        /// `executionMode: .sandbox(...)` instead of `.hostFolder`. Cases
+        /// are SKIPPED (not failed) when the host has no working sandbox
+        /// (`SandboxManager.checkAvailability` fails or setup is
+        /// incomplete) — same semantics as `requirePlugins`.
+        public let sandbox: SandboxFixture?
 
         public init(
             requirePlugins: [String]? = nil,
@@ -121,7 +141,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             enableSkills: [String]? = nil,
             enableTools: [String]? = nil,
             ensureToolsDisabled: [String]? = nil,
-            workspaceFiles: [WorkspaceFile]? = nil
+            workspaceFiles: [WorkspaceFile]? = nil,
+            agentCapabilities: AgentCapabilitiesFixture? = nil,
+            sandbox: SandboxFixture? = nil
         ) {
             self.requirePlugins = requirePlugins
             self.seedMethods = seedMethods
@@ -129,6 +151,114 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.enableTools = enableTools
             self.ensureToolsDisabled = ensureToolsDisabled
             self.workspaceFiles = workspaceFiles
+            self.agentCapabilities = agentCapabilities
+            self.sandbox = sandbox
+        }
+    }
+
+    /// Sandbox-mode fixture for `agent_loop` cases. Every flag maps onto
+    /// the eval agent's `AutonomousExecConfig`; omitted fields use the
+    /// production defaults for an autonomous-enabled agent (commands
+    /// capped at 10/turn, plugin creation on, host secret reads refused,
+    /// network on, background jobs off).
+    public struct SandboxFixture: Sendable, Codable {
+        /// Allow `sandbox_plugin_register` (AutonomousExecConfig.pluginCreate).
+        public let pluginCreate: Bool?
+        /// Expose `sandbox_exec(background:true)` + `sandbox_process`.
+        public let backgroundProcessEnabled: Bool?
+        /// Outbound network from the VM (honored at boot — flipping it
+        /// per-case does NOT restart an already-running container).
+        public let networkEnabled: Bool?
+        /// Combined mode only: let host read tools open secret-shaped
+        /// files (`.env`, keys) in the read-only host workspace.
+        public let allowHostSecretReads: Bool?
+        /// `sandbox_exec` per-turn call budget.
+        public let maxCommandsPerTurn: Int?
+        /// Combined mode: the case's temp workspace (with
+        /// `workspaceFiles`) becomes the READ-ONLY host context —
+        /// `file_read` / `file_search` stay host-side while writes and
+        /// execution happen in the VM (`ExecutionMode.sandbox(hostRead:)`).
+        /// Default false → pure sandbox mode (no host folder tools).
+        public let hostFolder: Bool?
+        /// Files written into the eval agent's VM home BEFORE the run
+        /// (via guest-side exec, so ownership matches the agent user).
+        /// `path` is relative to the agent home.
+        public let seedFiles: [WorkspaceFile]?
+        /// Secrets pre-seeded into `AgentSecretsKeychain` for the eval
+        /// agent (deleted after the case). Headless note: cases must use
+        /// this (or pass `value` to `sandbox_secret_set`) — the no-value
+        /// prompt flow can only be answered from ChatView.
+        public let seedSecrets: [SeedSecret]?
+
+        public init(
+            pluginCreate: Bool? = nil,
+            backgroundProcessEnabled: Bool? = nil,
+            networkEnabled: Bool? = nil,
+            allowHostSecretReads: Bool? = nil,
+            maxCommandsPerTurn: Int? = nil,
+            hostFolder: Bool? = nil,
+            seedFiles: [WorkspaceFile]? = nil,
+            seedSecrets: [SeedSecret]? = nil
+        ) {
+            self.pluginCreate = pluginCreate
+            self.backgroundProcessEnabled = backgroundProcessEnabled
+            self.networkEnabled = networkEnabled
+            self.allowHostSecretReads = allowHostSecretReads
+            self.maxCommandsPerTurn = maxCommandsPerTurn
+            self.hostFolder = hostFolder
+            self.seedFiles = seedFiles
+            self.seedSecrets = seedSecrets
+        }
+    }
+
+    /// One secret to seed into the eval agent's keychain for a sandbox
+    /// case run. `key` is the env-var name the model checks/uses.
+    public struct SeedSecret: Sendable, Codable {
+        public let key: String
+        public let value: String
+
+        public init(key: String, value: String) {
+            self.key = key
+            self.value = value
+        }
+    }
+
+    /// Opt-in capability flags for the temporary eval agent an
+    /// `agent_loop` case runs under. Every field defaults to the
+    /// production default (off) when omitted, so existing cases keep
+    /// running under a plain ephemeral agent.
+    public struct AgentCapabilitiesFixture: Sendable, Codable {
+        /// Expose the `db_*` agent-database tool family.
+        public let dbEnabled: Bool?
+        /// Expose `schedule_next_run` / `cancel_next_run` / `notify`.
+        public let selfSchedulingEnabled: Bool?
+        /// Expose the `render_chart` tool.
+        public let renderChartEnabled: Bool?
+        /// Expose the `speak` tool.
+        public let speakEnabled: Bool?
+        /// Expose the `search_memory` recall tool.
+        public let searchMemoryEnabled: Bool?
+
+        public init(
+            dbEnabled: Bool? = nil,
+            selfSchedulingEnabled: Bool? = nil,
+            renderChartEnabled: Bool? = nil,
+            speakEnabled: Bool? = nil,
+            searchMemoryEnabled: Bool? = nil
+        ) {
+            self.dbEnabled = dbEnabled
+            self.selfSchedulingEnabled = selfSchedulingEnabled
+            self.renderChartEnabled = renderChartEnabled
+            self.speakEnabled = speakEnabled
+            self.searchMemoryEnabled = searchMemoryEnabled
+        }
+
+        /// True when any flag is explicitly enabled — the runner only
+        /// pays the temp-agent setup cost when something is on.
+        public var requestsAnyCapability: Bool {
+            (dbEnabled ?? false) || (selfSchedulingEnabled ?? false)
+                || (renderChartEnabled ?? false) || (speakEnabled ?? false)
+                || (searchMemoryEnabled ?? false)
         }
     }
 
@@ -298,6 +428,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let allowedExits: [String]?
         /// Workspace file assertions, checked after the loop ends.
         public let files: [FileAssertion]?
+        /// Sandbox-home file assertions for cases with
+        /// `fixtures.sandbox`. Same shape as `files`, but paths resolve
+        /// against the eval agent's VM home dir READ FROM THE HOST via
+        /// the VirtioFS mount (`~/.osaurus/container/workspace/agents/
+        /// <agent>/`) — no guest exec needed to score.
+        public let sandboxFiles: [FileAssertion]?
         /// Commands run in the workspace after the loop ends; each must
         /// exit with its `expectExitCode`.
         public let commands: [CommandAssertion]?
@@ -320,6 +456,28 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// call (or before the run ends, when there is no `complete`) —
         /// pins "mark items done as you go", not just "made a list once".
         public let todoUpdatedBeforeComplete: Bool?
+        /// Ordered-subsequence assertion: these tool names must appear in
+        /// the transcript IN THIS ORDER (other calls may interleave).
+        /// Pins procedures where order matters (todo before edits, backup
+        /// before mutate, db insert before query, artifact before complete).
+        public let mustCallToolsInOrder: [String]?
+        /// Artifact-delivery assertion: at least `minCount` (default 1)
+        /// successful `share_artifact` calls whose result parses as a real
+        /// artifact envelope (`Artifact shared:` header), optionally
+        /// pinning the shared filename and requiring a description.
+        public let artifactShared: ArtifactSharedAssertion?
+        /// Self-scheduling outcome: a `schedule_next_run` write must have
+        /// landed in the scheduler store for the run's agent (checked
+        /// post-run via `LocalAgentBridge.nextRun`). Requires
+        /// `fixtures.agentCapabilities.selfSchedulingEnabled`.
+        public let scheduledRun: ScheduledRunAssertion?
+        /// Post-run SQL checks against the run agent's database. Requires
+        /// `fixtures.agentCapabilities.dbEnabled`. Each query runs through
+        /// the same `LocalAgentBridge` the `db_*` tools use.
+        public let dbState: [DbStateAssertion]?
+        /// Per-tool transcript hygiene audits (call-count bounds, error
+        /// ceilings, argument substrings). The folder-tool discipline lane.
+        public let toolUsageAudit: [ToolUsageAudit]?
 
         public init(
             maxIterations: Int? = nil,
@@ -333,12 +491,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             expectCompaction: Bool? = nil,
             allowedExits: [String]? = nil,
             files: [FileAssertion]? = nil,
+            sandboxFiles: [FileAssertion]? = nil,
             commands: [CommandAssertion]? = nil,
             finalTextContains: [String]? = nil,
             rubric: [String]? = nil,
             contextWindowOverride: Int? = nil,
             stopOnToolRejection: Bool? = nil,
-            todoUpdatedBeforeComplete: Bool? = nil
+            todoUpdatedBeforeComplete: Bool? = nil,
+            mustCallToolsInOrder: [String]? = nil,
+            artifactShared: ArtifactSharedAssertion? = nil,
+            scheduledRun: ScheduledRunAssertion? = nil,
+            dbState: [DbStateAssertion]? = nil,
+            toolUsageAudit: [ToolUsageAudit]? = nil
         ) {
             self.maxIterations = maxIterations
             self.mustCallTools = mustCallTools
@@ -351,12 +515,18 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.expectCompaction = expectCompaction
             self.allowedExits = allowedExits
             self.files = files
+            self.sandboxFiles = sandboxFiles
             self.commands = commands
             self.finalTextContains = finalTextContains
             self.rubric = rubric
             self.contextWindowOverride = contextWindowOverride
             self.stopOnToolRejection = stopOnToolRejection
             self.todoUpdatedBeforeComplete = todoUpdatedBeforeComplete
+            self.mustCallToolsInOrder = mustCallToolsInOrder
+            self.artifactShared = artifactShared
+            self.scheduledRun = scheduledRun
+            self.dbState = dbState
+            self.toolUsageAudit = toolUsageAudit
         }
 
         /// One workspace-file assertion. `path` is relative to the
@@ -391,6 +561,94 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             public init(command: String, expectExitCode: Int) {
                 self.command = command
                 self.expectExitCode = expectExitCode
+            }
+        }
+
+        /// Artifact-delivery assertion. A qualifying call is a
+        /// `share_artifact` transcript entry whose result was NOT an
+        /// error envelope and whose result text carries the artifact
+        /// header (`Artifact shared:`). `filenameContains` matches the
+        /// reported `Filename:` line; `descriptionRequired` demands a
+        /// `Description:` line (i.e. the model passed `description`).
+        public struct ArtifactSharedAssertion: Sendable, Codable {
+            public let minCount: Int?
+            public let filenameContains: String?
+            public let descriptionRequired: Bool?
+
+            public init(
+                minCount: Int? = nil,
+                filenameContains: String? = nil,
+                descriptionRequired: Bool? = nil
+            ) {
+                self.minCount = minCount
+                self.filenameContains = filenameContains
+                self.descriptionRequired = descriptionRequired
+            }
+        }
+
+        /// Self-scheduling outcome assertion, checked against the
+        /// scheduler store after the loop ends (not just the transcript —
+        /// a clamped/rejected `schedule_next_run` would still appear in
+        /// the transcript but never land a row).
+        public struct ScheduledRunAssertion: Sendable, Codable {
+            /// Substring the persisted next-run `instructions` must contain.
+            public let instructionsContain: String?
+
+            public init(instructionsContain: String? = nil) {
+                self.instructionsContain = instructionsContain
+            }
+        }
+
+        /// One post-run SQL check against the run agent's database.
+        /// `expectRowCountAtLeast` floors the returned row count;
+        /// `expectFirstValue` string-compares the first column of the
+        /// first row (numbers compared by canonical string form).
+        public struct DbStateAssertion: Sendable, Codable {
+            public let sql: String
+            public let expectRowCountAtLeast: Int?
+            public let expectFirstValue: String?
+
+            public init(
+                sql: String,
+                expectRowCountAtLeast: Int? = nil,
+                expectFirstValue: String? = nil
+            ) {
+                self.sql = sql
+                self.expectRowCountAtLeast = expectRowCountAtLeast
+                self.expectFirstValue = expectFirstValue
+            }
+        }
+
+        /// Per-tool transcript hygiene audit. Counts include dedupe
+        /// replays (they're processed calls the model asked for);
+        /// `maxErrors` counts error envelopes returned by the tool.
+        /// `argsMustContain` requires at least one call whose arguments
+        /// contain the substring; `argsMustNotContain` forbids the
+        /// substring across every call to the tool (e.g. `shell_run`
+        /// args must never contain `cat ` when `file_read` is the
+        /// sanctioned read path).
+        public struct ToolUsageAudit: Sendable, Codable {
+            public let tool: String
+            public let maxCalls: Int?
+            public let minCalls: Int?
+            public let maxErrors: Int?
+            public let argsMustContain: String?
+            public let argsMustNotContain: String?
+
+            public init(
+                tool: String,
+                maxCalls: Int? = nil,
+                minCalls: Int? = nil,
+                maxErrors: Int? = nil,
+                argsMustContain: String? = nil,
+                argsMustNotContain: String? = nil
+            ) {
+                self.tool = tool
+                self.maxCalls = maxCalls
+                self.minCalls = minCalls
+                self.maxErrors = maxErrors
+                self.argsMustContain = argsMustContain
+                self.argsMustNotContain = argsMustNotContain
             }
         }
     }
