@@ -37,6 +37,7 @@ reject_text() {
 CACHE_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/CacheSection.swift"
 CONCURRENCY_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/ConcurrencySection.swift"
 MTP_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/MTPSection.swift"
+MEMORY_SAFETY_UI="$ROOT/Packages/OsaurusCore/Views/Settings/ServerSettings/MemorySafetySection.swift"
 STORE="$ROOT/Packages/OsaurusCore/Models/Configuration/ServerRuntimeSettingsStore.swift"
 RUNTIME="$ROOT/Packages/OsaurusCore/Services/ModelRuntime.swift"
 CONTROLLER="$ROOT/Packages/OsaurusCore/Networking/ServerController.swift"
@@ -47,6 +48,7 @@ for pair in \
   "$CACHE_UI:CacheSection" \
   "$CONCURRENCY_UI:ConcurrencySection" \
   "$MTP_UI:MTPSection" \
+  "$MEMORY_SAFETY_UI:MemorySafetySection" \
   "$STORE:ServerRuntimeSettingsStore" \
   "$RUNTIME:ModelRuntime" \
   "$CONTROLLER:ServerController" \
@@ -94,6 +96,20 @@ require_text "$MTP_UI" 'Auto uses it only when the model ships a verified native
   "UI describes MTP auto-detect contract"
 require_text "$MTP_UI" 'value: \$draft\.mtp\.draftTokenLimit' \
   "UI exposes MTP draft token limit"
+require_text "$MEMORY_SAFETY_UI" 'selection: \$draft\.memorySafety\.mode' \
+  "UI exposes memory-safety mode"
+require_text "$MEMORY_SAFETY_UI" 'draft\.memorySafety\.slider' \
+  "UI exposes memory-safety slider"
+require_text "$MEMORY_SAFETY_UI" 'draft\.resolvedMemorySafetyPlan' \
+  "UI shows resolved memory-safety plan"
+require_text "$MEMORY_SAFETY_UI" 'value: \$draft\.memorySafety\.customPhysicalMemoryFraction' \
+  "UI exposes memory-safety custom load fraction"
+require_text "$MEMORY_SAFETY_UI" 'customAllocatorCacheBytes' \
+  "UI exposes memory-safety allocator cache cap"
+require_text "$MEMORY_SAFETY_UI" 'value: \$draft\.memorySafety\.customDefaultMaxKVSize' \
+  "UI exposes memory-safety KV cap"
+require_text "$MEMORY_SAFETY_UI" 'value: \$draft\.memorySafety\.customMaxConcurrentSequences' \
+  "UI exposes memory-safety concurrency cap"
 
 echo "--- persisted automatic defaults ---"
 require_text "$STORE" 'continuousBatching: true' \
@@ -144,6 +160,18 @@ require_text "$RUNTIME" 'settings\.resolvedLoadConfiguration' \
   "runtime consumes MTP load configuration"
 require_text "$RUNTIME" 'settings\.resolvedMTPDraftStrategy' \
   "runtime consumes MTP draft strategy"
+require_text "$RUNTIME" 'resolveMemorySafetyLoadPlan' \
+  "runtime resolves memory-safety plan for model loads"
+require_text "$RUNTIME" 'memorySafetyPlan\.loadConfiguration' \
+  "runtime applies memory-safety load configuration"
+require_text "$RUNTIME" 'memorySafety=\\\(mtpPlan\.memorySafetySummary' \
+  "runtime logs resolved memory-safety summary during load"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"memory_safety": Self\.memorySafetyJSONObject' \
+  "cache stats expose memory-safety status"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"display_summary": plan\.displaySummary' \
+  "memory-safety status exposes display summary"
+require_text "$ROOT/Packages/OsaurusCore/Networking/HTTPHandler.swift" '"memory_status": memoryStatusJSONObject' \
+  "memory-safety status exposes live memory status"
 require_text "$ADAPTER" 'turboQuantCompressions' \
   "runtime diagnostics report TurboQuant compression count"
 require_text "$ADAPTER" 'nativeMTPDepthSummary' \
