@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.18</title>
+            <pubDate>Thu, 11 Jun 2026 17:03:01 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.18</sparkle:version>
+            <sparkle:shortVersionString>0.19.18</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.18/Osaurus-0.19.18.dmg" length="52397730" type="application/octet-stream" sparkle:edSignature="+r5PqOh4HIhy2pwo61IPwgeDkWQ+42U0kp2kozzk35L49lt5Zv3yWArwHAl30aOg8iFjthkSxrz2b+Ux8adHCg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- updated chinese translations (#1466) by @ftzahao
+- Document Gemma checkpoint memory safety contract (#1462) by @jjang-ai
+- Apply memory safety plan to model loads (#1461) by @jjang-ai
+- disabled whats new modal (#1458) by @RaajeevChandran
+- Expose memory safety status in cache stats (#1460) by @jjang-ai
+- Pin vMLX memory safety contract (#1456) by @jjang-ai
+- Expose native MTP runtime status (#1455) by @jjang-ai
+- Make RAM pressure advisory for local model loads (#1454) by @jjang-ai
+- Keep local model discovery responsive (#1453) by @jjang-ai
+- Guard Gemma4 required tool failures (#1450) by @jjang-ai
+- fixed v5 memory migration aborting on a foreign key constraint (#1452) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fixed quit and plugin teardown crashes (#1463) by @RaajeevChandran
+- fixed main thread disk hangs (#1457) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- added frontier evals and improved harness stability (#1464) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.17...0.19.18
+]]></description>
+        </item>
+        <item>
             <title>0.19.17</title>
             <pubDate>Wed, 10 Jun 2026 15:22:40 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
