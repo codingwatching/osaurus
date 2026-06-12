@@ -603,7 +603,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "020ec0d5f96cc158dd82ea1973cae66c0b70face"
+        let expectedRuntimeHardenedRevision = "1ab081eb1d51568ae636f64b9ac76cd3ab4d2534"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -945,9 +945,10 @@ struct RuntimePolicySourceTests {
             "Step 3.7 runtime policy must stay text-only/tool-capable and must not block preflight on external bundle metadata until Step VLM is wired and proven"
         )
         #expect(
-            runtime.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
-                && runtime.contains("return cacheTopology.kvLayerCount > 0"),
-            "Gemma SWA must allow TurboQuant for KV-capable full-attention layers while topology tags preserve rotating SWA layers"
+            !runtime.contains(
+                "if ModelFamilyNames.isGemmaFamily(modelName) {\n                return cacheTopology.kvLayerCount > 0")
+                && runtime.contains("rotatingKVLayerCount > 0"),
+            "Gemma SWA must NOT be special-cased into TurboQuant KV: the generic rotating-topology rule keeps it native. Forcing TQ on Gemma 4 measured -42% decode on 26B-A4B and -29% on 12B (2026-06-12 RunBench) for ~70 MB of KV savings; TurboQuant remains available via explicit cache.liveKVCodec=turboQuant."
         )
     }
 
