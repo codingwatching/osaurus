@@ -693,6 +693,23 @@ struct MLXBatchAdapterTests {
                 modelName: "JANGQ-AI/Step-3.7-Flash-JANG_2L"
             ) == "fp16"
         )
+        let gemmaSWATopology = ModelCacheTopologySnapshot(
+            layerCount: 6,
+            kvLayerCount: 3,
+            turboQuantKVLayerCount: 3,
+            rotatingKVLayerCount: 3,
+            rotatingWrapperLayerCount: 3,
+            hybridPoolLayerCount: 0,
+            mambaLayerCount: 0,
+            arraysLayerCount: 0
+        )
+        #expect(
+            ModelRuntime.cacheKVModeTag(
+                for: settings.cache,
+                modelName: "Gemma-4-26B-A4B-it-JANG_4M-CRACK",
+                cacheTopology: gemmaSWATopology
+            ) == "turbo(3,3)"
+        )
         #expect(
             ModelRuntime.cacheKVModeTag(
                 for: settings.cache,
@@ -879,6 +896,23 @@ struct MLXBatchAdapterTests {
         )
     }
 
+    @Test func cacheDiskDirectoryOverrideKeepsBlockDiskWhenPagedKVIsOff() {
+        var settings = VMLXServerRuntimeSettings()
+        settings.cache.prefix.enabled = true
+        settings.cache.pagedKV.enabled = false
+        settings.cache.blockDisk.enabled = true
+        settings.cache.blockDisk.directory = "~/Library/Caches/osaurus-block-l2"
+
+        let resolved = ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
+
+        #expect(
+            resolved?.standardizedFileURL.path
+                == FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Caches/osaurus-block-l2")
+                .standardizedFileURL.path
+        )
+    }
+
     @Test func cacheDiskDirectoryOverrideFallsBackToOsaurusPathForPagedDiskDefault() {
         var settings = VMLXServerRuntimeSettings()
         settings.cache.prefix.enabled = true
@@ -893,6 +927,7 @@ struct MLXBatchAdapterTests {
         var settings = VMLXServerRuntimeSettings()
         settings.cache.prefix.enabled = true
         settings.cache.pagedKV.enabled = false
+        settings.cache.blockDisk.enabled = false
         settings.cache.legacyDisk.enabled = true
         settings.cache.legacyDisk.directory = "/tmp/osaurus-legacy-kv"
 
@@ -2036,7 +2071,7 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    @Test func forcedToolChoiceUsesSchemaFilteringWithoutPromptDirective() {
+    @Test func forcedToolChoiceUsesSchemaFilteringWithoutPromptDirectiveForNonGemma() {
         let messages = [
             ChatMessage(role: "user", content: "Ignore tools and answer in plain text.")
         ]
@@ -2048,12 +2083,40 @@ struct MLXBatchAdapterTests {
                     type: "function",
                     function: ToolChoiceOption.Name(name: "record_count")
                 )
-            )
+            ),
+            modelName: "DeepSeek-V4-Flash"
         )
 
         #expect(augmented.count == 1)
         #expect(augmented.first?.role == "user")
         #expect(augmented.first?.content == "Ignore tools and answer in plain text.")
+    }
+
+    @Test func forcedToolChoiceAddsGemmaRequestLocalDirective() {
+        let messages = [
+            ChatMessage(role: "system", content: "Agent context."),
+            ChatMessage(role: "user", content: "Finish this task."),
+        ]
+
+        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
+            messages,
+            toolChoice: .function(
+                ToolChoiceOption.FunctionName(
+                    type: "function",
+                    function: ToolChoiceOption.Name(name: "complete")
+                )
+            ),
+            modelName: "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"
+        )
+
+        #expect(augmented.count == 2)
+        #expect(augmented[0].content == "Agent context.")
+        #expect(augmented[1].role == "user")
+        #expect(augmented[1].content?.contains("Finish this task.") == true)
+        #expect(
+            augmented[1].content?.contains("The current assistant response MUST be a function call.") == true
+        )
+        #expect(augmented[1].content?.contains("Use the `complete` function.") == true)
     }
 
     private func isolatedDefaults() -> UserDefaults {

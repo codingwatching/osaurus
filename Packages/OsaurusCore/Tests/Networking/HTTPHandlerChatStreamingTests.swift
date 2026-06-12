@@ -665,6 +665,58 @@ struct HTTPHandlerChatStreamingTests {
         #expect(!body.contains("\u{FFFE}"))
     }
 
+    @Test func sse_path_emits_prefill_progress_diagnostic_chunks() async throws {
+        struct PrefillEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    continuation.yield(
+                        StreamingPrefillProgressHint.encode(
+                            PrefillProgressState(
+                                stage: .prefill,
+                                completedUnitCount: 128,
+                                totalUnitCount: 512,
+                                detail: "model.prepare"
+                            )
+                        )
+                    )
+                    continuation.yield("answer")
+                    continuation.finish()
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: PrefillEngine())
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("\"osaurus_prefill\""))
+        #expect(body.contains("\"stage\":\"prefill\""))
+        #expect(body.contains("\"completedUnitCount\":128"))
+        #expect(body.contains("\"totalUnitCount\":512"))
+        #expect(body.contains("\"content\":\"answer\""))
+        #expect(!body.contains("\u{FFFE}"))
+    }
+
     @Test func sse_path_emits_multi_tool_batch_deltas() async throws {
         // Engine that throws ServiceToolInvocations carrying two
         // invocations. The HTTP SSE handler must emit one `tool_calls`
@@ -871,6 +923,12 @@ struct HTTPHandlerChatStreamingTests {
             #expect(status == 200)
             #expect(body.contains("TOOLLOOP-FINAL"))
             #expect(await engine.sawToolMessage)
+            #expect(body.contains("\"osaurus_agent_tool\""))
+            #expect(body.contains("\"choices\":[]"))
+            #expect(body.contains("\"phase\":\"started\""))
+            #expect(body.contains("\"phase\":\"completed\""))
+            #expect(body.contains("\"name\":\"complete\""))
+            #expect(!body.contains("X-Osaurus-Debug-Agent-Tools"))
             #expect(!body.contains("\u{FFFE}tool:"))
             #expect(!body.contains("\u{FFFE}args:"))
             #expect(!body.contains("\u{FFFE}done:"))
@@ -878,7 +936,269 @@ struct HTTPHandlerChatStreamingTests {
         }
     }
 
+    @Test func agentRun_gemmaQATPostToolFinalizationDisablesAutoToolChoice() async throws {
+        actor GemmaQATToolChoiceEngine: ChatEngineProtocol {
+            private var calls = 0
+            private(set) var requests: [ChatCompletionRequest] = []
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                calls += 1
+                requests.append(request)
+                if calls == 1 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: "osaurus_status",
+                                jsonArguments: "{}"
+                            )
+                        )
+                    }
+                }
+
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("The current model id is osaurusai--gemma-4-12b-it-qat-jang_4m.")
+                    continuation.finish()
+                }
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        try await SandboxTestLock.runWithStoragePaths {
+            ConfigurationDomainBootstrap.registerBuiltIns()
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-http-gemma-qat-post-tool-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            let engine = GemmaQATToolChoiceEngine()
+            let server = try await startTestServer(with: engine, trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+
+            var request = URLRequest(
+                url: URL(string: "http://\(server.host):\(server.port)/agents/default/run")!
+            )
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.disablePersistenceForTests()
+            let reqBody = ChatCompletionRequest(
+                model: "osaurusai--gemma-4-12b-it-qat-jang_4m",
+                messages: [ChatMessage(role: "user", content: "Use osaurus_status, then answer.")],
+                temperature: 0,
+                max_tokens: 64,
+                stream: true,
+                top_p: 1,
+                frequency_penalty: nil,
+                presence_penalty: nil,
+                stop: nil,
+                n: nil,
+                tools: nil,
+                tool_choice: .auto,
+                session_id: nil
+            )
+            request.httpBody = try JSONEncoder().encode(reqBody)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+            let body = String(decoding: data, as: UTF8.self)
+            #expect(status == 200)
+            #expect(body.contains("The current model id is osaurusai--gemma-4-12b-it-qat-jang_4m."))
+
+            let requests = await engine.requests
+            #expect(requests.count == 2)
+            if case .some(.auto) = requests[0].tool_choice {
+                // Expected first iteration still allows the model to call tools.
+            } else {
+                Issue.record("Expected first Gemma QAT agent request to use tool_choice auto.")
+            }
+            if case .some(.none) = requests[1].tool_choice {
+                // Expected: Gemma QAT post-tool final text must not run in
+                // auto-tool mode because live JANG/MXFP rows corrupted prose.
+            } else {
+                Issue.record("Expected Gemma QAT post-tool request to use tool_choice none.")
+            }
+            #expect(requests[1].messages.last?.role == "tool")
+            #expect(requests[1].tools?.isEmpty == false)
+        }
+    }
+
+    @Test func agentRun_streamsStartedAndCompletedForNonInterceptToolBatch() async throws {
+        actor StatusToolEngine: ChatEngineProtocol {
+            private var calls = 0
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                calls += 1
+                if calls == 1 {
+                    return AsyncThrowingStream { continuation in
+                        continuation.finish(
+                            throwing: ServiceToolInvocation(
+                                toolName: "osaurus_status",
+                                jsonArguments: "{}"
+                            )
+                        )
+                    }
+                }
+
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("status tool finished")
+                    continuation.finish()
+                }
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        try await SandboxTestLock.runWithStoragePaths {
+            ConfigurationDomainBootstrap.registerBuiltIns()
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-http-agent-run-non-intercept-trace-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            let server = try await startTestServer(with: StatusToolEngine(), trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+
+            var request = URLRequest(
+                url: URL(string: "http://\(server.host):\(server.port)/agents/default/run")!
+            )
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.disablePersistenceForTests()
+            request.httpBody = #"""
+                {"model":"fake","stream":true,"tool_choice":"auto","messages":[{"role":"user","content":"use osaurus_status"}]}
+                """#.data(using: .utf8)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            let body = String(decoding: data, as: UTF8.self)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+            #expect(body.contains("\"osaurus_agent_tool\""))
+            #expect(body.contains("\"phase\":\"started\""))
+            #expect(body.contains("\"phase\":\"completed\""))
+            #expect(body.contains("\"name\":\"osaurus_status\""))
+            #expect(body.contains("status tool finished"))
+        }
+    }
+
     // MARK: - Built-in agent loopback exposure (App Intents surface)
+
+    /// `/agents/{id}/run` must use the same composer-resolved tool surface it
+    /// renders into the agent prompt. The strict OpenAI `/chat/completions`
+    /// path intentionally stays bare/stateless, but an agent run needs
+    /// per-agent gates: the Default agent gets its fixed configure baseline,
+    /// while custom agents must not see Default-agent-only `osaurus_*` tools.
+    @Test func agentRun_usesComposerResolvedToolSurface() async throws {
+        actor CaptureEngine: ChatEngineProtocol {
+            private(set) var requests: [ChatCompletionRequest] = []
+
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                requests.append(request)
+                return AsyncThrowingStream { continuation in
+                    continuation.yield("OK")
+                    continuation.finish()
+                }
+            }
+
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        try await SandboxTestLock.runWithStoragePaths {
+            ConfigurationDomainBootstrap.registerBuiltIns()
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-http-agent-run-tools-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
+            }
+
+            let custom = Agent(
+                name: "HTTPAgentRunTools-\(UUID().uuidString.prefix(6))",
+                systemPrompt: "Test identity",
+                agentAddress: "http-agent-run-tools-\(UUID().uuidString)"
+            )
+            AgentManager.shared.add(custom)
+
+            let engine = CaptureEngine()
+            let server = try await startTestServer(with: engine, trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+
+            func postRun(agentId: UUID, authenticate: Bool) async throws -> String {
+                var request = URLRequest(
+                    url: URL(
+                        string: "http://\(server.host):\(server.port)/agents/\(agentId.uuidString)/run"
+                    )!
+                )
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+                if authenticate { request.authenticate() }
+                request.disablePersistenceForTests()
+                request.httpBody = #"""
+                    {"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}
+                    """#.data(using: .utf8)
+                let (data, resp) = try await URLSession.shared.data(for: request)
+                #expect((resp as? HTTPURLResponse)?.statusCode == 200)
+                return String(decoding: data, as: UTF8.self)
+            }
+
+            let defaultBody = try await postRun(agentId: Agent.defaultId, authenticate: false)
+            let customBody = try await postRun(agentId: custom.id, authenticate: true)
+            #expect(!defaultBody.contains("\"osaurus_agent_tool\""))
+            #expect(!customBody.contains("\"osaurus_agent_tool\""))
+
+            let requests = await engine.requests
+            #expect(requests.count == 2)
+            let defaultNames = Set(requests[0].tools?.map(\.function.name) ?? [])
+            #expect(defaultNames == ToolRegistry.defaultAgentAllowedToolNames)
+
+            let customNames = Set(requests[1].tools?.map(\.function.name) ?? [])
+            for configure in ToolRegistry.configureToolNames {
+                #expect(
+                    !customNames.contains(configure),
+                    "configure tool \(configure) leaked into custom-agent run schema"
+                )
+            }
+            _ = await AgentManager.shared.delete(id: custom.id)
+        }
+    }
 
     /// Loopback callers (no auth, same machine) may reach the built-in Default
     /// agent via `/agents/{id}/run` so the App Intents "Ask Osaurus" surface
@@ -922,6 +1242,44 @@ struct HTTPHandlerChatStreamingTests {
         // Headers are flushed as 200 once the guard is cleared and streaming
         // begins, so a passing guard yields 200 (never the 403 envelope).
         #expect(status == 200)
+        #expect(!body.contains("built_in_agent_not_exposable"))
+    }
+
+    @Test func builtInAgentRun_defaultAlias_overLoopback_bypassesGuard() async throws {
+        struct EchoEngine: ChatEngineProtocol {
+            func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
+                String, Error
+            > {
+                AsyncThrowingStream { continuation in
+                    continuation.yield("OK-BUILTIN-DEFAULT-ALIAS")
+                    continuation.finish()
+                }
+            }
+            func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+                fatalError("not used")
+            }
+        }
+
+        let server = try await startTestServer(with: EchoEngine(), trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/agents/default/run")!
+        )
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.disablePersistenceForTests()
+        request.httpBody = #"""
+            {"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}
+            """#.data(using: .utf8)
+
+        let (data, resp) = try await URLSession.shared.data(for: request)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        let body = String(decoding: data, as: UTF8.self)
+        #expect(status == 200)
+        #expect(body.contains("OK-BUILTIN-DEFAULT-ALIAS"))
+        #expect(!body.contains("invalid_agent_id"))
         #expect(!body.contains("built_in_agent_not_exposable"))
     }
 

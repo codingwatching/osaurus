@@ -74,6 +74,22 @@ extension ResponseWriter {
 }
 
 final class SSEResponseWriter: ResponseWriter {
+    private struct AgentToolTraceChunk: Encodable {
+        struct Trace: Encodable {
+            var phase: String
+            var name: String
+            var call_id: String
+            var is_error: Bool?
+            var end_run: Bool?
+        }
+
+        var id: String
+        var object: String
+        var created: Int
+        var model: String
+        var choices: [StreamChoice]
+        var osaurus_agent_tool: Trace
+    }
 
     func writeHeaders(_ context: ChannelHandlerContext, extraHeaders: [(String, String)]? = nil) {
         var head = HTTPResponseHead(version: .http1_1, status: .ok)
@@ -89,6 +105,35 @@ final class SSEResponseWriter: ResponseWriter {
         head.headers = headers
         context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
         context.flush()
+    }
+
+    @inline(__always)
+    func writeAgentToolTrace(
+        phase: String,
+        toolName: String,
+        callId: String,
+        isError: Bool? = nil,
+        endRun: Bool? = nil,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        let chunk = AgentToolTraceChunk(
+            id: responseId,
+            object: "chat.completion.chunk",
+            created: created,
+            model: model,
+            choices: [],
+            osaurus_agent_tool: .init(
+                phase: phase,
+                name: toolName,
+                call_id: callId,
+                is_error: isError,
+                end_run: endRun
+            )
+        )
+        writeSSEChunk(chunk, context: context)
     }
 
     @inline(__always)
@@ -283,7 +328,7 @@ final class SSEResponseWriter: ResponseWriter {
     }
 
     @inline(__always)
-    private func writeSSEChunk(_ chunk: ChatCompletionChunk, context: ChannelHandlerContext) {
+    private func writeSSEChunk(_ chunk: some Encodable, context: ChannelHandlerContext) {
         let encoder = IkigaJSONEncoder()  // Create encoder per write for thread safety
         var buffer = context.channel.allocator.buffer(capacity: 256)
         buffer.writeString("data: ")
@@ -432,6 +477,27 @@ final class SSEResponseWriter: ResponseWriter {
             total_tokens: promptTokens + completionTokens,
             tokens_per_second: tokensPerSecond
         )
+        writeSSEChunk(chunk, context: context)
+    }
+
+    /// Emit an Osaurus extension progress chunk for local prefill. The chunk
+    /// deliberately uses empty `choices` so OpenAI-compatible text parsers can
+    /// ignore it while Osaurus UI/API clients render progress.
+    func writePrefillProgress(
+        _ progress: PrefillProgressState,
+        model: String,
+        responseId: String,
+        created: Int,
+        context: ChannelHandlerContext
+    ) {
+        var chunk = ChatCompletionChunk(
+            id: responseId,
+            created: created,
+            model: model,
+            choices: [],
+            system_fingerprint: nil
+        )
+        chunk.osaurus_prefill = progress
         writeSSEChunk(chunk, context: context)
     }
 }

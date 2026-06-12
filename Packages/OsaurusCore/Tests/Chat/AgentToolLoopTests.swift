@@ -714,7 +714,49 @@ struct AgentToolLoopTests {
 /// Records completion order across concurrent tasks.
 private actor CompletionRecorder {
     private(set) var order: [String] = []
-    func record(_ name: String) { order.append(name) }
+    private struct Waiter {
+        var id: UUID
+        var names: Set<String>
+        var continuation: CheckedContinuation<Bool, Never>
+    }
+    private var waiters: [Waiter] = []
+
+    func record(_ name: String) {
+        order.append(name)
+        resumeSatisfiedWaiters()
+    }
+
+    func waitForCompletions(_ names: Set<String>, timeoutNanoseconds: UInt64) async -> Bool {
+        let completed = Set(order)
+        if names.isSubset(of: completed) { return true }
+        let id = UUID()
+        return await withCheckedContinuation { continuation in
+            waiters.append(Waiter(id: id, names: names, continuation: continuation))
+            Task {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                await self.resumeWaiter(id: id, value: false)
+            }
+        }
+    }
+
+    private func resumeSatisfiedWaiters() {
+        let completed = Set(order)
+        var pending: [Waiter] = []
+        for waiter in waiters {
+            if waiter.names.isSubset(of: completed) {
+                waiter.continuation.resume(returning: true)
+            } else {
+                pending.append(waiter)
+            }
+        }
+        waiters = pending
+    }
+
+    private func resumeWaiter(id: UUID, value: Bool) {
+        guard let index = waiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = waiters.remove(at: index)
+        waiter.continuation.resume(returning: value)
+    }
 }
 
 /// Lets tests measure overlap without relying on task-start jitter.
@@ -837,7 +879,7 @@ private actor BatchCompletionController {
 struct AgentToolLoopParallelBatchTests {
 
     @Test func resultsComeBackInInputOrderUnderRandomCompletion() async {
-        // slow finishes LAST but is FIRST in the input — the executor must
+        // slow finishes LAST but is FIRST in the input; the executor must
         // re-sort by input index, not completion order.
         let calls: [(invocation: ServiceToolInvocation, callId: String)] = [
             (ServiceToolInvocation(toolName: "slow", jsonArguments: "{}", toolCallId: nil), "call_slow"),

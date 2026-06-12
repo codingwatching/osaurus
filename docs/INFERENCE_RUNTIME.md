@@ -30,6 +30,11 @@ ChatEngine (route resolution, attribution, logging)
 - `.reasoning(String)` -- model reasoning text. Osaurus forwards this to
   `ModelRuntimeEvent.reasoning`, HTTP `reasoning_content`, the ChatView
   Think panel, and plugin `chunk.delta.reasoning_content`.
+- `.prefillProgress(PrefillProgress)` -- real prompt-processing progress
+  before the first generated token. Osaurus forwards this to
+  `ModelRuntimeEvent.prefillProgress`, the in-band `prefill:` sentinel, and
+  `InferenceProgressManager` so the Chat UI can render a determinate prefill
+  percentage when total prompt/cache units are known.
 - `.toolCall(ToolCall)` -- a fully-parsed tool call. Every supported
   family (JSON, Qwen `xml_function`, Mistral, GLM-4, LFM2, Kimi K2,
   Gemma-3/4, MiniMax M2) emits this once the call is complete.
@@ -37,8 +42,8 @@ ChatEngine (route resolution, attribution, logging)
   / generation time, stop reason, and `unclosedReasoning`). One per request.
 
 `GenerationEventMapper` translates those into osaurus's local
-`ModelRuntimeEvent` (`.tokens`, `.reasoning`, `.toolInvocation`,
-`.completionInfo`).
+`ModelRuntimeEvent` (`.tokens`, `.reasoning`, `.prefillProgress`,
+`.toolInvocation`, `.completionInfo`).
 
 ## Cache management
 
@@ -52,8 +57,8 @@ per container at load time
 | `modelKey` | `"<modelName>\|kv=turbo(3,3)\|cachefmt=2\|restore=fullhit-trim-eval1\|..."` for engine-selected proven full-KV rows; `kv=fp16` for hybrid/rotating/CCA/DSV4 rows unless explicitly overridden | per-model isolation across loads; KV-mode, serializer, restore-contract, and topology tags prevent serving disk entries encoded under a different cache contract after a runtime update |
 | `diskCacheDir` | `OsaurusPaths.diskKVCache()` | osaurus-managed sandbox path |
 | `enableDiskCache` | `true` when probe-write succeeds, else `false` | graceful fallback to memory-only when the dir is read-only / out-of-disk |
-| `usePagedCache` | `true` | content-addressed paged blocks for prefix reuse |
-| `defaultKVMode` | `engine_selected` by default, resolved per model/topology: proven full-KV rows get TurboQuant, while hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly overridden | TurboQuant is enabled by default only where the cache topology is simple full KV; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
+| `usePagedCache` | `false` by default | paged RAM KV blocks are opt-in because they mainly help multi-batch workloads; default single-batch UX keeps prefix reuse through disk/L2 without holding an extra paged RAM tier |
+| `defaultKVMode` | `engine_selected` by default, resolved per model/topology: eligible full-KV Gemma QAT MXFP4/JANG_4M rows get TurboQuant KV, while hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly overridden | TurboQuant is enabled by default only where the cache topology is valid for the architecture; DSV4/ZAYA/SSM/rotating companion caches keep their typed serializers and are not replaced by generic KV compression |
 | `defaultMaxKVSize` | `65536` | prefill window; `longPromptMultiplier=2.0` covers the 131K case |
 | `longPromptMultiplier` | `2.0` | rotating-cache cap kicks in only past 131K |
 | `ssmMaxEntries` | `50` | SSM state cap for hybrid Mamba/CCA companion cache |
@@ -263,12 +268,15 @@ strings starting with `\u{FFFE}`:
 | `\u{FFFE}tool:` | local + remote tool call name | HTTP SSE -> `tool_calls` deltas; ChatView Think panel |
 | `\u{FFFE}args:` | tool argument fragments | HTTP SSE -> `tool_calls.function.arguments` deltas |
 | `\u{FFFE}done:` | server-side tool call result | ChatView (tool result card) |
+| `\u{FFFE}prefill:` | local vMLX prefill progress JSON | ChatView loading label through `InferenceProgressManager`; HTTP/plugin handlers treat it as an internal sentinel unless they add an explicit public progress event |
 | `\u{FFFE}stats:` | post-stream perf | ChatView, plugin `chunk.delta.stats` |
 | `\u{FFFE}reasoning:` | local (forward-compat) + remote `reasoning_content` | OpenAI SSE `reasoning_content`; Anthropic `thinking_delta`; OpenResponses `response.reasoning_summary_text.delta`; ChatView Think panel; plugin `chunk.delta.reasoning_content` |
 
-HTTP handlers and the plugin SDK MUST decode `StreamingReasoningHint`
-BEFORE the generic `StreamingToolHint.isSentinel` filter, otherwise
-reasoning gets dropped together with the other sentinels.
+HTTP handlers, ChatView, and the plugin SDK MUST decode any sentinel with
+public meaning (`StreamingReasoningHint`, `StreamingStatsHint`, and future
+public progress events) BEFORE the generic `StreamingToolHint.isSentinel`
+filter, otherwise that signal gets dropped together with the private tool
+sentinels.
 
 ## Source map
 
@@ -276,8 +284,8 @@ reasoning gets dropped together with the other sentinels.
 |---|---|
 | `ModelRuntime.swift` | Container lifecycle (load / unload / strict eviction), `ModelLease` glue, single MLX entry into `MLXBatchAdapter`. |
 | `MLXBatchAdapter.swift` | Per-model `BatchEngine` registry; submits each request via `engine.generate(...)`. |
-| `GenerationEventMapper.swift` | `Generation` -> `ModelRuntimeEvent` bridge; stop-sequence lookahead; tool-call argument JSON serialization. |
-| `Events.swift` | `ModelRuntimeEvent` enum (`tokens` / `reasoning` / `toolInvocation` / `completionInfo`). |
+| `GenerationEventMapper.swift` | `Generation` -> `ModelRuntimeEvent` bridge; stop-sequence lookahead; prefill progress forwarding; tool-call argument JSON serialization. |
+| `Events.swift` | `ModelRuntimeEvent` enum (`tokens` / `reasoning` / `prefillProgress` / `toolInvocation` / `completionInfo`). |
 | `RuntimeConfig.swift` | Server-side default `topP`. |
 | `InferenceFeatureFlags.swift` | Single user-tunable: `mlxBatchEngineMaxBatchSize`. |
 | `RuntimeProofValidation.swift` | Source-level validation for runtime proof rows and issue-closure evidence. |

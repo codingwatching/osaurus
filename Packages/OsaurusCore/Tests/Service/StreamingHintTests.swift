@@ -20,6 +20,32 @@ struct StreamingHintTests {
 
     // MARK: - StreamingStatsHint
 
+    @Test func prefillProgressHint_roundTripsJSONPayload() {
+        let progress = PrefillProgressState(
+            stage: .prefill,
+            completedUnitCount: 384,
+            totalUnitCount: 1024,
+            detail: "model.prepare"
+        )
+        let encoded = StreamingPrefillProgressHint.encode(progress)
+        #expect(encoded.hasPrefix("\u{FFFE}prefill:"))
+        #expect(StreamingPrefillProgressHint.decode(encoded) == progress)
+    }
+
+    @Test func prefillProgressHint_isOrthogonalToOtherSentinels() {
+        let progress = PrefillProgressState(
+            stage: .cacheRestore,
+            completedUnitCount: 512,
+            totalUnitCount: 1024,
+            detail: nil
+        )
+        let encoded = StreamingPrefillProgressHint.encode(progress)
+        #expect(StreamingToolHint.isSentinel(encoded))
+        #expect(StreamingStatsHint.decode(encoded) == nil)
+        #expect(StreamingReasoningHint.decode(encoded) == nil)
+        #expect(StreamingPrefillProgressHint.decode("plain text") == nil)
+    }
+
     @Test func statsHint_encode_prefixedWithFFFESentinel() {
         let encoded = StreamingStatsHint.encode(tokenCount: 24, tokensPerSecond: 85.4607)
         #expect(encoded.hasPrefix("\u{FFFE}stats:"))

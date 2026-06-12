@@ -188,7 +188,12 @@ public actor ModelRuntime {
         return modelCache[name] != nil
     }
 
-    func cachedModelSummaries() -> [ModelCacheSummary] {
+    func cachedModelSummaries(refreshTopology: Bool = false) async -> [ModelCacheSummary] {
+        if refreshTopology {
+            for holder in modelCache.values {
+                holder.cacheTopology = await holder.container.cacheTopologySnapshot()
+            }
+        }
         return modelCache.values.map { holder in
             ModelCacheSummary(
                 name: holder.name,
@@ -1512,6 +1517,8 @@ public actor ModelRuntime {
         if cache.pagedKV.enabled {
             guard cache.blockDisk.enabled else { return nil }
             directory = cache.blockDisk.directory
+        } else if cache.blockDisk.enabled {
+            directory = cache.blockDisk.directory
         } else {
             guard cache.legacyDisk.enabled else { return nil }
             directory = cache.legacyDisk.directory
@@ -1590,12 +1597,14 @@ public actor ModelRuntime {
         if ModelFamilyNames.isDSV4Family(modelName)
             || ModelFamilyNames.isZayaFamily(modelName)
             || ModelFamilyNames.isZayaVLFamily(modelName)
-            || ModelFamilyNames.isGemmaFamily(modelName)
             || Self.isKnownHybridModel(name: modelName)
         {
             return false
         }
         if let cacheTopology {
+            if ModelFamilyNames.isGemmaFamily(modelName) {
+                return cacheTopology.kvLayerCount > 0
+            }
             if cacheTopology.mambaLayerCount > 0
                 || cacheTopology.arraysLayerCount > 0
                 || cacheTopology.hybridPoolLayerCount > 0
@@ -1971,7 +1980,8 @@ public actor ModelRuntime {
         var pendingTools: [ServiceToolInvocation] = []
         let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
             messages,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
@@ -2001,6 +2011,8 @@ public actor ModelRuntime {
                 // Non-streaming caller — reasoning is dropped, mirroring
                 // the historical `respondWithTools` shape (callers that
                 // want reasoning use `streamWithTools`).
+                break
+            case .prefillProgress:
                 break
             case .toolInvocation(let name, let argsJSON):
                 pendingTools.append(
@@ -2076,7 +2088,8 @@ public actor ModelRuntime {
     ) async throws -> AsyncThrowingStream<String, Error> {
         let forcedToolMessages = ModelRuntime.applyForcedToolChoiceDirective(
             messages,
-            toolChoice: toolChoice
+            toolChoice: toolChoice,
+            modelName: modelName
         )
         let augmented = ModelRuntime.applyJSONMode(forcedToolMessages, jsonMode: parameters.jsonMode)
         let events = try await generateEventStream(
@@ -2127,6 +2140,8 @@ public actor ModelRuntime {
                         if !s.isEmpty { continuation.yield(s) }
                     case .reasoning(let s):
                         if !s.isEmpty { continuation.yield(StreamingReasoningHint.encode(s)) }
+                    case .prefillProgress(let progress):
+                        continuation.yield(StreamingPrefillProgressHint.encode(progress))
                     case .toolInvocation(let name, let argsJSON):
                         continuation.yield(StreamingToolHint.encode(name))
                         continuation.yield(StreamingToolHint.encodeArgs(argsJSON))
@@ -2380,15 +2395,57 @@ public actor ModelRuntime {
 
     nonisolated static func applyForcedToolChoiceDirective(
         _ messages: [ChatMessage],
-        toolChoice: ToolChoiceOption?
+        toolChoice: ToolChoiceOption?,
+        modelName: String? = nil
     ) -> [ChatMessage] {
-        // Named `tool_choice` is enforced by `makeTokenizerTools`: the
-        // tokenizer sees only the requested function's schema. Do not add a
-        // generic system directive here. Some model-family templates,
-        // including DSV4 DSML, treat that out-of-template prose as ordinary
-        // instruction text and can respond with an empty visible answer
-        // instead of the selected protocol block.
-        messages
+        guard let toolChoice else { return messages }
+
+        let requiredToolName: String?
+        switch toolChoice {
+        case .function(let target):
+            requiredToolName = target.function.name
+        case .required:
+            requiredToolName = nil
+        case .auto, .none:
+            return messages
+        }
+
+        // Named `tool_choice` is primarily enforced by `makeTokenizerTools`:
+        // the tokenizer sees only the requested function's schema. Keep that
+        // no-op behavior for most families; DSV4 DSML in particular treats
+        // out-of-template prose as ordinary instruction text and regressed
+        // when this was generic.
+        //
+        // Gemma 4's native template already has a required-tool contract in
+        // its fallback path. Live Osaurus agent runs add a much larger system
+        // prompt than strict `/v1/chat/completions`; for Gemma, schema
+        // filtering alone lets forced `complete` degrade into a plain-text
+        // summary. Add the same required-tool wording as a request-local
+        // directive so the bundle-native parser sees a real function-call
+        // turn instead of a textual paraphrase. This is scoped to Gemma and
+        // to explicit `required` / named tool choice only.
+        guard let modelName, ModelFamilyNames.isGemmaFamily(modelName) else {
+            return messages
+        }
+
+        var directive = "The current assistant response MUST be a function call."
+        if let requiredToolName {
+            directive += " Use the `\(requiredToolName)` function."
+        }
+
+        var out = messages
+        if let lastUserIndex = out.lastIndex(where: { $0.role == "user" }) {
+            let existing = out[lastUserIndex].content ?? ""
+            out[lastUserIndex] = ChatMessage(
+                role: out[lastUserIndex].role,
+                content: existing.isEmpty ? directive : existing + "\n\n" + directive,
+                tool_calls: out[lastUserIndex].tool_calls,
+                tool_call_id: out[lastUserIndex].tool_call_id
+            )
+        } else {
+            out.append(ChatMessage(role: "user", content: directive))
+        }
+        return out
     }
 
     /// When `jsonMode` is true, prepend (or augment) a system instruction

@@ -779,8 +779,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logPath = path
 
         runRequestTask(priority: .userInitiated) {
-            let cached = await ModelRuntime.shared.cachedModelSummaries()
-            let diagnostics = await MLXBatchAdapter.snapshotDiagnostics()
+            let cached = await ModelRuntime.shared.cachedModelSummaries(refreshTopology: true)
+            let batchDiagnostics = await MLXBatchAdapter.snapshotDiagnostics()
             let lastEffectiveGenerationSettings =
                 await MLXBatchAdapter.lastEffectiveGenerationSettingsSnapshot()
             var aggregate: [String: Int] = [
@@ -849,6 +849,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["cache_enabled"] = true
                 row["is_hybrid"] = stats.isHybrid
                 row["is_paged_incompatible"] = stats.isPagedIncompatible
+                row["effective_kv_mode"] = ModelRuntime.cacheKVModeTag(
+                    for: ServerRuntimeSettingsStore.snapshot().cache,
+                    modelName: summary.name,
+                    cacheTopology: summary.cacheTopology
+                )
                 if let topology = summary.cacheTopology {
                     row["cache_topology"] =
                         [
@@ -945,34 +950,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return row
             }
 
-            let batchDiagnostics: Any
-            if let snapshot = diagnostics {
-                var row: [String: Any] = [
-                    "pending_count": snapshot.pendingCount,
-                    "active_count": snapshot.activeCount,
-                    "active_high_watermark": snapshot.activeHighWatermark,
-                    "decode_split_count": snapshot.decodeSplitCount,
-                    "turbo_quant_compressions": snapshot.turboQuantCompressions,
-                    "is_accepting_requests": snapshot.isAcceptingRequests,
-                    "loaded_model_count": snapshot.loadedModelCount,
-                    "native_mtp_model_count": snapshot.nativeMTPModelCount,
-                    "cache_enabled_model_count": snapshot.cacheEnabledModelCount,
-                    "hybrid_model_count": snapshot.hybridModelCount,
-                    "paged_incompatible_model_count": snapshot.pagedIncompatibleModelCount,
-                    "prefix_hits": snapshot.prefixHits,
-                    "prefix_misses": snapshot.prefixMisses,
-                    "disk_l2_hits": snapshot.diskL2Hits,
-                    "disk_l2_misses": snapshot.diskL2Misses,
-                    "disk_l2_stores": snapshot.diskL2Stores,
-                    "ssm_companion_hits": snapshot.ssmCompanionHits,
-                    "ssm_companion_misses": snapshot.ssmCompanionMisses,
-                    "ssm_companion_rederives": snapshot.ssmCompanionReDerives,
-                ]
-                row["native_mtp_depth_summary"] = snapshot.nativeMTPDepthSummary ?? NSNull()
-                batchDiagnostics = row
-            } else {
-                batchDiagnostics = NSNull()
-            }
             let runtimeSettings = ServerRuntimeSettingsStore.snapshot()
             let memoryStatus = MemoryStatus.snapshot()
             let memorySafetyPlan = runtimeSettings.resolvedMemorySafetyPlan(
@@ -980,18 +957,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 host: memoryStatus
             )
 
-            let obj: [String: Any] = [
+            var obj: [String: Any] = [
                 "status": "ok",
                 "timestamp": Date().ISO8601Format(),
                 "models": models,
                 "aggregate": aggregate,
-                "batch_diagnostics": batchDiagnostics,
                 "memory_safety": Self.memorySafetyJSONObject(
                     settings: runtimeSettings,
                     plan: memorySafetyPlan,
                     memoryStatus: memoryStatus
                 ),
             ]
+            if let batchDiagnostics {
+                obj["batch_diagnostics"] = [
+                    "pending_count": batchDiagnostics.pendingCount,
+                    "active_count": batchDiagnostics.activeCount,
+                    "active_high_watermark": batchDiagnostics.activeHighWatermark,
+                    "decode_split_count": batchDiagnostics.decodeSplitCount,
+                    "turbo_quant_compressions": batchDiagnostics.turboQuantCompressions,
+                    "is_accepting_requests": batchDiagnostics.isAcceptingRequests,
+                    "loaded_model_count": batchDiagnostics.loadedModelCount,
+                    "native_mtp_model_count": batchDiagnostics.nativeMTPModelCount,
+                    "native_mtp_depth_summary": batchDiagnostics.nativeMTPDepthSummary ?? NSNull(),
+                    "cache_enabled_model_count": batchDiagnostics.cacheEnabledModelCount,
+                    "hybrid_model_count": batchDiagnostics.hybridModelCount,
+                    "paged_incompatible_model_count": batchDiagnostics.pagedIncompatibleModelCount,
+                    "prefix_hits": batchDiagnostics.prefixHits,
+                    "prefix_misses": batchDiagnostics.prefixMisses,
+                    "disk_l2_hits": batchDiagnostics.diskL2Hits,
+                    "disk_l2_misses": batchDiagnostics.diskL2Misses,
+                    "disk_l2_stores": batchDiagnostics.diskL2Stores,
+                    "ssm_companion_hits": batchDiagnostics.ssmCompanionHits,
+                    "ssm_companion_misses": batchDiagnostics.ssmCompanionMisses,
+                    "ssm_companion_rederives": batchDiagnostics.ssmCompanionReDerives,
+                ] as [String: Any]
+            } else {
+                obj["batch_diagnostics"] = NSNull()
+            }
             let data = try? JSONSerialization.data(withJSONObject: obj, options: .osaurusCanonical)
             let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
             let headers: [(String, String)] =
@@ -2759,7 +2761,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// passes client messages/tools through unchanged.
     private static func enrichWithAgentContext(
         _ request: ChatCompletionRequest,
-        agentId: String?
+        agentId: String?,
+        executionMode: ExecutionMode
     ) async -> ChatCompletionRequest {
         guard let agentId, !agentId.isEmpty,
             let agentUUID = UUID(uuidString: agentId)
@@ -2773,7 +2776,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let globalToolsDisabled = await MainActor.run { ChatConfigurationStore.load().disableTools }
         let composed = await SystemPromptComposer.composeChatContext(
             agentId: agentUUID,
-            executionMode: .none,
+            executionMode: executionMode,
             query: query,
             messages: enriched.messages,
             toolsDisabled: globalToolsDisabled
@@ -4294,9 +4297,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        // Extract agent ID: /agents/{id}/run
+        // Extract agent ID: /agents/{id}/run. Accept the local-friendly
+        // "default" alias for clients that do not know the built-in UUID yet;
+        // remote built-in access is still rejected by the guard below.
         let pathComponents = path.split(separator: "/")
-        guard pathComponents.count >= 2, let agentId = UUID(uuidString: String(pathComponents[1])) else {
+        let agentPathIdentifier = pathComponents.count >= 2 ? String(pathComponents[1]) : ""
+        let agentId: UUID? =
+            agentPathIdentifier.lowercased() == "default"
+            ? Agent.defaultId
+            : UUID(uuidString: agentPathIdentifier)
+        guard pathComponents.count >= 2, let agentId else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -4389,6 +4399,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
         let created = Int(Date().timeIntervalSince1970)
+        // Local Osaurus agent runs need visible tool progress during prefill/tool
+        // waits. The emitted chunk is sanitized: phase, tool name, call id, error
+        // state, and end-run status only; raw tool arguments/results stay hidden.
+        let emitAgentToolTrace = isLoopbackConnection(context)
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -4421,44 +4435,30 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // the first (user) turn only.
             Task { @MainActor in FeatureTelemetry.agentRun(source: "http_api") }
 
-            // Enrich with agent context (system prompt + memory)
-            var messages = await Self.enrichWithAgentContext(req, agentId: agentId.uuidString).messages
-
-            // INTENTIONAL DIVERGENCE FROM CHAT: the OpenAI-compatible HTTP
-            // API is stateless (no Osaurus session id), so we cannot reuse
-            // SessionToolStateStore, run a preflight LLM, or freeze a
-            // per-session schema. Bare `alwaysLoadedSpecs(mode:)` keeps the
-            // HTTP schema predictable and avoids per-request preflight cost.
-            // See docs/AGENT_LOOP.md before "fixing" this onto resolveTools.
-            //
-            // Tools resolution:
-            //   1. Always-loaded specs from the agent's execution mode form
-            //      the base set (sandbox, folder, etc.).
-            //   2. Client-supplied `req.tools` are appended (deduped by
-            //      function name, client wins on conflicts) so callers can
-            //      ship custom function definitions without losing the
-            //      agent surface.
-            let baseTools = await MainActor.run {
+            let executionMode = await MainActor.run {
                 let autonomousEnabled = AgentManager.shared.effectiveAutonomousExec(for: agentId)?.enabled == true
-                let mode = ToolRegistry.shared.resolveExecutionMode(
+                return ToolRegistry.shared.resolveExecutionMode(
                     folderContext: nil,
                     autonomousEnabled: autonomousEnabled
                 )
-                return ToolRegistry.shared.alwaysLoadedSpecs(mode: mode)
             }
-            let tools: [Tool] = {
-                guard let clientTools = req.tools, !clientTools.isEmpty else { return baseTools }
-                let clientNames = Set(clientTools.map { $0.function.name })
-                let kept = baseTools.filter { !clientNames.contains($0.function.name) }
-                return kept + clientTools
-            }()
-            // Honor client `tool_choice` when supplied (`none`, `auto`, or
-            // a forced function). Default to `.auto` so existing clients
-            // that set `tools` without `tool_choice` keep working.
-            let resolvedToolChoice: ToolChoiceOption? = {
-                if tools.isEmpty { return nil }
-                return req.tool_choice ?? .auto
-            }()
+
+            // Enrich with agent context (system prompt + memory) and use the
+            // same composer-resolved tool surface for the model request. The
+            // endpoint is still stateless — no SessionToolStateStore,
+            // preflight LLM, or frozen per-session schema — but `/agents/{id}/run`
+            // is an agent surface, so per-agent gates (Default-agent configure
+            // tools, DB, scheduling, speak, render_chart, search_memory) must
+            // match the rendered prompt. Bare `alwaysLoadedSpecs` remains the
+            // contract for strict OpenAI-compatible `/chat/completions`.
+            let enrichedReq = await Self.enrichWithAgentContext(
+                req,
+                agentId: agentId.uuidString,
+                executionMode: executionMode
+            )
+            var messages = enrichedReq.messages
+            let tools = enrichedReq.tools ?? []
+            let resolvedToolChoice = enrichedReq.tool_choice
 
             let configuredMaxToolAttempts = await MainActor.run {
                 ChatConfigurationStore.load().maxToolAttempts ?? 30
@@ -4569,6 +4569,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     )
                 },
                 modelStep: { msgs, _ in
+                    let iterationToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice(
+                        model: model,
+                        messages: msgs,
+                        requested: resolvedToolChoice
+                    )
                     var iterationReq = ChatCompletionRequest(
                         model: model,
                         messages: msgs,
@@ -4581,7 +4586,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stop: req.stop,
                         n: nil,
                         tools: tools.isEmpty ? nil : tools,
-                        tool_choice: resolvedToolChoice,
+                        tool_choice: iterationToolChoice,
                         session_id: req.session_id,
                         seed: req.seed,
                         response_format: req.response_format,
@@ -4710,6 +4715,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if AgentToolLoop.containsIntercept(calls) {
                             var executions: [AgentLoopToolExecution] = []
                             for call in calls {
+                                if emitAgentToolTrace {
+                                    hop {
+                                        writerBound.value.writeAgentToolTrace(
+                                            phase: "started",
+                                            toolName: call.invocation.toolName,
+                                            callId: call.callId,
+                                            model: model,
+                                            responseId: responseId,
+                                            created: created,
+                                            context: ctx.value
+                                        )
+                                    }
+                                }
                                 let single =
                                     await AgentToolLoop.runBatchInParallel(
                                         [(invocation: call.invocation, callId: call.callId)],
@@ -4717,10 +4735,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         agentId: agentId
                                     ).first ?? AgentLoopToolExecution(result: "")
                                 let execution = interceptAware(call.invocation, single)
+                                if emitAgentToolTrace {
+                                    hop {
+                                        writerBound.value.writeAgentToolTrace(
+                                            phase: "completed",
+                                            toolName: call.invocation.toolName,
+                                            callId: call.callId,
+                                            isError: execution.isError,
+                                            endRun: execution.endRun,
+                                            model: model,
+                                            responseId: responseId,
+                                            created: created,
+                                            context: ctx.value
+                                        )
+                                    }
+                                }
                                 executions.append(execution)
                                 if execution.endRun { break }
                             }
                             return executions
+                        }
+                        if emitAgentToolTrace {
+                            for call in calls {
+                                hop {
+                                    writerBound.value.writeAgentToolTrace(
+                                        phase: "started",
+                                        toolName: call.invocation.toolName,
+                                        callId: call.callId,
+                                        model: model,
+                                        responseId: responseId,
+                                        created: created,
+                                        context: ctx.value
+                                    )
+                                }
+                            }
                         }
                         // Two-phase canonical batch: approvals resolve serially
                         // in model order FIRST (no stacked/racing permission
@@ -4738,6 +4786,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     var assistantToolCalls: [ToolCall] = []
                     var toolResultsByCallId: [(String, String)] = []
                     for outcome in outcomes {
+                        if emitAgentToolTrace {
+                            hop {
+                                writerBound.value.writeAgentToolTrace(
+                                    phase: "completed",
+                                    toolName: outcome.invocation.toolName,
+                                    callId: outcome.callId,
+                                    isError: outcome.wasError,
+                                    endRun: false,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                        }
                         assistantToolCalls.append(
                             ToolCall(
                                 id: outcome.callId,
@@ -6100,6 +6163,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             hop {
                                 writerBound.value.writeReasoning(
                                     reasoning,
+                                    model: model,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
+                                )
+                            }
+                            continue
+                        }
+                        if let progress = StreamingPrefillProgressHint.decode(delta) {
+                            hop {
+                                writerBound.value.writePrefillProgress(
+                                    progress,
                                     model: model,
                                     responseId: responseId,
                                     created: created,

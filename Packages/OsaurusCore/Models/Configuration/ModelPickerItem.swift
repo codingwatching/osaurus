@@ -167,6 +167,35 @@ extension ModelPickerItem {
         }
     }
 
+    /// Ranking used only when Chat needs an automatic fallback selection.
+    ///
+    /// Local discovery can include source/unquantized Gemma folders alongside
+    /// the OsaurusAI QAT bundles users are expected to run. Keep every model in
+    /// the picker, but do not let a source folder win the default slot just
+    /// because it sorts earlier on disk.
+    var defaultChatSelectionRank: Int {
+        let lower = id.lowercased()
+        switch source {
+        case .local:
+            if lower.contains("gemma-4"), lower.contains("qat"),
+                lower.contains("osaurusai--"),
+                lower.contains("jang_4m") || lower.contains("mxfp4")
+            {
+                return 0
+            }
+            if lower.contains("gemma-4"),
+                lower.contains("unquantized") || lower.contains("q4_0-unquantized")
+            {
+                return 20
+            }
+            return 5
+        case .foundation:
+            return 10
+        case .remote:
+            return isLikelyChatCapable ? 15 : 30
+        }
+    }
+
     /// Token- and prefix-based classifier that returns `true` when the model
     /// ID almost certainly belongs to an embedding or reranker family.
     ///
@@ -232,7 +261,14 @@ extension Array where Element == ModelPickerItem {
     /// items exist — a chat model with an unusual name still gets selected,
     /// just not preferentially.
     var firstChatCapable: ModelPickerItem? {
-        first(where: { $0.isLikelyChatCapable }) ?? first
+        let ranked = enumerated()
+            .filter { $0.element.isLikelyChatCapable }
+            .min {
+                let lhs = ($0.element.defaultChatSelectionRank, $0.offset)
+                let rhs = ($1.element.defaultChatSelectionRank, $1.offset)
+                return lhs < rhs
+            }
+        return ranked?.element ?? first
     }
 
     /// Group models by source for display in sections

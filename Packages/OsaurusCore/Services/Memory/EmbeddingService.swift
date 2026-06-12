@@ -2,11 +2,12 @@
 //  EmbeddingService.swift
 //  osaurus
 //
-//  Provides text embedding generation via VecturaKit's SwiftEmbedder.
+//  Provides text embedding generation via vmlx-swift's Model2Vec embedder.
 //  Used by the /v1/embeddings (OpenAI) and /api/embed (Ollama) endpoints.
 //
 
 import Foundation
+import MLXEmbedders
 import VecturaKit
 import os
 
@@ -17,10 +18,13 @@ public actor EmbeddingService {
     public static let embeddingDimension = 128
 
     /// Single shared embedder used by all VecturaKit indexes and the embedding API.
-    /// Wrapped in MetalSafeEmbedder to prevent concurrent CoreML (embedding) and
-    /// MLX (inference) Metal operations that can SIGSEGV on Apple Silicon.
+    /// Wrapped in MetalSafeEmbedder to coordinate embedding and generation work.
     public static let sharedEmbedder: MetalSafeEmbedder = MetalSafeEmbedder(
-        inner: SwiftEmbedder(modelSource: .default)
+        inner: VMLXModel2VecEmbedder(
+            modelName: modelName,
+            dimension: embeddingDimension,
+            tokenizerLoader: SwiftTransformersTokenizerLoader()
+        )
     )
 
     private static let logger = Logger(subsystem: "ai.osaurus", category: "EmbeddingService")

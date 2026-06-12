@@ -207,6 +207,23 @@ struct ModelPickerItemChatCapabilityTests {
         #expect(items.firstChatCapable == nil)
     }
 
+    @Test func firstChatCapable_prefersOsaurusGemmaQATOverSourceGemma() {
+        let items: [ModelPickerItem] = [
+            ModelPickerItem(
+                id: "google--gemma-4-26b-a4b-it-qat-q4_0-unquantized",
+                displayName: "google Gemma 4 26B A4B it qat q4_0 unquantized",
+                source: .local
+            ),
+            ModelPickerItem(
+                id: "osaurusai--gemma-4-12b-it-qat-jang_4m",
+                displayName: "OsaurusAI Gemma 4 12B it qat JANG_4M",
+                source: .local
+            ),
+        ]
+
+        #expect(items.firstChatCapable?.id == "osaurusai--gemma-4-12b-it-qat-jang_4m")
+    }
+
     @Test func firstChatCapable_prefersFoundationWhenLeading() {
         // Matches the computeItems() ordering where Foundation (when
         // available) is prepended and should always be the default pick.

@@ -8,6 +8,30 @@
 
 import Foundation
 
+enum PrefillProgressStage: String, Codable, Sendable, Equatable {
+    case queued
+    case cacheLookup
+    case cacheRestore
+    case prefill
+    case complete
+}
+
+struct PrefillProgressState: Codable, Sendable, Equatable {
+    let stage: PrefillProgressStage
+    let completedUnitCount: Int
+    let totalUnitCount: Int
+    let detail: String?
+
+    var fractionCompleted: Double {
+        guard totalUnitCount > 0 else { return 0 }
+        return min(1, max(0, Double(completedUnitCount) / Double(totalUnitCount)))
+    }
+
+    var percentCompleted: Double {
+        fractionCompleted * 100
+    }
+}
+
 /// Singleton observable that tracks in-flight prefill progress.
 ///
 /// Stored-property mutations are always dispatched to the MainActor so that
@@ -43,6 +67,13 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// Wall-clock time when the current prefill started.
     @MainActor @Published var prefillStartedAt: Date? = nil
 
+    /// Latest runtime-reported prefill stage. Nil means no prompt prefill is active.
+    @MainActor @Published var prefillProgress: PrefillProgressState? = nil
+
+    /// True while the request has entered the local generation path but the
+    /// runtime has not reported a token count or cache/prefill stage yet.
+    @MainActor @Published var isPreflighting: Bool = false
+
     init() {}
 
     #if DEBUG
@@ -55,6 +86,24 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     @MainActor func prefillWillStart(tokenCount: Int) {
         if prefillTokenCount == nil { prefillStartedAt = Date() }
         prefillTokenCount = tokenCount
+        isPreflighting = tokenCount == 0
+        prefillProgress = PrefillProgressState(
+            stage: .queued,
+            completedUnitCount: 0,
+            totalUnitCount: max(0, tokenCount),
+            detail: nil
+        )
+    }
+
+    /// Called from the MainActor when vmlx reports real prompt-processing progress.
+    @MainActor func prefillDidUpdate(_ progress: PrefillProgressState) {
+        if prefillStartedAt == nil { prefillStartedAt = Date() }
+        prefillTokenCount = progress.totalUnitCount
+        isPreflighting = false
+        prefillProgress = progress
+        if progress.stage == .complete {
+            prefillDidFinish()
+        }
     }
 
     /// Called from the MainActor when the first token is generated (prefill done)
@@ -62,11 +111,18 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     @MainActor func prefillDidFinish() {
         prefillTokenCount = nil
         prefillStartedAt = nil
+        prefillProgress = nil
+        isPreflighting = false
     }
 
     /// Fire-and-forget variant for call sites that are not on MainActor.
     func prefillWillStartAsync(tokenCount: Int) {
         Task { @MainActor in self.prefillWillStart(tokenCount: tokenCount) }
+    }
+
+    /// Fire-and-forget variant for call sites that are not on MainActor.
+    func prefillDidUpdateAsync(_ progress: PrefillProgressState) {
+        Task { @MainActor in self.prefillDidUpdate(progress) }
     }
 
     /// Fire-and-forget variant for call sites that are not on MainActor.

@@ -9,6 +9,7 @@
 //
 //    .chunk(text)     -> .tokens(text)         (pure user-visible answer)
 //    .reasoning(text) -> .reasoning(text)      (chain-of-thought delta)
+//    .prefillProgress -> .prefillProgress(...) (prompt-processing progress)
 //    .toolCall(call)  -> .toolInvocation(...)  (parsed tool envelope)
 //    .info(info)      -> .completionInfo(...)  (final stats / stopReason)
 //
@@ -41,126 +42,136 @@ enum GenerationEventMapper {
         modelName: String = "",
         trace: TTFTTrace? = nil
     ) -> AsyncThrowingStream<ModelRuntimeEvent, Error> {
-        return AsyncThrowingStream<ModelRuntimeEvent, Error> { continuation in
-            let task = Task {
-                let interval = mapperSignposter.beginInterval(
-                    "generation",
-                    id: mapperSignposter.makeSignpostID()
-                )
-                let startedAt = CFAbsoluteTimeGetCurrent()
-                var firstChunk = true
-                var finalTokenCount = 0
-                var sawCompletionInfo = false
-                var sawReasoning = false
-                var estimatedTextTokens = 0
-                var markedFirstModelOutput = false
+        let (stream, continuation) = AsyncThrowingStream<ModelRuntimeEvent, Error>.makeStream()
+        let task = Task {
+            let interval = mapperSignposter.beginInterval(
+                "generation",
+                id: mapperSignposter.makeSignpostID()
+            )
+            let startedAt = CFAbsoluteTimeGetCurrent()
+            var firstChunk = true
+            var finalTokenCount = 0
+            var sawCompletionInfo = false
+            var sawReasoning = false
+            var estimatedTextTokens = 0
+            var markedFirstModelOutput = false
 
-                func markFirstModelOutput() {
-                    guard !markedFirstModelOutput else { return }
-                    markedFirstModelOutput = true
-                    let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
-                    trace?.set("first_token_ms", ms)
-                    trace?.mark("first_model_output")
-                }
+            func markFirstModelOutput() {
+                guard !markedFirstModelOutput else { return }
+                markedFirstModelOutput = true
+                let ms = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+                trace?.set("first_token_ms", ms)
+                trace?.mark("first_model_output")
+            }
 
-                for await event in events {
-                    if case .info(let info) = event {
-                        sawCompletionInfo = true
-                        finalTokenCount = info.generationTokenCount
-                        logCompletionInfo(info)
-                        continuation.yield(
-                            .completionInfo(
-                                tokenCount: info.generationTokenCount,
-                                tokensPerSecond: info.tokensPerSecond,
-                                unclosedReasoning: info.unclosedReasoning,
-                                stopReason: Self.openAIStopReason(from: info.stopReason)
-                            )
-                        )
-                        continue
-                    }
-
-                    if Task.isCancelled { break }
-                    switch event {
-                    case .chunk(let text):
-                        guard !text.isEmpty else { continue }
-                        markFirstModelOutput()
-                        if firstChunk {
-                            firstChunk = false
-                            InferenceProgressManager.shared.prefillDidFinishAsync()
-                        }
-                        estimatedTextTokens += max(1, text.count / 4)
-                        continuation.yield(.tokens(text))
-
-                    case .reasoning(let text):
-                        guard !text.isEmpty else { continue }
-                        markFirstModelOutput()
-                        sawReasoning = true
-                        estimatedTextTokens += max(1, text.count / 4)
-                        // Reasoning-capable families (DSV4-Flash thinking,
-                        // Qwen 3.5 / 3.6 thinking-on, etc.) can stream
-                        // `.reasoning` deltas for many seconds before the
-                        // first `.chunk`. Marking prefill done on the
-                        // first non-empty event of either kind keeps the
-                        // "loading model" / spinner UI honest — the model
-                        // IS producing output, just on a different
-                        // channel.
-                        if firstChunk {
-                            firstChunk = false
-                            InferenceProgressManager.shared.prefillDidFinishAsync()
-                        }
-                        continuation.yield(.reasoning(text))
-
-                    case .toolCall(let call):
-                        markFirstModelOutput()
-                        let argsJSON = serializeArguments(
-                            call.function.arguments,
-                            toolName: call.function.name
-                        )
-                        continuation.yield(
-                            .toolInvocation(name: call.function.name, argsJSON: argsJSON)
-                        )
-
-                    case .info:
-                        continue
-
-                    @unknown default:
-                        // Forward-compat: unknown future cases are skipped
-                        // so a library bump cannot leak raw markers to the UI.
-                        continue
-                    }
-                }
-
-                if !sawCompletionInfo {
-                    finalTokenCount = estimatedTextTokens
-                    mapperLog.notice(
-                        "generation stream ended without vmlx completion info; synthesizing stats model=\(modelName, privacy: .public) estimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
-                    )
+            for await event in events {
+                if case .info(let info) = event {
+                    sawCompletionInfo = true
+                    finalTokenCount = info.generationTokenCount
+                    logCompletionInfo(info)
                     continuation.yield(
                         .completionInfo(
-                            tokenCount: estimatedTextTokens,
-                            tokensPerSecond: 0,
-                            unclosedReasoning: sawReasoning,
-                            stopReason: nil
+                            tokenCount: info.generationTokenCount,
+                            tokensPerSecond: info.tokensPerSecond,
+                            unclosedReasoning: info.unclosedReasoning,
+                            stopReason: Self.openAIStopReason(from: info.stopReason)
                         )
                     )
+                    continue
                 }
 
-                let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
-                mapperSignposter.endInterval(
-                    "generation",
-                    interval,
-                    "\(finalTokenCount, privacy: .public) tokens"
-                )
-                mapperLog.info(
-                    "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount, privacy: .public)"
-                )
-                InferenceProgressManager.shared.prefillDidFinishAsync()
-                continuation.finish()
+                if Task.isCancelled { break }
+                switch event {
+                case .chunk(let text):
+                    guard !text.isEmpty else { continue }
+                    markFirstModelOutput()
+                    if firstChunk {
+                        firstChunk = false
+                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                    }
+                    estimatedTextTokens += max(1, text.count / 4)
+                    continuation.yield(.tokens(text))
+
+                case .reasoning(let text):
+                    guard !text.isEmpty else { continue }
+                    markFirstModelOutput()
+                    sawReasoning = true
+                    estimatedTextTokens += max(1, text.count / 4)
+                    // Reasoning-capable families (DSV4-Flash thinking,
+                    // Qwen 3.5 / 3.6 thinking-on, etc.) can stream
+                    // `.reasoning` deltas for many seconds before the
+                    // first `.chunk`. Marking prefill done on the
+                    // first non-empty event of either kind keeps the
+                    // "loading model" / spinner UI honest — the model
+                    // IS producing output, just on a different
+                    // channel.
+                    if firstChunk {
+                        firstChunk = false
+                        InferenceProgressManager.shared.prefillDidFinishAsync()
+                    }
+                    continuation.yield(.reasoning(text))
+
+                case .prefillProgress(let progress):
+                    let state = PrefillProgressState(
+                        stage: PrefillProgressStage(rawValue: progress.stage.rawValue) ?? .prefill,
+                        completedUnitCount: progress.completedUnitCount,
+                        totalUnitCount: progress.totalUnitCount,
+                        detail: progress.detail
+                    )
+                    InferenceProgressManager.shared.prefillDidUpdateAsync(state)
+                    continuation.yield(.prefillProgress(state))
+
+                case .toolCall(let call):
+                    markFirstModelOutput()
+                    let argsJSON = serializeArguments(
+                        call.function.arguments,
+                        toolName: call.function.name
+                    )
+                    continuation.yield(
+                        .toolInvocation(name: call.function.name, argsJSON: argsJSON)
+                    )
+
+                case .info:
+                    continue
+
+                @unknown default:
+                    // Forward-compat: unknown future cases are skipped
+                    // so a library bump cannot leak raw markers to the UI.
+                    continue
+                }
             }
-            continuation.onTermination = { @Sendable _ in
-                task.cancel()
+
+            if !sawCompletionInfo {
+                finalTokenCount = estimatedTextTokens
+                mapperLog.notice(
+                    "generation stream ended without vmlx completion info; synthesizing stats model=\(modelName, privacy: .public) estimatedTokens=\(estimatedTextTokens, privacy: .public) unclosedReasoning=\(sawReasoning, privacy: .public)"
+                )
+                continuation.yield(
+                    .completionInfo(
+                        tokenCount: estimatedTextTokens,
+                        tokensPerSecond: 0,
+                        unclosedReasoning: sawReasoning,
+                        stopReason: nil
+                    )
+                )
             }
+
+            let durationMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            mapperSignposter.endInterval(
+                "generation",
+                interval,
+                "\(finalTokenCount, privacy: .public) tokens"
+            )
+            mapperLog.info(
+                "[perf] generation durationMs=\(durationMs, privacy: .public) tokenCount=\(finalTokenCount, privacy: .public)"
+            )
+            InferenceProgressManager.shared.prefillDidFinishAsync()
+            continuation.finish()
         }
+        continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+        return stream
     }
 
     // MARK: - Helpers

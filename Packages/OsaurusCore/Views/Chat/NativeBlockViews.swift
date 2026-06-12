@@ -140,12 +140,29 @@ final class NativeTypingIndicatorView: NSView {
     /// wins over a raw model-load tick.
     private enum LoadingPhase {
         case sandbox
+        case preflight
+        case prefill(PrefillProgressState)
         case modelLoad
 
         var labelText: String {
             switch self {
-            case .sandbox: "Sandbox is still loading..."
-            case .modelLoad: "Loading Model..."
+            case .sandbox:
+                return "Sandbox is still loading..."
+            case .preflight:
+                return "Searching capabilities..."
+            case .prefill(let progress):
+                if progress.totalUnitCount > 0 {
+                    return "Prefill \(Int(progress.percentCompleted.rounded()))%..."
+                }
+                return switch progress.stage {
+                case .queued: "Prefill queued..."
+                case .cacheLookup: "Checking cache..."
+                case .cacheRestore: "Restoring cache..."
+                case .prefill: "Prefilling prompt..."
+                case .complete: "Prefill complete..."
+                }
+            case .modelLoad:
+                return "Loading Model..."
             }
         }
     }
@@ -162,6 +179,8 @@ final class NativeTypingIndicatorView: NSView {
 
         let triggers: [AnyPublisher<Void, Never>] = [
             progress.$loadInFlightCount.map { _ in () }.eraseToAnyPublisher(),
+            progress.$isPreflighting.map { _ in () }.eraseToAnyPublisher(),
+            progress.$prefillProgress.map { _ in () }.eraseToAnyPublisher(),
             sandbox.$status.map { _ in () }.eraseToAnyPublisher(),
             sandbox.$isProvisioning.map { _ in () }.eraseToAnyPublisher(),
             agents.$activeAgentId.map { _ in () }.eraseToAnyPublisher(),
@@ -191,6 +210,8 @@ final class NativeTypingIndicatorView: NSView {
         let sandboxBooting = sandbox.status == .starting || sandbox.isProvisioning
 
         if agentUsesSandbox && sandboxBooting { return .sandbox }
+        if progress.isPreflighting { return .preflight }
+        if let prefillProgress = progress.prefillProgress { return .prefill(prefillProgress) }
         if progress.loadInFlightCount > 0 { return .modelLoad }
         return nil
     }

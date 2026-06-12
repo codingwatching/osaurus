@@ -17,6 +17,14 @@ enum ModelRuntimeEvent: Sendable {
     /// `reasoning_content` field, the ChatView Think panel, and the plugin
     /// streaming hint.
     case reasoning(String)
+    /// Real prompt-processing progress before first generated token.
+    ///
+    /// This is emitted from vmlx-swift's `Generation.prefillProgress` and
+    /// intentionally carries stage + completed/total units instead of a
+    /// wall-clock estimate. Consumers can render a determinate percentage when
+    /// total units are known, or stage text when the runtime is still doing
+    /// cache lookup/restore work.
+    case prefillProgress(PrefillProgressState)
     case toolInvocation(name: String, argsJSON: String)
     /// Completion stats for the just-finished generation.
     ///

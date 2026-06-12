@@ -49,6 +49,7 @@ struct MCPHTTPHandlerTests {
         #expect(aggregate["paged_hits"] as? Int == 0)
         #expect(aggregate["disk_l2_hits"] as? Int == 0)
         #expect(aggregate["ssm_companion_hits"] as? Int == 0)
+        #expect(json.keys.contains("batch_diagnostics"))
     }
 
     @Test func mcp_tools_lists_only_enabled_tools() async throws {

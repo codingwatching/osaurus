@@ -2176,6 +2176,8 @@ final class ChatSession: ObservableObject {
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
+                } else if let progress = StreamingPrefillProgressHint.decode(delta) {
+                    InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
                     let now = Date()
                     if firstDeltaTime == nil {
@@ -3277,6 +3279,16 @@ final class ChatSession: ObservableObject {
                                     debugLog(promptDump)
                                 }
                             #endif
+                            let requestedToolChoice = ChatToolChoicePolicy.resolve(
+                                tools: toolSpecs,
+                                userText: trimmed,
+                                attempt: attempt
+                            )
+                            let finalToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice(
+                                model: self.selectedModel ?? "default",
+                                messages: msgs,
+                                requested: requestedToolChoice
+                            )
                             var req = ChatCompletionRequest(
                                 model: self.selectedModel ?? "default",
                                 messages: msgs,
@@ -3289,11 +3301,7 @@ final class ChatSession: ObservableObject {
                                 stop: nil,
                                 n: nil,
                                 tools: toolSpecs.isEmpty ? nil : toolSpecs,
-                                tool_choice: ChatToolChoicePolicy.resolve(
-                                    tools: toolSpecs,
-                                    userText: trimmed,
-                                    attempt: attempt
-                                ),
+                                tool_choice: finalToolChoice,
                                 session_id: self.sessionId?.uuidString
                             )
                             req.samplingParametersAreImplicit = true

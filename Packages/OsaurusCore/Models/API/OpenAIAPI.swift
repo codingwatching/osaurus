@@ -885,6 +885,9 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Final usage chunk (OpenAI `stream_options.include_usage`). Populated
     /// only on the dedicated penultimate SSE chunk; nil on every other.
     var usage: Usage? = nil
+    /// Osaurus extension chunk for determinate local prefill progress. Emitted
+    /// with empty choices before the first token when the runtime reports it.
+    var osaurus_prefill: PrefillProgressState? = nil
 }
 
 // MARK: - Error Response
@@ -1183,9 +1186,8 @@ extension JSONValue {
     }
 
     private static func normalizeTypeUnion(_ entries: [JSONValue], in object: inout [String: JSONValue]) {
-        var typeNames: [String] = []
         var hasNull = false
-
+        var scalars: [String] = []
         for entry in entries {
             guard case .string(let typeName) = entry else {
                 object["type"] = inferredFallbackType(for: object)
@@ -1193,14 +1195,18 @@ extension JSONValue {
             }
             if typeName == "null" {
                 hasNull = true
-            } else if !typeNames.contains(typeName) {
-                typeNames.append(typeName)
+            } else {
+                scalars.append(typeName)
             }
         }
 
-        object["type"] = .string(typeNames.first ?? "string")
+        guard let scalar = scalars.first else { return }
+        object["type"] = .string(scalar)
         if hasNull {
             object["nullable"] = .bool(true)
+        }
+        if scalars.count > 1 {
+            object["x-osaurus-original-type"] = .array(scalars.map { .string($0) })
         }
     }
 

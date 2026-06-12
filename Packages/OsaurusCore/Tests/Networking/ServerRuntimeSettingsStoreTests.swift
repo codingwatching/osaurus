@@ -36,7 +36,7 @@ struct ServerRuntimeSettingsStoreTests {
             // The default disk-cache topology mirrors what
             // `ModelRuntime.buildCacheCoordinatorConfig` used to hardcode.
             #expect(migrated.cache.prefix.enabled == true)
-            #expect(migrated.cache.pagedKV.enabled == true)
+            #expect(migrated.cache.pagedKV.enabled == false)
             #expect(migrated.cache.blockDisk.enabled == true)
             #expect(migrated.cache.legacyDisk.enabled == false)
             #expect(migrated.cache.liveKVCodec == .engineSelected)
@@ -65,7 +65,7 @@ struct ServerRuntimeSettingsStoreTests {
 
             #expect(snapshot.network.port == ServerConfiguration.default.port)
             #expect(snapshot.cache.prefix.enabled == true)
-            #expect(snapshot.cache.pagedKV.enabled == true)
+            #expect(snapshot.cache.pagedKV.enabled == false)
             #expect(snapshot.cache.blockDisk.enabled == true)
             #expect(snapshot.cache.legacyDisk.enabled == false)
             #expect(snapshot.cache.liveKVCodec == .engineSelected)
@@ -142,6 +142,7 @@ struct ServerRuntimeSettingsStoreTests {
         let dir = try makeTempDirectory()
         try await withOverriddenDirectory(dir) {
             var oldDefault = VMLXServerRuntimeSettings()
+            oldDefault.cache.pagedKV.enabled = true
             oldDefault.cache.liveKVCodec = .none
             oldDefault.cache.enableSSMReDerive = false
             oldDefault.cache.defaultMaxKVSize = 65536
@@ -151,11 +152,13 @@ struct ServerRuntimeSettingsStoreTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
             #expect(loaded.cache.liveKVCodec == .none)
+            #expect(loaded.cache.pagedKV.enabled == false)
             #expect(loaded.cache.enableSSMReDerive == true)
 
             let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
             let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
             #expect(persisted.cache.liveKVCodec == .none)
+            #expect(persisted.cache.pagedKV.enabled == false)
             #expect(persisted.cache.enableSSMReDerive == true)
             #expect(
                 FileManager.default.fileExists(
@@ -166,6 +169,7 @@ struct ServerRuntimeSettingsStoreTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let snapshot = ServerRuntimeSettingsStore.snapshot()
             #expect(snapshot.cache.liveKVCodec == .none)
+            #expect(snapshot.cache.pagedKV.enabled == false)
             #expect(snapshot.cache.enableSSMReDerive == true)
         }
     }
@@ -237,6 +241,44 @@ struct ServerRuntimeSettingsStoreTests {
             ServerRuntimeSettingsStore.invalidateSnapshot()
             let loaded = try #require(ServerRuntimeSettingsStore.load())
             #expect(loaded.cache.liveKVCodec == .engineSelected)
+        }
+    }
+
+    @Test @MainActor func load_repairsOldEngineSelectedPagedCacheDefaultToOff() async throws {
+        let dir = try makeTempDirectory()
+        try await withOverriddenDirectory(dir) {
+            var oldDefault = VMLXServerRuntimeSettings()
+            oldDefault.cache.pagedKV.enabled = true
+            oldDefault.cache.liveKVCodec = .engineSelected
+            oldDefault.cache.enableSSMReDerive = true
+            oldDefault.cache.defaultMaxKVSize = 65536
+            oldDefault.cache.longPromptMultiplier = 2.0
+            oldDefault.cache.legacyDisk = VMLXDiskCacheSettings(
+                enabled: false,
+                maxSizeGB: nil,
+                directory: nil
+            )
+            oldDefault.cache.blockDisk = VMLXBlockDiskCacheSettings(
+                enabled: true,
+                maxSizeGB: nil,
+                directory: nil
+            )
+            try writeSettings(oldDefault, to: dir)
+
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            let loaded = try #require(ServerRuntimeSettingsStore.load())
+            #expect(loaded.cache.pagedKV.enabled == false)
+            #expect(loaded.cache.liveKVCodec == .engineSelected)
+            #expect(loaded.cache.blockDisk.enabled == true)
+
+            let data = try Data(contentsOf: dir.appendingPathComponent("server-runtime.json"))
+            let persisted = try JSONDecoder().decode(VMLXServerRuntimeSettings.self, from: data)
+            #expect(persisted.cache.pagedKV.enabled == false)
+            #expect(
+                FileManager.default.fileExists(
+                    atPath: dir.appendingPathComponent(".server-runtime-paged-cache-default-off-v3-migrated").path
+                )
+            )
         }
     }
 

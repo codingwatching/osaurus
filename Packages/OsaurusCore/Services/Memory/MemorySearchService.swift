@@ -198,10 +198,32 @@ public actor MemorySearchService {
 
     public var isVecturaAvailable: Bool { !vectorDBs.isEmpty }
 
+    private func vectorWorkAllowed(_ operation: String) async -> Bool {
+        let env = ProcessInfo.processInfo.environment
+        if env["OSAURUS_DISABLE_MEMORY_VECTOR_SEARCH"] == "1"
+            || env["OSAURUS_DISABLE_MEMORY_VECTOR_SEARCH"]?.lowercased() == "true"
+        {
+            MemoryLogger.search.warning("Skipping VecturaKit \(operation); disabled by environment")
+            return false
+        }
+
+        let residentModels = await ModelRuntime.shared.cachedModelSummaries()
+        guard residentModels.isEmpty else {
+            let names = residentModels.map(\.name).joined(separator: ",")
+            MemoryLogger.search.warning(
+                "Skipping VecturaKit \(operation) while MLX model resident (\(names)); using SQL text fallback"
+            )
+            return false
+        }
+        return true
+    }
+
     // MARK: - Indexing
 
     public func indexPinnedFact(_ fact: PinnedFact) async {
-        guard let db = await ensureVectorDB(for: fact.agentId) else { return }
+        guard await vectorWorkAllowed("indexPinnedFact"),
+            let db = await ensureVectorDB(for: fact.agentId)
+        else { return }
         guard let id = UUID(uuidString: fact.id) else { return }
         do {
             _ = try await db.addDocument(text: fact.content, id: id)
@@ -212,7 +234,9 @@ public actor MemorySearchService {
     }
 
     public func indexEpisode(_ episode: Episode) async {
-        guard let db = await ensureVectorDB(for: episode.agentId) else { return }
+        guard await vectorWorkAllowed("indexEpisode"),
+            let db = await ensureVectorDB(for: episode.agentId)
+        else { return }
         let id = TextSimilarity.deterministicUUID(from: "episode:\(episode.id)")
         do {
             let text = episode.summary + " — " + episode.topicsCSV
@@ -225,7 +249,9 @@ public actor MemorySearchService {
     }
 
     public func indexTranscriptTurn(_ turn: TranscriptTurn) async {
-        guard let db = await ensureVectorDB(for: turn.agentId) else { return }
+        guard await vectorWorkAllowed("indexTranscriptTurn"),
+            let db = await ensureVectorDB(for: turn.agentId)
+        else { return }
         let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
         do {
             _ = try await db.addDocument(text: turn.content, id: id)
@@ -261,7 +287,9 @@ public actor MemorySearchService {
         // Per-agent partitioning: scope the vector search to the
         // caller's agent index. Cross-agent leakage is now structural
         // — agent A simply doesn't open agent B's index.
-        if let db = await ensureVectorDB(for: agentId) {
+        if await vectorWorkAllowed("searchPinnedFacts"),
+            let db = await ensureVectorDB(for: agentId)
+        {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
                 let results = try await db.search(
@@ -301,7 +329,9 @@ public actor MemorySearchService {
         topK: Int = 10
     ) async -> [Episode] {
         guard topK > 0 else { return [] }
-        if let db = await ensureVectorDB(for: agentId) {
+        if await vectorWorkAllowed("searchEpisodes"),
+            let db = await ensureVectorDB(for: agentId)
+        {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
                 let results = try await db.search(
@@ -364,7 +394,9 @@ public actor MemorySearchService {
         topK: Int = 10
     ) async -> [TranscriptTurn] {
         guard topK > 0 else { return [] }
-        if let db = await ensureVectorDB(for: agentId) {
+        if await vectorWorkAllowed("searchTranscript"),
+            let db = await ensureVectorDB(for: agentId)
+        {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
                 let results = try await db.search(
@@ -501,6 +533,8 @@ public actor MemorySearchService {
     /// first launch after upgrade so vectors land in their per-agent
     /// directories.
     public func rebuildIndex() async {
+        guard await vectorWorkAllowed("rebuildIndex") else { return }
+
         episodeKeyMap.removeAll()
         transcriptKeyMap.removeAll()
 

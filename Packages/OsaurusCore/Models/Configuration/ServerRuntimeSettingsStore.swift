@@ -53,6 +53,8 @@ public enum ServerRuntimeSettingsStore {
     private static let fileName = "server-runtime.json"
     private static let cacheDefaultsMigrationMarkerName =
         ".server-runtime-cache-defaults-v2-migrated"
+    private static let pagedCacheDefaultOffMigrationMarkerName =
+        ".server-runtime-paged-cache-default-off-v3-migrated"
 
     // MARK: - Load / Save
 
@@ -174,6 +176,10 @@ public enum ServerRuntimeSettingsStore {
             normalized.cache.enableSSMReDerive = true
             writeCacheDefaultsMigrationMarker()
         }
+        if shouldRepairPagedCacheDefault(normalized.cache) {
+            normalized.cache.pagedKV.enabled = false
+            writePagedCacheDefaultOffMigrationMarker()
+        }
         return normalized
     }
 
@@ -207,6 +213,40 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func writeCacheDefaultsMigrationMarker() {
         let url = cacheDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
+    }
+
+    private nonisolated static func shouldRepairPagedCacheDefault(
+        _ cache: VMLXServerCacheSettings
+    ) -> Bool {
+        guard !FileManager.default.fileExists(atPath: pagedCacheDefaultOffMigrationMarkerURL().path) else {
+            return false
+        }
+        return cache.prefix.enabled
+            && cache.prefix.legacyEntryCountCache == false
+            && cache.prefix.memoryLimitMB == nil
+            && cache.prefix.memoryPercent == 15.0
+            && cache.prefix.ttlMinutes == nil
+            && cache.pagedKV.enabled
+            && cache.pagedKV.blockSize == nil
+            && cache.pagedKV.maxBlocks == nil
+            && (cache.liveKVCodec == .engineSelected || cache.liveKVCodec == .none)
+            && cache.turboQuantKeyBits == nil
+            && cache.turboQuantValueBits == nil
+            && cache.defaultMaxKVSize == 65536
+            && cache.longPromptMultiplier == 2.0
+            && cache.storedKVCodec == .auto
+            && cache.legacyDisk.enabled == false
+            && cache.legacyDisk.maxSizeGB == nil
+            && cache.blockDisk.enabled
+            && cache.blockDisk.maxSizeGB == nil
+            && cache.blockDisk.directory == nil
+            && cache.enableSSMReDerive
+    }
+
+    private nonisolated static func writePagedCacheDefaultOffMigrationMarker() {
+        let url = pagedCacheDefaultOffMigrationMarkerURL()
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         try? Data().write(to: url, options: [.atomic])
     }
@@ -269,8 +309,9 @@ public enum ServerRuntimeSettingsStore {
         )
 
         // Cache: seed the engine-owned topology with automatic policy.
-        // Prefix, paged KV, block-disk L2, and SSM rederive are on by
-        // default. Engine-selected live KV is resolved by ModelRuntime per
+        // Prefix, block-disk L2, and SSM rederive are on by default; paged
+        // RAM KV is opt-in because it only helps materially for multibatch
+        // workloads. Engine-selected live KV is resolved by ModelRuntime per
         // model family/topology: proven full-KV rows get TurboQuant, while
         // hybrid/rotating/CCA/DSV4 rows stay native/fp16 unless explicitly
         // overridden.
@@ -283,7 +324,7 @@ public enum ServerRuntimeSettingsStore {
                 ttlMinutes: nil
             ),
             pagedKV: VMLXPagedKVCacheSettings(
-                enabled: true,
+                enabled: false,
                 blockSize: nil,
                 maxBlocks: nil
             ),
@@ -360,6 +401,10 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func cacheDefaultsMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(cacheDefaultsMigrationMarkerName)
+    }
+
+    private nonisolated static func pagedCacheDefaultOffMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(pagedCacheDefaultOffMigrationMarkerName)
     }
 
     private nonisolated static func legacyConfigurationFileURL() -> URL {

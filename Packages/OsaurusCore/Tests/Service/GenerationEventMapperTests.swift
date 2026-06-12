@@ -177,6 +177,39 @@ struct GenerationEventMapperTests {
         #expect(tokenPieces == ["answer"])
     }
 
+    @Test func prefillProgress_emits_runtime_progress_event() async throws {
+        let events: [Generation] = [
+            .prefillProgress(
+                PrefillProgress(
+                    stage: .cacheRestore,
+                    completedUnitCount: 512,
+                    totalUnitCount: 2048,
+                    detail: "disk L2"
+                )
+            ),
+            .prefillProgress(
+                PrefillProgress(
+                    stage: .prefill,
+                    completedUnitCount: 1024,
+                    totalUnitCount: 2048,
+                    detail: "model.prepare"
+                )
+            ),
+            .chunk("answer"),
+        ]
+        let out = try await collect(events: events)
+        let progress = out.compactMap {
+            if case .prefillProgress(let state) = $0 { state } else { nil }
+        }
+        #expect(progress.count == 2)
+        #expect(progress[0].stage == .cacheRestore)
+        #expect(progress[0].completedUnitCount == 512)
+        #expect(progress[0].totalUnitCount == 2048)
+        #expect(progress[0].detail == "disk L2")
+        #expect(progress[1].stage == .prefill)
+        #expect(progress[1].percentCompleted == 50)
+    }
+
     @Test func empty_reasoning_is_skipped() async throws {
         let events: [Generation] = [
             .reasoning(""),

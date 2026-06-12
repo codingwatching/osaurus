@@ -236,6 +236,27 @@ enum StreamingReasoningItemHint: Sendable {
     }
 }
 
+/// In-band signaling for local prefill progress before the first generated
+/// token. Payload is JSON so additional fields can be added later without
+/// changing the sentinel prefix or colliding with visible model text.
+enum StreamingPrefillProgressHint: Sendable {
+    private static let prefillPrefix = "\u{FFFE}prefill:"
+
+    static func encode(_ progress: PrefillProgressState) -> String {
+        guard let data = try? JSONEncoder().encode(progress),
+            let json = String(data: data, encoding: .utf8)
+        else { return prefillPrefix + "{}" }
+        return prefillPrefix + json
+    }
+
+    static func decode(_ delta: String) -> PrefillProgressState? {
+        guard delta.hasPrefix(prefillPrefix) else { return nil }
+        let json = String(delta.dropFirst(prefillPrefix.count))
+        guard let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(PrefillProgressState.self, from: data)
+    }
+}
+
 /// In-band signaling for generation benchmarks (tok/s, token count).
 /// Uses the same `\u{FFFE}` sentinel pattern as `StreamingToolHint`.
 ///

@@ -24,8 +24,6 @@ struct ToolSerializationStabilityTests {
                 description: "Echoes its input back.",
                 parameters: .object([
                     "type": .string("object"),
-                    // Insertion order chosen so a non-canonical encoder would
-                    // surface key reordering between runs.
                     "z_last": .object(["type": .string("string")]),
                     "a_first": .object(["type": .string("string")]),
                     "m_middle": .object(["type": .string("string")]),
@@ -36,9 +34,6 @@ struct ToolSerializationStabilityTests {
         let a = tool.toTokenizerToolSpec()
         let b = tool.toTokenizerToolSpec()
 
-        // Re-serialize both with sortedKeys so we get a deterministic byte
-        // representation we can compare. (`isValidJSONObject` + serialize is
-        // intentionally identical to the path the canonical helper uses.)
         let aData = try JSONSerialization.data(withJSONObject: a, options: [.sortedKeys])
         let bData = try JSONSerialization.data(withJSONObject: b, options: [.sortedKeys])
         #expect(aData == bData)
@@ -129,12 +124,6 @@ struct ToolSerializationStabilityTests {
 
     @Test
     func toTokenizerToolSpec_dropsBooleanAdditionalPropertiesForChatTemplates() throws {
-        // Mirrors the Osaurus default `db_*` tools (db_insert/db_update/db_upsert/
-        // db_delete/db_restore), whose free-form object args are spelled
-        // `{"type": "object", "additionalProperties": true}`. Gemma4's template
-        // pipes a property's `additionalProperties` through `| upper`, which
-        // throws "upper filter requires string" on the boolean form. The schema
-        // object form must still survive so nested constraints keep rendering.
         let tool = Tool(
             type: "function",
             function: ToolFunction(
@@ -170,17 +159,86 @@ struct ToolSerializationStabilityTests {
         let whereClause = try #require(properties["where"] as? [String: any Sendable])
         let shaped = try #require(properties["shaped"] as? [String: any Sendable])
 
-        // Boolean additionalProperties (both at the root and nested) is dropped.
         #expect(parameters["additionalProperties"] == nil)
         #expect(set["additionalProperties"] == nil)
         #expect(whereClause["additionalProperties"] == nil)
-        // Object-form additionalProperties is preserved and still renderable.
         let shapedAdditional = try #require(shaped["additionalProperties"] as? [String: any Sendable])
         #expect(shapedAdditional["type"] as? String == "string")
-        // Surrounding shape is untouched.
         #expect(set["type"] as? String == "object")
         #expect(whereClause["type"] as? String == "object")
         try Self.assertNoBooleanAdditionalProperties(parameters)
+    }
+
+    @Test
+    func toTokenizerToolSpec_collapsesMultiTypeSchemasForGemmaTemplates() throws {
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(
+                name: "create_table",
+                description: "Creates a table.",
+                parameters: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "columns": .object([
+                            "type": .string("array"),
+                            "items": .object([
+                                "type": .string("object"),
+                                "properties": .object([
+                                    "properties": .object([
+                                        "type": .array([.string("description"), .string("type")]),
+                                        "description": .string("Column metadata."),
+                                    ])
+                                ]),
+                            ]),
+                        ])
+                    ]),
+                ])
+            )
+        )
+
+        let spec = tool.toTokenizerToolSpec()
+        let fn = try #require(spec["function"] as? [String: any Sendable])
+        let parameters = try #require(fn["parameters"] as? [String: any Sendable])
+        let rootProperties = try #require(parameters["properties"] as? [String: any Sendable])
+        let columns = try #require(rootProperties["columns"] as? [String: any Sendable])
+        let items = try #require(columns["items"] as? [String: any Sendable])
+        let itemProperties = try #require(items["properties"] as? [String: any Sendable])
+        let nestedProperties = try #require(itemProperties["properties"] as? [String: any Sendable])
+
+        #expect(nestedProperties["type"] as? String == "description")
+        #expect((nestedProperties["x-osaurus-original-type"] as? [String]) == ["description", "type"])
+    }
+
+    @Test
+    @MainActor
+    func alwaysLoadedTokenizerToolSpecsExposeOnlyStringTypeFields() throws {
+        let specs = ToolRegistry.shared.alwaysLoadedSpecs(mode: .none)
+            .map { $0.toTokenizerToolSpec() }
+        var failures: [String] = []
+
+        func walk(_ value: Any, path: String) {
+            if let dict = value as? [String: Any] {
+                if !path.hasSuffix(".properties"), let type = dict["type"], !(type is String) {
+                    failures.append("\(path).type=\(type)")
+                }
+                for (key, child) in dict {
+                    walk(child, path: path + "." + key)
+                }
+            } else if let array = value as? [Any] {
+                for (index, child) in array.enumerated() {
+                    walk(child, path: "\(path)[\(index)]")
+                }
+            }
+        }
+
+        for spec in specs {
+            let name =
+                ((spec["function"] as? [String: Any])?["name"] as? String)
+                ?? "<unknown>"
+            walk(spec, path: name)
+        }
+
+        #expect(failures.isEmpty, Comment(rawValue: failures.joined(separator: "\n")))
     }
 
     private static func assertNoBooleanAdditionalProperties(

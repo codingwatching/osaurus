@@ -126,6 +126,31 @@ struct RuntimePolicySourceTests {
         )
     }
 
+    @Test("Memory vector search skips vMLX embeddings while local model is resident")
+    func memoryVectorSearchSkipsResidentMLXModel() throws {
+        let source = try Self.source("Services/Memory/MemorySearchService.swift")
+
+        #expect(source.contains("OSAURUS_DISABLE_MEMORY_VECTOR_SEARCH"))
+        #expect(source.contains("ModelRuntime.shared.cachedModelSummaries()"))
+        #expect(source.contains("residentModels.isEmpty"))
+        #expect(source.contains("using SQL text fallback"))
+
+        for operation in [
+            "indexPinnedFact",
+            "indexEpisode",
+            "indexTranscriptTurn",
+            "searchPinnedFacts",
+            "searchEpisodes",
+            "searchTranscript",
+            "rebuildIndex",
+        ] {
+            #expect(
+                source.contains("vectorWorkAllowed(\"\(operation)\")"),
+                "MemorySearchService must guard \(operation) before VecturaKit/vMLX embedding work"
+            )
+        }
+    }
+
     @Test("AppDelegate binds HTTP server before Parakeet/CoreML startup")
     func appDelegateStartsServerBeforeSpeechAutoload() throws {
         let source = try Self.source("AppDelegate.swift")
@@ -578,7 +603,7 @@ struct RuntimePolicySourceTests {
         // duplicate-product collisions with the app graph while keeping yyjson
         // as one shared C dependency. Osaurus must not carry SwiftPM
         // moduleAliases for that collision.
-        let expectedRuntimeHardenedRevision = "76047f3b4492d4fae316267a30fba55163b1c5cd"
+        let expectedRuntimeHardenedRevision = "020ec0d5f96cc158dd82ea1973cae66c0b70face"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -586,7 +611,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the pushed vmlx-swift runtime-hardening revision proven by the Qwen/Gemma/DSV4/Step matrix, Gemma4 proportional RoPE live rows, Gemma4 quoted tool-key parser coverage, Gemma4 file-backed required-tool template grounding, Nemotron Ultra JANGTQ streaming plus BF16/weighted-MoE fast-path guards plus native XML required-tool metadata, the Nemotron Ultra resident/mmap cache-proof harness, mmap graph-breakdown documentation, the Nemotron Ultra mamba_projection role alias, mmap quantized-matmul trace, README resident-vs-mmap speed-boundary guard, hybrid SSM rederive boundary clarification, exact-boundary hybrid SSM snapshot rederive avoidance, Ultra no-load speed-gate boundary, Nemotron-H JANGTQ mmap auto-BF16 load proof, Osaurus MLXPress cold-tier opt-in policy, streamed DSV4 request-tool prefix buffering, Gemma4 native tool-call parser regression pin, hybrid SSM companion rederive boundary pin, Nemotron-H Mamba cache-offset and dtype parity, the stacked Nemotron JANGTQ scored down-projection kernel kept opt-in after live Ultra rows showed it regresses the default decode path, default-off Nemotron Mamba subprofile diagnostics, the Nemotron Omni activation BF16 default-off fix, LFM2 exact required-tool text grounding for preserving-newlines prompts, schema-checked LFM bracket-array tool parsing, LFM2.5 MXFP8 required-tool warm disk-restore bypass, LFM2 Pythonic parser schema validation, LFM2 OpenAI tool_call JSON envelope parsing, LFM2 required-tool prompt preface ordering, DSV4 required-tool reminder placement before the current tail user turn, the Gemma4 audio/media/cache Swift Testing crash fix, and the Gemma4 required-tool template ordering fix that preserves multiline user arguments; an internally-consistent older pin is still not wired"
+            "Osaurus must consume the pushed vmlx-swift revision proven for this Gemma QAT correctness checkpoint: Gemma 4 QAT loader/parser fixes, paged-cache default policy, prefill progress wiring, Model2Vec static embedding APIs, and the post-merge pin/readiness proof. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -866,6 +891,14 @@ struct RuntimePolicySourceTests {
             "ServerRuntimeSettingsStore.migratedFromLegacy must use engine-selected live KV so proven full-KV rows default to TurboQuant"
         )
         #expect(
+            store.contains("pagedKV: VMLXPagedKVCacheSettings(\n                enabled: false"),
+            "ServerRuntimeSettingsStore.migratedFromLegacy must keep paged RAM KV off by default"
+        )
+        #expect(
+            store.contains("shouldRepairPagedCacheDefault"),
+            "ServerRuntimeSettingsStore must repair stale persisted paged-cache default files to off"
+        )
+        #expect(
             !store.contains("normalized.cache.liveKVCodec = .engineSelected"),
             "Legacy cache migration must not overwrite explicit existing live-KV choices"
         )
@@ -910,6 +943,11 @@ struct RuntimePolicySourceTests {
                 && mlxService.contains("Step 3.7 tool parsing/template selection is owned by the pinned")
                 && mlxService.contains("return ModelMediaCapabilities.descriptor(modelId: modelId)"),
             "Step 3.7 runtime policy must stay text-only/tool-capable and must not block preflight on external bundle metadata until Step VLM is wired and proven"
+        )
+        #expect(
+            runtime.contains("if ModelFamilyNames.isGemmaFamily(modelName)")
+                && runtime.contains("return cacheTopology.kvLayerCount > 0"),
+            "Gemma SWA must allow TurboQuant for KV-capable full-attention layers while topology tags preserve rotating SWA layers"
         )
     }
 
@@ -1282,6 +1320,30 @@ struct RuntimePolicySourceTests {
         )
         #expect(agentRun.contains("assistantToolCalls.append"))
         #expect(agentRun.contains("ChatMessage(role: \"tool\""))
+    }
+
+    @Test("Gemma QAT agent final answer disables auto tools after tool results")
+    func gemmaQATAgentFinalAnswerDisablesAutoToolsAfterToolResults() throws {
+        let handler = try Self.source("Networking/HTTPHandler.swift")
+        let chatPolicy = try Self.source("Services/Chat/ChatToolChoicePolicy.swift")
+        let helper = try Self.functionBody("static func finalizingPostToolChoice(", in: chatPolicy)
+        let agentRun = try Self.functionBody("private func handleAgentRunEndpoint(", in: handler)
+        let chatView = try Self.source("Views/Chat/ChatView.swift")
+
+        #expect(helper.contains("messages.last?.role == \"tool\""))
+        #expect(helper.contains("modelId.contains(\"gemma-4\")"))
+        #expect(helper.contains("modelId.contains(\"qat\")"))
+        #expect(helper.contains("modelId.contains(\"jang_4m\") || modelId.contains(\"mxfp4\")"))
+        #expect(helper.contains("return ToolChoiceOption.none"))
+        #expect(
+            helper.contains("case .some(.required), .some(.function):"),
+            "Required/named tool-choice requests must stay fail-closed instead of being silently downgraded."
+        )
+        #expect(agentRun.contains("ChatToolChoicePolicy.finalizingPostToolChoice("))
+        #expect(agentRun.contains("tool_choice: iterationToolChoice"))
+        #expect(chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve("))
+        #expect(chatView.contains("let finalToolChoice = ChatToolChoicePolicy.finalizingPostToolChoice("))
+        #expect(chatView.contains("tool_choice: finalToolChoice"))
     }
 
     @Test("OpenAI chat completions endpoint does not inject agent context")
@@ -2237,7 +2299,8 @@ struct RuntimePolicySourceTests {
             "Chat UI should only send tool schemas when the composer resolved a non-empty tool set."
         )
         #expect(
-            chatView.contains("tool_choice: ChatToolChoicePolicy.resolve("),
+            chatView.contains("let requestedToolChoice = ChatToolChoicePolicy.resolve(")
+                && chatView.contains("tool_choice: finalToolChoice"),
             "Chat UI should route explicit tool-use prompts through the shared policy instead of hard-coding auto for every tool-enabled turn."
         )
         #expect(

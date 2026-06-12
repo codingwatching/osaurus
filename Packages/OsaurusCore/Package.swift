@@ -34,18 +34,19 @@ let package = Package(
         // live model, cache, parser, API, and UI evidence.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "76047f3b4492d4fae316267a30fba55163b1c5cd"
+            revision: "020ec0d5f96cc158dd82ea1973cae66c0b70face"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
         // last working version until osaurus catches up. Bumping requires
         // a paired osaurus-side TTSService update.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", "0.14.0" ..< "0.14.2"),
-        // Pinned by commit (was `branch: "main"`) — same reasoning as the
-        // consolidated vmlx-swift pin above.
+        // VecturaKit 6.x keeps embedding providers out of the core package.
+        // Osaurus supplies its embedder from vmlx-swift so the app graph does
+        // not pull a second transformer/embedding stack.
         .package(
             url: "https://github.com/rryam/VecturaKit",
-            revision: "a1b93774d16d8a6e7fc39b7cda9449b719f07f48"
+            revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
         .package(path: "../OsaurusRepository"),
@@ -169,6 +170,7 @@ let package = Package(
                 .product(name: "MLXLLM", package: "vmlx-swift"),
                 .product(name: "MLXVLM", package: "vmlx-swift"),
                 .product(name: "MLXLMCommon", package: "vmlx-swift"),
+                .product(name: "MLXEmbedders", package: "vmlx-swift"),
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
