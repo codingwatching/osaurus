@@ -470,6 +470,17 @@ The shared pipeline rejects a registration up-front (no library state is written
 
 Registered plugins are saved to the `SandboxPluginLibrary` (`~/.osaurus/sandbox-plugins/`) and survive app restarts. Per-agent install state lives under `~/.osaurus/agents/{agent-id}/sandbox-plugins/installed.json`. Manage, export, or remove plugins from the **Sandbox → Plugins** tab.
 
+### Capture Capability Policy
+
+Screenshot or screen-capture access is policy-defined but not installed as a
+default tool. A capture request is denied unless a trusted plugin owns the
+capability, the plugin is installed and enabled, the user explicitly opted in,
+the plugin has a permission grant, and the request is interactive. Background
+capture is always denied. Denials use stable codes:
+`unknownCapability`, `pluginNotInstalled`, `pluginDisabled`,
+`userOptInRequired`, `missingPermissionGrant`, and
+`backgroundCaptureDenied`.
+
 ---
 
 ## Host API Bridge

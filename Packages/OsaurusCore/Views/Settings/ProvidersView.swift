@@ -205,6 +205,7 @@ private struct ProviderCard: View {
     @State private var inlineBearerToken: String = ""
     @State private var bearerTokenPresent = false
     @State private var oauthTokensPresent = false
+    @State private var healthSnapshot: MCPProviderHealthSnapshot?
 
     private var isConnected: Bool {
         state?.isConnected ?? false
@@ -219,12 +220,17 @@ private struct ProviderCard: View {
     }
 
     private var diagnosticsReport: ProviderDiagnosticReport {
-        ProviderNetworkDiagnostics.mcpProviderReport(
+        let baseReport = ProviderNetworkDiagnostics.mcpProviderReport(
             provider: provider,
             state: state,
             proxy: GlobalProxySettings.currentDiagnostic(),
             bearerTokenPresent: bearerTokenPresent,
             oauthTokensPresent: oauthTokensPresent
+        )
+        return MCPLocalProviderDiagnostics.augment(
+            report: baseReport,
+            provider: provider,
+            healthSnapshot: healthSnapshot
         )
     }
 
@@ -239,6 +245,10 @@ private struct ProviderCard: View {
         }.value
         bearerTokenPresent = credentials.0
         oauthTokensPresent = credentials.1
+    }
+
+    private func refreshHealthSnapshot() {
+        healthSnapshot = MCPProviderHealthSnapshotStore.snapshot(providerId: provider.id)
     }
 
     var body: some View {
@@ -447,9 +457,20 @@ private struct ProviderCard: View {
         .onHover { hovering in isHovering = hovering }
         .task(id: provider.id) {
             await refreshCredentialState()
+            refreshHealthSnapshot()
         }
         .onChange(of: provider.authType) { _, _ in
             Task { await refreshCredentialState() }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: Foundation.Notification.Name.mcpProviderHealthSnapshotChanged
+            )
+        ) { notification in
+            guard let changedId = notification.object as? UUID else { return }
+            if changedId == provider.id {
+                refreshHealthSnapshot()
+            }
         }
         .opacity(hasAppeared ? 1 : 0)
         .onAppear {
@@ -899,8 +920,15 @@ private struct ProviderEditSheet: View {
     }
 
     enum TestResult {
-        case success(Int)
-        case failure(String)
+        case success(MCPProviderProbeResult)
+        case failure(MCPProviderProbeResult)
+
+        var probeResult: MCPProviderProbeResult {
+            switch self {
+            case .success(let result), .failure(let result):
+                return result
+            }
+        }
     }
 
     var body: some View {
@@ -1122,11 +1150,7 @@ private struct ProviderEditSheet: View {
     @ViewBuilder
     private var testConnectionButton: some View {
         Button(action: {
-            if testResult != nil {
-                testResult = nil
-            } else {
-                testConnection()
-            }
+            testConnection()
         }) {
             HStack(spacing: 6) {
                 Group {
@@ -1150,11 +1174,11 @@ private struct ProviderEditSheet: View {
 
                 if let result = testResult {
                     switch result {
-                    case .success(let count):
-                        Text("Connected! (\(count) tools)", bundle: .module)
+                    case .success(let probe):
+                        Text("Connected! (\(probe.toolCount) tools)", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
-                    case .failure:
-                        Text("Failed - Tap to retry", bundle: .module)
+                    case .failure(let probe):
+                        Text("Failed - \(probe.reasonCode.rawValue)", bundle: .module)
                             .font(.system(size: 12, weight: .medium))
                     }
                 } else {
@@ -1817,8 +1841,76 @@ private struct ProviderEditSheet: View {
             }
 
             advancedCard
+
+            if let result = testResult {
+                probeResultCard(result.probeResult)
+            }
         }
         .padding(0)
+    }
+
+    private func probeResultCard(_ result: MCPProviderProbeResult) -> some View {
+        EditorCard(
+            title: result.succeeded ? "Probe Passed" : "Probe Failed",
+            icon: result.succeeded ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    probeChip(title: "Reason", value: result.reasonCode.rawValue)
+                    probeChip(title: "Stage", value: result.stage.rawValue)
+                    probeChip(title: "Tools", value: "\(result.toolCount)")
+                }
+
+                Text(result.message)
+                    .font(.system(size: 12))
+                    .foregroundColor(themeManager.currentTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if let action = result.action, !action.isEmpty {
+                    Text(action)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(themeManager.currentTheme.accentColor)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Button(action: { copyProbeResult(result) }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Copy Probe Result", bundle: .module)
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundColor(themeManager.currentTheme.accentColor)
+                }
+                .buttonStyle(PlainButtonStyle())
+                .localizedHelp("Copy")
+            }
+        }
+    }
+
+    private func probeChip(title: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(LocalizedStringKey(title), bundle: .module)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(themeManager.currentTheme.tertiaryText)
+            Text(value)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundColor(themeManager.currentTheme.primaryText)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(themeManager.currentTheme.tertiaryBackground)
+        )
+    }
+
+    private func copyProbeResult(_ result: MCPProviderProbeResult) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(result.pasteboardText, forType: .string)
     }
 
     private var customHeadersCard: some View {
@@ -2439,29 +2531,27 @@ private struct ProviderEditSheet: View {
         testResult = nil
 
         Task {
-            do {
-                let count: Int
-                switch transport {
-                case .http:
-                    count = try await MCPProviderManager.shared.testConnection(
-                        url: url,
-                        token: httpTestToken(),
-                        headers: buildHeaders()
-                    )
-                case .stdio:
-                    count = try await MCPProviderManager.shared.testStdioConnection(
-                        provider: makeStdioProbeProvider()
-                    )
-                }
-                await MainActor.run {
-                    testResult = .success(count)
-                    isTesting = false
-                }
-            } catch {
-                await MainActor.run {
-                    testResult = .failure(error.localizedDescription)
-                    isTesting = false
-                }
+            let provider = makeProbeProvider()
+            let result: MCPProviderProbeResult
+            switch transport {
+            case .http:
+                result = await MCPProviderProbeService.probeHTTP(
+                    providerId: provider.id,
+                    name: provider.name,
+                    url: provider.url,
+                    token: httpTestToken(),
+                    headers: buildHeaders(),
+                    streamingEnabled: provider.streamingEnabled,
+                    discoveryTimeout: provider.discoveryTimeout
+                )
+            case .stdio:
+                result = await MCPProviderProbeService.probeStdio(provider: provider)
+            }
+            MCPProviderHealthSnapshotStore.record(result, for: provider)
+
+            await MainActor.run {
+                testResult = result.succeeded ? .success(result) : .failure(result)
+                isTesting = false
             }
         }
     }
@@ -2535,6 +2625,25 @@ private struct ProviderEditSheet: View {
             secretEnvKeys: fields.secretEnvKeys,
             workingDirectory: fields.workingDirectory
         )
+    }
+
+    private func makeProbeProvider() -> MCPProvider {
+        switch transport {
+        case .http:
+            return MCPProvider(
+                id: effectiveProviderId,
+                name: name.isEmpty ? "HTTP MCP probe" : name,
+                url: url.trimmingCharacters(in: .whitespaces),
+                customHeaders: buildHeaders(),
+                streamingEnabled: streamingEnabled,
+                discoveryTimeout: discoveryTimeout,
+                toolCallTimeout: toolCallTimeout,
+                authType: authType,
+                transport: .http
+            )
+        case .stdio:
+            return makeStdioProbeProvider()
+        }
     }
 
     private func save() {

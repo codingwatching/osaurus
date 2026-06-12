@@ -100,6 +100,12 @@ The freeform editor — Name, URL, Auth picker (None / Bearer Token / OAuth), Cu
 Custom Server supports both HTTP/SSE and stdio. HTTP/SSE providers use the
 global proxy policy when one is configured. Stdio providers run a local
 subprocess and therefore do not send traffic through URLSession's proxy path.
+The Test button now records a provider health snapshot after the explicit
+initialize/listTools probe. The copied probe result includes the stable reason
+code (`succeeded`, `invalidURL`, `missingCommand`, `commandNotFound`,
+`sandboxUnavailable`, `spawnFailed`, `timeout`, `authRequired`,
+`protocolError`, or `connectionFailed`) plus the stage that failed, but never
+includes credentials, env values, headers, request bodies, or tokens.
 
 ---
 
@@ -166,7 +172,10 @@ headers.
 For stdio providers, diagnostics distinguish sandbox vs host execution and point
 command-not-found failures at the executable path/PATH fix. For HTTP/SSE
 providers, diagnostics show whether the global proxy is active, disabled, or
-ignored because the saved URL failed validation.
+ignored because the saved URL failed validation. Local MCP rows also include the
+last explicit health snapshot and a capture-policy row. The capture row is policy
+only: screenshot/capture access remains off unless a trusted plugin is installed,
+enabled, opted in by the user, granted permission, and invoked interactively.
 
 ---
 
@@ -323,11 +332,12 @@ When connected, the provider card shows tool count, last connected timestamp, an
 ## Testing Connections
 
 The freeform Custom Server form has a **Test** button. For HTTP/SSE providers it
-runs `tools/list` against the configured URL and reports the tool count. For
-stdio providers it launches the configured command, completes the MCP
-initialize/listTools flow, reports the tool count or spawn/protocol error, and
-then tears the subprocess down. The OAuth and API-key catalog screens skip this
-button — saving and connecting is the test.
+runs initialize/listTools against the configured URL and reports the typed
+result. For stdio providers it launches the configured command, completes the
+same MCP initialize/listTools flow, reports the tool count or reason-coded
+spawn/protocol error, records the health snapshot, and then tears the subprocess
+down. The OAuth and API-key catalog screens skip this button — saving and
+connecting is the test.
 
 ---
 
