@@ -85,9 +85,15 @@ public enum ServerRuntimeSettingsStore {
     @MainActor
     public static func loadOrMigrate() -> VMLXServerRuntimeSettings {
         if let existing = load() { return existing }
-        let migrated = migratedFromLegacy(
-            serverConfiguration: ServerConfigurationStore.load() ?? .default,
-            userDefaults: .standard
+        // Brand-new install (no settings file): run the freshly-migrated
+        // settings through the same normalization as a loaded file so the
+        // product defaults (q6 tied head, diffusion denoising budget, cache
+        // repairs) are seeded on the very first launch, not only on reload.
+        let migrated = normalizeLoadedSettings(
+            migratedFromLegacy(
+                serverConfiguration: ServerConfigurationStore.load() ?? .default,
+                userDefaults: .standard
+            )
         )
         save(migrated)
         return migrated
@@ -166,6 +172,34 @@ public enum ServerRuntimeSettingsStore {
             normalized.mtp.acceptedTokensOnlyEnterBaseCache
         {
             normalized.mtp.mode = .auto
+        }
+        // Osaurus product default for block-diffusion models: 16 denoising
+        // steps (~74 tok/s on diffusiongemma-26B-A4B MXFP4, coherent) vs the
+        // bundle's 48 (~37 tok/s). Seeded exactly once; afterwards a blank
+        // field is an explicit "use bundle default" choice.
+        if normalized.generation.diffusionMaxDenoisingSteps == nil,
+            !FileManager.default.fileExists(
+                atPath: diffusionDefaultsMigrationMarkerURL().path)
+        {
+            normalized.generation.diffusionMaxDenoisingSteps = 16
+            writeDiffusionDefaultsMigrationMarker()
+        }
+        // Osaurus product default: quantize the unquantized Gemma 4 QAT tied
+        // head to q6 (GGUF Q6_K-parity head bandwidth) instead of fp16
+        // passthrough. This is the safe speed lever — affine head quantization,
+        // no compile/model-switch risk — and is the largest out-of-box Gemma 4
+        // QAT speedup. Seeded once for installs that have never picked a codec
+        // (nil performance, or the engine fp16 default); the marker keeps a
+        // user's later explicit fp16 choice sticky.
+        if (normalized.performance == nil
+            || normalized.performance?.tiedHeadCodec == .fp16Passthrough),
+            !FileManager.default.fileExists(
+                atPath: tiedHeadDefaultsMigrationMarkerURL().path)
+        {
+            var perf = normalized.effectivePerformance
+            perf.tiedHeadCodec = .q6
+            normalized.performance = perf
+            writeTiedHeadDefaultsMigrationMarker()
         }
         if shouldRepairLegacyCacheDefaults(normalized.cache) {
             // Keep companion-cache repair independent from the live KV codec.
@@ -292,6 +326,8 @@ public enum ServerRuntimeSettingsStore {
             minP: nil,
             repetitionPenalty: nil
         )
+        settings.generation.diffusionMaxDenoisingSteps = 16
+        writeDiffusionDefaultsMigrationMarker()
 
         // Concurrency: legacy UserDefaults key for BatchEngine max
         // batch size. Falls back to nil so vmlx's coordinator chooses
@@ -401,6 +437,42 @@ public enum ServerRuntimeSettingsStore {
 
     private nonisolated static func cacheDefaultsMigrationMarkerURL() -> URL {
         directoryURL().appendingPathComponent(cacheDefaultsMigrationMarkerName)
+    }
+
+    /// One-shot seed of the Osaurus diffusion default (16 denoising steps,
+    /// the measured speed/quality knee for diffusiongemma-26B-A4B). The
+    /// marker keeps a user's later "blank = bundle default" choice sticky.
+    static let diffusionDefaultsMigrationMarkerName =
+        "diffusion-defaults-migrated.marker"
+
+    private nonisolated static func diffusionDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(diffusionDefaultsMigrationMarkerName)
+    }
+
+    private nonisolated static func writeDiffusionDefaultsMigrationMarker() {
+        let url = diffusionDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
+    }
+
+    /// Osaurus product default for the tied-LM-head codec: q6 (6-bit affine,
+    /// the bandwidth/quality point matching the llama.cpp Q6_K output head used
+    /// by the documented GGUF baselines). Gemma 4 QAT bundles ship the 262k
+    /// tied head UNQUANTIZED (fp16), which streams ~1 GB/token; q6 is the safe
+    /// speed lever (no model-switch-compile risk, unlike compiled decode).
+    /// Seeded once; afterwards the user's explicit codec choice (including
+    /// fp16 passthrough) stays sticky.
+    static let tiedHeadDefaultsMigrationMarkerName =
+        "tied-head-q6-default-migrated.marker"
+
+    private nonisolated static func tiedHeadDefaultsMigrationMarkerURL() -> URL {
+        directoryURL().appendingPathComponent(tiedHeadDefaultsMigrationMarkerName)
+    }
+
+    private nonisolated static func writeTiedHeadDefaultsMigrationMarker() {
+        let url = tiedHeadDefaultsMigrationMarkerURL()
+        OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
+        try? Data().write(to: url, options: [.atomic])
     }
 
     private nonisolated static func pagedCacheDefaultOffMigrationMarkerURL() -> URL {
