@@ -38,6 +38,12 @@ public enum RemoteProviderServiceError: LocalizedError {
             return L("No models available from provider")
         }
     }
+
+    var isTransientStreamRetryable: Bool {
+        guard case .streamingError(let message) = self else { return false }
+        return message.contains("mid-argument")
+            || message.contains("arguments were complete")
+    }
 }
 
 /// Service that proxies requests to a remote OpenAI-compatible API provider
@@ -333,7 +339,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        let (data, response) = try await session.data(for: try await buildURLRequest(for: request))
         WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -349,7 +355,7 @@ public actor RemoteProviderService: ToolCapableService {
             configuredProviderType: provider.providerType,
             request: request
         )
-        let (content, _) = try parseResponse(data, providerType: responseProviderType)
+        let (content, _) = try Self.parseResponse(data, providerType: responseProviderType)
         let (unscrubbedContent, _) = await PrivacyFilterPipeline.unscrubInbound(
             content: content,
             toolCalls: nil,
@@ -377,7 +383,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            let inner = try geminiImageGenerateContent(
+            let inner = try await geminiImageGenerateContent(
                 messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
@@ -444,7 +450,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let (data, response) = try await session.data(for: try buildURLRequest(for: request))
+        let (data, response) = try await session.data(for: try await buildURLRequest(for: request))
         WireTransportProbe.current?.replaceResponseBody(data)
 
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -460,7 +466,7 @@ public actor RemoteProviderService: ToolCapableService {
             configuredProviderType: provider.providerType,
             request: request
         )
-        let (content, toolCalls) = try parseResponse(data, providerType: responseProviderType)
+        let (content, toolCalls) = try Self.parseResponse(data, providerType: responseProviderType)
         let (unscrubbedContent, unscrubbedToolCalls) = await PrivacyFilterPipeline.unscrubInbound(
             content: content,
             toolCalls: toolCalls,
@@ -512,7 +518,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         // Gemini image models don't support streamGenerateContent; fall back to generateContent.
         if provider.providerType == .gemini && Self.isImageCapableModel(modelName) {
-            let inner = try geminiImageGenerateContent(
+            let inner = try await geminiImageGenerateContent(
                 messages: scrubbedMessages,
                 parameters: parameters,
                 model: modelName,
@@ -536,112 +542,26 @@ public actor RemoteProviderService: ToolCapableService {
 
     // MARK: - Private Helpers
 
-    /// Byte-level SSE line tokenizer. Splits a stream of bytes into logical SSE
-    /// lines, treating LF (`\n`), CR (`\r`), and CRLF (`\r\n`) as a single
-    /// terminator. Critically, it does NOT split on `\v`, `\f`, NEL (U+0085),
-    /// LS (U+2028), or PS (U+2029) — `Character.isNewline` matches those, but
-    /// they can legitimately appear unescaped inside JSON string values, and
-    /// treating them as line breaks corrupts SSE-framed JSON payloads.
-    struct SSELineParser {
-        private var lineBuffer = Data()
-        private var carriageReturnLast = false
-        private var completedLines: [Data] = []
-        private var nextOutputIndex = 0
+    typealias SSELineParser = OpenAICompatibleStreamFramer.SSELineParser
 
-        /// Feed a chunk of bytes; appends complete lines to the internal queue
-        /// for `nextLine()` to drain.
-        mutating func append(_ data: Data) {
-            for byte in data {
-                switch byte {
-                case 0x0D:  // CR
-                    completedLines.append(lineBuffer)
-                    lineBuffer = Data()
-                    carriageReturnLast = true
-                case 0x0A:  // LF
-                    if carriageReturnLast {
-                        // CRLF — the CR already emitted the line; consume the LF as part of
-                        // the same terminator without emitting a spurious blank line.
-                        carriageReturnLast = false
-                    } else {
-                        completedLines.append(lineBuffer)
-                        lineBuffer = Data()
-                    }
-                default:
-                    carriageReturnLast = false
-                    lineBuffer.append(byte)
-                }
-            }
-        }
-
-        /// Returns the next completed line (terminator stripped), or `nil` if
-        /// the queue is empty. An empty `Data` indicates a blank line, which
-        /// per the SSE spec terminates the current event.
-        mutating func nextLine() -> Data? {
-            guard nextOutputIndex < completedLines.count else {
-                if nextOutputIndex > 0 {
-                    completedLines.removeFirst(nextOutputIndex)
-                    nextOutputIndex = 0
-                }
-                return nil
-            }
-            let line = completedLines[nextOutputIndex]
-            nextOutputIndex += 1
-            return line
-        }
-
-        /// Flush any unterminated trailing bytes as a final line. Call once
-        /// when the upstream stream has ended; any subsequent `nextLine()` call
-        /// will return that flushed content.
-        mutating func flushPending() {
-            if !lineBuffer.isEmpty {
-                completedLines.append(lineBuffer)
-                lineBuffer = Data()
-            }
-            carriageReturnLast = false
-        }
-    }
-
-    /// Parse a single SSE line per the W3C spec and merge its payload into
-    /// `eventData`. Recognises `data`/`event`/`id`/`retry`/comment fields with
-    /// optional space after the colon; bare `data:value` (no space) is honoured
-    /// just like `data: value`. Multiple `data:` lines in a single event are
-    /// joined with `\n` per spec.
     @inline(__always)
     static func processSSELine(_ line: Data, into eventData: inout String) {
-        guard !line.isEmpty else { return }
+        OpenAICompatibleStreamFramer.processLine(line, into: &eventData)
+    }
 
-        // Decode the line as UTF-8. SSE field names and the optional space after
-        // the colon are ASCII; lossy decoding is safe for any non-UTF-8 bytes
-        // that would only appear inside the value portion.
-        // swiftlint:disable:next optional_data_string_conversion
-        let lineStr = String(decoding: line, as: UTF8.self)
+    @inline(__always)
+    static func processSSELine(_ line: Data, providerType: RemoteProviderType, into eventData: inout String) {
+        OpenAICompatibleStreamFramer.processLine(
+            line,
+            options: openAICompatibleFramingOptions(for: providerType),
+            into: &eventData
+        )
+    }
 
-        // Comment line — entire line starts with ":" (no field name).
-        if lineStr.first == ":" { return }
-
-        let field: Substring
-        var value: Substring
-        if let colonIdx = lineStr.firstIndex(of: ":") {
-            field = lineStr[..<colonIdx]
-            value = lineStr[lineStr.index(after: colonIdx)...]
-            if value.first == " " { value = value.dropFirst() }
-        } else {
-            // No colon — entire line is the field name with empty value.
-            field = Substring(lineStr)
-            value = Substring("")
-        }
-
-        switch field {
-        case "data":
-            if eventData.isEmpty {
-                eventData = String(value)
-            } else {
-                eventData += "\n" + value
-            }
-        default:
-            // event, id, retry, and any unknown field are ignored per spec.
-            break
-        }
+    private static func openAICompatibleFramingOptions(
+        for providerType: RemoteProviderType
+    ) -> OpenAICompatibleStreamFramer.Options {
+        providerType == .osaurusRouter ? .routerCompatible : .strict
     }
 
     /// Wraps `URLSession.AsyncBytes` in an `AsyncThrowingStream<Data, Error>`
@@ -793,6 +713,12 @@ public actor RemoteProviderService: ToolCapableService {
         _ jsonData: Data,
         providerType: RemoteProviderType
     ) -> String? {
+        if providerType == .osaurusRouter,
+            let routerError = try? JSONDecoder().decode(OsaurusRouterErrorEnvelope.self, from: jsonData)
+        {
+            return "\(routerError.error.code): \(routerError.error.message)"
+        }
+
         // Generic OpenAI-compatible error envelope: {"error":{"message":"..."}}
         if let openAIError = try? JSONDecoder().decode(OpenAIError.self, from: jsonData) {
             return openAIError.error.message
@@ -812,6 +738,306 @@ public actor RemoteProviderService: ToolCapableService {
             break
         }
         return nil
+    }
+
+    private static var routerStreamDebugEnabled: Bool {
+        UserDefaults.standard.bool(forKey: "ai.osaurus.router.debugStream")
+    }
+
+    private static func routerStreamDebug(
+        providerType: RemoteProviderType,
+        _ message: @autoclosure () -> String
+    ) {
+        guard providerType == .osaurusRouter, routerStreamDebugEnabled else { return }
+        print("[Osaurus][Router][Stream] \(message())")
+    }
+
+    private static func routerStreamFinalDebug(
+        providerType: RemoteProviderType,
+        marker: String,
+        state: StreamingState
+    ) {
+        routerStreamDebug(
+            providerType: providerType,
+            "final marker=\(marker) yieldedTextDeltas=\(state.yieldedTextCount) yieldedTextBytes=\(state.yieldedTextBytes) finishReason=\(state.lastFinishReason ?? "nil")"
+        )
+    }
+
+    private static func logRouterEmptyStreamIfNeeded(_ diagnostics: RouterStreamDiagnostics?) {
+        guard let diagnostics, diagnostics.shouldLogEmptyTerminal else { return }
+        print("[Osaurus][Router][EmptyStream] \(diagnostics.sanitizedSummary)")
+    }
+
+    private static func routerEventDebugSummary(_ dataContent: String) -> String {
+        let trimmed = dataContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "[DONE]" { return "done-marker" }
+        guard let data = trimmed.data(using: .utf8) else { return "non-utf8 payload" }
+
+        if let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: data) {
+            return
+                "summary status=\(summary.osaurus.status) inputTokens=\(summary.osaurus.inputTokens) outputTokens=\(summary.osaurus.outputTokens) costMicro=\(summary.osaurus.costMicro)"
+        }
+
+        guard let object = try? JSONSerialization.jsonObject(with: data),
+            let root = object as? [String: Any]
+        else {
+            return "non-json bytes=\(data.count)"
+        }
+
+        if let error = root["error"] as? [String: Any] {
+            return "error code=\(error["code"] ?? "nil") messageBytes=\((error["message"] as? String)?.utf8.count ?? 0)"
+        }
+
+        if let choices = root["choices"] as? [[String: Any]], let first = choices.first {
+            let finish = first["finish_reason"] as? String ?? "nil"
+            if let delta = first["delta"] as? [String: Any] {
+                return "choice.delta finish=\(finish) \(openAIMessageDebugSummary(delta))"
+            }
+            if let message = first["message"] as? [String: Any] {
+                return "choice.message finish=\(finish) \(openAIMessageDebugSummary(message))"
+            }
+            return "choice finish=\(finish) keys=\(sortedKeys(first))"
+        }
+
+        if let usage = root["usage"] as? [String: Any] {
+            return "usage keys=\(sortedKeys(usage))"
+        }
+
+        return "object keys=\(sortedKeys(root)) bytes=\(data.count)"
+    }
+
+    private static func openAIMessageDebugSummary(_ message: [String: Any]) -> String {
+        let contentBytes = (message["content"] as? String)?.utf8.count ?? 0
+        let reasoningBytes = (message["reasoning_content"] as? String)?.utf8.count ?? 0
+        let toolCallCount = (message["tool_calls"] as? [Any])?.count ?? 0
+        return
+            "contentBytes=\(contentBytes) reasoningBytes=\(reasoningBytes) toolCalls=\(toolCallCount) keys=\(sortedKeys(message))"
+    }
+
+    private static func sortedKeys(_ object: [String: Any]) -> String {
+        "[" + object.keys.sorted().joined(separator: ",") + "]"
+    }
+
+    private static func streamOutcomeDebugDescription(_ outcome: StreamEventOutcome) -> String {
+        switch outcome {
+        case .continue:
+            return "continue"
+        case .finishNormal:
+            return "finishNormal"
+        case .finishWithToolCall(let invocation):
+            return "finishWithToolCall(\(invocation.toolName), argsBytes=\(invocation.jsonArguments.utf8.count))"
+        case .finishWithError(let error):
+            return "finishWithError(\(error.localizedDescription))"
+        }
+    }
+
+    struct RouterStreamDiagnostics: Equatable, Sendable {
+        let model: String
+        let messageCount: Int
+        let messageRoles: [String]
+        let toolNames: [String]
+        let toolChoice: String
+        let idempotencyKeySuffix: String?
+        let requestBodyBytes: Int
+        let routerTransformsApplied: Bool
+
+        var httpStatus: Int?
+        var contentType: String?
+        var connectAttempt: Int = 0
+        var chunkCount: Int = 0
+        var byteCount: Int = 0
+        var eventCount: Int = 0
+        var doneMarkerCount: Int = 0
+        var summaryCount: Int = 0
+        var usageOnlyCount: Int = 0
+        var unrecognizedEventCount: Int = 0
+        var visibleTextDeltas: Int = 0
+        var visibleTextBytes: Int = 0
+        var reasoningDeltas: Int = 0
+        var toolHintDeltas: Int = 0
+        var billingHintDeltas: Int = 0
+        var prefillHintDeltas: Int = 0
+        var toolCallFinishes: Int = 0
+        var errorFinishes: Int = 0
+        var finishMarker: String?
+        var pendingEventBytes: Int = 0
+        var pendingToolSlots: Int = 0
+        var lastEventSummary: String?
+        var lastOutcome: String?
+        var recentEventSummaries: [String] = []
+
+        init(
+            model: String = "osaurus/test",
+            messageRoles: [String] = ["user"],
+            toolNames: [String] = [],
+            toolChoice: String = "auto",
+            idempotencyKeySuffix: String? = "test",
+            requestBodyBytes: Int = 0,
+            routerTransformsApplied: Bool = true
+        ) {
+            self.model = model
+            self.messageCount = messageRoles.count
+            self.messageRoles = messageRoles
+            self.toolNames = toolNames.sorted()
+            self.toolChoice = toolChoice
+            self.idempotencyKeySuffix = idempotencyKeySuffix
+            self.requestBodyBytes = requestBodyBytes
+            self.routerTransformsApplied = routerTransformsApplied
+        }
+
+        init(
+            request: RemoteChatRequest,
+            urlRequest: URLRequest,
+            toolNames: [String],
+            providerType: RemoteProviderType
+        ) {
+            self.model = request.model
+            self.messageCount = request.messages.count
+            self.messageRoles = request.messages.map(\.role)
+            self.toolNames = toolNames.sorted()
+            self.toolChoice = Self.describeToolChoice(request.tool_choice)
+            if let key = request.idempotencyKey, !key.isEmpty {
+                self.idempotencyKeySuffix = String(key.suffix(12))
+            } else {
+                self.idempotencyKeySuffix = nil
+            }
+            self.requestBodyBytes = urlRequest.httpBody?.count ?? 0
+            self.routerTransformsApplied = providerType == .osaurusRouter
+        }
+
+        mutating func recordResponse(status: Int, contentType: String?, attempt: Int) {
+            httpStatus = status
+            self.contentType = contentType
+            connectAttempt = attempt
+        }
+
+        mutating func recordChunk(_ chunk: Data) {
+            chunkCount += 1
+            byteCount += chunk.count
+        }
+
+        mutating func recordEvent(summary: String) {
+            eventCount += 1
+            lastEventSummary = summary
+            recentEventSummaries.append(summary)
+            if recentEventSummaries.count > 5 {
+                recentEventSummaries.removeFirst(recentEventSummaries.count - 5)
+            }
+            if summary == "done-marker" {
+                doneMarkerCount += 1
+            } else if summary.hasPrefix("summary ") {
+                summaryCount += 1
+            } else if summary.hasPrefix("usage ") {
+                usageOnlyCount += 1
+            } else if summary.hasPrefix("non-json") || summary.hasPrefix("object keys=") {
+                unrecognizedEventCount += 1
+            }
+        }
+
+        mutating func recordYield(_ delta: String) {
+            if StreamingBillingHint.decode(delta) != nil {
+                billingHintDeltas += 1
+            } else if StreamingPrefillProgressHint.decode(delta) != nil {
+                prefillHintDeltas += 1
+            } else if StreamingReasoningHint.decode(delta) != nil {
+                reasoningDeltas += 1
+            } else if StreamingToolHint.isSentinel(delta) {
+                toolHintDeltas += 1
+            } else if !delta.isEmpty {
+                visibleTextDeltas += 1
+                visibleTextBytes += delta.utf8.count
+            }
+        }
+
+        mutating func recordOutcome(_ outcome: StreamEventOutcome) {
+            lastOutcome = RemoteProviderService.streamOutcomeDebugDescription(outcome)
+            switch outcome {
+            case .finishWithToolCall:
+                toolCallFinishes += 1
+            case .finishWithError:
+                errorFinishes += 1
+            case .continue, .finishNormal:
+                break
+            }
+        }
+
+        mutating func recordTerminal(
+            marker: String,
+            yieldedTextCount: Int,
+            yieldedTextBytes: Int,
+            pendingToolSlots: Int,
+            pendingEventBytes: Int
+        ) {
+            finishMarker = marker
+            self.pendingEventBytes = pendingEventBytes
+            self.pendingToolSlots = pendingToolSlots
+            visibleTextDeltas = max(visibleTextDeltas, yieldedTextCount)
+            visibleTextBytes = max(visibleTextBytes, yieldedTextBytes)
+        }
+
+        var modelOutputCount: Int {
+            visibleTextDeltas + reasoningDeltas + toolHintDeltas + toolCallFinishes
+        }
+
+        var emptyClassification: String {
+            if modelOutputCount > 0 { return "non-empty" }
+            if chunkCount == 0 && eventCount == 0 { return "raw-empty" }
+            if summaryCount > 0 && eventCount == summaryCount + doneMarkerCount { return "summary-only" }
+            if usageOnlyCount > 0 && eventCount == usageOnlyCount + doneMarkerCount { return "usage-only" }
+            if unrecognizedEventCount > 0 { return "unrecognized-events" }
+            return "empty-after-events"
+        }
+
+        var shouldLogEmptyTerminal: Bool {
+            modelOutputCount == 0 && errorFinishes == 0
+        }
+
+        var sanitizedSummary: String {
+            [
+                "kind=\(emptyClassification)",
+                "model=\(model)",
+                "messages=\(messageCount)",
+                "roles=\(messageRoles.joined(separator: ">"))",
+                "tools=\(toolNames.count)[\(toolNames.joined(separator: ","))]",
+                "tool_choice=\(toolChoice)",
+                "idempotency_suffix=\(idempotencyKeySuffix ?? "nil")",
+                "bodyBytes=\(requestBodyBytes)",
+                "routerTransforms=\(routerTransformsApplied)",
+                "http=\(httpStatus.map(String.init) ?? "nil")",
+                "contentType=\(contentType ?? "nil")",
+                "attempt=\(connectAttempt)",
+                "chunks=\(chunkCount)",
+                "bytes=\(byteCount)",
+                "events=\(eventCount)",
+                "done=\(doneMarkerCount)",
+                "summaries=\(summaryCount)",
+                "usageOnly=\(usageOnlyCount)",
+                "unrecognized=\(unrecognizedEventCount)",
+                "visibleDeltas=\(visibleTextDeltas)",
+                "visibleBytes=\(visibleTextBytes)",
+                "reasoningDeltas=\(reasoningDeltas)",
+                "toolHints=\(toolHintDeltas)",
+                "billingHints=\(billingHintDeltas)",
+                "prefillHints=\(prefillHintDeltas)",
+                "toolFinishes=\(toolCallFinishes)",
+                "finish=\(finishMarker ?? "nil")",
+                "pendingEventBytes=\(pendingEventBytes)",
+                "pendingToolSlots=\(pendingToolSlots)",
+                "lastOutcome=\(lastOutcome ?? "nil")",
+                "lastEvent=\(lastEventSummary ?? "nil")",
+                "recentEvents=\(recentEventSummaries.joined(separator: " | "))",
+            ].joined(separator: " ")
+        }
+
+        private static func describeToolChoice(_ choice: ToolChoiceOption?) -> String {
+            guard let choice else { return "nil" }
+            switch choice {
+            case .auto: return "auto"
+            case .none: return "none"
+            case .required: return "required"
+            case .function(let function): return "function:\(function.function.name)"
+            }
+        }
     }
 
     // MARK: - Streaming Pipeline Shared Helpers
@@ -843,6 +1069,16 @@ public actor RemoteProviderService: ToolCapableService {
         /// Yielded text content. Only used when `trackContent` is `true`
         /// (streamWithTools, for the inline tool-call detection fallback).
         var accumulatedContent: String = ""
+        var yieldedTextCount: Int = 0
+        var yieldedTextBytes: Int = 0
+        var yieldedReasoningCount: Int = 0
+
+        /// Router-only low-volume diagnostics. Nil for all other providers so
+        /// the shared parser path stays cheap.
+        var routerDiagnostics: RouterStreamDiagnostics?
+        /// Stable router request id for local correlation. This is the signed
+        /// idempotency key unless the router summary frame provides request_id.
+        var routerRequestId: String?
 
         /// Non-nil only for providers that inline reasoning as `<think>` in the
         /// content rail (MiniMax). When set, content deltas are split so the
@@ -856,6 +1092,9 @@ public actor RemoteProviderService: ToolCapableService {
         /// about the inline-tool-detection fallback.
         @inline(__always)
         mutating func recordYield(_ text: String) {
+            guard !text.isEmpty else { return }
+            yieldedTextCount += 1
+            yieldedTextBytes += text.utf8.count
             if trackContent { accumulatedContent += text }
         }
     }
@@ -889,19 +1128,10 @@ public actor RemoteProviderService: ToolCapableService {
         from accumulated: [Int: StreamingState.ToolSlot],
         finishMarker: String
     ) -> AccumulatedToolCallResult {
-        guard let (invocation, wasRepaired) = makeToolInvocation(from: accumulated) else {
-            return .none
-        }
-        if wasRepaired {
-            return .truncated(
-                truncatedToolCallError(
-                    from: accumulated,
-                    toolName: invocation.toolName,
-                    finishMarker: finishMarker
-                )
-            )
-        }
-        return .ready(invocation)
+        OpenAICompatibleToolCallAccumulator.resolveAccumulatedToolCall(
+            from: accumulated,
+            finishMarker: finishMarker
+        )
     }
 
     /// Process one fully-framed SSE event payload. Returns `true` when the
@@ -916,7 +1146,20 @@ public actor RemoteProviderService: ToolCapableService {
         tools: [Tool],
         continuation: AsyncThrowingStream<String, Error>.Continuation
     ) -> Bool {
+        let eventSummary = routerEventDebugSummary(dataContent)
+        state.routerDiagnostics?.recordEvent(summary: eventSummary)
+        routerStreamDebug(providerType: providerType, "event \(eventSummary)")
+
         if dataContent.trimmingCharacters(in: .whitespaces) == "[DONE]" {
+            routerStreamFinalDebug(providerType: providerType, marker: "[DONE]", state: state)
+            state.routerDiagnostics?.recordTerminal(
+                marker: "[DONE]",
+                yieldedTextCount: state.yieldedTextCount,
+                yieldedTextBytes: state.yieldedTextBytes,
+                pendingToolSlots: state.accumulatedToolCalls.count,
+                pendingEventBytes: 0
+            )
+            logRouterEmptyStreamIfNeeded(state.routerDiagnostics)
             dispatchFinal(
                 state: state,
                 tools: tools,
@@ -928,17 +1171,59 @@ public actor RemoteProviderService: ToolCapableService {
 
         guard let jsonData = dataContent.data(using: .utf8) else { return false }
 
+        if providerType == .osaurusRouter,
+            let summary = try? JSONDecoder().decode(OsaurusRouterSummaryEvent.self, from: jsonData)
+        {
+            Task { @MainActor in
+                OsaurusRouterAccountService.shared.noteRouterSummary(summary.osaurus)
+            }
+            // Surface the charge on the stream so the chat layer can keep +
+            // explain a billed-but-empty turn and record the on-device ledger
+            // row. The `\u{FFFE}` sentinel keeps it out of visible output and
+            // token counting; it carries no prompt/response text.
+            var billingSummary = RouterBillingSummary(summary.osaurus)
+            if billingSummary.requestId == nil {
+                billingSummary.requestId = state.routerRequestId
+            }
+            let hint = StreamingBillingHint.encode(billingSummary)
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
+        var emittedDeltas: [String] = []
         let outcome = handleStreamEvent(
             jsonData: jsonData,
             providerType: providerType,
             state: &state,
-            yield: { continuation.yield($0) }
+            yield: {
+                emittedDeltas.append($0)
+                continuation.yield($0)
+            }
+        )
+        for delta in emittedDeltas {
+            state.routerDiagnostics?.recordYield(delta)
+        }
+        state.routerDiagnostics?.recordOutcome(outcome)
+
+        routerStreamDebug(
+            providerType: providerType,
+            "event outcome=\(streamOutcomeDebugDescription(outcome)) yieldedTextDeltas=\(state.yieldedTextCount) yieldedTextBytes=\(state.yieldedTextBytes) finishReason=\(state.lastFinishReason ?? "nil")"
         )
 
         switch outcome {
         case .continue:
             return false
         case .finishNormal:
+            routerStreamFinalDebug(providerType: providerType, marker: "finishNormal", state: state)
+            state.routerDiagnostics?.recordTerminal(
+                marker: "finishNormal",
+                yieldedTextCount: state.yieldedTextCount,
+                yieldedTextBytes: state.yieldedTextBytes,
+                pendingToolSlots: state.accumulatedToolCalls.count,
+                pendingEventBytes: 0
+            )
+            logRouterEmptyStreamIfNeeded(state.routerDiagnostics)
             dispatchFinal(
                 state: state,
                 tools: tools,
@@ -964,6 +1249,10 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) -> StreamEventOutcome {
+        if let errorMessage = tryDecodeStreamError(jsonData, providerType: providerType) {
+            return .finishWithError(RemoteProviderServiceError.requestFailed(errorMessage))
+        }
+
         do {
             switch providerType {
             case .gemini:
@@ -972,19 +1261,41 @@ public actor RemoteProviderService: ToolCapableService {
                 return try handleAnthropicEvent(jsonData, state: &state, yield: yield)
             case .openResponses, .openAICodex:
                 return try handleOpenResponsesEvent(jsonData, state: &state, yield: yield)
+            case .osaurusRouter:
+                return try OpenAICompatibleStreamParser.handleEvent(
+                    jsonData: jsonData,
+                    options: openAICompatibleParserOptions(for: providerType),
+                    state: &state,
+                    yield: yield
+                )
             case .openaiLegacy, .azureOpenAI, .osaurus:
-                return try handleOpenAIEvent(jsonData, state: &state, yield: yield)
+                return try OpenAICompatibleStreamParser.handleEvent(
+                    jsonData: jsonData,
+                    options: openAICompatibleParserOptions(for: providerType),
+                    state: &state,
+                    yield: yield
+                )
             }
         } catch {
-            // Server-side error payload? Some providers stream a structured
-            // error event mid-stream rather than closing with a non-2xx; if
-            // we don't surface it the user sees an opaque "stream ended".
-            if let errorMessage = tryDecodeStreamError(jsonData, providerType: providerType) {
-                return .finishWithError(RemoteProviderServiceError.requestFailed(errorMessage))
-            }
             print("[Osaurus] Warning: Failed to parse SSE chunk: \(error.localizedDescription)")
             return .continue
         }
+    }
+
+    private static func openAICompatibleParserOptions(
+        for providerType: RemoteProviderType
+    ) -> OpenAICompatibleStreamParser.Options {
+        providerType == .osaurusRouter ? .routerCompatible : .strict
+    }
+
+    static func remoteChatMaxTokens(
+        providerType: RemoteProviderType,
+        parameters: GenerationParameters
+    ) -> Int? {
+        if providerType == .osaurusRouter {
+            return parameters.maxTokens
+        }
+        return parameters.maxTokensExplicit ? parameters.maxTokens : nil
     }
 
     /// Apply stop-sequence truncation to a text delta. Returns `(maybeTruncated, hitStop)`:
@@ -1327,97 +1638,25 @@ public actor RemoteProviderService: ToolCapableService {
         state: inout StreamingState,
         yield: (String) -> Void
     ) throws -> StreamEventOutcome {
-        let chunk = try JSONDecoder().decode(ChatCompletionChunk.self, from: jsonData)
+        try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: jsonData,
+            options: .strict,
+            state: &state,
+            yield: yield
+        )
+    }
 
-        // Tool calls FIRST so we can suppress text yields once we know the
-        // delta is structurally a function call.
-        if let toolCalls = chunk.choices.first?.delta.tool_calls {
-            for toolCall in toolCalls {
-                let idx = resolveToolCallSlot(
-                    explicitIndex: toolCall.index,
-                    callId: toolCall.id,
-                    accumulated: state.accumulatedToolCalls,
-                    idToIndex: &state.toolCallIdToIndex,
-                    nextFallback: &state.nextFallbackToolCallIndex,
-                    lastTouchedSlot: state.lastTouchedToolSlot
-                )
-                var current =
-                    state.accumulatedToolCalls[idx] ?? (
-                        id: nil, name: nil, args: "", thoughtSignature: nil
-                    )
-                if let id = toolCall.id { current.id = id }
-                if let name = toolCall.function?.name, current.name == nil {
-                    current.name = name
-                    print("[Osaurus] OpenAI tool call detected: index=\(idx), name=\(name)")
-                    yield(StreamingToolHint.encode(name))
-                }
-                if let args = toolCall.function?.arguments {
-                    current.args += args
-                    yield(StreamingToolHint.encodeArgs(args))
-                }
-                state.accumulatedToolCalls[idx] = current
-                state.lastTouchedToolSlot = idx
-            }
-        }
-
-        // Reasoning text on a dedicated `reasoning_content` channel
-        // (DeepSeek, Qwen, Together, vLLM). Forwarded as a sentinel so the
-        // SSE layer routes it onto `reasoning_content` and ChatView places
-        // it in the Think panel — without ever emitting `<think>` literals.
-        if state.accumulatedToolCalls.isEmpty,
-            let reasoning = chunk.choices.first?.delta.reasoning_content,
-            !reasoning.isEmpty
-        {
-            yield(StreamingReasoningHint.encode(reasoning))
-        }
-
-        // Only yield content if no tool calls have been detected, to avoid
-        // function-call JSON leaking into the chat UI.
-        if state.accumulatedToolCalls.isEmpty,
-            let delta = chunk.choices.first?.delta.content, !delta.isEmpty
-        {
-            if var splitter = state.thinkSplitter {
-                // MiniMax-style inline `<think>`: route reasoning to the Think
-                // panel and only the visible remainder to the content rail.
-                let segments = splitter.process(delta)
-                state.thinkSplitter = splitter
-                for segment in segments {
-                    switch segment {
-                    case .reasoning(let reasoning):
-                        if !reasoning.isEmpty { yield(StreamingReasoningHint.encode(reasoning)) }
-                    case .content(let visible):
-                        guard !visible.isEmpty else { continue }
-                        let (truncated, hitStop) = applyStopSequences(
-                            visible,
-                            stopSequences: state.stopSequences
-                        )
-                        state.recordYield(truncated)
-                        yield(truncated)
-                        if hitStop { return .finishNormal }
-                    }
-                }
-            } else {
-                let (truncated, hitStop) = applyStopSequences(delta, stopSequences: state.stopSequences)
-                state.recordYield(truncated)
-                yield(truncated)
-                if hitStop { return .finishNormal }
-            }
-        }
-
-        // Emit on finish_reason — applies whether or not there's a tool call.
-        if let finishReason = chunk.choices.first?.finish_reason, !finishReason.isEmpty {
-            state.lastFinishReason = finishReason
-            switch resolveAccumulatedToolCall(
-                from: state.accumulatedToolCalls,
-                finishMarker: "finish_reason=\(finishReason)"
-            ) {
-            case .none: break
-            case .ready(let inv): return .finishWithToolCall(inv)
-            case .truncated(let err): return .finishWithError(err)
-            }
-        }
-
-        return .continue
+    static func handleLenientOpenAIEvent(
+        _ jsonData: Data,
+        state: inout StreamingState,
+        yield: (String) -> Void
+    ) throws -> StreamEventOutcome {
+        try OpenAICompatibleStreamParser.handleEvent(
+            jsonData: jsonData,
+            options: .routerCompatible,
+            state: &state,
+            yield: yield
+        )
     }
 
     /// Final dispatch site: drains any tool call still in-flight after the
@@ -1502,7 +1741,7 @@ public actor RemoteProviderService: ToolCapableService {
 
         try await refreshCodexOAuthIfNeeded()
         try await refreshXAIOAuthIfNeeded()
-        let urlRequest = try buildURLRequest(for: request)
+        let urlRequest = try await buildURLRequest(for: request)
         let currentSession = self.session
         let providerType = Self.effectiveRequestProviderType(
             configuredProviderType: self.provider.providerType,
@@ -1516,10 +1755,23 @@ public actor RemoteProviderService: ToolCapableService {
         let secureProvider = providerType == .osaurus ? self.provider : nil
         let inactivityTimeout = self.streamInactivityTimeout
         let toolList = tools ?? []
+        Self.routerStreamDebug(
+            providerType: providerType,
+            "request model=\(modelName) url=\(urlRequest.url?.absoluteString ?? "nil") stream=\(request.stream) tools=\(toolList.count) bodyBytes=\(urlRequest.httpBody?.count ?? 0)"
+        )
         // Only the with-tools path needs accumulated text for the inline
         // tool-call fallback; streamDeltas has no tools, so skip the
         // memory cost of growing a 100% unused buffer.
         let trackContent = !toolList.isEmpty
+        let initialRouterDiagnostics =
+            providerType == .osaurusRouter
+            ? RouterStreamDiagnostics(
+                request: request,
+                urlRequest: urlRequest,
+                toolNames: toolList.map(\.function.name),
+                providerType: providerType
+            )
+            : nil
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
 
@@ -1531,6 +1783,10 @@ public actor RemoteProviderService: ToolCapableService {
 
         let producerTask = Task {
             do {
+                var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
+                state.routerDiagnostics = initialRouterDiagnostics
+                state.routerRequestId = request.idempotencyKey
+
                 // Idempotent connect-phase retry: only retries the
                 // `bytes(for:)` call (no stream data has been delivered
                 // upstream yet, so retrying is safe). Once we start
@@ -1576,6 +1832,15 @@ public actor RemoteProviderService: ToolCapableService {
                         continuation.finish(throwing: RemoteProviderServiceError.invalidResponse)
                         return
                     }
+                    Self.routerStreamDebug(
+                        providerType: providerType,
+                        "response status=\(httpResponse.statusCode) contentType=\(httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "nil") attempt=\(attempt)"
+                    )
+                    state.routerDiagnostics?.recordResponse(
+                        status: httpResponse.statusCode,
+                        contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
+                        attempt: attempt
+                    )
 
                     if httpResponse.statusCode >= 400 {
                         var errorData = Data()
@@ -1611,7 +1876,6 @@ public actor RemoteProviderService: ToolCapableService {
                     return
                 }
 
-                var state = StreamingState(stopSequences: stopSequences, trackContent: trackContent)
                 // MiniMax-style providers inline reasoning as <think> in the
                 // content rail; install the splitter so it routes to the Think
                 // panel instead of leaking the tags into the visible message.
@@ -1628,6 +1892,9 @@ public actor RemoteProviderService: ToolCapableService {
                 // chunk arrival — no intermediate AsyncStream layer.
                 var sseEventData = ""
                 var lineParser = SSELineParser()
+                var routerChunkCount = 0
+                var routerByteCount = 0
+                var routerEventCount = 0
                 let chunkStream = Self.makeChunkStream(from: bytes)
                 let chunkIter = ChunkIteratorRef(chunkStream.makeAsyncIterator())
 
@@ -1643,6 +1910,11 @@ public actor RemoteProviderService: ToolCapableService {
                     )
 
                     if let chunk = chunk {
+                        if providerType == .osaurusRouter {
+                            routerChunkCount += 1
+                            routerByteCount += chunk.count
+                            state.routerDiagnostics?.recordChunk(chunk)
+                        }
                         if let secureDecoder {
                             // Decrypt outer secure frames into the original
                             // SSE bytes before line parsing. The probe sees
@@ -1678,13 +1950,16 @@ public actor RemoteProviderService: ToolCapableService {
 
                     while let lineBytes = lineParser.nextLine() {
                         if !lineBytes.isEmpty {
-                            Self.processSSELine(lineBytes, into: &sseEventData)
+                            Self.processSSELine(lineBytes, providerType: providerType, into: &sseEventData)
                             continue
                         }
                         // Blank line — SSE event boundary, dispatch payload.
                         guard !sseEventData.isEmpty else { continue }
                         let dataContent = sseEventData
                         sseEventData = ""
+                        if providerType == .osaurusRouter {
+                            routerEventCount += 1
+                        }
                         if Self.processEventPayload(
                             dataContent,
                             state: &state,
@@ -1701,6 +1976,9 @@ public actor RemoteProviderService: ToolCapableService {
                         if !sseEventData.isEmpty {
                             let dataContent = sseEventData
                             sseEventData = ""
+                            if providerType == .osaurusRouter {
+                                routerEventCount += 1
+                            }
                             if Self.processEventPayload(
                                 dataContent,
                                 state: &state,
@@ -1716,6 +1994,18 @@ public actor RemoteProviderService: ToolCapableService {
                 }
 
                 // Stream ended naturally without a finish marker.
+                Self.routerStreamDebug(
+                    providerType: providerType,
+                    "stream-end chunks=\(routerChunkCount) bytes=\(routerByteCount) events=\(routerEventCount) yieldedTextDeltas=\(state.yieldedTextCount) yieldedTextBytes=\(state.yieldedTextBytes) finishReason=\(state.lastFinishReason ?? "nil") pendingEventBytes=\(sseEventData.utf8.count)"
+                )
+                state.routerDiagnostics?.recordTerminal(
+                    marker: "stream-end",
+                    yieldedTextCount: state.yieldedTextCount,
+                    yieldedTextBytes: state.yieldedTextBytes,
+                    pendingToolSlots: state.accumulatedToolCalls.count,
+                    pendingEventBytes: sseEventData.utf8.count
+                )
+                Self.logRouterEmptyStreamIfNeeded(state.routerDiagnostics)
                 Self.dispatchFinal(
                     state: state,
                     tools: toolList,
@@ -1757,213 +2047,6 @@ public actor RemoteProviderService: ToolCapableService {
         "gemini-\(UUID().uuidString.prefix(8))"
     }
 
-    /// Creates a `ServiceToolInvocation` from the first accumulated tool call entry,
-    /// validating the JSON arguments. Returns `nil` if there are no accumulated calls
-    /// or the first entry has no name. `wasRepaired` is true when the args JSON was
-    /// malformed and had to be structurally closed — strong signal that the stream
-    /// was truncated mid-argument, especially when no `finish_reason` was ever seen.
-    private static func makeToolInvocation(
-        from accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)]
-    ) -> (invocation: ServiceToolInvocation, wasRepaired: Bool)? {
-        guard let first = accumulated.min(by: { $0.key < $1.key }),
-            let name = first.value.name
-        else { return nil }
-
-        let validated = validateToolCallJSON(first.value.args)
-        return (
-            ServiceToolInvocation(
-                toolName: name,
-                jsonArguments: validated.json,
-                toolCallId: first.value.id,
-                geminiThoughtSignature: first.value.thoughtSignature
-            ),
-            validated.wasRepaired
-        )
-    }
-
-    /// Build a short diagnostic summary of the truncated args buffer for the
-    /// log line emitted on a discarded tool call. Helps identify *where* the
-    /// stream was cut (e.g. "received 33 bytes, ends with `.html\"`")
-    /// instead of just "args needed repair".
-    private static func truncatedArgsSummary(
-        from accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)],
-        toolName: String
-    ) -> String {
-        guard let entry = accumulated.first(where: { $0.value.name == toolName })?.value
-        else { return "received 0 bytes" }
-        let args = entry.args
-        let bytes = args.utf8.count
-        let tail = args.suffix(40).replacingOccurrences(of: "\n", with: "\\n")
-        return "received \(bytes) bytes, ends with `\(tail)`"
-    }
-
-    /// Wrap a repaired-mid-stream tool call into the same `streamingError` we
-    /// throw at the post-loop drain. Centralised because every dispatch site
-    /// (`[DONE]`, `STOP`/`MAX_TOKENS`, `message_stop`, `response.completed`,
-    /// OpenAI `finish_reason`) needs to honour `wasRepaired` — silently
-    /// emitting a partial-args call locks the broken payload into history and
-    /// the model can only loop on the truncated call.
-    private static func truncatedToolCallError(
-        from accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)],
-        toolName: String,
-        finishMarker: String
-    ) -> RemoteProviderServiceError {
-        let argsSummary = truncatedArgsSummary(from: accumulated, toolName: toolName)
-        print(
-            "[Osaurus] Discarding truncated tool call '\(toolName)' — "
-                + "args needed repair (finish marker: \(finishMarker)). \(argsSummary)"
-        )
-        return RemoteProviderServiceError.streamingError(
-            "Stream ended before tool call '\(toolName)' arguments were complete "
-                + "(finish marker: \(finishMarker)). The provider closed the connection "
-                + "mid-argument; retry the request."
-        )
-    }
-
-    /// Resolve the slot index for an incoming OpenAI-format tool-call delta.
-    /// Resolution order:
-    ///   1. Explicit `index` (the standard OpenAI streaming contract).
-    ///   2. Known `id` correlation (for providers that only send `id` once).
-    ///   3. The last slot we touched (for providers like Venice that send
-    ///      `index` on the first chunk only and leave continuation chunks
-    ///      bare — without this fallback the second args delta would get
-    ///      assigned to a fresh slot and the streamed args would fragment).
-    ///   4. A freshly allocated slot — only when there's truly no signal that
-    ///      this is a continuation (new tool call without index or id).
-    @inline(__always)
-    private static func resolveToolCallSlot(
-        explicitIndex: Int?,
-        callId: String?,
-        accumulated: [Int: (id: String?, name: String?, args: String, thoughtSignature: String?)],
-        idToIndex: inout [String: Int],
-        nextFallback: inout Int,
-        lastTouchedSlot: Int?
-    ) -> Int {
-        if let idx = explicitIndex {
-            if let id = callId { idToIndex[id] = idx }
-            nextFallback = max(nextFallback, idx + 1)
-            return idx
-        }
-        if let id = callId, let known = idToIndex[id] {
-            return known
-        }
-        // No explicit index. If the previous delta opened/extended a slot,
-        // assume this delta is a continuation of the same call — most
-        // providers omit `index` on subsequent chunks for a single call.
-        if callId == nil, let last = lastTouchedSlot, accumulated[last] != nil {
-            return last
-        }
-        let highest = accumulated.keys.max() ?? -1
-        let idx = max(highest + 1, nextFallback)
-        nextFallback = idx + 1
-        if let id = callId { idToIndex[id] = idx }
-        return idx
-    }
-
-    /// Outcome of validating streamed tool-call JSON.
-    private struct ValidatedToolCallJSON {
-        /// Either the original (already-valid) JSON or a best-effort repair.
-        let json: String
-        /// True when the input was malformed and we structurally closed it.
-        /// Callers paired with `lastFinishReason == nil` should treat this as
-        /// "stream truncated mid-args" rather than emitting a partial call.
-        let wasRepaired: Bool
-    }
-
-    /// Validates that tool call arguments JSON is well-formed.
-    /// If the JSON is incomplete (e.g., stream was cut off mid-argument), attempts to repair it.
-    /// Returns the original string + `wasRepaired: false` if valid, or a best-effort
-    /// repair + `wasRepaired: true`.
-    private static func validateToolCallJSON(_ json: String) -> ValidatedToolCallJSON {
-        let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Empty args ARE valid for tools that take no arguments — no repair flag.
-        guard !trimmed.isEmpty else { return ValidatedToolCallJSON(json: "{}", wasRepaired: false) }
-
-        // Quick validation: try to parse as-is.
-        if let data = trimmed.data(using: .utf8),
-            (try? JSONSerialization.jsonObject(with: data)) != nil
-        {
-            return ValidatedToolCallJSON(json: trimmed, wasRepaired: false)
-        }
-
-        // Attempt repair: close unclosed braces/brackets and escape literal newlines
-        var repaired = ""
-        var inString = false
-        var isEscaped = false
-        var braceCount = 0
-        var bracketCount = 0
-
-        for ch in trimmed {
-            if inString {
-                if isEscaped {
-                    isEscaped = false
-                    repaired.append(ch)
-                } else if ch == "\\" {
-                    isEscaped = true
-                    repaired.append(ch)
-                } else if ch == "\"" {
-                    inString = false
-                    repaired.append(ch)
-                } else if ch.isNewline {
-                    if ch == "\n" {
-                        repaired.append("\\n")
-                    } else if ch == "\r" {
-                        repaired.append("\\r")
-                    }
-                } else {
-                    repaired.append(ch)
-                }
-            } else {
-                if ch == "\"" {
-                    inString = true
-                } else if ch == "{" {
-                    braceCount += 1
-                } else if ch == "}" {
-                    braceCount -= 1
-                } else if ch == "[" {
-                    bracketCount += 1
-                } else if ch == "]" {
-                    bracketCount -= 1
-                }
-                repaired.append(ch)
-            }
-        }
-
-        // Close any unclosed strings
-        if inString {
-            if isEscaped {
-                repaired.append("\\")
-            }
-            repaired.append("\"")
-        }
-
-        // Remove trailing comma before closing
-        let trimmedForComma = repaired.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmedForComma.hasSuffix(",") {
-            repaired = String(trimmedForComma.dropLast())
-        }
-
-        // Close unclosed brackets and braces
-        for _ in 0 ..< bracketCount {
-            repaired.append("]")
-        }
-        for _ in 0 ..< braceCount {
-            repaired.append("}")
-        }
-
-        // Verify the repair worked
-        if let data = repaired.data(using: .utf8),
-            (try? JSONSerialization.jsonObject(with: data)) != nil
-        {
-            print("[Osaurus] Repaired incomplete tool call JSON (\(json.count) -> \(repaired.count) chars)")
-            return ValidatedToolCallJSON(json: repaired, wasRepaired: true)
-        }
-
-        // Repair failed - return original and let downstream handle the error.
-        print("[Osaurus] Warning: Tool call JSON is malformed and could not be repaired: \(json.prefix(200))")
-        return ValidatedToolCallJSON(json: json, wasRepaired: true)
-    }
-
     /// Build a chat completion request structure
     private func buildChatRequest(
         messages: [ChatMessage],
@@ -1986,8 +2069,8 @@ public actor RemoteProviderService: ToolCapableService {
             )
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
 
-        // Providers that 400 on restricted top-level schema keys get
-        // sanitized tool parameters; everyone else receives the full schema.
+        // Strict wire targets get sanitized tool parameters; Osaurus still
+        // validates calls locally against the original full schema.
         let wireTools: [Tool]?
         if let tools,
             Self.enforcesTopLevelParameterSchemaRestrictions(
@@ -2006,7 +2089,10 @@ public actor RemoteProviderService: ToolCapableService {
             // Reasoning models (o1, gpt-5) forbid temperature/top_p when reasoning is active as inferred from
             // https://community.openai.com/t/gpt-5-nano-accepted-parameters/1355086/2
             temperature: isReasoningModel ? nil : parameters.temperature,
-            max_completion_tokens: parameters.maxTokensExplicit ? parameters.maxTokens : nil,
+            max_completion_tokens: Self.remoteChatMaxTokens(
+                providerType: provider.providerType,
+                parameters: parameters
+            ),
             stream: stream,
             top_p: isReasoningModel ? nil : parameters.topPOverride,
             // Forward the raw OpenAI penalties — most upstream OpenAI-
@@ -2021,7 +2107,12 @@ public actor RemoteProviderService: ToolCapableService {
             reasoning: allowsReasoningObject ? effortValue.map { ReasoningConfig(effort: $0) } : nil,
             thinking: thinking,
             modelOptions: parameters.modelOptions,
-            veniceParameters: buildVeniceParameters(from: parameters.modelOptions)
+            veniceParameters: buildVeniceParameters(from: parameters.modelOptions),
+            // Router-only: the body is signed, so this rides the existing
+            // signature. Gated here so no other OpenAI-compat upstream receives
+            // an unexpected `idempotency_key` field (some 422 on unknown keys).
+            idempotencyKey: provider.providerType == .osaurusRouter
+                ? parameters.idempotencyKey : nil
         )
     }
 
@@ -2102,7 +2193,7 @@ public actor RemoteProviderService: ToolCapableService {
         stopSequences: [String],
         tools: [Tool]?,
         toolChoice: ToolChoiceOption?
-    ) throws -> AsyncThrowingStream<String, Error> {
+    ) async throws -> AsyncThrowingStream<String, Error> {
         var request = buildChatRequest(
             messages: messages,
             parameters: parameters,
@@ -2116,7 +2207,7 @@ public actor RemoteProviderService: ToolCapableService {
             request.stop = stopSequences
         }
 
-        let urlRequest = try buildURLRequest(for: request)
+        let urlRequest = try await buildURLRequest(for: request)
         let currentSession = self.session
 
         let (stream, continuation) = AsyncThrowingStream<String, Error>.makeStream()
@@ -2197,7 +2288,7 @@ public actor RemoteProviderService: ToolCapableService {
     }
 
     /// Build a URLRequest for the chat completions endpoint
-    private func buildURLRequest(for request: RemoteChatRequest) throws -> URLRequest {
+    private func buildURLRequest(for request: RemoteChatRequest) async throws -> URLRequest {
         let url: URL
         let requestProviderType = Self.effectiveRequestProviderType(
             configuredProviderType: provider.providerType,
@@ -2290,7 +2381,9 @@ public actor RemoteProviderService: ToolCapableService {
         }
 
         let headers: [String: String]
-        if provider.authType == .openAICodexOAuth {
+        if provider.providerType == .osaurusRouter {
+            headers = [:]
+        } else if provider.authType == .openAICodexOAuth {
             headers = try codexOAuthHeaders()
         } else if provider.authType == .xaiOAuth {
             // Merge the refreshed Bearer over the cached headers so any
@@ -2324,7 +2417,7 @@ public actor RemoteProviderService: ToolCapableService {
         case .gemini:
             let geminiRequest = request.toGeminiRequest()
             bodyData = try encoder.encode(geminiRequest)
-        case .openaiLegacy, .azureOpenAI, .osaurus:
+        case .openaiLegacy, .azureOpenAI, .osaurus, .osaurusRouter:
             // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
             // reasoning is re-sent: strip (default), keep `reasoning_content`
             // (DeepSeek), or fold it back into `<think>` content (MiniMax).
@@ -2334,9 +2427,25 @@ public actor RemoteProviderService: ToolCapableService {
                 host: provider.host,
                 model: request.model
             ).transformOutbound(outbound.messages)
+            if requestProviderType == .osaurusRouter {
+                outbound.messages = Self.routerWireCompatibleMessages(outbound.messages)
+                outbound.clamp_to_balance = false
+            }
             bodyData = try encoder.encode(outbound)
         }
         urlRequest.httpBody = bodyData
+        if provider.providerType == .osaurusRouter {
+            // The signer hashes `bodyData`, so the `idempotency_key` embedded
+            // above is signature-covered (no separate header to protect).
+            //
+            // Server-side contract (out of this repo, required to fully close
+            // double-billing): the router must treat `idempotency_key` as a
+            // dedupe key — a repeat POST with the same key returns the original
+            // result/charge instead of billing again — and SHOULD echo a stable
+            // `request_id` in the summary frame. Until then, the local ledger
+            // uses this signed key as its request id for usage correlation.
+            try await OsaurusRouterAuthSigner().sign(request: &urlRequest, body: bodyData)
+        }
         // Wire-verification capture: record the post-scrub bytes
         // BEFORE we hand them to URLSession. Idempotent inside the
         // probe (only the first write wins) so request retries
@@ -2354,8 +2463,52 @@ public actor RemoteProviderService: ToolCapableService {
         RemoteReasoningPolicy.strippingReasoning(messages)
     }
 
+    /// Router fan-out advertises one OpenAI-compatible request to many
+    /// upstreams, so it uses the strictest shared chat-completions history
+    /// shape. User media stays multimodal; assistant history leaves Osaurus as
+    /// string `content` because several upstreams reject assistant arrays or
+    /// omitted assistant content on tool-call turns.
+    static func routerWireCompatibleMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
+        let wireMessages = routerMessagesDroppingUnsupportedAssistantPrefill(messages)
+        return wireMessages.map { message in
+            guard requiresRouterAssistantStringContent(message) else { return message }
+            return routerAssistantWireMessage(message)
+        }
+    }
+
+    private static func routerMessagesDroppingUnsupportedAssistantPrefill(
+        _ messages: [ChatMessage]
+    ) -> [ChatMessage] {
+        guard let last = messages.last,
+            isUnsupportedRouterAssistantPrefill(last)
+        else { return messages }
+        return Array(messages.dropLast())
+    }
+
+    private static func isUnsupportedRouterAssistantPrefill(_ message: ChatMessage) -> Bool {
+        message.role.lowercased() == "assistant"
+            && (message.tool_calls?.isEmpty ?? true)
+            && message.tool_call_id == nil
+    }
+
+    private static func requiresRouterAssistantStringContent(_ message: ChatMessage) -> Bool {
+        message.role.lowercased() == "assistant" && (message.contentParts != nil || message.content == nil)
+    }
+
+    private static func routerAssistantWireMessage(_ message: ChatMessage) -> ChatMessage {
+        ChatMessage(
+            role: message.role,
+            content: message.content ?? "",
+            tool_calls: message.tool_calls,
+            tool_call_id: message.tool_call_id,
+            reasoning_content: message.reasoning_content,
+            reasoning_item_id: message.reasoning_item_id,
+            reasoning_encrypted: message.reasoning_encrypted
+        )
+    }
+
     /// Parse response based on provider type
-    private func parseResponse(
+    static func parseResponse(
         _ data: Data,
         providerType: RemoteProviderType
     ) throws -> (content: String?, toolCalls: [ToolCall]?) {
@@ -2389,11 +2542,8 @@ public actor RemoteProviderService: ToolCapableService {
 
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
 
-        case .openaiLegacy, .azureOpenAI:
-            let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
-            let content = response.choices.first?.message.content
-            let toolCalls = response.choices.first?.message.tool_calls
-            return (content, toolCalls)
+        case .openaiLegacy, .azureOpenAI, .osaurusRouter:
+            return try Self.parseOpenAICompatibleChatCompletion(data)
 
         case .openResponses, .openAICodex:
             let response = try JSONDecoder().decode(OpenResponsesResponse.self, from: data)
@@ -2462,11 +2612,21 @@ public actor RemoteProviderService: ToolCapableService {
             return (textContent.isEmpty ? nil : textContent, toolCalls.isEmpty ? nil : toolCalls)
 
         case .osaurus:
-            // Native Osaurus agent returns OpenAI-compatible responses
+            // Native Osaurus agents execute tools server-side and expose only
+            // text deltas to this client, so no client-dispatched tool_calls
+            // are returned from the legacy peer endpoint.
             let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
             let content = response.choices.first?.message.content
             return (content, nil)
         }
+    }
+
+    static func parseOpenAICompatibleChatCompletion(
+        _ data: Data
+    ) throws -> (content: String?, toolCalls: [ToolCall]?) {
+        let response = try JSONDecoder().decode(ChatCompletionResponse.self, from: data)
+        let message = response.choices.first?.message
+        return (message?.content, message?.tool_calls)
     }
 
     // MARK: - Thought-Signature Round-Trip Helpers
@@ -2651,6 +2811,15 @@ struct RemoteChatRequest: Encodable {
     let thinking: ThinkingConfig?
     let modelOptions: [String: ModelOptionValue]
     let veniceParameters: VeniceParameters?
+    /// Router-only billing behavior. `false` keeps insufficient-balance
+    /// requests explicit (402) instead of silently shrinking the token cap.
+    var clamp_to_balance: Bool? = nil
+    /// Router-only idempotency token. Stable across connect-phase and transient
+    /// agent-loop retries of the same logical step so the router can dedupe
+    /// billing on a re-POST. Lives in the body so it's covered by the request
+    /// signature. Only ever set for `.osaurusRouter` (see `buildChatRequest`),
+    /// so other OpenAI-compat upstreams never see an unknown field.
+    var idempotencyKey: String? = nil
 
     enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_completion_tokens, max_tokens, stream
@@ -2658,6 +2827,8 @@ struct RemoteChatRequest: Encodable {
         case reasoning_effort
         case reasoning
         case thinking
+        case clamp_to_balance
+        case idempotencyKey = "idempotency_key"
         case veniceParameters = "venice_parameters"
     }
 
@@ -2697,6 +2868,8 @@ struct RemoteChatRequest: Encodable {
         try container.encodeIfPresent(reasoning_effort, forKey: .reasoning_effort)
         try container.encodeIfPresent(reasoning, forKey: .reasoning)
         try container.encodeIfPresent(thinking, forKey: .thinking)
+        try container.encodeIfPresent(clamp_to_balance, forKey: .clamp_to_balance)
+        try container.encodeIfPresent(idempotencyKey, forKey: .idempotencyKey)
         try container.encodeIfPresent(veniceParameters, forKey: .veniceParameters)
         // `modelOptions` is intentionally not in `CodingKeys` — it stays
         // in-process for model-specific feature flags.
@@ -3362,21 +3535,25 @@ extension OpenResponsesRequest {
 // MARK: - Top-level parameter schema sanitization
 
 extension RemoteProviderService {
-    /// Whether the provider rejects restricted JSON Schema keys at the TOP
-    /// level of a function's `parameters`. OpenAI's official API 400s with
-    /// `invalid_function_parameters` on top-level
-    /// `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` (nested uses are
+    /// Whether the provider route needs the tool schema narrowed for wire
+    /// compatibility. This is not local validation weakening: Osaurus still
+    /// validates tool calls against the original schema. The narrowed copy is
+    /// only what we advertise to remote providers that reject restricted
+    /// top-level JSON Schema keys.
+    ///
+    /// OpenAI's official API 400s with `invalid_function_parameters` on
+    /// top-level `oneOf`/`anyOf`/`allOf`/`enum`/`const`/`not` (nested uses are
     /// accepted); Azure OpenAI runs the same validator, and Anthropic's
     /// Messages API rejects top-level `oneOf`/`allOf`/`anyOf` on
-    /// `input_schema` the same way. Third-party OpenAI-compatible
-    /// providers (xAI, Groq, OpenRouter, …) accept the full schema, so
-    /// they keep it unmodified.
+    /// `input_schema`. Osaurus Router is a provider-agnostic fan-out boundary,
+    /// so it uses the strict wire subset regardless of the current model's
+    /// upstream.
     static func enforcesTopLevelParameterSchemaRestrictions(
         providerType: RemoteProviderType,
         host: String
     ) -> Bool {
         switch providerType {
-        case .azureOpenAI, .openAICodex, .anthropic: return true
+        case .azureOpenAI, .openAICodex, .anthropic, .osaurusRouter: return true
         default: break
         }
         let normalizedHost = host.lowercased()
@@ -3451,6 +3628,10 @@ extension RemoteProviderService {
         // Native Osaurus agent — fetch all models from the server's /models endpoint
         if provider.providerType == .osaurus {
             return try await fetchOsaurusModels(from: provider)
+        }
+
+        if provider.providerType == .osaurusRouter {
+            return try await fetchOsaurusRouterModels(from: provider)
         }
 
         // OpenAI-compatible providers use /models endpoint
@@ -3556,9 +3737,77 @@ extension RemoteProviderService {
         switch providerType {
         case .openaiLegacy, .openResponses, .azureOpenAI:
             return true
-        case .anthropic, .openAICodex, .gemini, .osaurus:
+        case .anthropic, .openAICodex, .gemini, .osaurus, .osaurusRouter:
             return false
         }
+    }
+
+    private static func fetchOsaurusRouterModels(from provider: RemoteProvider) async throws -> [String] {
+        try await fetchOsaurusRouterModelsDiscovery(from: provider).models
+    }
+
+    /// Like `fetchOsaurusRouterModels` but returns the full discovery, including
+    /// the per-model metadata catalog, so callers (connect/refetch) can cache
+    /// pricing/provider/context for the picker without a second request.
+    static func fetchOsaurusRouterModelsDiscovery(
+        from provider: RemoteProvider
+    ) async throws -> OsaurusRouterModelDiscovery {
+        guard let url = provider.url(for: "/models") else {
+            throw RemoteProviderServiceError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = modelDiscoveryTimeout(provider.timeout)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try await OsaurusRouterAuthSigner().sign(request: &request, body: Data())
+
+        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw RemoteProviderServiceError.invalidResponse
+        }
+        if httpResponse.statusCode >= 400 {
+            // Throw a typed router error that carries the HTTP status so the
+            // launch connect-retry can tell retryable 5xx from terminal 4xx.
+            // Mirrors `OsaurusRouterAPIClient.ensureOK`.
+            if let envelope = try? JSONDecoder().decode(OsaurusRouterErrorEnvelope.self, from: data) {
+                throw OsaurusRouterAPIError.from(
+                    code: envelope.error.code,
+                    message: envelope.error.message,
+                    status: httpResponse.statusCode,
+                    retryAfter: httpResponse.value(forHTTPHeaderField: "retry-after")
+                )
+            }
+            throw OsaurusRouterAPIError.server(
+                code: "HTTP_\(httpResponse.statusCode)",
+                message: extractErrorMessage(from: data, statusCode: httpResponse.statusCode),
+                status: httpResponse.statusCode
+            )
+        }
+
+        let discovery = try decodeOsaurusRouterModelsDiscovery(data: data)
+        if discovery.staleCount > 0 {
+            print(
+                "[Osaurus] Router model discovery: \(discovery.models.count) fresh models (\(discovery.staleCount) stale hidden of \(discovery.totalCount) total)"
+            )
+        }
+        return discovery
+    }
+
+    static func decodeOsaurusRouterModelsResponse(data: Data) throws -> [String] {
+        try decodeOsaurusRouterModelsDiscovery(data: data).models
+    }
+
+    static func decodeOsaurusRouterModelsDiscovery(data: Data) throws -> OsaurusRouterModelDiscovery {
+        let decoded = try JSONDecoder().decode(OsaurusRouterModelListResponse.self, from: data)
+        let freshModels = decoded.data.filter { !$0.stale }
+        let freshIds = freshModels.map(\.id)
+        let catalog = Dictionary(freshModels.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return OsaurusRouterModelDiscovery(
+            models: freshIds,
+            totalCount: decoded.data.count,
+            staleCount: decoded.data.count - freshIds.count,
+            catalog: catalog
+        )
     }
 
     /// Fetch models for a native Osaurus agent.

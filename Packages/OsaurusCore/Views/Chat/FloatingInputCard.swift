@@ -36,6 +36,10 @@ struct FloatingInputCard: View {
     let estimatedContextTokens: Int
     /// Per-category breakdown of context token usage
     var contextBreakdown: ContextBreakdown = .zero
+    /// Total micro-USD spent on the Osaurus Router this session.
+    var sessionSpendMicro: Int = 0
+    /// Whether to show the session spend chip (true only for Osaurus Router sessions).
+    var showSessionSpend: Bool = false
     let onSend: (String?) -> Void
     let onStop: () -> Void
     /// Trigger to focus the input field (increment to focus)
@@ -65,6 +69,8 @@ struct FloatingInputCard: View {
     var onSendNow: (() -> Void)?
     /// Discard the queued send without sending it. Called by the chip's ×.
     var onCancelQueued: (() -> Void)?
+    /// Invoked when the user taps the credits chip (opens the top-up sheet).
+    var onAddCredits: (() -> Void)?
 
     init(
         text: Binding<String>,
@@ -80,6 +86,8 @@ struct FloatingInputCard: View {
         supportsImages: Bool,
         estimatedContextTokens: Int,
         contextBreakdown: ContextBreakdown = .zero,
+        sessionSpendMicro: Int = 0,
+        showSessionSpend: Bool = false,
         onSend: @escaping (String?) -> Void,
         onStop: @escaping () -> Void,
         focusTrigger: Int = 0,
@@ -92,7 +100,8 @@ struct FloatingInputCard: View {
         autoSpeakAssistant: Binding<Bool> = .constant(false),
         queuedSend: Binding<QueuedSend?> = .constant(nil),
         onSendNow: (() -> Void)? = nil,
-        onCancelQueued: (() -> Void)? = nil
+        onCancelQueued: (() -> Void)? = nil,
+        onAddCredits: (() -> Void)? = nil
     ) {
         self._text = text
         self._selectedModel = selectedModel
@@ -107,6 +116,8 @@ struct FloatingInputCard: View {
         self.supportsImages = supportsImages
         self.estimatedContextTokens = estimatedContextTokens
         self.contextBreakdown = contextBreakdown
+        self.sessionSpendMicro = sessionSpendMicro
+        self.showSessionSpend = showSessionSpend
         self.onSend = onSend
         self.onStop = onStop
         self.focusTrigger = focusTrigger
@@ -120,6 +131,7 @@ struct FloatingInputCard: View {
         self._queuedSend = queuedSend
         self.onSendNow = onSendNow
         self.onCancelQueued = onCancelQueued
+        self.onAddCredits = onAddCredits
     }
 
     // Observe managers for reactive updates
@@ -128,6 +140,9 @@ struct FloatingInputCard: View {
     @ObservedObject private var sandboxState = SandboxManager.State.shared
     @ObservedObject private var clipboardService = ClipboardService.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
+    /// Drives the composer credits chip (balance + low-balance tinting) for
+    /// Osaurus Router sessions.
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
 
     // MARK: - Slash Command State
 
@@ -178,6 +193,8 @@ struct FloatingInputCard: View {
     @State private var showModelOptionsPicker = false
     @State private var showContextBreakdown = false
     @State private var contextHoverTask: Task<Void, Never>?
+    @State private var showBalanceBreakdown = false
+    @State private var balanceHoverTask: Task<Void, Never>?
     @State private var isSandboxHovered = false
     @State private var sandboxPulseAmount: CGFloat = 1.0
     @State private var sandboxPulseTask: Task<Void, Never>? = nil
@@ -350,7 +367,8 @@ struct FloatingInputCard: View {
             if (pickerItems.count > 1
                 || displayContextTokens > 0
                 || isSandboxAvailable
-                || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent))
+                || (appConfig.chatConfig.enableClipboardMonitoring && clipboardService.hasNewContent)
+                || showSessionSpend)
                 && !showVoiceOverlay
             {
                 selectorRow
@@ -1305,6 +1323,7 @@ extension FloatingInputCard {
                         .background(Circle().fill(theme.tertiaryBackground))
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
                 .localizedHelp("Cancel queued message")
             }
             .padding(.horizontal, 10)
@@ -1348,6 +1367,7 @@ extension FloatingInputCard {
                         .background(Circle().fill(theme.tertiaryBackground))
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -1520,9 +1540,208 @@ extension FloatingInputCard {
 
             Spacer()
 
-            // Context size indicator (right-aligned)
-            if displayContextTokens > 0 {
-                contextIndicatorChip
+            // Right-aligned "meta" cluster: balance + token usage read as one
+            // quiet status group (the balance escalates to an amber CTA when
+            // it runs low). Controls live on the left; status lives here.
+            metaCluster
+        }
+    }
+
+    /// Passive status group for the right edge of the selector row: the Osaurus
+    /// Router balance and the context/token indicator, joined by a hairline only
+    /// when both are present. Rendered as muted text (the balance chip adds its
+    /// own pill only in the low/empty attention states) so it never competes
+    /// with the interactive chips on the left.
+    @ViewBuilder
+    private var metaCluster: some View {
+        let showCredits = showSessionSpend
+        let showTokens = displayContextTokens > 0
+        if showCredits || showTokens {
+            HStack(alignment: .center, spacing: 8) {
+                if showCredits {
+                    creditsChip
+                }
+                if showCredits && showTokens {
+                    Rectangle()
+                        .fill(theme.primaryBorder.opacity(0.25))
+                        .frame(width: 1, height: 12)
+                }
+                if showTokens {
+                    contextIndicatorChip
+                }
+            }
+        }
+    }
+
+    // MARK: - Credits Indicator
+
+    /// Urgency tiers for the balance indicator. Healthy stays quiet (plain muted
+    /// text that blends into the meta cluster); low and empty escalate to an
+    /// amber pill so a top-up is easy to notice. Empty/frozen reads as an "Add
+    /// credits" call to action — deliberately amber, never error-red, so it
+    /// invites action instead of looking like a failure.
+    private enum BalanceLevel {
+        case healthy
+        case low
+        case empty
+    }
+
+    private var balanceLevel: BalanceLevel {
+        let micro = accountService.balanceMicroValue
+        if micro <= 0 || accountService.isFrozen {
+            return .empty
+        }
+        if micro < 1_000_000 {  // < $1.00
+            return .low
+        }
+        return .healthy
+    }
+
+    /// Resolved visual tokens for one `BalanceLevel` so `creditsChip` can render
+    /// declaratively instead of re-deriving each property from the level inline.
+    private struct CreditsChipStyle {
+        let iconName: String
+        let iconColor: Color
+        let textColor: Color
+        let weight: Font.Weight
+        /// Pill fill/stroke; `nil` keeps the chip chrome-free (healthy state).
+        let pill: (fill: Color, stroke: Color)?
+        let glow: Color
+        /// When false, the chip shows the "Add credits" CTA instead of an amount.
+        let showsAmount: Bool
+    }
+
+    private func creditsStyle(for level: BalanceLevel) -> CreditsChipStyle {
+        let amber = theme.warningColor
+        switch level {
+        case .healthy:
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: theme.tertiaryText,
+                textColor: theme.secondaryText,
+                weight: .medium,
+                pill: nil,
+                glow: .clear,
+                showsAmount: true
+            )
+        case .low:
+            return CreditsChipStyle(
+                iconName: "creditcard",
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
+                pill: (amber.opacity(0.12), amber.opacity(0.3)),
+                glow: .clear,
+                showsAmount: true
+            )
+        case .empty:
+            return CreditsChipStyle(
+                iconName: "plus.circle.fill",
+                iconColor: amber,
+                textColor: amber,
+                weight: .semibold,
+                pill: (amber.opacity(0.22), amber.opacity(0.5)),
+                glow: amber.opacity(0.25),
+                showsAmount: false
+            )
+        }
+    }
+
+    /// Tooltip for the balance indicator: explains the chip, folds in the
+    /// this-session spend when a charge has landed, and swaps to a "paused"
+    /// message for frozen accounts. The per-session figure used to sit inline in
+    /// the chip; it now lives here so the visible label stays compact.
+    private var creditsHelpText: Text {
+        if accountService.isFrozen {
+            return Text("Account paused - add credits to resume.", bundle: .module)
+        }
+        if sessionSpendMicro > 0 {
+            let spent = OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
+            return Text(
+                "Your balance. \(spent) spent this session. Click to add credits.",
+                bundle: .module
+            )
+        }
+        return Text("Your balance. Click to add credits.", bundle: .module)
+    }
+
+    /// Balance indicator for Osaurus Router sessions. Tapping opens the top-up
+    /// sheet; the balance best-effort refreshes on appear so it isn't blank.
+    /// Quiet plain text when funded, escalating to an amber pill / "Add credits"
+    /// CTA as the balance runs low or hits zero (see `BalanceLevel`).
+    @ViewBuilder
+    private var creditsChip: some View {
+        let level = balanceLevel
+        let style = creditsStyle(for: level)
+        let caption = CGFloat(theme.captionSize)
+        // Hide the icon in compact mode to save width, except the empty-state
+        // plus glyph, which signals the chip is actionable.
+        let showIcon = !isCompact || level == .empty
+
+        Button {
+            onAddCredits?()
+        } label: {
+            HStack(spacing: 4) {
+                if showIcon {
+                    Image(systemName: style.iconName)
+                        .font(.system(size: caption - 2))
+                        .foregroundColor(style.iconColor)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+
+                if style.showsAmount {
+                    Text(verbatim: accountService.formattedBalance)
+                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                        .foregroundColor(style.textColor)
+                } else {
+                    Text("Add credits", bundle: .module)
+                        .font(theme.font(size: caption - 1, weight: style.weight))
+                        .foregroundColor(style.textColor)
+                }
+            }
+            // Chrome only appears in the low/empty attention states; the healthy
+            // chip stays plain text to match the token indicator's weight.
+            .padding(.horizontal, style.pill == nil ? 0 : 10)
+            .padding(.vertical, style.pill == nil ? 0 : 4)
+            .background {
+                if let pill = style.pill {
+                    Capsule()
+                        .fill(pill.fill)
+                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
+                }
+            }
+            // Soft glow on the empty CTA draws the eye without a repeating animation.
+            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .accessibilityLabel(creditsHelpText)
+        .onHover { hovering in
+            balanceHoverTask?.cancel()
+            if hovering {
+                balanceHoverTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    guard !Task.isCancelled else { return }
+                    showBalanceBreakdown = true
+                }
+            } else {
+                showBalanceBreakdown = false
+            }
+        }
+        .popover(isPresented: $showBalanceBreakdown, arrowEdge: .top) {
+            BalanceBreakdownPopover(
+                balance: accountService.formattedBalance,
+                isAttention: level != .healthy,
+                sessionSpend: sessionSpendMicro > 0
+                    ? OsaurusRouter.formatMicroUSDPrecise(String(sessionSpendMicro))
+                    : nil,
+                isFrozen: accountService.isFrozen
+            )
+        }
+        .task(id: showSessionSpend) {
+            if showSessionSpend {
+                await accountService.refreshBalance()
             }
         }
     }
@@ -1568,6 +1787,7 @@ extension FloatingInputCard {
                     .foregroundColor(theme.tertiaryText.opacity(0.7))
             }
         }
+        .pointingHandCursor()
         .onHover { hovering in
             contextHoverTask?.cancel()
             if hovering {
@@ -2091,6 +2311,7 @@ extension FloatingInputCard {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         // Intentionally NOT `.disabled(isSandboxLoading)` — the chip
         // stays tappable during provisioning so the user can click
         // through to the Sandbox settings tab and watch the journey
@@ -2294,6 +2515,7 @@ extension FloatingInputCard {
                 )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isClipboardHovered = hovering
@@ -2461,6 +2683,7 @@ extension FloatingInputCard {
                 folderChipContent(hasFolder: hasFolder, canEdit: true)
             }
             .buttonStyle(.plain)
+            .pointingHandCursor()
             .help(folderChipHelp(hasFolder: hasFolder))
             .contextMenu {
                 if hasFolder {
@@ -2507,6 +2730,7 @@ extension FloatingInputCard {
                         .overlay(Circle().strokeBorder(theme.primaryBorder.opacity(0.5), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
                 .localizedHelp("Clear folder selection")
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
@@ -3289,6 +3513,7 @@ struct CachedImageThumbnail: View {
                     )
             }
             .buttonStyle(.plain)
+            .pointingHandCursor()
             .offset(x: 4, y: -4)
         }
         .padding(.top, 4)
@@ -3429,6 +3654,91 @@ extension NSImage {
     }
 }
 
+// MARK: - Popover Card Chrome
+
+/// Shared rounded glass card chrome for the composer's hover/selector popovers
+/// (Context Budget, router balance, model options) so they read as one family.
+/// Defaults match the lightweight hover cards; the model-options panel passes
+/// larger values for its heavier look.
+private struct PopoverCardModifier: ViewModifier {
+    var cornerRadius: CGFloat = 10
+    var accentOpacity: (dark: Double, light: Double) = (0.04, 0.03)
+    var borderOpacity: Double = 0.12
+    var shadowOpacity: Double = 0.2
+    var shadowRadius: CGFloat = 16
+    var shadowOffsetY: CGFloat = 8
+
+    @Environment(\.theme) private var theme
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        content
+            .background {
+                ZStack {
+                    if theme.glassEnabled {
+                        shape.fill(.ultraThinMaterial)
+                    }
+                    shape.fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
+                    LinearGradient(
+                        colors: [
+                            theme.accentColor.opacity(
+                                theme.isDark ? accentOpacity.dark : accentOpacity.light
+                            ),
+                            .clear,
+                        ],
+                        startPoint: .top,
+                        endPoint: .center
+                    )
+                    .clipShape(shape)
+                }
+            }
+            .clipShape(shape)
+            .overlay(
+                shape.strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            theme.glassEdgeLight.opacity(0.2),
+                            theme.primaryBorder.opacity(borderOpacity),
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
+            )
+            .shadow(
+                color: theme.shadowColor.opacity(shadowOpacity),
+                radius: shadowRadius,
+                x: 0,
+                y: shadowOffsetY
+            )
+    }
+}
+
+private extension View {
+    /// Applies the shared composer popover card chrome (glass fill, gradient
+    /// border, soft shadow). Tunable for the heavier model-options panel.
+    func popoverCard(
+        cornerRadius: CGFloat = 10,
+        accentOpacity: (dark: Double, light: Double) = (0.04, 0.03),
+        borderOpacity: Double = 0.12,
+        shadowOpacity: Double = 0.2,
+        shadowRadius: CGFloat = 16,
+        shadowOffsetY: CGFloat = 8
+    ) -> some View {
+        modifier(
+            PopoverCardModifier(
+                cornerRadius: cornerRadius,
+                accentOpacity: accentOpacity,
+                borderOpacity: borderOpacity,
+                shadowOpacity: shadowOpacity,
+                shadowRadius: shadowRadius,
+                shadowOffsetY: shadowOffsetY
+            )
+        )
+    }
+}
+
 // MARK: - Context Breakdown Popover
 
 private struct ContextBreakdownPopover: View {
@@ -3524,10 +3834,7 @@ private struct ContextBreakdownPopover: View {
             totalRow.padding(.horizontal, 12).padding(.vertical, 8)
         }
         .frame(width: 240)
-        .background(popoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay(popoverBorder)
-        .shadow(color: theme.shadowColor.opacity(0.2), radius: 16, x: 0, y: 8)
+        .popoverCard()
     }
 
     // MARK: - Stacked Bar
@@ -3624,34 +3931,88 @@ private struct ContextBreakdownPopover: View {
         Divider().overlay(theme.primaryBorder.opacity(0.15))
     }
 
-    private var popoverBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-            LinearGradient(
-                colors: [theme.accentColor.opacity(theme.isDark ? 0.04 : 0.03), .clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
+}
+
+// MARK: - Balance Breakdown Popover
+
+/// Hover card for the composer balance chip, styled to match
+/// `ContextBreakdownPopover` (rounded glass card, 11pt header, hairline
+/// dividers, monospaced values). Replaces the plain OS tooltip so the router
+/// balance reads like the Context Budget breakdown beside it. The balance is
+/// the hero figure (paralleling the budget bar) and tints amber when low/empty.
+private struct BalanceBreakdownPopover: View {
+    let balance: String
+    let isAttention: Bool
+    let sessionSpend: String?
+    let isFrozen: Bool
+
+    @Environment(\.theme) private var theme
+
+    private var accent: Color { isAttention ? theme.warningColor : theme.accentColor }
+
+    private var footerText: Text {
+        isFrozen
+            ? Text("Account paused - add credits to resume.", bundle: .module)
+            : Text("Click to add credits", bundle: .module)
     }
 
-    private var popoverBorder: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [theme.glassEdgeLight.opacity(0.2), theme.primaryBorder.opacity(0.12)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "creditcard")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+                Text("Router Balance", bundle: .module)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(theme.secondaryText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(accent.opacity(0.85))
+                    .frame(width: 3, height: 16)
+                Text(verbatim: balance)
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundColor(isAttention ? theme.warningColor : theme.primaryText)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 10)
+
+            if let sessionSpend {
+                divider
+                HStack(spacing: 0) {
+                    Text("Spent this session", bundle: .module)
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.secondaryText)
+                    Spacer()
+                    Text(verbatim: sessionSpend)
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundColor(theme.primaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+
+            divider
+            footerText
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .frame(width: 200)
+        .popoverCard()
     }
+
+    private var divider: some View {
+        Divider().overlay(theme.primaryBorder.opacity(0.15))
+    }
+
 }
 
 // MARK: - Context Budget Segment Widths
@@ -3742,6 +4103,7 @@ private struct SelectorChip<Content: View>: View {
                 )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -3809,10 +4171,14 @@ private struct ModelOptionsSelectorView: View {
             optionRows
         }
         .frame(width: 300)
-        .background(popoverBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(popoverBorder)
-        .shadow(color: theme.shadowColor.opacity(0.25), radius: 20, x: 0, y: 10)
+        .popoverCard(
+            cornerRadius: 12,
+            accentOpacity: (0.06, 0.04),
+            borderOpacity: 0.15,
+            shadowOpacity: 0.25,
+            shadowRadius: 20,
+            shadowOffsetY: 10
+        )
     }
 
     // MARK: - Header
@@ -3852,6 +4218,7 @@ private struct ModelOptionsSelectorView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
             }
         }
         .padding(.horizontal, 14)
@@ -3932,6 +4299,7 @@ private struct ModelOptionsSelectorView: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .pointingHandCursor()
             }
         }
     }
@@ -3966,42 +4334,6 @@ private struct ModelOptionsSelectorView: View {
         .padding(.vertical, 10)
     }
 
-    // MARK: - Background & Border
-
-    private var popoverBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.primaryBackground.opacity(theme.isDark ? 0.85 : 0.92))
-            LinearGradient(
-                colors: [
-                    theme.accentColor.opacity(theme.isDark ? 0.06 : 0.04),
-                    Color.clear,
-                ],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-    }
-
-    private var popoverBorder: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(0.2),
-                        theme.primaryBorder.opacity(0.15),
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
-    }
 }
 
 // MARK: - Input Action Button
@@ -4054,6 +4386,7 @@ private struct SlashCommandTriggerButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .localizedHelp("Browse slash commands")
         .onHover { isHovered = $0 }
     }
@@ -4114,6 +4447,7 @@ private struct InputActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .help(help)
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -4182,6 +4516,7 @@ private struct SendButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .disabled(!canSend)
         .opacity(canSend ? 1 : 0.5)
         .onHover { hovering in
@@ -4237,6 +4572,7 @@ private struct StopButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
                 isHovered = hovering
@@ -4284,6 +4620,7 @@ private struct SendQueueButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .disabled(!canSend)
         .opacity(canSend ? 1 : 0.5)
         .localizedHelp("Queue message · sent when current run finishes")
@@ -4356,6 +4693,7 @@ private struct SendNowButton: View {
             )
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .localizedHelp("Send now · interrupts current run")
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {

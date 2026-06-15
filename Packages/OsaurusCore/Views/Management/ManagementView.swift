@@ -142,7 +142,7 @@ private extension ManagementView {
         Binding(
             get: { stateManager.selectedTab.rawValue },
             set: { newValue in
-                if let tab = ManagementTab(rawValue: newValue) {
+                if let tab = ManagementTab.resolved(from: newValue) {
                     stateManager.selectedTab = tab
                 }
             }
@@ -151,8 +151,10 @@ private extension ManagementView {
 
     @ViewBuilder
     func contentView(for tabId: String) -> some View {
-        let tab = ManagementTab(rawValue: tabId)
+        let tab = ManagementTab.resolved(from: tabId)
         switch tab {
+        case .credits:
+            CreditsView()
         case .models:
             ModelDownloadView(
                 deeplinkModelId: deeplinkModelId,

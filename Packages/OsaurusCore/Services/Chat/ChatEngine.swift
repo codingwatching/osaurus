@@ -156,7 +156,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             jsonMode: isJSONObject,
             modelOptions: modelOptions,
             sessionId: request.session_id,
-            ttftTrace: trace
+            ttftTrace: trace,
+            idempotencyKey: request.idempotencyKey
         )
 
         let services = self.services
@@ -437,6 +438,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         inferenceSource: InferenceSource,
         temperature: Float?,
         maxTokens: Int,
+        turnId: UUID? = nil,
+        requestId: String? = nil,
         requestBodyJSON: String? = nil,
         tools: [Tool]? = nil
     ) -> ChatCompletionResponse {
@@ -482,6 +485,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             let durationMs = Date().timeIntervalSince(startTime) * 1000
             InsightsService.logInference(
                 source: inferenceSource,
+                turnId: turnId,
+                requestId: requestId,
                 model: effectiveModel,
                 inputTokens: inputTokens,
                 outputTokens: 0,
@@ -585,11 +590,13 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // is safe for the detached producer — correlates the log back to
             // the chat assistant turn for the per-message Insights button.
             let turnId = request.turnId
+            let requestId = request.idempotencyKey
 
             return wrapStreamWithLogging(
                 innerStream,
                 source: source,
                 turnId: turnId,
+                requestId: requestId,
                 model: model,
                 inputTokens: inputTokens,
                 temperature: temp,
@@ -609,6 +616,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         _ inner: AsyncThrowingStream<String, Error>,
         source: InferenceSource,
         turnId: UUID? = nil,
+        requestId: String? = nil,
         model: String,
         inputTokens: Int,
         temperature: Float?,
@@ -674,6 +682,11 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             // growing total without double-counting either source.
             var reportedOutputTokens = 0
             var deltaCount = 0
+            var statsHintCount = 0
+            var reasoningHintCount = 0
+            var toolHintCount = 0
+            var billingHintCount = 0
+            var prefillHintCount = 0
             var finishReason: InferenceLog.FinishReason = .stop
             var errorMsg: String? = nil
             var toolInvocation: (name: String, args: String)? = nil
@@ -693,6 +706,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             do {
                 for try await delta in inner {
                     if let stats = StreamingStatsHint.decode(delta) {
+                        statsHintCount += 1
                         outputTokenCount = stats.tokenCount
                         // Stats hint carries the authoritative cumulative
                         // output-token count from the model runtime. Push
@@ -727,6 +741,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
 
                     if let reasoning = StreamingReasoningHint.decode(delta) {
                         deltaCount += 1
+                        reasoningHintCount += 1
                         let estimated = TokenEstimator.estimate(reasoning)
                         outputTokenCount += estimated
                         if let bgId, estimated > 0 {
@@ -742,8 +757,21 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         continue
                     }
 
+                    if StreamingBillingHint.decode(delta) != nil {
+                        billingHintCount += 1
+                        continuation.yield(delta)
+                        continue
+                    }
+
+                    if StreamingPrefillProgressHint.decode(delta) != nil {
+                        prefillHintCount += 1
+                        continuation.yield(delta)
+                        continue
+                    }
+
                     // Pass through tool-hint sentinels without counting as tokens
                     if StreamingToolHint.isSentinel(delta) {
+                        toolHintCount += 1
                         continuation.yield(delta)
                         continue
                     }
@@ -789,8 +817,14 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 }
 
                 let totalTime = Date().timeIntervalSince(startTime)
+                let sentinelCount =
+                    statsHintCount + toolHintCount + billingHintCount + prefillHintCount
+                let zeroDeltaClassification =
+                    deltaCount == 0
+                    ? (sentinelCount > 0 ? "sentinel-only" : "empty")
+                    : "non-empty"
                 print(
-                    "[Osaurus][Stream] Stream completed: \(deltaCount) deltas in \(String(format: "%.2f", totalTime))s"
+                    "[Osaurus][Stream] Stream completed: \(deltaCount) content/reasoning deltas in \(String(format: "%.2f", totalTime))s classification=\(zeroDeltaClassification) reasoning=\(reasoningHintCount) stats=\(statsHintCount) toolHints=\(toolHintCount) billingHints=\(billingHintCount) prefillHints=\(prefillHintCount)"
                 )
 
                 // A blank stream that coincides with a fresh MLX C++ error is
@@ -838,6 +872,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 InsightsService.logInference(
                     source: source,
                     turnId: turnId,
+                    requestId: requestId,
                     model: model,
                     inputTokens: inputTokens,
                     outputTokens: outputTokenCount,
@@ -884,6 +919,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
         // (text-only, text-with-tools, tool-calls batch, tool-calls single)
         // surface the same prompt + tools in the Insights detail pane.
         let requestBodyJSON = inferenceSource == .chatUI ? Self.serializeRequestForLog(request) : nil
+        let requestId = request.idempotencyKey
         // Carry the caller's `ttftTrace` through to non-streaming requests
         // for parity with `streamChat` — useful when an HTTP route runs the
         // same `request.ttftTrace` across both code paths.
@@ -1007,6 +1043,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         InsightsService.logInference(
                             source: inferenceSource,
                             turnId: request.turnId,
+                            requestId: requestId,
                             model: effectiveModel,
                             inputTokens: inputTokens,
                             outputTokens: outputTokens,
@@ -1031,6 +1068,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
+                        turnId: request.turnId,
+                        requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
                         tools: tools
                     )
@@ -1045,6 +1084,8 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                         inferenceSource: inferenceSource,
                         temperature: temperature,
                         maxTokens: maxTokens,
+                        turnId: request.turnId,
+                        requestId: requestId,
                         requestBodyJSON: requestBodyJSON,
                         tools: tools
                     )
@@ -1123,6 +1164,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
                 InsightsService.logInference(
                     source: inferenceSource,
                     turnId: request.turnId,
+                    requestId: requestId,
                     model: effectiveModel,
                     inputTokens: inputTokens,
                     outputTokens: outputTokens,

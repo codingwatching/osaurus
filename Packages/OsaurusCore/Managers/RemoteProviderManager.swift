@@ -5,6 +5,7 @@
 //  Manages remote OpenAI-compatible API provider connections.
 //
 
+import AppKit
 import Foundation
 
 /// Notification posted when remote provider connection status changes
@@ -44,6 +45,7 @@ public enum RemoteProviderError: LocalizedError {
 @MainActor
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
+    public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration
@@ -57,13 +59,75 @@ public final class RemoteProviderManager: ObservableObject {
     /// Provider IDs created from Bonjour discovery — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
+    /// Per-model metadata for the managed Osaurus Router, keyed by unprefixed
+    /// model id (e.g. "venice/model-b"). Captured from `/models` on
+    /// connect/refetch so the picker can show provider, pricing, and context
+    /// without a second request. Empty until the router connects.
+    private var osaurusRouterModelCatalog: [String: OsaurusRouterModel] = [:]
+
     private init() {
         self.configuration = RemoteProviderConfigurationStore.load()
+        ensureManagedOsaurusRouterProviderIfNeeded()
 
         // Initialize states for all providers
         for provider in configuration.providers {
             providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
         }
+
+        registerIdentityAndActivationObservers()
+    }
+
+    /// Test seam: overrides `OsaurusIdentity.exists()` for the identity-gated
+    /// connect/ensure paths so router lifecycle tests don't depend on whether
+    /// the test machine happens to have a real master key installed.
+    var testIdentityExistsOverride: Bool?
+
+    private func identityExists() -> Bool {
+        testIdentityExistsOverride ?? OsaurusIdentity.exists()
+    }
+
+    private static func isManagedOsaurusRouterProvider(_ provider: RemoteProvider) -> Bool {
+        provider.id == osaurusRouterProviderId || provider.providerType == .osaurusRouter
+    }
+
+    private static func makeManagedOsaurusRouterProvider() -> RemoteProvider {
+        RemoteProvider(
+            id: osaurusRouterProviderId,
+            name: "Osaurus",
+            host: OsaurusRouter.defaultBaseURL.host ?? "router.osaurus.ai",
+            providerProtocol: OsaurusRouter.defaultBaseURL.scheme == "http" ? .http : .https,
+            port: OsaurusRouter.defaultBaseURL.port,
+            basePath: "",
+            authType: .none,
+            providerType: .osaurusRouter,
+            enabled: true,
+            autoConnect: true,
+            timeout: 120
+        )
+    }
+
+    private func ensureManagedOsaurusRouterProviderIfNeeded() {
+        guard identityExists() else {
+            configuration.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
+            providerStates.removeValue(forKey: Self.osaurusRouterProviderId)
+            if let service = services.removeValue(forKey: Self.osaurusRouterProviderId) {
+                Task { await service.invalidateSession() }
+            }
+            return
+        }
+
+        let provider = Self.makeManagedOsaurusRouterProvider()
+        configuration.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
+        configuration.add(provider)
+        if providerStates[provider.id] == nil {
+            providerStates[provider.id] = RemoteProviderState(providerId: provider.id)
+        }
+    }
+
+    private func saveUserProviderConfiguration() {
+        var persisted = configuration
+        persisted.providers.removeAll(where: Self.isManagedOsaurusRouterProvider)
+        RemoteProviderConfigurationStore.save(persisted)
     }
 
     // MARK: - Provider Management
@@ -85,7 +149,7 @@ public final class RemoteProviderManager: ObservableObject {
         if isEphemeral {
             ephemeralProviderIds.insert(provider.id)
         } else {
-            RemoteProviderConfigurationStore.save(configuration)
+            saveUserProviderConfiguration()
             // KPI: a user-configured remote provider. Only the closed-enum
             // type is captured. Ephemeral Bonjour-discovered providers are
             // excluded — they aren't a deliberate configuration action.
@@ -128,7 +192,7 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         configuration.update(provider)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
 
         // Update API key if provided (nil means no change, empty string means clear)
         if let apiKey = apiKey {
@@ -161,7 +225,7 @@ public final class RemoteProviderManager: ObservableObject {
         // Remove from configuration (also cleans up Keychain)
         configuration.remove(id: id)
         ephemeralProviderIds.remove(id)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
 
         // Clean up state
         providerStates.removeValue(forKey: id)
@@ -175,7 +239,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// When enabled is false, disconnects from the provider
     public func setEnabled(_ enabled: Bool, for providerId: UUID) {
         configuration.setEnabled(enabled, for: providerId)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
 
         if enabled {
             // Always auto-connect when toggled ON
@@ -194,7 +258,7 @@ public final class RemoteProviderManager: ObservableObject {
     /// drops providers. Connection state is untouched — only display order moves.
     public func reorder(orderedIds: [UUID]) {
         configuration.reorder(orderedIds: orderedIds)
-        RemoteProviderConfigurationStore.save(configuration)
+        saveUserProviderConfiguration()
         notifyStatusChanged()
     }
 
@@ -232,7 +296,19 @@ public final class RemoteProviderManager: ObservableObject {
             // Fetch models from the provider and merge any manually configured deployment IDs.
             let discoveredModels: [String]
             do {
-                discoveredModels = try await RemoteProviderService.fetchModels(from: provider)
+                if let override = testFetchModelsOverride {
+                    discoveredModels = try await override(provider)
+                } else if provider.providerType == .osaurusRouter {
+                    // The discovery variant also captures pricing/provider/context
+                    // metadata for the picker, in the same request.
+                    let discovery = try await RemoteProviderService.fetchOsaurusRouterModelsDiscovery(
+                        from: provider
+                    )
+                    discoveredModels = discovery.models
+                    osaurusRouterModelCatalog = discovery.catalog
+                } else {
+                    discoveredModels = try await RemoteProviderService.fetchModels(from: provider)
+                }
             } catch {
                 if provider.providerType == .azureOpenAI && !provider.manualModelIds.isEmpty {
                     discoveredModels = []
@@ -307,6 +383,9 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         if let provider = configuration.provider(id: providerId) {
+            if provider.providerType == .osaurusRouter {
+                osaurusRouterModelCatalog = [:]
+            }
             print("[Osaurus] Remote Provider '\(provider.name)': Disconnected")
         }
 
@@ -322,13 +401,168 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Connect to all enabled providers on app launch
     public func connectEnabledProviders() async {
+        ensureManagedOsaurusRouterProviderIfNeeded()
         for provider in configuration.enabledProviders {
+            // The managed Osaurus Router gets bounded retry so a transient
+            // launch failure (offline, server 5xx, cold start) doesn't leave
+            // the model picker without Osaurus options until a manual refresh.
+            if provider.id == Self.osaurusRouterProviderId {
+                await connectOsaurusRouterWithRetry()
+                continue
+            }
             do {
                 try await connect(providerId: provider.id)
             } catch {
                 print("[Osaurus] Failed to auto-connect to '\(provider.name)': \(error)")
             }
         }
+    }
+
+    public func connectOsaurusRouterIfPossible() async {
+        guard managedRouterNeedsConnect() else { return }
+        try? await connect(providerId: Self.osaurusRouterProviderId)
+    }
+
+    // MARK: - Osaurus Router connect retry & recovery
+
+    /// Total attempts (including the first) for the launch-time router connect.
+    public static let osaurusRouterConnectMaxAttempts = 3
+    /// Base delay for exponential backoff between router connect retries.
+    static let osaurusRouterConnectRetryBaseDelay: TimeInterval = 1.0
+    /// Test seam: replaces the real backoff sleep so retry tests don't wait on
+    /// wall-clock time.
+    var testRetrySleepOverride: (@MainActor (TimeInterval) async -> Void)?
+
+    /// Inject (or drop) the managed router for the current identity state and
+    /// report whether a fresh connect should be attempted — i.e. it exists and
+    /// isn't already connected or connecting. Shared by the single-shot and
+    /// retrying entry points so their preconditions can't drift apart.
+    private func managedRouterNeedsConnect() -> Bool {
+        ensureManagedOsaurusRouterProviderIfNeeded()
+        guard configuration.provider(id: Self.osaurusRouterProviderId) != nil else { return false }
+        let state = providerStates[Self.osaurusRouterProviderId]
+        return state?.isConnected != true && state?.isConnecting != true
+    }
+
+    /// Connect the managed Osaurus Router with bounded retry on *transient*
+    /// failures (offline at launch, server 5xx, timeouts). Terminal failures
+    /// (no identity, auth, other 4xx, bad config) stop immediately because a
+    /// retry cannot fix them. This is the launch entry point; the single-shot
+    /// `connectOsaurusRouterIfPossible()` remains for event-driven triggers.
+    public func connectOsaurusRouterWithRetry(
+        maxAttempts: Int = RemoteProviderManager.osaurusRouterConnectMaxAttempts
+    ) async {
+        guard managedRouterNeedsConnect() else { return }
+
+        let attempts = max(1, maxAttempts)
+        for attempt in 1 ... attempts {
+            do {
+                try await connect(providerId: Self.osaurusRouterProviderId)
+                return
+            } catch {
+                // Stop on terminal errors or once attempts are exhausted.
+                guard Self.isTransientConnectError(error), attempt < attempts else { return }
+                await routerRetryBackoff(forAttempt: attempt)
+                // Another path (picker/credits/activation/identity event) may
+                // have connected while we waited — don't pile on a duplicate.
+                if providerStates[Self.osaurusRouterProviderId]?.isConnected == true { return }
+            }
+        }
+    }
+
+    /// Exponential backoff between router connect attempts; honors the test seam.
+    private func routerRetryBackoff(forAttempt attempt: Int) async {
+        let delay = Self.osaurusRouterConnectRetryBaseDelay * pow(2.0, Double(attempt - 1))
+        if let testRetrySleepOverride {
+            await testRetrySleepOverride(delay)
+        } else {
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+        }
+    }
+
+    /// Whether a router connect error is worth retrying. Transient = network
+    /// loss / timeout / DNS / TLS and server-side 5xx / rate-limit. Terminal =
+    /// identity / auth / other 4xx / config, plus anything unrecognized
+    /// (e.g. a biometric/Keychain failure, which a tight retry loop must not
+    /// hammer — the app-activation observer recovers those instead).
+    static func isTransientConnectError(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .timedOut, .networkConnectionLost,
+                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed,
+                .secureConnectionFailed, .resourceUnavailable, .badServerResponse:
+                return true
+            default:
+                return false
+            }
+        }
+        if let routerError = error as? OsaurusRouterAPIError {
+            switch routerError {
+            case .transport, .invalidResponse, .rateLimited:
+                return true
+            case .server(_, _, let status):
+                return status >= 500
+            case .noIdentity, .invalidURL, .unauthorized,
+                .belowMinimumTopUp, .insufficientFunds, .accountFrozen:
+                return false
+            }
+        }
+        if let serviceError = error as? RemoteProviderServiceError {
+            switch serviceError {
+            case .invalidResponse:
+                return true
+            case .invalidURL, .notConnected, .requestFailed, .streamingError, .noModelsAvailable:
+                return false
+            }
+        }
+        return false
+    }
+
+    /// Observe identity creation/wipe and app re-activation so the managed
+    /// Osaurus Router (re)connects without waiting for a user-driven refresh.
+    private func registerIdentityAndActivationObservers() {
+        observeOnMain(.osaurusIdentityChanged) { await $0.handleIdentityChanged() }
+        observeOnMain(NSApplication.didBecomeActiveNotification) { await $0.handleAppDidBecomeActive() }
+    }
+
+    /// Add a main-queue notification observer that hops onto the MainActor and
+    /// invokes `handler` with a strong (but cycle-free) reference to self — the
+    /// handler receives the manager as an argument rather than capturing it.
+    private func observeOnMain(
+        _ name: Foundation.Notification.Name,
+        _ handler: @escaping @MainActor (RemoteProviderManager) async -> Void
+    ) {
+        NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+            [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await handler(self)
+            }
+        }
+    }
+
+    /// Identity was created or wiped. When present, inject + connect the managed
+    /// router; when gone, `ensureManagedOsaurusRouterProviderIfNeeded` drops it
+    /// and we post `.remoteProviderModelsChanged` so the picker rebuilds without
+    /// the now-invalid Osaurus options.
+    func handleIdentityChanged() async {
+        ensureManagedOsaurusRouterProviderIfNeeded()
+        if identityExists() {
+            await connectOsaurusRouterIfPossible()
+        } else {
+            notifyModelsChanged()
+        }
+    }
+
+    /// App regained focus. Retry the router connect only when it isn't already
+    /// connected, so a launch that failed while offline recovers on the next
+    /// activation. The `isConnected` short-circuit avoids re-running
+    /// `ensureManagedOsaurusRouterProviderIfNeeded` (and its `@Published`
+    /// configuration churn) on every activation.
+    func handleAppDidBecomeActive() async {
+        guard identityExists() else { return }
+        guard providerStates[Self.osaurusRouterProviderId]?.isConnected != true else { return }
+        await connectOsaurusRouterIfPossible()
     }
 
     private var refreshConnectedTask: Task<Void, Never>?
@@ -354,6 +588,14 @@ public final class RemoteProviderManager: ObservableObject {
         do {
             if let override = testFetchModelsOverride {
                 discovered = try await override(provider)
+            } else if provider.providerType == .osaurusRouter {
+                let discovery = try await RemoteProviderService.fetchOsaurusRouterModelsDiscovery(
+                    from: provider
+                )
+                discovered = discovery.models
+                // Refresh metadata even when the id set is unchanged: pricing or
+                // capabilities may have moved without a new/removed model.
+                osaurusRouterModelCatalog = discovery.catalog
             } else {
                 discovered = try await RemoteProviderService.fetchModels(from: provider)
             }
@@ -376,6 +618,8 @@ public final class RemoteProviderManager: ObservableObject {
     /// Refresh every enabled provider's model list, coalesced and throttled.
     /// Called from the picker-open path.
     public func refreshConnectedProviders() async {
+        await connectOsaurusRouterIfPossible()
+
         if let existing = refreshConnectedTask {
             await existing.value
             return
@@ -436,6 +680,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Get all available models synchronously from cached state
     public func cachedAvailableModels() -> [(providerId: UUID, providerName: String, models: [String])] {
+        ensureManagedOsaurusRouterProviderIfNeeded()
         var result: [(providerId: UUID, providerName: String, models: [String])] = []
 
         for provider in configuration.providers {
@@ -451,6 +696,35 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         return result
+    }
+
+    /// The first hosted (Osaurus Router) Venice model id, prefixed exactly as
+    /// the model picker lists it (e.g. "osaurus/venice/model-b"). `nil` until
+    /// the managed router connects and its catalog is discovered.
+    ///
+    /// Used to pin the new agent's default model when the user picked the
+    /// hosted brain in onboarding. Prefers a Venice-backed model so the hosted
+    /// privacy copy holds, but falls back to the first router model so the
+    /// hosted path still routes if the catalog ever exposes a different
+    /// upstream.
+    public func firstHostedVeniceModelId() -> String? {
+        guard
+            let entry = cachedAvailableModels().first(where: {
+                $0.providerId == Self.osaurusRouterProviderId
+            })
+        else { return nil }
+        return entry.models.first { $0.lowercased().contains("/venice/") }
+            ?? entry.models.first
+    }
+
+    /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
+    /// appears in `discoveredModels`, e.g. "venice/model-b"). Returns nil for
+    /// non-router models or before the router has connected.
+    ///
+    /// Intentionally `internal`: `OsaurusRouterModel` is an internal type, and
+    /// the only caller (`ModelPickerItemCache`) lives in this module.
+    func osaurusRouterMetadata(for unprefixedModelId: String) -> OsaurusRouterModel? {
+        osaurusRouterModelCatalog[unprefixedModelId]
     }
 
     /// Find the service that handles a given model
@@ -523,7 +797,7 @@ public final class RemoteProviderManager: ObservableObject {
                 if testHeaders["api-key"] == nil {
                     testHeaders["api-key"] = apiKey
                 }
-            case .openaiLegacy, .openResponses, .openAICodex, .osaurus:
+            case .openaiLegacy, .openResponses, .openAICodex, .osaurus, .osaurusRouter:
                 if testHeaders["Authorization"] == nil {
                     testHeaders["Authorization"] = "Bearer \(apiKey)"
                 }
@@ -722,7 +996,10 @@ public final class RemoteProviderManager: ObservableObject {
             }
         }
         refreshConnectedTask = nil
+        osaurusRouterModelCatalog = [:]
         testFetchModelsOverride = nil
+        testIdentityExistsOverride = nil
+        testRetrySleepOverride = nil
     }
 }
 

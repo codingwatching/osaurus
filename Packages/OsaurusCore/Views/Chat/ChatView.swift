@@ -102,6 +102,26 @@ final class ChatSession: ObservableObject {
 
     @Published var lastStreamError: String?
 
+    /// Set when an Osaurus Router send fails because the account is out of
+    /// credits (HTTP 402 INSUFFICIENT_FUNDS). Drives the "out of credits"
+    /// themed modal in ChatView. Cleared when the user dismisses it or tops up.
+    @Published var insufficientFundsAlert = false
+
+    /// The assistant turn that was blocked by an insufficient-funds failure,
+    /// remembered so a post-top-up retry can regenerate exactly that turn.
+    /// Nil when there's nothing to retry.
+    var insufficientFundsTurnId: UUID?
+
+    /// Balance (micro-USD) captured at the moment of an insufficient-funds
+    /// failure. The post-top-up watcher offers a retry only once the balance
+    /// rises above this baseline, so a stale/no-op refresh doesn't prompt.
+    var balanceMicroAtInsufficientFunds: Int64?
+
+    /// Set when the balance is restored after an insufficient-funds failure
+    /// while the blocked turn is still last. Drives the "Credits added" retry
+    /// modal in ChatView.
+    @Published var topUpRetryAlert = false
+
     /// Last typed draft preserved when a send is cancelled
     /// (Cancel-send button in review sheet, or Task cancel during
     /// review). The chat view re-reads this in the cancel branch and
@@ -129,6 +149,12 @@ final class ChatSession: ObservableObject {
     /// Tracks expand/collapse state for tool calls, thinking blocks, etc.
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
+
+    /// Thinking-block ids already auto-expanded once for a completed
+    /// reasoning-only turn. Seeding the shared `expandedBlocksStore` (rather
+    /// than force-expanding in the cell) lets the user collapse the block
+    /// afterward; this set stops us re-expanding it on the next rebuild.
+    private var autoExpandedReasoningBlockIds: Set<String> = []
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
@@ -664,6 +690,28 @@ final class ChatSession: ObservableObject {
         return pickerItems.first { $0.id == model }
     }
 
+    /// True when the selected model is served by the managed Osaurus Router
+    /// (the billed, identity-signed cloud provider). Drives the per-session
+    /// spend indicator in the composer.
+    var isOsaurusRouterSession: Bool {
+        if case .remote(_, let providerId)? = selectedPickerItem?.source {
+            return providerId == RemoteProviderManager.osaurusRouterProviderId
+        }
+        return false
+    }
+
+    /// Total micro-USD billed by the Osaurus Router across this session's turns.
+    /// Summed from each turn's persisted `routerBilling`, so it reflects both the
+    /// live run and a reloaded session. The on-device ledger remains the exact
+    /// source of truth if a single turn ever carried more than one charge.
+    var sessionRouterSpendMicro: Int {
+        turns.reduce(0) { sum, turn in
+            guard let raw = turn.routerBilling?.costMicro else { return sum }
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return sum + (Int(trimmed) ?? 0)
+        }
+    }
+
     /// True when the selected model is a local model — the kind that runs on
     /// the device's shared inference context. Covers both osaurus-downloaded
     /// models and externally-discovered ones (LM Studio, Hugging Face cache),
@@ -753,6 +801,8 @@ final class ChatSession: ObservableObject {
             return
         }
 
+        seedAutoExpandedReasoningBlocks(streamingTurnId: streamingTurnId)
+
         let newBlocks = blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
@@ -766,6 +816,25 @@ final class ChatSession: ObservableObject {
         withAnimation(.none) {
             visibleBlocksStore.blocks = newBlocks
             visibleBlocksStore.groupHeaderMap = newHeaderMap
+        }
+    }
+
+    /// Auto-expand the thinking block of a completed reasoning-only turn so the
+    /// reasoning the user was (often) billed for is visible instead of a
+    /// collapsed "Thought for Xs" they have to click. Seeds the shared
+    /// expansion store once per block (covers freshly finished and reloaded
+    /// turns); the user can collapse it afterward.
+    private func seedAutoExpandedReasoningBlocks(streamingTurnId: UUID?) {
+        for turn in turns where turn.role == .assistant {
+            guard turn.id != streamingTurnId,
+                turn.hasRenderableThinking,
+                turn.contentIsBlank,
+                (turn.toolCalls ?? []).isEmpty
+            else { continue }
+            let blockId = ContentBlock.thinkingBlockId(turnId: turn.id)
+            guard !autoExpandedReasoningBlockIds.contains(blockId) else { continue }
+            autoExpandedReasoningBlockIds.insert(blockId)
+            expandedBlocksStore.expand(blockId)
         }
     }
 
@@ -1805,6 +1874,123 @@ final class ChatSession: ObservableObject {
         // last-resort fallback when the sentinel never fires.
     }
 
+    /// Stamp an Osaurus Router billing event onto an assistant turn. Adopts the
+    /// server-authoritative output-token count so the turn carries accurate
+    /// stats and is preserved through run cleanup, and writes a durable,
+    /// metadata-only ledger row the instant the charge lands (outcome is
+    /// finalized at `completeRunCleanup`). Two-phase write = correct on crash.
+    private func recordRouterBilling(_ billing: RouterBillingSummary, on turn: ChatTurn) {
+        // Publish so the composer's per-session spend chip reflects this charge
+        // right away, even mid-run: an agentic turn can bill several times before
+        // streaming ends, and `isStreaming` flipping would otherwise be the only
+        // thing that re-renders the aggregate (it sums each turn's `routerBilling`,
+        // which is a plain, non-published field on ChatTurn).
+        objectWillChange.send()
+        turn.routerBilling = billing
+        if billing.outputTokens > 0 {
+            turn.generationTokenCount = billing.outputTokens
+        }
+        if let entryId = RouterBillingLedger.shared.record(
+            summary: billing,
+            sessionId: sessionId,
+            turnId: turn.id,
+            model: selectedModel,
+            outcome: .pending
+        ) {
+            turn.billingEntryIds.insert(entryId)
+        }
+    }
+
+    /// Classify how a completed assistant turn ultimately rendered. The same
+    /// classification drives both the chat UI (keep + notice vs. trim) and the
+    /// ledger's finalized outcome, so support sees exactly what the user saw.
+    private func classifyBillingOutcome(for turn: ChatTurn) -> RouterBillingOutcome {
+        RouterBillingOutcome.classify(
+            hasVisibleText: !turn.visibleContent
+                .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            hasToolCalls: !(turn.toolCalls?.isEmpty ?? true),
+            hasReasoning: turn.hasRenderableThinking,
+            wasCancelled: stopRequested,
+            hadError: lastStreamError != nil
+        )
+    }
+
+    /// Backfill the rendered outcome onto each billed turn's ledger rows. Called
+    /// once per run at cleanup. Idempotent; reloaded turns have no transient
+    /// entry ids and are skipped since their rows were finalized live.
+    private func finalizeRouterBillingOutcomes() {
+        for turn in turns where turn.role == .assistant {
+            for entryId in turn.billingEntryIds {
+                RouterBillingLedger.shared.finalizeOutcome(
+                    entryId: entryId,
+                    outcome: classifyBillingOutcome(for: turn)
+                )
+            }
+        }
+    }
+
+    // MARK: - Insufficient funds + post-top-up retry
+
+    /// When a send fails because the router account is out of credits, surface
+    /// the "out of credits" modal and remember the blocked turn so a post-top-up
+    /// retry can resume seamlessly. No-op for non-router sessions or unrelated
+    /// errors. The bubble text is already set to the friendly copy by the caller
+    /// via `ChatErrorMessages.assistantMessage`.
+    private func noteInsufficientFundsIfNeeded(error: Error, blockedTurn: ChatTurn) {
+        guard isOsaurusRouterSession,
+            OsaurusRouter.isInsufficientFundsError(error.localizedDescription)
+        else { return }
+        insufficientFundsAlert = true
+        insufficientFundsTurnId = blockedTurn.id
+        // Establish the retry baseline from the authoritative balance: refresh
+        // (no charge happened, so this reflects the true shortfall), then record
+        // it so only a later top-up that raises the balance above this baseline
+        // triggers the retry prompt. Left nil until the refresh lands so the
+        // refresh's own balance change doesn't read as a top-up.
+        balanceMicroAtInsufficientFunds = nil
+        Task {
+            await OsaurusRouterAccountService.shared.refreshBalance()
+            self.balanceMicroAtInsufficientFunds =
+                OsaurusRouterAccountService.shared.balanceMicroValue
+        }
+    }
+
+    /// Offer a one-tap retry once the balance is restored after an
+    /// insufficient-funds failure. Called by ChatView when the account balance
+    /// changes (it auto-refreshes on app activation when returning from Stripe).
+    /// Only fires while the blocked turn is still the last turn, because
+    /// `regenerate` truncates everything from that turn onward and must not
+    /// delete newer messages.
+    func handleBalanceChangeForRetry() {
+        guard let blockedId = insufficientFundsTurnId,
+            let baseline = balanceMicroAtInsufficientFunds
+        else { return }
+        guard turns.last?.id == blockedId else {
+            // The user has moved on; nothing safe to retry.
+            clearInsufficientFundsRetryState()
+            return
+        }
+        let currentMicro = OsaurusRouterAccountService.shared.balanceMicroValue
+        guard currentMicro > baseline, currentMicro > 0 else { return }
+        topUpRetryAlert = true
+    }
+
+    /// Retry the message that was blocked by insufficient funds by regenerating
+    /// the blocked turn (a fresh run that re-bills by design). Safe-guards the
+    /// truncation: only retries while the blocked turn is still last.
+    func retryInsufficientFundsTurn() {
+        defer { clearInsufficientFundsRetryState() }
+        guard let blockedId = insufficientFundsTurnId, turns.last?.id == blockedId else { return }
+        regenerate(turnId: blockedId)
+    }
+
+    /// Clear all pending insufficient-funds / retry state.
+    func clearInsufficientFundsRetryState() {
+        insufficientFundsTurnId = nil
+        balanceMicroAtInsufficientFunds = nil
+        topUpRetryAlert = false
+    }
+
     private func trimTrailingEmptyAssistantTurn() {
         if let lastTurn = turns.last,
             lastTurn.role == .assistant,
@@ -1812,7 +1998,11 @@ final class ChatSession: ObservableObject {
             lastTurn.toolCalls == nil,
             !lastTurn.hasRenderableThinking,
             lastTurn.generationTokenCount == nil,
-            lastTurn.generationTokensPerSecond == nil
+            lastTurn.generationTokensPerSecond == nil,
+            // Never drop a turn the router billed — even a zero-output charge
+            // must stay so the user sees the "you were charged" notice instead
+            // of a silent gap.
+            lastTurn.routerBilling == nil
         {
             turns.removeLast()
         }
@@ -1865,6 +2055,9 @@ final class ChatSession: ObservableObject {
         savedDraftOnCancel = nil
         budgetTracker.clear()
         ServerController.signalGenerationEnd()
+        // Finalize ledger outcomes before trimming so the classification sees
+        // the run's turns intact (the trim guard already preserves billed ones).
+        finalizeRouterBillingOutcomes()
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
         markUnfinishedToolCallsInterrupted()
@@ -2057,6 +2250,12 @@ final class ChatSession: ObservableObject {
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
         var uiDeltaCount = 0
+        var uiReasoningDeltaCount = 0
+        var uiToolSentinelCount = 0
+        var uiReasoningItemCount = 0
+        var uiStatsHintCount = 0
+        var uiBillingHintCount = 0
+        var uiPrefillHintCount = 0
         var firstDeltaTime: Date?
         // Throttle key for streaming tool-call argument rebuilds.
         var lastToolArgRebuildAt: Date = .distantPast
@@ -2111,6 +2310,7 @@ final class ChatSession: ObservableObject {
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
                 if let done = StreamingToolHint.decodeDone(delta) {
+                    uiToolSentinelCount += 1
                     await processor.finalize()
                     let call = ToolCall(
                         id: done.callId,
@@ -2137,6 +2337,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 if let toolName = StreamingToolHint.decode(delta) {
+                    uiToolSentinelCount += 1
                     currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                     rebuildVisibleBlocks()
                     continue
@@ -2145,11 +2346,13 @@ final class ChatSession: ObservableObject {
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
                 if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                    uiReasoningItemCount += 1
                     currentTurn.reasoningItemId = reasoningItem.id
                     currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
                     continue
                 }
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                    uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
@@ -2162,6 +2365,7 @@ final class ChatSession: ObservableObject {
                         rebuildVisibleBlocks()
                     }
                 } else if let stats = StreamingStatsHint.decode(delta) {
+                    uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop
                     // stamp. We DELIBERATELY do NOT overwrite the rolling
                     // rate here: vmlx's `tokensPerSecond` is the full-
@@ -2176,9 +2380,19 @@ final class ChatSession: ObservableObject {
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
+                } else if let billing = StreamingBillingHint.decode(delta) {
+                    uiBillingHintCount += 1
+                    // Osaurus Router billed this turn. Stamp it so the run can't
+                    // silently drop a billed-but-empty turn (see
+                    // `trimTrailingEmptyAssistantTurn`) and so the bubble can
+                    // explain the charge. Adopt the server-authoritative output
+                    // token count over our rolling estimate.
+                    recordRouterBilling(billing, on: currentTurn)
                 } else if let progress = StreamingPrefillProgressHint.decode(delta) {
+                    uiPrefillHintCount += 1
                     InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
                 } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                    uiReasoningDeltaCount += 1
                     let now = Date()
                     if firstDeltaTime == nil {
                         firstDeltaTime = now
@@ -2271,8 +2485,15 @@ final class ChatSession: ObservableObject {
         currentTurn.completedAt = Date()
 
         let totalTime = Date().timeIntervalSince(streamStartTime)
+        let uiSentinelOnlyCount =
+            uiToolSentinelCount + uiReasoningItemCount + uiStatsHintCount
+            + uiBillingHintCount + uiPrefillHintCount
+        let uiStreamClassification =
+            uiDeltaCount == 0 && uiReasoningDeltaCount == 0 && capturedInvocations.isEmpty
+            ? (uiSentinelOnlyCount > 0 ? "sentinel-only" : "empty")
+            : "non-empty"
         print(
-            "[Osaurus][UI] Stream consumption completed: \(uiDeltaCount) deltas in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength)"
+            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
         )
 
         return (capturedInvocations, currentTurn)
@@ -3312,6 +3533,15 @@ final class ChatSession: ObservableObject {
                             // assistant turn, so the per-message "Insights" button can
                             // open this exact response.
                             req.turnId = assistantTurn.id
+                            // Stable per-logical-step idempotency token. The
+                            // agent loop holds `attempt` constant across
+                            // transient retries (it decrements then re-increments
+                            // on retryWithoutCharge), so a re-POST reuses this key
+                            // and the router dedupes the charge; a genuinely new
+                            // step gets a fresh key and bills normally. A user
+                            // Retry starts a new run (new runId) and re-bills by
+                            // design.
+                            req.idempotencyKey = "\(runId.uuidString):\(attempt)"
                             debugLog(
                                 "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
                             )
@@ -3354,7 +3584,8 @@ final class ChatSession: ObservableObject {
                                     // model's intended answer in the reasoning
                                     // channel — so require thinking blank too, matching
                                     // the "No visible text was produced" condition.
-                                    return (assistantTurn.contentIsBlank
+                                    return
+                                        (assistantTurn.contentIsBlank
                                         && assistantTurn.thinkingIsBlank)
                                         ? .emptyResponse : .finalResponse
                                 }
@@ -3368,7 +3599,9 @@ final class ChatSession: ObservableObject {
                                 // surfacing to the user; the model can't see what it
                                 // actually streamed last time so it would just retry
                                 // with the same broken args.
-                                if transientRetries < maxTransientRetries {
+                                if error.isTransientStreamRetryable,
+                                    transientRetries < maxTransientRetries
+                                {
                                     transientRetries += 1
                                     print(
                                         "[Osaurus] Transient stream error (retry \(transientRetries)/\(maxTransientRetries)): \(error.localizedDescription)"
@@ -3544,6 +3777,11 @@ final class ChatSession: ObservableObject {
                             finalReq.samplingParametersAreImplicit = true
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
                             finalReq.turnId = assistantTurn.id
+                            // Distinct logical step (the post-cap summarizing
+                            // call) so it bills once and dedupes on its own
+                            // connect-phase retry without colliding with the
+                            // loop's per-iteration keys.
+                            finalReq.idempotencyKey = "\(runId.uuidString):final"
 
                             let processor = StreamingDeltaProcessor(
                                 turn: assistantTurn
@@ -3612,6 +3850,7 @@ final class ChatSession: ObservableObject {
                 } catch {
                     assistantTurn.content = ChatErrorMessages.assistantMessage(for: error)
                     lastStreamError = error.localizedDescription
+                    noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
             }  // ChatExecutionContext.$currentAgentId.withValue
         }
@@ -3683,6 +3922,12 @@ struct ChatView: View {
     // What's New modal
     @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
+    /// Presents the credits top-up sheet, opened from the out-of-credits modal
+    /// or the composer's credits chip.
+    @State private var showTopUpSheet: Bool = false
+    /// Observed so the post-top-up retry watcher reacts to balance changes; the
+    /// balance auto-refreshes on app activation when returning from Stripe.
+    @ObservedObject private var accountService = OsaurusRouterAccountService.shared
     /// Privacy-filter review sheet payload. Set by the
     /// `PrivacyReviewService` presenter registration in `.onAppear`;
     /// presented via `.sheet(item:)` below. Identifiable so SwiftUI
@@ -3699,6 +3944,28 @@ struct ChatView: View {
 
     /// Convenience accessor for the window's theme
     private var theme: ThemeProtocol { windowState.theme }
+
+    /// Balance-aware copy for the out-of-credits modal.
+    private var insufficientFundsMessage: String {
+        String(
+            localized:
+                "Your balance is \(accountService.formattedBalance). Add credits to keep chatting.",
+            bundle: .module,
+            comment:
+                "Message in the out-of-credits modal shown in chat; the placeholder is the current balance."
+        )
+    }
+
+    /// Balance-aware copy for the post-top-up retry modal.
+    private var creditsAddedRetryMessage: String {
+        String(
+            localized:
+                "Your balance is now \(accountService.formattedBalance). Retry your last message to continue.",
+            bundle: .module,
+            comment:
+                "Message in the credits-added retry modal shown in chat after a top-up; the placeholder is the new balance."
+        )
+    }
 
     /// Convenience accessor for the window ID
     private var windowId: UUID { windowState.windowId }
@@ -3798,9 +4065,30 @@ struct ChatView: View {
                     .cancel(L("OK"))
                 ]
             )
+            .themedAlert(
+                L("You're out of credits"),
+                isPresented: $observedSession.insufficientFundsAlert,
+                message: insufficientFundsMessage,
+                primaryButton: .primary(L("Add credits")) { showTopUpSheet = true },
+                secondaryButton: .cancel(L("Not now"))
+            )
+            .themedAlert(
+                L("Credits added"),
+                isPresented: $observedSession.topUpRetryAlert,
+                message: creditsAddedRetryMessage,
+                primaryButton: .primary(L("Retry")) { session.retryInsufficientFundsTurn() },
+                secondaryButton: .cancel(L("Later")) { session.clearInsufficientFundsRetryState() }
+            )
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
             .overlay { promptOverlayLayer }
+            .sheet(isPresented: $showTopUpSheet) {
+                CreditsTopUpSheet()
+                    .environment(\.theme, theme)
+            }
+            .onChange(of: accountService.balance) { _, _ in
+                session.handleBalanceChangeForRetry()
+            }
             .onChange(of: session.promptQueue.current?.id) { _, newValue in
                 // Hand keyboard focus back to the composer once the last
                 // prompt resolves — it was hit-test disabled while the
@@ -3979,6 +4267,8 @@ struct ChatView: View {
                                 supportsImages: observedSession.selectedModelSupportsImages,
                                 estimatedContextTokens: observedSession.estimatedContextTokens,
                                 contextBreakdown: observedSession.estimatedContextBreakdown,
+                                sessionSpendMicro: observedSession.sessionRouterSpendMicro,
+                                showSessionSpend: observedSession.isOsaurusRouterSession,
                                 onSend: { manualText in
                                     if let manualText = manualText {
                                         observedSession.input = manualText
@@ -4005,7 +4295,8 @@ struct ChatView: View {
                                 autoSpeakAssistant: $observedSession.autoSpeakAssistant,
                                 queuedSend: $observedSession.queuedSend,
                                 onSendNow: { observedSession.sendNowInterrupting() },
-                                onCancelQueued: { observedSession.cancelQueuedSend() }
+                                onCancelQueued: { observedSession.cancelQueuedSend() },
+                                onAddCredits: { showTopUpSheet = true }
                             )
                             .frame(maxWidth: 1100)
                             .frame(maxWidth: .infinity)

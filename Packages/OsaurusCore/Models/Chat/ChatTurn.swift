@@ -244,6 +244,16 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// user toggle "Disable Thinking" for the next turn.
     var unclosedReasoning: Bool = false
 
+    /// Osaurus Router billing snapshot captured from the in-stream summary
+    /// frame (cost, token counts, status). Persisted so a reloaded chat still
+    /// shows a billed-but-empty turn (and its "you were charged" notice)
+    /// instead of a silent gap. Nil for local models and non-router providers.
+    var routerBilling: RouterBillingSummary?
+    /// Ledger entry ids recorded during this live run. Ephemeral - not persisted;
+    /// the ledger owns the rows. A single assistant turn can contain multiple
+    /// router requests in agent/tool loops, so cleanup finalizes every billed row.
+    var billingEntryIds: Set<String> = []
+
     private static let maxArgPreviewLength = 500
 
     /// Durations shorter than this aren't shown — they're indistinguishable from
