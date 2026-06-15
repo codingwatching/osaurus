@@ -3,6 +3,57 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.19.20</title>
+            <pubDate>Mon, 15 Jun 2026 15:40:55 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.19.20</sparkle:version>
+            <sparkle:shortVersionString>0.19.20</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.19.20/Osaurus-0.19.20.dmg" length="51415180" type="application/octet-stream" sparkle:edSignature="Zzp+cEAY98ZZsSQIIlyiIrt8L1Ac07Bl61qavWV3T1yiT1nRdIzVl8mUXeGgnshP8A/hbgPTbZqZixOAZBmJAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Estimate image context tokens from resolution, not byte size (#1511) by @jjang-ai
+- Fix test-core CI failure by skipping TCC status probes under tests (#1507) by @jjang-ai
+- Restore Swift-format parity on current main (#1500) by @mimeding
+- updated chinese translations (#1491) by @ftzahao
+- Fix Gemma-4 JANG audio: one-time patch adds fp16 multimodal passthrough to configs (#1506) by @jjang-ai
+- Repin vmlx 36aebd42: strip tool-call markers when no tools offered (fixes chat-UI envelope leak) (#1505) by @jjang-ai
+- Repin vmlx a6472300: Gemma4 drifted tool-call envelope fix (stops leaked \<|tool\_call|> markup) (#1504) by @jjang-ai
+- Repin vmlx 466c0a10: Gemma4 bf16 global-attention fp32 upcast (fixes long-context \<pad>) (#1501) by @jjang-ai
+- Repin vmlx: DiffusionGemma prefill-progress + MLXLMCommon Swift 5 language-mode fix (#1499) by @jjang-ai
+- Build the live cache coordinator from the resolved memory-safety plan (slider now governs the live KV cap) (#1497) by @jjang-ai
+- Let the RAM-safety slider govern the default KV/context cap (seed=nil) (#1495) by @jjang-ai
+- Repin vMLX 839d9f55: live prefill streaming + tool-name canonicalization + monotonic prefill %, prefix-cache proven (#1494) by @jjang-ai
+- Re-pin vmlx-swift to main (53e7c208): Gemma de-scramble, slider KV, warm prefix reuse (#1493) by @jjang-ai
+- Re-pin vmlx-swift to main (357c81d4): DiffusionGemma router crash fix (#1489) by @jjang-ai
+- Gemma 4 speed/cache + DiffusionGemma — consolidated (vMLX main 7d9a85fe) (#1488) by @jjang-ai
+- Gemma 4 audio + GGUF-class speed: repin vMLX 1ab081eb, fix TurboQuant KV regression, decode performance settings (#1485) by @jjang-ai
+- Add local MCP probe diagnostics (#1476) by @mimeding
+- Add Gemma cache defaults and prefill checkpoint (#1469) by @jjang-ai
+- Stabilize CI-sensitive tests (#1480) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed app hangs (#1509) by @RaajeevChandran
+- fixed main thread hang from non-converging layout loop in management window (#1510) by @RaajeevChandran
+- fixed hang main thread hangs (#1498) by @RaajeevChandran
+- fixed missing prefill UI (#1492) by @tpae
+- fixed chat renaming in sidebar (#1482) by @RaajeevChandran
+- hide embedding model from showing up for chat (#1484) by @tpae
+- fixed app hangs (#1473) by @RaajeevChandran
+- prevent switching chat windows from interrupting an in-flight chat (#1481) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- visual and interaction polish (#1513) by @RaajeevChandran
+- updated model lists (#1490) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.19...0.19.20
+]]></description>
+        </item>
+        <item>
             <title>0.19.19</title>
             <pubDate>Fri, 12 Jun 2026 13:11:25 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
