@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.0</title>
+            <pubDate>Mon, 15 Jun 2026 23:54:55 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.0</sparkle:version>
+            <sparkle:shortVersionString>0.20.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.0/Osaurus-0.20.0.dmg" length="51703901" type="application/octet-stream" sparkle:edSignature="oI8SKmiX5vgn2ZsVtctTOwLypuA2dbE5/wLTR6Z5dJk1sChoLzrcOQMy9cCCSDsM1sbHm/UH2ou4XFF6yBdvAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Restore main CI gate stability (#1514) by @mimeding
+
+## 🚀 Features
+
+- added hosted inference (#1512) by @tpae
+
+## 🐛 Bug Fixes
+
+- enable sandbox by default (#1516) by @tpae
+
+## 🧰 Maintenance
+
+- model picker improvements (#1515) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.19.20...0.19.21
+]]></description>
+        </item>
+        <item>
             <title>0.19.20</title>
             <pubDate>Mon, 15 Jun 2026 15:40:55 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
