@@ -10922,6 +10922,22 @@
         }
       }
     },
+    "Codex subscription" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Codex-Abonnement"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Codex 订阅"
+          }
+        }
+      }
+    },
     "Coding" : {
       "localizations" : {
         "de" : {
@@ -12896,6 +12912,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制探测结果并检查提供者日志。"
+          }
+        }
+      }
+    },
+    "Copy diagnostics after a failed sign-in attempt and include this row in the issue." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopiere die Diagnosedaten nach einem fehlgeschlagenen Anmeldeversuch und füge diese Zeile in das Issue ein."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "登录尝试失败后复制诊断信息，并在问题中包含此行。"
           }
         }
       }
@@ -32712,6 +32744,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OAuth"
+          }
+        }
+      }
+    },
+    "OAuth context" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth-Kontext"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "OAuth 上下文"
           }
         }
       }
