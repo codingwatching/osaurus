@@ -1,5 +1,80 @@
 # Open PR and Bug Development Plan
 
+Snapshot update: 2026-06-16 19:05 UTC, repo `osaurus-ai/osaurus`.
+
+This section is the current actionable plan. Older dated sections remain below
+as history and should not override this snapshot.
+
+## Current Live State - 2026-06-16 19:05 UTC
+
+- `origin/main` is `e8bcba8aa24eefeb2268a9b2f213ec1af2025d73`
+  (`fixed issue where model selected during onboarding not used (#1535)`).
+- Latest main remote gates are green on `e8bcba8a`:
+  - CI `27634279752`: `success`.
+  - Release Drafter `27634278864`: `success`.
+  - pages `27634275056`: `success`.
+- Recently landed work since the last active planning pass includes #1524,
+  #1525, #1526, #1534, #1535, and the 0.20.1 appcast update.
+- Author-owned review stack is green and mergeable:
+  - #1527, system prompt injection proof trace: draft, `CLEAN`, all checks
+    `SUCCESS`.
+  - #1528, pasted provider model-list URL handling: draft, `CLEAN`, all checks
+    `SUCCESS`.
+  - #1529, Codex OAuth diagnostic context: draft, `CLEAN`, all checks
+    `SUCCESS`.
+  - #1530, provider OAuth global proxy routing: draft, `CLEAN`, all checks
+    `SUCCESS`.
+  - #1531, configurable Hugging Face cache path: draft, `CLEAN`, all checks
+    `SUCCESS`.
+  - #1532, local access key lifecycle: draft, `CLEAN`, all checks `SUCCESS`.
+  - #1533, agent defaults and team API: draft, `CLEAN`, all checks `SUCCESS`.
+  - #1536, MCP OAuth global proxy routing: draft, `CLEAN`, all checks
+    `SUCCESS`.
+- Upstream #1537 is not author-owned and is still blocked on its long-running
+  `test-core` check; do not let it block review of the green author-owned
+  stack unless it lands and advances `main`.
+- Evidence-request comments were posted on bugs needing reporter confirmation:
+  #1496, #1161, #1129, #662, #1225, #615, and #903.
+
+## Immediate Execution Order - 2026-06-16
+
+1. Ask `tpae` to review the green stack in small groups:
+   - #1527-#1529: bug-proof and diagnostics.
+   - #1530 and #1536: global proxy coverage for provider OAuth and MCP OAuth.
+   - #1531-#1533: cache, access lifecycle, and agent/team follow-ups.
+2. Keep all issue threads awaiting reporter evidence in watch mode. Do not
+   claim those bugs fixed until new reporter evidence or local reproduction
+   confirms current-main behavior.
+3. Continue the global proxy lane with one narrow follow-up PR:
+   - Route plugin-host `http_request` traffic through the global proxy while
+     preserving manual redirect/SSRF checks.
+   - Keep the branch independent of #1536 by using the existing
+     `GlobalProxySettings.currentConfiguration()` and `makeSession(...)`
+     surface.
+   - Validate with focused plugin-host proxy tests, `swiftlint`, and scoped
+     OsaurusCore tests.
+4. After the plugin-host proxy PR is published, reassess remaining global proxy
+   gaps before starting new features. Likely candidates are plugin download
+   paths, repository/package fetches, and any remaining bespoke `URLSession`
+   creation outside shared proxy policy.
+5. Defer broad document-stack, historical conflict, localization, voice, and
+   runtime research lanes until the current green stack receives maintainer
+   direction or merges into `main`.
+
+## Discord Review Message - 2026-06-16
+
+Suggested message:
+
+```text
+@tpae quick review request when you have a window: the recent author-owned stack is green and CLEAN.
+
+- #1527-#1529: bug proof/diagnostic follow-ups for system prompt injection, provider URL handling, and Codex OAuth diagnostics.
+- #1530 + #1536: global proxy coverage for provider OAuth and MCP OAuth.
+- #1531-#1533: Hugging Face cache path, local access key lifecycle, and agent defaults/team API follow-ups.
+
+All listed PRs have test-core, test-cli, swiftlint, shellcheck, and release drafter green. I also posted evidence requests on the remaining blocked bug issues, so those are waiting on reporter confirmation rather than code changes right now.
+```
+
 Snapshot update: 2026-05-16 07:33 UTC, repo `osaurus-ai/osaurus`.
 
 This section is the current consolidated automation plan. It supersedes every
