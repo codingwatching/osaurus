@@ -183,7 +183,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 
         if hits.isEmpty {
             let queryList = queries.map { "'\($0)'" }.joined(separator: ", ")
-            let text: String
+            var text: String
             let pluginCreationAgentId = await Self.resolvePluginCreationAgentId(explicit: agentId)
             if await CapabilitySearch.canCreatePlugins(agentId: pluginCreationAgentId) {
                 text = """
@@ -195,6 +195,12 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
                     """
             } else {
                 text = "No capabilities found matching \(queryList)."
+            }
+            if let diagnostic = await Self.exposureDiagnosticForNamedTools(
+                queries: queries,
+                allowedToolNames: effectiveAllowedToolNames
+            ) {
+                text += "\n\n\(diagnostic.textBlock)"
             }
             return ToolEnvelope.success(tool: name, text: text)
         }
@@ -284,6 +290,64 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
         }
     }
 
+    /// When a search misses entirely, surface diagnostics only for tool-like
+    /// names the request explicitly mentioned. This keeps normal semantic
+    /// searches concise while making exact probes such as `tool/sandbox_exec`
+    /// or `capabilities_discover` explain why they did not appear as hits.
+    private static func exposureDiagnosticForNamedTools(
+        queries: [String],
+        allowedToolNames: Set<String>?
+    ) async -> ToolExposureDiagnostic? {
+        let registeredNames = await MainActor.run {
+            Set(ToolRegistry.shared.listTools().map(\.name))
+        }
+        let candidates = namedToolCandidates(
+            in: queries,
+            registeredToolNames: registeredNames
+        )
+        guard !candidates.isEmpty else { return nil }
+        let diagnostic = await ToolIndexService.shared.exposureDiagnostic(
+            forToolNames: candidates,
+            agentAllowedNames: allowedToolNames
+        )
+        return diagnostic.rows.isEmpty ? nil : diagnostic
+    }
+
+    static func namedToolCandidates(
+        in queries: [String],
+        registeredToolNames: Set<String>
+    ) -> [String] {
+        var seen = Set<String>()
+        var candidates: [String] = []
+        let regex = try? NSRegularExpression(
+            pattern: #"(?:tool/)?[A-Za-z0-9_-]{1,64}"#,
+            options: []
+        )
+
+        for query in queries {
+            let range = NSRange(query.startIndex ..< query.endIndex, in: query)
+            let matches = regex?.matches(in: query, options: [], range: range) ?? []
+            for match in matches {
+                guard let swiftRange = Range(match.range, in: query) else { continue }
+                let raw = String(query[swiftRange])
+                let explicitTool = raw.hasPrefix("tool/")
+                let candidate = explicitTool ? String(raw.dropFirst("tool/".count)) : raw
+                let normalized = registeredToolNames.contains(candidate)
+                    ? candidate
+                    : candidate.lowercased()
+                guard explicitTool
+                    || registeredToolNames.contains(normalized)
+                    || candidate.contains("_")
+                    || candidate.contains("-")
+                else { continue }
+                if seen.insert(normalized).inserted {
+                    candidates.append(normalized)
+                }
+            }
+        }
+        return candidates
+    }
+
     /// Accept the template-safe singular `query` spelling plus older
     /// `queries` arrays. This recovery is local to the discovery tool so
     /// other array arguments keep the stricter validator behavior.
@@ -342,8 +406,7 @@ final class CapabilitiesDiscoverTool: OsaurusTool, @unchecked Sendable {
 
         let normalized = trimmed.replacingOccurrences(of: #"<|"|>"#, with: #"""#)
         if let data = normalized.data(using: .utf8),
-            let array = try? JSONSerialization.jsonObject(with: data) as? [String]
-        {
+            let array = try? JSONSerialization.jsonObject(with: data) as? [String] {
             return array
         }
 

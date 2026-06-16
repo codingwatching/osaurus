@@ -108,6 +108,62 @@ struct CapabilitiesDiscoverToolTests {
         #expect(result.contains("No capabilities found") || result.contains("capability"))
     }
 
+    @Test func namedToolCandidateExtractionIsConservative() {
+        let candidates = CapabilitiesDiscoverTool.namedToolCandidates(
+            in: [
+                "Can I use tool/share_artifact here?",
+                "What about capabilities_discover and zzz_missing_tool?",
+                "plain prose should stay quiet",
+            ],
+            registeredToolNames: ["share_artifact", "capabilities_discover", "notify"]
+        )
+
+        #expect(candidates == ["share_artifact", "capabilities_discover", "zzz_missing_tool"])
+    }
+
+    @Test @MainActor
+    func exposureDiagnosticSeparatesLoadedSearchableAndMissingTools() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let dbWasOpen = ToolDatabase.shared.isOpen
+            if !dbWasOpen {
+                try ToolDatabase.shared.openInMemory()
+            }
+            defer {
+                if !dbWasOpen {
+                    ToolDatabase.shared.close()
+                }
+            }
+
+            await ToolIndexService.shared.syncFromRegistry(rebuildVectorIndex: false)
+            let diagnostic = await ToolIndexService.shared.exposureDiagnostic(
+                forToolNames: [
+                    "share_artifact",
+                    "capabilities_discover",
+                    "zzz_missing_tool",
+                ]
+            )
+            let rows = Dictionary(
+                uniqueKeysWithValues: diagnostic.rows.map { ($0.toolName, $0) }
+            )
+
+            let shareArtifact = try #require(rows["share_artifact"])
+            #expect(shareArtifact.availability.reasonCodes.contains(.alreadyLoaded))
+            #expect(shareArtifact.indexedForSearch)
+            #expect(shareArtifact.searchableByCapabilitiesDiscover)
+            #expect(shareArtifact.searchReasonCodes.contains(.searchable))
+
+            let discover = try #require(rows["capabilities_discover"])
+            #expect(discover.availability.reasonCodes.contains(.alreadyLoaded))
+            #expect(!discover.searchableByCapabilitiesDiscover)
+            #expect(discover.searchReasonCodes.contains(.excludedCapabilityInfrastructure))
+
+            let missing = try #require(rows["zzz_missing_tool"])
+            #expect(missing.availability.reasonCodes == [.notRegistered])
+            #expect(!missing.searchableByCapabilitiesDiscover)
+            #expect(missing.searchReasonCodes.contains(.notRegistered))
+        }
+    }
+
     @Test @MainActor
     func searchFiltersDynamicToolsOutsideAgentGrant() async throws {
         try await StoragePathsTestLock.shared.run {

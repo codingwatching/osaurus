@@ -1013,7 +1013,7 @@ Context management replaces manual per-turn tool selection with a static, sessio
 **Components:**
 
 - `Services/Tool/ToolSearchService.swift` — VecturaKit hybrid search over tools
-- `Services/Tool/ToolIndexService.swift` — Syncs ToolRegistry into searchable index
+- `Services/Tool/ToolIndexService.swift` — Syncs ToolRegistry into searchable index and exposes named-tool diagnostics
 - `Services/Context/CapabilitySearch.swift` — Index-search backend for `capabilities_discover`
 - `Storage/ToolDatabase.swift` — SQLite storage for tool index
 - `Tools/CapabilityTools.swift` — Runtime capability search and load tools
@@ -1028,6 +1028,8 @@ For on-demand discovery during a session, agents can use:
 | `capabilities_load`   | Load a capability by ID into the active session (tools become callable immediately) |
 
 When `capabilities_load` is called, new tool specs are queued in a `CapabilityLoadBuffer` and drained after the invocation. Loaded tools are callable immediately (the registry dispatches by name), but the rendered tool schema stays frozen until the next user turn — hot-patching it mid-run would rewrite the prompt prefix and bust the KV cache. The loaded names persist on the session's tool state, so the next compose includes their full schemas.
+
+When `capabilities_discover` finds no matches for a query that explicitly names a tool, it appends a typed exposure diagnostic for those names: registry availability, global enablement, index presence, and whether capability search can surface the tool. This distinguishes already-loaded built-ins from disabled, agent-hidden, runtime-managed, unindexed, or missing tools without adding new default tools.
 
 **Search Infrastructure:**
 

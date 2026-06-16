@@ -127,6 +127,143 @@ public actor ToolIndexService {
         await ToolSearchService.shared.search(query: query, topK: topK)
     }
 
+    /// Explain how named tools move through the registry → search index →
+    /// capability-discovery path. This is intentionally read-only: callers
+    /// still enforce loading and execution through `ToolRegistry` and
+    /// `capabilities_load`.
+    func exposureDiagnostic(
+        forToolNames rawNames: [String],
+        agentAllowedNames: Set<String>? = nil,
+        executionMode: ExecutionMode? = nil,
+        selectedPreflightNames: Set<String>? = nil
+    ) async -> ToolExposureDiagnostic {
+        var seen = Set<String>()
+        let names =
+            rawNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+
+        let databaseOpen = ToolDatabase.shared.isOpen
+        let indexedToolCount = (try? ToolDatabase.shared.entryCount()) ?? 0
+        let indexedNames: Set<String> = {
+            guard databaseOpen,
+                let entries = try? ToolDatabase.shared.loadAllEntries()
+            else { return [] }
+            return Set(entries.map(\.name))
+        }()
+
+        struct RegistrySnapshot {
+            let registeredToolCount: Int
+            let registeredNames: Set<String>
+            let enabledNames: Set<String>
+            let runtimeManagedNames: Set<String>
+            let capabilityToolNames: Set<String>
+            let availabilityByName: [String: ToolAvailability]
+        }
+
+        let snapshot = await MainActor.run {
+            let tools = ToolRegistry.shared.listTools()
+            return RegistrySnapshot(
+                registeredToolCount: tools.count,
+                registeredNames: Set(tools.map(\.name)),
+                enabledNames: Set(tools.filter(\.enabled).map(\.name)),
+                runtimeManagedNames: ToolRegistry.shared.runtimeManagedToolNames,
+                capabilityToolNames: ToolRegistry.capabilityToolNames,
+                availabilityByName: Dictionary(
+                    uniqueKeysWithValues: names.map {
+                        (
+                            $0,
+                            ToolRegistry.shared.availability(
+                                forTool: $0,
+                                agentAllowedNames: agentAllowedNames,
+                                executionMode: executionMode,
+                                selectedPreflightNames: selectedPreflightNames
+                            )
+                        )
+                    }
+                )
+            )
+        }
+
+        let rows = names.map { name -> ToolExposureDiagnostic.Row in
+            let registered = snapshot.registeredNames.contains(name)
+            let globallyEnabled = snapshot.enabledNames.contains(name)
+            let indexedForSearch = indexedNames.contains(name)
+            let availability = snapshot.availabilityByName[name]
+                ?? ToolAvailability(
+                    toolName: name,
+                    runtime: nil,
+                    groupName: nil,
+                    reasonCodes: [.notRegistered],
+                    detail: L("tool is not registered; install or enable the plugin/provider that owns it")
+                )
+
+            var blockers: [ToolExposureSearchReasonCode] = []
+            func append(_ reason: ToolExposureSearchReasonCode) {
+                if !blockers.contains(reason) {
+                    blockers.append(reason)
+                }
+            }
+
+            if !registered {
+                append(.notRegistered)
+            }
+            if snapshot.capabilityToolNames.contains(name) {
+                append(.excludedCapabilityInfrastructure)
+            }
+            if snapshot.runtimeManagedNames.contains(name) {
+                append(.runtimeManaged)
+            }
+            if registered, !globallyEnabled {
+                append(.globallyDisabled)
+            }
+            if availability.reasonCodes.contains(.hiddenByAgentScope) {
+                append(.hiddenByAgentScope)
+            }
+            if availability.reasonCodes.contains(.hiddenByExecutionMode) {
+                append(.hiddenByExecutionMode)
+            }
+            if databaseOpen, registered, !indexedForSearch {
+                append(.notIndexed)
+            }
+
+            let hasSearchBlocker = blockers.contains { reason in
+                switch reason {
+                case .indexed, .databaseClosedRegistryFallback, .searchable:
+                    return false
+                default:
+                    return true
+                }
+            }
+            let searchable = registered
+                && !hasSearchBlocker
+                && (!databaseOpen || indexedForSearch)
+
+            var reasons: [ToolExposureSearchReasonCode] = []
+            if searchable {
+                reasons.append(.searchable)
+                reasons.append(databaseOpen ? .indexed : .databaseClosedRegistryFallback)
+            }
+            reasons.append(contentsOf: blockers)
+
+            return ToolExposureDiagnostic.Row(
+                toolName: name,
+                availability: availability,
+                registered: registered,
+                globallyEnabled: globallyEnabled,
+                indexedForSearch: indexedForSearch,
+                searchableByCapabilitiesDiscover: searchable,
+                searchReasonCodes: reasons
+            )
+        }
+
+        return ToolExposureDiagnostic(
+            registeredToolCount: snapshot.registeredToolCount,
+            indexedToolCount: indexedToolCount,
+            rows: rows
+        )
+    }
+
     /// Build a compact text index for injection into system prompt.
     /// Only includes enabled tools from the registry.
     public func buildCompactIndex() async throws -> String {
