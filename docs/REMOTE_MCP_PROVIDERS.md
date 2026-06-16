@@ -299,10 +299,19 @@ List all tools (including remote ones):
 curl http://127.0.0.1:1337/mcp/tools
 ```
 
+If Server > Network exposure is enabled, local loopback auth bypass is disabled.
+Use an access key from Settings > Server > Authentication:
+
+```bash
+curl -H "Authorization: Bearer $OSAURUS_MCP_ACCESS_KEY" \
+  http://127.0.0.1:1337/mcp/tools
+```
+
 Call a remote tool directly:
 
 ```bash
 curl http://127.0.0.1:1337/mcp/call \
+  -H "Authorization: Bearer $OSAURUS_MCP_ACCESS_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "linear_search_issues",

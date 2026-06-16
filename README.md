@@ -149,7 +149,23 @@ Osaurus is a full MCP (Model Context Protocol) server. Give any MCP-compatible c
 }
 ```
 
-`osaurus mcp` starts a stdio MCP server for the client and proxies tool discovery/calls to your local Osaurus HTTP server. In the other direction, Osaurus can also act as an MCP client and aggregate tools from URL-based remote MCP providers. One-tap connect to ~25 well-known providers (Linear, Notion, GitHub, Vercel, Supabase, Sentry, Stripe, Cloudflare, ...) with auto OAuth 2.1 + Dynamic Client Registration, or paste an API key. The Remote MCP Providers UI is for HTTP/SSE MCP endpoints; it does not launch third-party `command`/`args` stdio providers. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
+`osaurus mcp` starts a stdio MCP server for the client and proxies tool discovery/calls to your local Osaurus HTTP server. Local-only servers can rely on loopback trust. If Server > Network exposure is enabled, add an access key to the client environment:
+
+```json
+{
+  "mcpServers": {
+    "osaurus": {
+      "command": "osaurus",
+      "args": ["mcp"],
+      "env": {
+        "OSAURUS_MCP_ACCESS_KEY": "osk-v1..."
+      }
+    }
+  }
+}
+```
+
+In the other direction, Osaurus can also act as an MCP client and aggregate tools from URL-based remote MCP providers. One-tap connect to ~25 well-known providers (Linear, Notion, GitHub, Vercel, Supabase, Sentry, Stripe, Cloudflare, ...) with auto OAuth 2.1 + Dynamic Client Registration, or paste an API key. The Remote MCP Providers UI is for HTTP/SSE MCP endpoints; it does not launch third-party `command`/`args` stdio providers. See the [Remote MCP Providers Guide](docs/REMOTE_MCP_PROVIDERS.md) for details.
 
 ## Tools & Plugins
 
