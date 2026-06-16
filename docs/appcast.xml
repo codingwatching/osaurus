@@ -3,6 +3,29 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.2</title>
+            <pubDate>Tue, 16 Jun 2026 20:54:37 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.2</sparkle:version>
+            <sparkle:shortVersionString>0.20.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.2/Osaurus-0.20.2.dmg" length="51828380" type="application/octet-stream" sparkle:edSignature="7IgzLrTQaaPTK8byGPxFv07dHXOruptuoj3fkD3rTR93mhSweilZZJbrzLup9fIZCoFr6Vzt6IHD+3CgUgXsAQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fixed issue where model selected during onboarding not used (#1535) by @tpae
+
+## 🧰 Maintenance
+
+- fix hanging with tools section, fixed sandbox vsock diagnostics (#1537) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.1...0.20.2
+]]></description>
+        </item>
+        <item>
             <title>0.20.1</title>
             <pubDate>Tue, 16 Jun 2026 16:01:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
