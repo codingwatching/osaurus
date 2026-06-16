@@ -26,6 +26,9 @@ struct SkillsView: View {
     @State private var showProgress = false
     @State private var searchText = ""
     @State private var selectedTab: SkillsTab = .all
+    @State private var pendingOverwriteImportURL: URL?
+    @State private var pendingOverwriteSkillName = ""
+    @State private var showOverwriteConfirmation = false
 
     /// Base skill set for a tab: All, Installed (user-created + plugin), or
     /// Default (built-in).
@@ -201,6 +204,26 @@ struct SkillsView: View {
                 }
             )
         }
+        .alert(L("Replace Existing Skill?"), isPresented: $showOverwriteConfirmation) {
+            Button(L("Cancel"), role: .cancel) {
+                pendingOverwriteImportURL = nil
+                pendingOverwriteSkillName = ""
+            }
+            Button(L("Replace"), role: .destructive) {
+                guard let url = pendingOverwriteImportURL else { return }
+                pendingOverwriteImportURL = nil
+                pendingOverwriteSkillName = ""
+                Task { @MainActor in
+                    await performSkillImport(from: url, overwriteExisting: true)
+                }
+            }
+        } message: {
+            Text(
+                L(
+                    "A skill named \"\(pendingOverwriteSkillName)\" already exists. Replacing it overwrites its SKILL.md, references, and assets."
+                )
+            )
+        }
         .onChange(of: isProcessing || skillManager.isRefreshing) { _, newValue in
             if newValue {
                 // Delay showing the progress bar to avoid flickering for fast operations
@@ -301,28 +324,46 @@ struct SkillsView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             Task { @MainActor in
-                self.isProcessing = true
-                defer { self.isProcessing = false }
-                do {
-                    let skill: Skill
-                    if url.pathExtension.lowercased() == "zip" {
-                        skill = try await skillManager.importSkillFromZip(url)
-                    } else {
-                        // Read off the main thread so a large file can't hang the UI.
-                        let content = try await Task.detached(priority: .userInitiated) {
-                            try String(contentsOf: url, encoding: .utf8)
-                        }.value
-                        skill = try await skillManager.importSkillFromMarkdown(content)
-                    }
-                    self.showToast(L("Imported \"\(skill.name)\""))
-                } catch {
-                    self.showToast(
-                        L("Import failed: \(error.localizedDescription)"),
-                        isError: true
-                    )
-                }
+                await self.performSkillImport(from: url, overwriteExisting: false)
             }
         }
+    }
+
+    @MainActor
+    private func performSkillImport(from url: URL, overwriteExisting: Bool) async {
+        isProcessing = true
+        defer { isProcessing = false }
+        do {
+            if url.pathExtension.lowercased() == "zip" {
+                let result = try await skillManager.importSkillFromZip(url, overwriteExisting: overwriteExisting)
+                showImportSuccess(for: result.skill, notes: result.notes)
+            } else {
+                // Read off the main thread so a large file can't hang the UI.
+                let content = try await Task.detached(priority: .userInitiated) {
+                    try String(contentsOf: url, encoding: .utf8)
+                }.value
+                let skill = try await skillManager.importSkillFromMarkdown(
+                    content,
+                    overwriteExisting: overwriteExisting
+                )
+                showImportSuccess(for: skill, notes: [])
+            }
+        } catch SkillFileError.skillAlreadyExists(let name) {
+            pendingOverwriteImportURL = url
+            pendingOverwriteSkillName = name
+            showOverwriteConfirmation = true
+        } catch {
+            showToast(
+                L("Import failed: \(error.localizedDescription)"),
+                isError: true
+            )
+        }
+    }
+
+    @MainActor
+    private func showImportSuccess(for skill: Skill, notes: [String]) {
+        let note = notes.first.map { " \($0)" } ?? ""
+        showToast(L("Imported \"\(skill.name)\"") + note)
     }
 
     // MARK: - Empty State

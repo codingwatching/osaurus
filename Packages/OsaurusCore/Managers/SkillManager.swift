@@ -9,12 +9,21 @@ import Foundation
 import Observation
 import SwiftUI
 
-public enum SkillFileError: Error, LocalizedError {
+public enum SkillFileError: Error, LocalizedError, Sendable {
     case cannotModifyBuiltIn
     case cannotModifyPluginSkill
     case skillNotFound
     case exportFailed
     case invalidSkillArchive
+    case archiveTooLarge(limitBytes: Int64)
+    case archiveEntryTooLarge(path: String, limitBytes: Int64)
+    case archiveEntryLimitExceeded(limit: Int)
+    case archiveEntryTooDeep(path: String, limit: Int)
+    case archiveEntryEscapes(path: String)
+    case archiveEntryUnsupported(path: String)
+    case archiveListingFailed(String)
+    case skillAlreadyExists(name: String)
+    case skillImportCopyFailed(path: String, reason: String)
 
     public var errorDescription: String? {
         switch self {
@@ -23,7 +32,32 @@ public enum SkillFileError: Error, LocalizedError {
         case .skillNotFound: return L("Skill not found")
         case .exportFailed: return L("Failed to export skill")
         case .invalidSkillArchive: return L("Invalid skill archive - SKILL.md not found")
+        case .archiveTooLarge(let limitBytes):
+            return L("Skill archive is larger than the \(Self.formatBytes(limitBytes)) limit")
+        case .archiveEntryTooLarge(let path, let limitBytes):
+            return L("Skill archive entry \"\(path)\" is larger than the \(Self.formatBytes(limitBytes)) limit")
+        case .archiveEntryLimitExceeded(let limit):
+            return L("Skill archive contains more than \(limit) entries")
+        case .archiveEntryTooDeep(let path, let limit):
+            return L("Skill archive entry \"\(path)\" is deeper than the \(limit)-level limit")
+        case .archiveEntryEscapes(let path):
+            return L("Skill archive entry \"\(path)\" escapes the archive root")
+        case .archiveEntryUnsupported(let path):
+            return L("Skill archive entry \"\(path)\" is not a regular file or directory")
+        case .archiveListingFailed(let details):
+            let suffix = details.isEmpty ? "" : ": \(details)"
+            return L("Could not inspect skill archive\(suffix)")
+        case .skillAlreadyExists(let name):
+            return L("A skill named \"\(name)\" already exists")
+        case .skillImportCopyFailed(let path, let reason):
+            return L("Could not import skill file \"\(path)\": \(reason)")
         }
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        if bytes < 1024 { return "\(bytes) B" }
+        if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
+        return "\(bytes / (1024 * 1024)) MB"
     }
 }
 
@@ -227,6 +261,11 @@ public final class SkillManager {
 
     @discardableResult
     public func importSkillFromMarkdown(_ content: String) async throws -> Skill {
+        try await importSkillFromMarkdown(content, overwriteExisting: false)
+    }
+
+    @discardableResult
+    public func importSkillFromMarkdown(_ content: String, overwriteExisting: Bool) async throws -> Skill {
         var skill = try Skill.parseAnyFormat(from: content)
         skill = Skill(
             name: skill.name,
@@ -236,7 +275,7 @@ public final class SkillManager {
             category: skill.category,
             instructions: skill.instructions
         )
-        await SkillStore.save(skill)
+        try Self.installImportedSkill(skill, from: nil, overwriteExisting: overwriteExisting)
         await refresh()
 
         Task { await SkillSearchService.shared.indexSkill(skill) }
@@ -386,25 +425,32 @@ public final class SkillManager {
 
     @discardableResult
     public func importSkillFromZip(_ zipURL: URL) async throws -> Skill {
+        let result = try await importSkillFromZip(zipURL, overwriteExisting: false)
+        return result.skill
+    }
+
+    @discardableResult
+    public func importSkillFromZip(
+        _ zipURL: URL,
+        overwriteExisting: Bool,
+        policy: SkillImportPolicy = .default
+    ) async throws -> SkillImportResult {
         // All filesystem work (unzip, SKILL.md read, nested file copies) runs
         // off the main actor — a large bundle would otherwise block the UI and
         // trip an app-hang. Only the trailing `refresh()` (which mutates
         // observed state) hops back to the main actor.
-        let skill = try await Task.detached(priority: .userInitiated) {
+        let result = try await Task.detached(priority: .userInitiated) {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
                 UUID().uuidString
             )
             defer { try? FileManager.default.removeItem(at: tempDir) }
 
+            try policy.validateArchiveBeforeExtraction(zipURL)
             try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
             try await FileManager.default.unzipItem(at: zipURL, to: tempDir)
 
-            guard let skillMdURL = Self.findSkillMd(in: tempDir) else {
-                throw SkillFileError.invalidSkillArchive
-            }
-
-            let skillDir = skillMdURL.deletingLastPathComponent()
-            let content = try String(contentsOf: skillMdURL, encoding: .utf8)
+            let importPlan = try policy.scanExtractedTree(at: tempDir)
+            let content = try String(contentsOf: importPlan.skillMarkdownURL, encoding: .utf8)
             let parsed = try Skill.parseAnyFormat(from: content)
 
             let skill = Skill(
@@ -418,64 +464,196 @@ public final class SkillManager {
                 directoryName: parsed.xplaceholder_agentSkillsNamex
             )
 
-            await SkillStore.save(skill)
+            try Self.installImportedSkill(
+                skill,
+                from: importPlan.skillRootURL,
+                overwriteExisting: overwriteExisting,
+                stagingBase: tempDir
+            )
 
-            // Copy associated files
-            let destDir = SkillStore.skillDirectory(for: skill)
-            for subdir in ["references", "assets"] {
-                let sourceSubdir = skillDir.appendingPathComponent(subdir)
-                let destSubdir = destDir.appendingPathComponent(subdir)
-
-                if FileManager.default.fileExists(atPath: sourceSubdir.path) {
-                    try? FileManager.default.createDirectory(
-                        at: destSubdir,
-                        withIntermediateDirectories: true
-                    )
-                    if let files = try? FileManager.default.contentsOfDirectory(
-                        at: sourceSubdir,
-                        includingPropertiesForKeys: nil
-                    ) {
-                        for file in files {
-                            try? FileManager.default.copyItem(
-                                at: file,
-                                to: destSubdir.appendingPathComponent(file.lastPathComponent)
-                            )
-                        }
-                    }
-                }
+            let notes: [String]
+            if importPlan.ignoredSkillMarkdownPaths.isEmpty {
+                notes = []
+            } else {
+                let ignored = importPlan.ignoredSkillMarkdownPaths.joined(separator: ", ")
+                notes = [
+                    L("Imported \(importPlan.selectedSkillMarkdownPath); ignored additional SKILL.md files: \(ignored)")
+                ]
             }
-
-            return skill
+            return SkillImportResult(skill: skill, notes: notes)
         }.value
 
         await refresh()
 
-        Task { await SkillSearchService.shared.indexSkill(skill) }
-        return skill
+        Task { await SkillSearchService.shared.indexSkill(result.skill) }
+        return result
     }
 
-    nonisolated private static func findSkillMd(in directory: URL) -> URL? {
-        let rootSkillMd = directory.appendingPathComponent("SKILL.md")
-        if FileManager.default.fileExists(atPath: rootSkillMd.path) {
-            return rootSkillMd
-        }
+    nonisolated private static func installImportedSkill(
+        _ skill: Skill,
+        from sourceSkillRoot: URL?,
+        overwriteExisting: Bool,
+        stagingBase: URL = FileManager.default.temporaryDirectory
+    ) throws {
+        let fileManager = FileManager.default
+        let destination = SkillStore.skillDirectory(for: skill)
+        let stage = stagingBase.appendingPathComponent("skill-import-stage-\(UUID().uuidString)", isDirectory: true)
+        defer { try? fileManager.removeItem(at: stage) }
 
-        if let contents = try? FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) {
-            for item in contents {
-                var isDir: ObjCBool = false
-                if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
-                    let skillMd = item.appendingPathComponent("SKILL.md")
-                    if FileManager.default.fileExists(atPath: skillMd.path) {
-                        return skillMd
+        try fileManager.createDirectory(at: stage, withIntermediateDirectories: true)
+        try skill.toAgentSkillsFormatWithId().write(
+            to: stage.appendingPathComponent("SKILL.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        if let sourceSkillRoot {
+            for subdirectory in ["references", "assets"] {
+                let source = sourceSkillRoot.appendingPathComponent(subdirectory, isDirectory: true)
+                var isDirectory: ObjCBool = false
+                if fileManager.fileExists(atPath: source.path, isDirectory: &isDirectory) {
+                    guard isDirectory.boolValue else {
+                        throw SkillFileError.skillImportCopyFailed(
+                            path: subdirectory,
+                            reason: L("Expected directory")
+                        )
                     }
+                    try copyImportedSubdirectory(
+                        named: subdirectory,
+                        from: source,
+                        to: stage.appendingPathComponent(subdirectory, isDirectory: true)
+                    )
                 }
             }
         }
-        return nil
+
+        try installStagedSkillDirectory(
+            stage,
+            to: destination,
+            skillName: skill.name,
+            overwriteExisting: overwriteExisting
+        )
+    }
+
+    nonisolated private static func copyImportedSubdirectory(
+        named name: String,
+        from source: URL,
+        to destination: URL
+    ) throws {
+        let fileManager = FileManager.default
+        let sourceRoot = source.standardizedFileURL
+        let destinationRoot = destination.standardizedFileURL
+        try fileManager.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+
+        guard
+            let enumerator = fileManager.enumerator(
+                at: sourceRoot,
+                includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
+                options: []
+            )
+        else {
+            throw SkillFileError.skillImportCopyFailed(path: name, reason: L("Could not inspect directory"))
+        }
+
+        for case let entry as URL in enumerator {
+            let relativePath = try relativePath(for: entry, in: sourceRoot)
+            let importPath = "\(name)/\(relativePath)"
+            do {
+                let values = try entry.resourceValues(
+                    forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey]
+                )
+                guard values.isSymbolicLink != true else {
+                    throw SkillFileError.archiveEntryUnsupported(path: importPath)
+                }
+
+                let target = destinationRoot.appendingPathComponent(relativePath)
+                try ensureContained(target, in: destinationRoot)
+
+                if values.isDirectory == true {
+                    try fileManager.createDirectory(at: target, withIntermediateDirectories: true)
+                } else if values.isRegularFile == true {
+                    try fileManager.createDirectory(
+                        at: target.deletingLastPathComponent(),
+                        withIntermediateDirectories: true
+                    )
+                    try fileManager.copyItem(at: entry, to: target)
+                } else {
+                    throw SkillFileError.archiveEntryUnsupported(path: importPath)
+                }
+            } catch let error as SkillFileError {
+                throw error
+            } catch {
+                throw SkillFileError.skillImportCopyFailed(path: importPath, reason: error.localizedDescription)
+            }
+        }
+    }
+
+    nonisolated private static func installStagedSkillDirectory(
+        _ stage: URL,
+        to destination: URL,
+        skillName: String,
+        overwriteExisting: Bool
+    ) throws {
+        let fileManager = FileManager.default
+        let parent = destination.deletingLastPathComponent()
+        try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+
+        var isDirectory: ObjCBool = false
+        let exists = fileManager.fileExists(atPath: destination.path, isDirectory: &isDirectory)
+        if exists {
+            guard isDirectory.boolValue else {
+                throw SkillFileError.skillImportCopyFailed(
+                    path: destination.lastPathComponent,
+                    reason: L("Destination exists and is not a directory")
+                )
+            }
+            guard overwriteExisting else {
+                throw SkillFileError.skillAlreadyExists(name: skillName)
+            }
+        }
+
+        if !exists {
+            try fileManager.moveItem(at: stage, to: destination)
+            return
+        }
+
+        let backup = parent.appendingPathComponent(
+            ".\(destination.lastPathComponent).import-backup-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.moveItem(at: destination, to: backup)
+        do {
+            try fileManager.moveItem(at: stage, to: destination)
+            try? fileManager.removeItem(at: backup)
+        } catch {
+            try? fileManager.removeItem(at: destination)
+            try? fileManager.moveItem(at: backup, to: destination)
+            throw SkillFileError.skillImportCopyFailed(
+                path: destination.lastPathComponent,
+                reason: error.localizedDescription
+            )
+        }
+    }
+
+    nonisolated private static func relativePath(for fileURL: URL, in baseDirectory: URL) throws -> String {
+        let fileComponents = fileURL.standardizedFileURL.pathComponents
+        let baseComponents = baseDirectory.standardizedFileURL.pathComponents
+        guard fileComponents.count > baseComponents.count,
+            Array(fileComponents.prefix(baseComponents.count)) == baseComponents
+        else {
+            throw SkillFileError.archiveEntryEscapes(path: fileURL.path)
+        }
+        return fileComponents.dropFirst(baseComponents.count).joined(separator: "/")
+    }
+
+    nonisolated private static func ensureContained(_ fileURL: URL, in baseDirectory: URL) throws {
+        let fileComponents = fileURL.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        let baseComponents = baseDirectory.standardizedFileURL.resolvingSymlinksInPath().pathComponents
+        guard fileComponents.count >= baseComponents.count,
+            Array(fileComponents.prefix(baseComponents.count)) == baseComponents
+        else {
+            throw SkillFileError.archiveEntryEscapes(path: fileURL.path)
+        }
     }
 
     // MARK: - Catalog & Instructions

@@ -57,6 +57,13 @@ Import skills from local files:
 | `.json` | JSON export format |
 | `.zip` | ZIP archive with `SKILL.md` and optional `references/` and `assets/` folders |
 
+Local file imports are checked before they are saved:
+
+- ZIP archives are bounded by archive size, file count, per-file size, and path depth.
+- Archive entries must stay inside the archive root. Symlinks and non-regular files are refused.
+- If a ZIP contains more than one `SKILL.md`, Osaurus imports the shallowest path, then the lexicographically first path, and reports the ignored candidates.
+- Importing a file over an existing skill stops first and asks for an explicit replace confirmation.
+
 ---
 
 ## Managing Skills

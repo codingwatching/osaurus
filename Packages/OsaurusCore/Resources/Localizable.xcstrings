@@ -57828,6 +57828,246 @@
         }
       }
     },
+    "A skill named \"%@\" already exists" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ein Skill namens \"%@\" existiert bereits"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "名为“%@”的技能已存在"
+          }
+        }
+      }
+    },
+    "Could not import skill file \"%@\": %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Datei \"%@\" konnte nicht importiert werden: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法导入技能文件“%@”：%@"
+          }
+        }
+      }
+    },
+    "Could not inspect directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verzeichnis konnte nicht geprüft werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法检查目录"
+          }
+        }
+      }
+    },
+    "Could not inspect skill archive%@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiv%@ konnte nicht geprüft werden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "无法检查技能归档%@"
+          }
+        }
+      }
+    },
+    "Destination exists and is not a directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ziel existiert und ist kein Verzeichnis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "目标已存在且不是目录"
+          }
+        }
+      }
+    },
+    "Expected directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Verzeichnis erwartet"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "预期为目录"
+          }
+        }
+      }
+    },
+    "Imported %@; ignored additional SKILL.md files: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Importiert %@; zusätzliche SKILL.md-Dateien ignoriert: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已导入 %@；已忽略其他 SKILL.md 文件：%@"
+          }
+        }
+      }
+    },
+    "Replace" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ersetzen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "替换"
+          }
+        }
+      }
+    },
+    "Replace Existing Skill?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bestehenden Skill ersetzen?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "替换现有技能？"
+          }
+        }
+      }
+    },
+    "Skill archive contains more than %lld entries" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiv enthält mehr als %lld Einträge"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档包含超过 %lld 个条目"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" escapes the archive root" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" verlässt den Archivstamm"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”会逃逸归档根目录"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" is deeper than the %lld-level limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" ist tiefer als die Grenze von %lld Ebenen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”超过 %lld 级深度限制"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" is larger than the %@ limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" ist größer als die Grenze von %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”超过 %@ 限制"
+          }
+        }
+      }
+    },
+    "Skill archive entry \"%@\" is not a regular file or directory" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiveintrag \"%@\" ist keine reguläre Datei und kein Verzeichnis"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档条目“%@”不是常规文件或目录"
+          }
+        }
+      }
+    },
+    "Skill archive is larger than the %@ limit" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Skill-Archiv ist größer als die Grenze von %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "技能归档超过 %@ 限制"
+          }
+        }
+      }
+    },
     "Zip Bundle" : {
       "localizations" : {
         "de" : {
