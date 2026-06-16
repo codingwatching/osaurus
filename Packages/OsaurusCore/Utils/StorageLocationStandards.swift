@@ -89,6 +89,8 @@ public enum StorageLocationStandards {
         public let applicationSupportPath: String?
         public let legacyApplicationSupportRootPath: String?
         public let legacyApplicationSupportRootPresent: Bool
+        public let legacyApplicationSupportMergeMarkerPath: String?
+        public let legacyApplicationSupportMergeMarked: Bool
         public let appleSpecCandidateRootPath: String?
         public let appleSpecCandidateRootPresent: Bool
         public let modelsRootPath: String
@@ -100,6 +102,8 @@ public enum StorageLocationStandards {
             applicationSupportPath: String?,
             legacyApplicationSupportRootPath: String?,
             legacyApplicationSupportRootPresent: Bool,
+            legacyApplicationSupportMergeMarkerPath: String?,
+            legacyApplicationSupportMergeMarked: Bool,
             appleSpecCandidateRootPath: String?,
             appleSpecCandidateRootPresent: Bool,
             modelsRootPath: String
@@ -110,6 +114,8 @@ public enum StorageLocationStandards {
             self.applicationSupportPath = applicationSupportPath
             self.legacyApplicationSupportRootPath = legacyApplicationSupportRootPath
             self.legacyApplicationSupportRootPresent = legacyApplicationSupportRootPresent
+            self.legacyApplicationSupportMergeMarkerPath = legacyApplicationSupportMergeMarkerPath
+            self.legacyApplicationSupportMergeMarked = legacyApplicationSupportMergeMarked
             self.appleSpecCandidateRootPath = appleSpecCandidateRootPath
             self.appleSpecCandidateRootPresent = appleSpecCandidateRootPresent
             self.modelsRootPath = modelsRootPath
@@ -125,6 +131,8 @@ public enum StorageLocationStandards {
         public let appleSpecCandidateRootPresent: Bool
         public let legacyApplicationSupportRootPath: String?
         public let legacyApplicationSupportRootPresent: Bool
+        public let legacyApplicationSupportMergeMarkerPath: String?
+        public let legacyApplicationSupportMergeMarked: Bool
         public let modelsRootPath: String
         public let modelsRootClassification: ModelsRootClassification
         public let findings: [Finding]
@@ -149,6 +157,8 @@ public enum StorageLocationStandards {
             appleSpecCandidateRootPresent: Bool,
             legacyApplicationSupportRootPath: String?,
             legacyApplicationSupportRootPresent: Bool,
+            legacyApplicationSupportMergeMarkerPath: String?,
+            legacyApplicationSupportMergeMarked: Bool,
             modelsRootPath: String,
             modelsRootClassification: ModelsRootClassification,
             findings: [Finding]
@@ -160,6 +170,8 @@ public enum StorageLocationStandards {
             self.appleSpecCandidateRootPresent = appleSpecCandidateRootPresent
             self.legacyApplicationSupportRootPath = legacyApplicationSupportRootPath
             self.legacyApplicationSupportRootPresent = legacyApplicationSupportRootPresent
+            self.legacyApplicationSupportMergeMarkerPath = legacyApplicationSupportMergeMarkerPath
+            self.legacyApplicationSupportMergeMarked = legacyApplicationSupportMergeMarked
             self.modelsRootPath = modelsRootPath
             self.modelsRootClassification = modelsRootClassification
             self.findings = findings
@@ -198,14 +210,18 @@ public enum StorageLocationStandards {
             appleSpecCandidateFolderName,
             isDirectory: true
         )
+        let activeRoot = OsaurusPaths.root()
+        let mergeMarker = OsaurusPaths.legacyApplicationSupportMergeMarker(for: activeRoot)
         return Inputs(
-            activeRootPath: OsaurusPaths.root().path,
+            activeRootPath: activeRoot.path,
             rootSource: rootSource,
             homeDirectoryPath: fm.homeDirectoryForCurrentUser.path,
             applicationSupportPath: support?.path,
             legacyApplicationSupportRootPath: legacy?.path,
             legacyApplicationSupportRootPresent: legacy.map { fm.fileExists(atPath: $0.path) }
                 ?? false,
+            legacyApplicationSupportMergeMarkerPath: mergeMarker.path,
+            legacyApplicationSupportMergeMarked: fm.fileExists(atPath: mergeMarker.path),
             appleSpecCandidateRootPath: candidate?.path,
             appleSpecCandidateRootPresent: candidate.map { fm.fileExists(atPath: $0.path) }
                 ?? false,
@@ -276,16 +292,28 @@ public enum StorageLocationStandards {
             let legacyPath =
                 inputs.legacyApplicationSupportRootPath
                 ?? legacyApplicationSupportFolderName
+            let markerPath =
+                inputs.legacyApplicationSupportMergeMarkerPath
+                ?? OsaurusPaths.legacyApplicationSupportMergeMarkerName
+            let severity: Severity = inputs.legacyApplicationSupportMergeMarked ? .info : .warning
+            let message: String
+            if inputs.legacyApplicationSupportMergeMarked {
+                message =
+                    "Legacy root \(legacyPath) still exists, but one-shot migration marker "
+                    + "\(markerPath) is present. OsaurusPaths will not re-merge it into "
+                    + "the active root on future launches."
+            } else {
+                message =
+                    "Legacy root \(legacyPath) still exists and one-shot migration marker "
+                    + "\(markerPath) is missing. OsaurusPaths will copy or merge it into "
+                    + "the active root once, then write the marker so future launches do "
+                    + "not resurrect stale legacy files."
+            }
             findings.append(
                 Finding(
                     code: .legacyApplicationSupportRootPresent,
-                    severity: .warning,
-                    message:
-                        "Legacy root \(legacyPath) still exists. OsaurusPaths re-merges it "
-                        + "into the active root on the first path access of every launch "
-                        + "(newer file wins), which can resurrect files that were since "
-                        + "changed under the active root. A one-shot migration marker is "
-                        + "pending."
+                    severity: severity,
+                    message: message
                 )
             )
         }
@@ -327,6 +355,8 @@ public enum StorageLocationStandards {
             appleSpecCandidateRootPresent: inputs.appleSpecCandidateRootPresent,
             legacyApplicationSupportRootPath: inputs.legacyApplicationSupportRootPath,
             legacyApplicationSupportRootPresent: inputs.legacyApplicationSupportRootPresent,
+            legacyApplicationSupportMergeMarkerPath: inputs.legacyApplicationSupportMergeMarkerPath,
+            legacyApplicationSupportMergeMarked: inputs.legacyApplicationSupportMergeMarked,
             modelsRootPath: inputs.modelsRootPath,
             modelsRootClassification: modelsClassification,
             findings: findings
@@ -347,6 +377,9 @@ public enum StorageLocationStandards {
             "legacy_application_support_root": report.legacyApplicationSupportRootPath as Any?
                 ?? NSNull(),
             "legacy_application_support_root_present": report.legacyApplicationSupportRootPresent,
+            "legacy_application_support_merge_marker":
+                report.legacyApplicationSupportMergeMarkerPath as Any? ?? NSNull(),
+            "legacy_application_support_merge_marked": report.legacyApplicationSupportMergeMarked,
             "models_root": report.modelsRootPath,
             "models_root_classification": report.modelsRootClassification.rawValue,
             "reason_codes": report.reasonCodes,

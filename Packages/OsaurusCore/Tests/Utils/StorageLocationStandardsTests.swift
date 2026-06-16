@@ -22,16 +22,20 @@ struct StorageLocationStandardsTests {
         home: String = "/Users/sam",
         support: String? = "/Users/sam/Library/Application Support",
         legacyPresent: Bool = false,
+        legacyMergeMarked: Bool = false,
         candidatePresent: Bool = false,
         modelsRootPath: String = "/Users/sam/MLXModels"
     ) -> StorageLocationStandards.Inputs {
-        StorageLocationStandards.Inputs(
+        let markerPath = "\(activeRootPath)/\(OsaurusPaths.legacyApplicationSupportMergeMarkerName)"
+        return StorageLocationStandards.Inputs(
             activeRootPath: activeRootPath,
             rootSource: rootSource,
             homeDirectoryPath: home,
             applicationSupportPath: support,
             legacyApplicationSupportRootPath: support.map { "\($0)/com.dinoki.osaurus" },
             legacyApplicationSupportRootPresent: legacyPresent,
+            legacyApplicationSupportMergeMarkerPath: markerPath,
+            legacyApplicationSupportMergeMarked: legacyMergeMarked,
             appleSpecCandidateRootPath: support.map { "\($0)/Osaurus" },
             appleSpecCandidateRootPresent: candidatePresent,
             modelsRootPath: modelsRootPath
@@ -171,8 +175,23 @@ struct StorageLocationStandardsTests {
             $0.code == .legacyApplicationSupportRootPresent
         }
         #expect(legacy?.severity == .warning)
-        #expect(legacy?.message.contains("re-merges") == true)
+        #expect(legacy?.message.contains("marker") == true)
+        #expect(legacy?.message.contains("missing") == true)
         #expect(legacy?.message.contains("com.dinoki.osaurus") == true)
+    }
+
+    @Test("Legacy root with merge marker reports as consumed, not repeatedly merged")
+    func legacyRootWithMergeMarker() {
+        let report = StorageLocationStandards.audit(
+            makeInputs(legacyPresent: true, legacyMergeMarked: true)
+        )
+
+        #expect(report.legacyApplicationSupportMergeMarked)
+        let legacy = report.findings.first {
+            $0.code == .legacyApplicationSupportRootPresent
+        }
+        #expect(legacy?.severity == .info)
+        #expect(legacy?.message.contains("will not re-merge") == true)
     }
 
     @Test("Legacy root present alongside a compliant root still pends the migration decision")
@@ -251,6 +270,8 @@ struct StorageLocationStandardsTests {
                 "apple_spec_candidate_root_present",
                 "legacy_application_support_root",
                 "legacy_application_support_root_present",
+                "legacy_application_support_merge_marker",
+                "legacy_application_support_merge_marked",
                 "models_root",
                 "models_root_classification",
                 "reason_codes",
@@ -261,6 +282,7 @@ struct StorageLocationStandardsTests {
         #expect(json["classification"] as? String == "home_dot_directory")
         #expect(json["spec_compliant"] as? Bool == false)
         #expect(json["legacy_application_support_root_present"] as? Bool == true)
+        #expect(json["legacy_application_support_merge_marked"] as? Bool == false)
         #expect(json["models_root_classification"] as? String == "home_visible")
 
         let findings = try #require(json["findings"] as? [[String: Any]])
@@ -283,6 +305,89 @@ struct StorageLocationStandardsTests {
 
         #expect(json["apple_spec_candidate_root"] is NSNull)
         #expect(json["legacy_application_support_root"] is NSNull)
+    }
+
+    // MARK: - Legacy Application Support merge marker
+
+    @Test("Legacy Application Support migration writes marker and skips later merges")
+    func legacyApplicationSupportMigrationIsOneShot() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacy = sandbox.appendingPathComponent("Library/Application Support/com.dinoki.osaurus")
+        let active = sandbox.appendingPathComponent(".osaurus")
+        defer { try? fm.removeItem(at: sandbox) }
+
+        try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try "first".write(
+            to: legacy.appendingPathComponent("settings.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let first = OsaurusPaths.migrateLegacyApplicationSupportRootIfNeeded(
+            fileManager: fm,
+            legacyRoot: legacy,
+            activeRoot: active
+        )
+        #expect(first == .copied(OsaurusPaths.legacyApplicationSupportMergeMarker(for: active)))
+        #expect(fm.fileExists(atPath: active.appendingPathComponent("settings.json").path))
+        #expect(
+            fm.fileExists(
+                atPath: OsaurusPaths.legacyApplicationSupportMergeMarker(for: active).path
+            )
+        )
+
+        try "second".write(
+            to: legacy.appendingPathComponent("new-after-marker.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let second = OsaurusPaths.migrateLegacyApplicationSupportRootIfNeeded(
+            fileManager: fm,
+            legacyRoot: legacy,
+            activeRoot: active
+        )
+        #expect(second == .alreadyMarked(OsaurusPaths.legacyApplicationSupportMergeMarker(for: active)))
+        #expect(!fm.fileExists(atPath: active.appendingPathComponent("new-after-marker.json").path))
+    }
+
+    @Test("Legacy Application Support merge keeps newer active files before writing marker")
+    func legacyApplicationSupportMergePreservesNewerActiveFiles() throws {
+        let fm = FileManager.default
+        let sandbox = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacy = sandbox.appendingPathComponent("Library/Application Support/com.dinoki.osaurus")
+        let active = sandbox.appendingPathComponent(".osaurus")
+        defer { try? fm.removeItem(at: sandbox) }
+
+        try fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+        try fm.createDirectory(at: active, withIntermediateDirectories: true)
+        let legacyFile = legacy.appendingPathComponent("config.json")
+        let activeFile = active.appendingPathComponent("config.json")
+        try "legacy".write(to: legacyFile, atomically: true, encoding: .utf8)
+        try "active".write(to: activeFile, atomically: true, encoding: .utf8)
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 100)],
+            ofItemAtPath: legacyFile.path
+        )
+        try fm.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 200)],
+            ofItemAtPath: activeFile.path
+        )
+
+        let result = OsaurusPaths.migrateLegacyApplicationSupportRootIfNeeded(
+            fileManager: fm,
+            legacyRoot: legacy,
+            activeRoot: active
+        )
+
+        #expect(result == .merged(OsaurusPaths.legacyApplicationSupportMergeMarker(for: active)))
+        #expect(try String(contentsOf: activeFile, encoding: .utf8) == "active")
+        #expect(
+            fm.fileExists(
+                atPath: OsaurusPaths.legacyApplicationSupportMergeMarker(for: active).path
+            )
+        )
     }
 
     @Test("Summary stays one stable line")

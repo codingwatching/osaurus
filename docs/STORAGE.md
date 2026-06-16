@@ -185,12 +185,12 @@ Issue [#1422](https://github.com/osaurus-ai/osaurus/issues/1422) is right: the a
 | Root | Current location | Spec-compliant target |
 |---|---|---|
 | App data | `~/.osaurus/` | `~/Library/Application Support/Osaurus/` |
-| Legacy app data | `~/Library/Application Support/com.dinoki.osaurus/` (merged into `~/.osaurus/` when present; never deleted) | n/a — retired after a one-shot migration marker lands |
+| Legacy app data | `~/Library/Application Support/com.dinoki.osaurus/` (copied/merged once into `~/.osaurus/` when the marker is missing; never deleted) | n/a — retired by `~/.osaurus/.legacy-application-support-merge.done` |
 | Model weights | `~/MLXModels/` (legacy `~/Documents/MLXModels/`, env override, or user-picked folder) | separate decision — weights are user-managed and home-visible by design |
 
 ### The audit surface
 
-`GET /admin/cache-stats` now returns a read-only `storage_locations` block (built by [`StorageLocationStandards`](../Packages/OsaurusCore/Utils/StorageLocationStandards.swift)) reporting: the active root and its classification (`apple_application_support`, `home_dot_directory`, `test_override`, `environment_override`, `custom`), `spec_compliant`, whether the legacy `com.dinoki.osaurus` root still exists, the models root classification, and stable snake_case `reason_codes` with human-readable findings. The audit never creates, copies, moves, or deletes anything.
+`GET /admin/cache-stats` now returns a read-only `storage_locations` block (built by [`StorageLocationStandards`](../Packages/OsaurusCore/Utils/StorageLocationStandards.swift)) reporting: the active root and its classification (`apple_application_support`, `home_dot_directory`, `test_override`, `environment_override`, `custom`), `spec_compliant`, whether the legacy `com.dinoki.osaurus` root still exists, whether the one-shot merge marker is present, the models root classification, and stable snake_case `reason_codes` with human-readable findings. The audit never creates, copies, moves, or deletes anything.
 
 ### Why the root has not moved (yet)
 
@@ -198,7 +198,7 @@ Relocating `~/.osaurus/` is a data-safety decision pending an explicit maintaine
 
 - The Keychain DEK is paired with the existing tree, and the HKDF salt sidecar (`~/.osaurus/.storage-key.salt`) must travel with the data it unlocks (see Key Management above).
 - Sandbox tooling references `~/.osaurus/` literally (e.g. the node workspace path), and plugin/container trees can be many gigabytes — a silent move on upgrade is not acceptable.
-- `OsaurusPaths.defaultRoot` currently **re-merges** a still-present legacy `com.dinoki.osaurus/` root into `~/.osaurus/` on the first path access of every launch (newer file wins), which can resurrect files the user has since changed. Any migration design must first add a one-shot migration marker so this loop ends.
+- `OsaurusPaths.defaultRoot` now consumes a still-present legacy `com.dinoki.osaurus/` root only when `~/.osaurus/.legacy-application-support-merge.done` is missing. The first successful copy/merge writes that marker, and future launches skip the legacy root even if the user leaves it in place.
 
 Until that decision, the contract is: paths resolve exclusively through `OsaurusPaths`, the audit reports reality instead of hiding it, and no code outside `OsaurusPaths` may invent a storage root.
 

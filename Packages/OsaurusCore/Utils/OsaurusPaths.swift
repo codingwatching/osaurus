@@ -14,7 +14,7 @@ import Foundation
 public enum OsaurusPaths {
     /// Optional root directory override for tests
     /// Note: nonisolated(unsafe) since this is only set during test setup before any concurrent access
-    public nonisolated(unsafe) static var overrideRoot: URL?
+    nonisolated(unsafe) public static var overrideRoot: URL?
 
     // MARK: - Root Directory
 
@@ -24,23 +24,27 @@ public enum OsaurusPaths {
         let supportDir = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let oldRoot = supportDir.appendingPathComponent("com.dinoki.osaurus", isDirectory: true)
 
-        // Copy data from old Application Support on first access (never deletes the original).
-        if fm.fileExists(atPath: oldRoot.path) {
-            if !fm.fileExists(atPath: newRoot.path) {
-                do {
-                    try fm.copyItem(at: oldRoot, to: newRoot)
-                    print("[Osaurus] Copied data from \(oldRoot.path) to \(newRoot.path)")
-                    return newRoot
-                } catch {
-                    print("[Osaurus] Copy failed, falling back to merge: \(error)")
-                }
-            }
-            mergeDirectory(from: oldRoot, into: newRoot)
-            print("[Osaurus] Merged data from \(oldRoot.path) into \(newRoot.path)")
-        }
+        _ = migrateLegacyApplicationSupportRootIfNeeded(
+            fileManager: fm,
+            legacyRoot: oldRoot,
+            activeRoot: newRoot
+        )
 
         return newRoot
     }()
+
+    /// Marker written after the legacy Application Support root has been
+    /// copied/merged into `~/.osaurus`. The legacy root is intentionally never
+    /// deleted, so this marker prevents every future launch from re-merging it.
+    public static let legacyApplicationSupportMergeMarkerName =
+        ".legacy-application-support-merge.done"
+
+    enum LegacyApplicationSupportMigrationResult: Equatable {
+        case legacyRootAbsent
+        case alreadyMarked(URL)
+        case copied(URL)
+        case merged(URL)
+    }
 
     /// The root data directory for Osaurus: `~/.osaurus/`
     public static func root() -> URL {
@@ -48,11 +52,16 @@ public enum OsaurusPaths {
             return override
         }
         if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
-            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
+            !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
         }
         return defaultRoot
+    }
+
+    /// Returns the marker path for a resolved root without triggering another
+    /// root lookup when the caller already has one.
+    public static func legacyApplicationSupportMergeMarker(for root: URL) -> URL {
+        root.appendingPathComponent(legacyApplicationSupportMergeMarkerName)
     }
 
     // MARK: - Directory Paths
@@ -162,8 +171,7 @@ public enum OsaurusPaths {
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
         var legacyFree: Int64?
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
-            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value
-        {
+            let free = (attrs[.systemFreeSize] as? NSNumber)?.int64Value {
             legacyFree = free
         }
         if let legacyFree, legacyFree > 0 {
@@ -174,8 +182,7 @@ public enum OsaurusPaths {
         var importantCapacity: Int64?
         let keys: Set<URLResourceKey> = [.volumeAvailableCapacityForImportantUsageKey]
         if let values = try? url.resourceValues(forKeys: keys),
-            let capacity = values.volumeAvailableCapacityForImportantUsage
-        {
+            let capacity = values.volumeAvailableCapacityForImportantUsage {
             importantCapacity = capacity
         }
         return resolvedVolumeFreeBytes(
@@ -204,13 +211,11 @@ public enum OsaurusPaths {
         let url = URL(fileURLWithPath: path)
         let keys: Set<URLResourceKey> = [.volumeTotalCapacityKey]
         if let values = try? url.resourceValues(forKeys: keys),
-            let capacity = values.volumeTotalCapacity
-        {
+            let capacity = values.volumeTotalCapacity {
             return Int64(capacity)
         }
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
-            let total = (attrs[.systemSize] as? NSNumber)?.int64Value
-        {
+            let total = (attrs[.systemSize] as? NSNumber)?.int64Value {
             return total
         }
         return nil
@@ -637,6 +642,72 @@ public enum OsaurusPaths {
     }
 
     // MARK: - Migration
+
+    /// Copies or merges the retired Application Support root into the active
+    /// root once, then writes a marker in the active root. The legacy root is
+    /// left untouched so users can inspect or delete it manually.
+    @discardableResult
+    static func migrateLegacyApplicationSupportRootIfNeeded(
+        fileManager fm: FileManager = .default,
+        legacyRoot oldRoot: URL,
+        activeRoot newRoot: URL
+    ) -> LegacyApplicationSupportMigrationResult {
+        var isLegacyDirectory = ObjCBool(false)
+        guard fm.fileExists(atPath: oldRoot.path, isDirectory: &isLegacyDirectory),
+            isLegacyDirectory.boolValue
+        else {
+            return .legacyRootAbsent
+        }
+
+        let marker = legacyApplicationSupportMergeMarker(for: newRoot)
+        if fm.fileExists(atPath: marker.path) {
+            print("[Osaurus] Legacy data migration already marked at \(marker.path); skipping")
+            return .alreadyMarked(marker)
+        }
+
+        if !fm.fileExists(atPath: newRoot.path) {
+            do {
+                try fm.copyItem(at: oldRoot, to: newRoot)
+                writeLegacyApplicationSupportMergeMarker(
+                    marker,
+                    legacyRoot: oldRoot,
+                    activeRoot: newRoot
+                )
+                print("[Osaurus] Copied data from \(oldRoot.path) to \(newRoot.path)")
+                return .copied(marker)
+            } catch {
+                print("[Osaurus] Copy failed, falling back to merge: \(error)")
+            }
+        }
+
+        mergeDirectory(from: oldRoot, into: newRoot)
+        writeLegacyApplicationSupportMergeMarker(
+            marker,
+            legacyRoot: oldRoot,
+            activeRoot: newRoot
+        )
+        print("[Osaurus] Merged data from \(oldRoot.path) into \(newRoot.path)")
+        return .merged(marker)
+    }
+
+    private static func writeLegacyApplicationSupportMergeMarker(
+        _ marker: URL,
+        legacyRoot: URL,
+        activeRoot: URL
+    ) {
+        let payload = """
+        legacy_application_support_migrated=1
+        legacy_root=\(legacyRoot.path)
+        active_root=\(activeRoot.path)
+
+        """
+        do {
+            try ensureExists(marker.deletingLastPathComponent())
+            try Data(payload.utf8).write(to: marker, options: .atomic)
+        } catch {
+            print("[Osaurus] Failed to write legacy data migration marker \(marker.path): \(error)")
+        }
+    }
 
     /// Recursively copy the contents of `src` into `dest` (never deletes from `src`).
     /// When both source and destination files exist, the newer one wins.
