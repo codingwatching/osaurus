@@ -10127,6 +10127,22 @@
         }
       }
     },
+    "Choose Hugging Face cache folder" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Hugging-Face-Cache-Ordner auswählen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "选择 Hugging Face 缓存文件夹"
+          }
+        }
+      }
+    },
     "Choose how much to add. You'll finish payment in your browser." : {
       "comment" : "Subtitle of the add-credits amount picker sheet.",
       "localizations" : {
@@ -56224,6 +56240,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用你的 ChatGPT Plus/Pro 订阅。"
+          }
+        }
+      }
+    },
+    "Use default Hugging Face cache locations" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Standard-Hugging-Face-Cache-Orte verwenden"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "使用默认 Hugging Face 缓存位置"
           }
         }
       }
