@@ -310,6 +310,33 @@ If a user-visible TTFT is slow but `promptMs` is fast, inspect template render,
 cache materialization, media preprocessing, and first-token decode before
 calling it a cache miss.
 
+## Runtime proof matrix appendix
+
+Render the machine-readable classifier report into this appendix after a live
+matrix run:
+
+```bash
+scripts/live-proof/render-runtime-proof-matrix.py \
+  build/runtime-validation/YYYYMMDD-HHMM/PROOF_CLASSIFICATION.json \
+  --update-doc docs/RUNTIME_VALIDATION_STANDARD.md \
+  --json-surface build/runtime-validation/YYYYMMDD-HHMM/runtime-proof-surface.json
+```
+
+The renderer is source/UX only. It cannot promote proof rows; it only displays
+the verdicts already written by `classify-runtime-proof-summary.py`. The schema
+rows for #903 and #1163 stay `unproven` until live artifacts exist.
+
+<!-- BEGIN RUNTIME PROOF MATRIX -->
+
+Generated from PROOF_CLASSIFICATION.json at not generated in this checkout.
+
+| Row | Model | Family | Verdict | Requirements | Evidence | Blockers |
+|---|---|---|---|---|---|---|
+| issue-903-system-prompt-injection-schema | all local chat runtimes | cross-family | unproven | visible_output, tokens_per_second, no_parser_marker_leak, multi_turn_coherency, system_prompt_injection | none | requires a live artifact with an explicit system-prompt injection probe, visible output, token/s, multi-turn coherency, and no parser marker leakage |
+| issue-1163-hy3-harmony-retro-validation-schema | Hy3/harmony local rows | hy3 | unproven | visible_output, tokens_per_second, no_parser_marker_leak, multi_turn_coherency | none | requires a Hy3/harmony live artifact; sibling model rows or source-only parser checks do not prove this issue |
+
+<!-- END RUNTIME PROOF MATRIX -->
+
 ## Recommended next tooling
 
 Add these scripts as follow-up work:

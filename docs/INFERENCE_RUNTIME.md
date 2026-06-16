@@ -145,6 +145,13 @@ VL model was tested through a text/tool path without a real media payload and
 media cache salt. Those rows stay useful as evidence, but they must not close a
 runtime/media issue as proven.
 
+Use `scripts/live-proof/render-runtime-proof-matrix.py` to render the latest
+`PROOF_CLASSIFICATION.json` into the matrix appendix in
+[`RUNTIME_VALIDATION_STANDARD.md`](RUNTIME_VALIDATION_STANDARD.md). The renderer
+also writes a read-only JSON surface for inspection workflows, and it keeps the
+#903 system-prompt-injection and #1163 Hy3/harmony schema rows `unproven` until
+real live artifacts exist.
+
 osaurus deliberately does not pass `GenerateParameters.maxKVSize` -- a
 global rotating cache window forced from the app layer conflicted with
 sliding-window attention layers (e.g. Gemma-4 with a fixed per-layer
