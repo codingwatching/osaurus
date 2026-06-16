@@ -307,8 +307,7 @@ public enum OpenAICodexOAuthService {
     }
 
     public static func exchangeAuthorizationCode(_ code: String, verifier: String) async throws
-        -> RemoteProviderOAuthTokens
-    {
+        -> RemoteProviderOAuthTokens {
         try await requestTokens(
             form: [
                 "grant_type": "authorization_code",
@@ -365,7 +364,7 @@ public enum OpenAICodexOAuthService {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
         } catch {
             let message = "Network error: \(error.localizedDescription)"
             switch operation {
