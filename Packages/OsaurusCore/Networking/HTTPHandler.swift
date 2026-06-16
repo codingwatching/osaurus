@@ -967,6 +967,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     plan: memorySafetyPlan,
                     memoryStatus: memoryStatus
                 ),
+                "storage_locations": Self.storageLocationsJSONObject(),
             ]
             if let batchDiagnostics {
                 obj["batch_diagnostics"] =
@@ -1375,6 +1376,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return [:]
         }
         return object
+    }
+
+    /// Storage-location standards audit block for `/admin/cache-stats`.
+    /// Read-only probe + pure classification; see issue #1422 and
+    /// `docs/STORAGE.md` (Storage Location Standards).
+    private static func storageLocationsJSONObject() -> [String: Any] {
+        StorageLocationStandards.jsonObject(for: StorageLocationStandards.currentReport())
     }
 
     private static func memorySafetyJSONObject(

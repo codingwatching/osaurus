@@ -15,6 +15,7 @@ This document covers what's encrypted, how the key is managed, and the user-faci
 - [Storage Settings](#storage-settings)
 - [Background Maintenance](#background-maintenance)
 - [Storage Paths Reference](#storage-paths-reference)
+- [Storage Location Standards](#storage-location-standards)
 - [Limitations and Trade-offs](#limitations-and-trade-offs)
 
 ---
@@ -172,6 +173,34 @@ The ticker is started from [`AppDelegate`](../Packages/OsaurusCore/AppDelegate.s
 | `~/.osaurus/scheduler.sqlite` | SQLCipher cross-agent next-run + pause slots |
 
 The DEK lives in macOS Keychain, **not** in `~/.osaurus/`.
+
+---
+
+## Storage Location Standards
+
+Issue [#1422](https://github.com/osaurus-ai/osaurus/issues/1422) is right: the app-data root `~/.osaurus/` follows neither [Apple's file-system guidance](https://developer.apple.com/documentation/foundation/using-the-file-system-effectively) (app data belongs under `~/Library/Application Support/`) nor the [XDG base-directory spec](https://specifications.freedesktop.org/basedir/latest/) (`~/.local/share/`, `~/.config/`, `~/.cache/`). Historically the data deliberately moved *out of* `~/Library/Application Support/com.dinoki.osaurus/` *into* `~/.osaurus/` (see `OsaurusPaths.defaultRoot`), so this is a known trade-off, not an accident.
+
+### Where things stand
+
+| Root | Current location | Spec-compliant target |
+|---|---|---|
+| App data | `~/.osaurus/` | `~/Library/Application Support/Osaurus/` |
+| Legacy app data | `~/Library/Application Support/com.dinoki.osaurus/` (merged into `~/.osaurus/` when present; never deleted) | n/a — retired after a one-shot migration marker lands |
+| Model weights | `~/MLXModels/` (legacy `~/Documents/MLXModels/`, env override, or user-picked folder) | separate decision — weights are user-managed and home-visible by design |
+
+### The audit surface
+
+`GET /admin/cache-stats` now returns a read-only `storage_locations` block (built by [`StorageLocationStandards`](../Packages/OsaurusCore/Utils/StorageLocationStandards.swift)) reporting: the active root and its classification (`apple_application_support`, `home_dot_directory`, `test_override`, `environment_override`, `custom`), `spec_compliant`, whether the legacy `com.dinoki.osaurus` root still exists, the models root classification, and stable snake_case `reason_codes` with human-readable findings. The audit never creates, copies, moves, or deletes anything.
+
+### Why the root has not moved (yet)
+
+Relocating `~/.osaurus/` is a data-safety decision pending an explicit maintainer call, because:
+
+- The Keychain DEK is paired with the existing tree, and the HKDF salt sidecar (`~/.osaurus/.storage-key.salt`) must travel with the data it unlocks (see Key Management above).
+- Sandbox tooling references `~/.osaurus/` literally (e.g. the node workspace path), and plugin/container trees can be many gigabytes — a silent move on upgrade is not acceptable.
+- `OsaurusPaths.defaultRoot` currently **re-merges** a still-present legacy `com.dinoki.osaurus/` root into `~/.osaurus/` on the first path access of every launch (newer file wins), which can resurrect files the user has since changed. Any migration design must first add a one-shot migration marker so this loop ends.
+
+Until that decision, the contract is: paths resolve exclusively through `OsaurusPaths`, the audit reports reality instead of hiding it, and no code outside `OsaurusPaths` may invent a storage root.
 
 ---
 
