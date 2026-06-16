@@ -30,7 +30,7 @@ struct ThemeEditorView: View {
     @State private var editingTheme: CustomTheme
     @State private var showImagePicker = false
     @State private var showSaveConfirmation = false
-    @State private var collapsedSections: Set<String> = ["Advanced Colors", "Advanced"]
+    @State private var collapsedSections: Set<String> = ["Advanced Colors", "Advanced", "Raw JSON"]
     @State private var animationPreviewTrigger = false
     @State private var showGlassPerformanceWarning = false
     /// Reverts the glass toggle the user just turned on if they cancel the
@@ -40,11 +40,15 @@ struct ThemeEditorView: View {
     /// Decoded copy of `editingTheme.background.imageData`, refreshed off
     /// the main actor whenever the base64 string changes.
     @State private var backgroundPreviewImage: NSImage?
+    @State private var rawThemeJSON: String
+    @State private var rawThemeJSONError: String?
+    @State private var rawThemeJSONIsDirty = false
 
     let onDismiss: () -> Void
 
     init(theme: CustomTheme, onDismiss: @escaping () -> Void) {
         _editingTheme = State(initialValue: theme)
+        _rawThemeJSON = State(initialValue: (try? ThemeJSONEditorCodec.encode(theme)) ?? "{}")
         self.onDismiss = onDismiss
     }
 
@@ -61,6 +65,9 @@ struct ThemeEditorView: View {
         .background(currentTheme.primaryBackground)
         .task(id: editingTheme.background.imageData) {
             backgroundPreviewImage = await decodeThemeBackgroundImage(editingTheme.background.imageData)
+        }
+        .onChange(of: editingTheme) { _, newTheme in
+            syncRawThemeJSONIfNeeded(newTheme)
         }
         .fileImporter(
             isPresented: $showImagePicker,
@@ -105,6 +112,7 @@ struct ThemeEditorView: View {
                     textAndFontsSection
                     bordersAndEffectsSection
                     advancedSection
+                    rawJSONSection
                 }
                 .padding(20)
             }
@@ -663,6 +671,90 @@ struct ThemeEditorView: View {
         }
     }
 
+    // MARK: - Section 7: Raw JSON
+
+    private var rawJSONSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            editorSection(L("Raw JSON")) {
+                VStack(alignment: .leading, spacing: 10) {
+                    TextEditor(text: rawThemeJSONBinding)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundColor(currentTheme.primaryText)
+                        .frame(minHeight: 220)
+                        .padding(6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(currentTheme.inputBackground)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(currentTheme.inputBorder, lineWidth: 1)
+                        )
+
+                    if let rawThemeJSONError {
+                        rawJSONErrorView(rawThemeJSONError)
+                    }
+
+                    HStack(spacing: 8) {
+                        Button {
+                            refreshRawThemeJSON()
+                        } label: {
+                            Label {
+                                Text("Refresh", bundle: .module)
+                            } icon: {
+                                Image(systemName: "arrow.clockwise")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+
+                        Spacer()
+
+                        Button {
+                            applyRawThemeJSON()
+                        } label: {
+                            Label {
+                                Text("Apply JSON", bundle: .module)
+                            } icon: {
+                                Image(systemName: "checkmark.circle")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(rawThemeJSON.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+        }
+    }
+
+    private var rawThemeJSONBinding: Binding<String> {
+        Binding(
+            get: { rawThemeJSON },
+            set: { newValue in
+                rawThemeJSON = newValue
+                rawThemeJSONIsDirty = true
+                rawThemeJSONError = nil
+            }
+        )
+    }
+
+    private func rawJSONErrorView(_ message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(currentTheme.errorColor)
+            Text(message)
+                .font(.system(size: 11))
+                .foregroundColor(currentTheme.errorColor)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(currentTheme.errorColor.opacity(0.12))
+        )
+    }
+
     // MARK: - Preview Panel
 
     private var previewPanel: some View {
@@ -958,6 +1050,36 @@ struct ThemeEditorView: View {
     }
 
     // MARK: - Actions
+
+    private func syncRawThemeJSONIfNeeded(_ theme: CustomTheme) {
+        guard !rawThemeJSONIsDirty else { return }
+        rawThemeJSON = encodedThemeJSON(theme, fallback: rawThemeJSON)
+    }
+
+    private func refreshRawThemeJSON() {
+        rawThemeJSON = encodedThemeJSON(editingTheme, fallback: rawThemeJSON)
+        rawThemeJSONError = nil
+        rawThemeJSONIsDirty = false
+    }
+
+    private func applyRawThemeJSON() {
+        do {
+            let decoded = try ThemeJSONEditorCodec.decodePreservingEditorIdentity(
+                rawThemeJSON,
+                currentTheme: editingTheme
+            )
+            editingTheme = decoded
+            rawThemeJSON = encodedThemeJSON(decoded, fallback: rawThemeJSON)
+            rawThemeJSONError = nil
+            rawThemeJSONIsDirty = false
+        } catch {
+            rawThemeJSONError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+    }
+
+    private func encodedThemeJSON(_ theme: CustomTheme, fallback: String) -> String {
+        (try? ThemeJSONEditorCodec.encode(theme)) ?? fallback
+    }
 
     private func saveTheme() {
         var themeToSave = editingTheme

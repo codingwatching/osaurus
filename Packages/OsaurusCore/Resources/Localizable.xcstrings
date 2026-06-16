@@ -40785,6 +40785,22 @@
         }
       }
     },
+    "Raw JSON" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Rohes JSON"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "原始 JSON"
+          }
+        }
+      }
+    },
     "Ready" : {
       "localizations" : {
         "de" : {
