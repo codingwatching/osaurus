@@ -347,6 +347,8 @@ struct ThemeEditorView: View {
                 .textCase(.uppercase)
                 colorRow("Card BG", hex: $editingTheme.colors.cardBackground)
                 colorRow("Card Border", hex: $editingTheme.colors.cardBorder)
+                colorRow("Button BG", hex: $editingTheme.colors.buttonBackground)
+                colorRow("Button Border", hex: $editingTheme.colors.buttonBorder)
                 colorRow("Input BG", hex: $editingTheme.colors.inputBackground)
                 colorRow("Input Border", hex: $editingTheme.colors.inputBorder)
             }
@@ -1196,6 +1198,8 @@ struct ThemeChatPreview: View {
                     .foregroundColor(c(theme.colors.primaryText))
 
                 previewCodeBlock
+                previewButtonTray
+                previewToast
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -1215,8 +1219,13 @@ struct ThemeChatPreview: View {
 
     private var previewCodeBlock: some View {
         let themeProtocol = CustomizableTheme(config: theme)
-        let sampleCode = "print(\"Hello, World!\")"
-        let _ = ensureHighlightrTheme(for: themeProtocol)
+        let sampleCode = [
+            "struct ThemeSample {",
+            "    let accent = \"button\"",
+            "    func render() { print(accent) }",
+            "}",
+        ].joined(separator: "\n")
+        ensureHighlightrTheme(for: themeProtocol)
         let bgColor = highlightrThemeBackgroundColor()
 
         return VStack(alignment: .leading, spacing: 0) {
@@ -1245,13 +1254,63 @@ struct ThemeChatPreview: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
             }
-            .frame(height: 36)
+            .frame(height: 84)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8).fill(bgColor)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var previewButtonTray: some View {
+        HStack(spacing: 8) {
+            previewControlButton("Primary", foreground: c(theme.colors.primaryText))
+            previewControlButton("Success", foreground: c(theme.colors.successColor))
+            previewControlButton("Delete", foreground: c(theme.colors.errorColor))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func previewControlButton(_ title: LocalizedStringKey, foreground: Color) -> some View {
+        Text(title, bundle: .module)
+            .font(primaryFont(size: captionSize, weight: .semibold))
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .foregroundColor(foreground)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(c(theme.colors.buttonBackground))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .stroke(c(theme.colors.buttonBorder), lineWidth: 1)
+            )
+    }
+
+    private var previewToast: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundColor(c(theme.colors.successColor))
+            Text("Success action preview", bundle: .module)
+                .font(primaryFont(size: captionSize))
+                .lineLimit(1)
+                .foregroundColor(c(theme.colors.primaryText))
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 32)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(c(theme.colors.cardBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(c(theme.colors.cardBorder), lineWidth: 1)
+        )
     }
 
     // MARK: - Background
