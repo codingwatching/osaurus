@@ -174,23 +174,87 @@ enum PrivacyFilterPipelineError: Error, Equatable, LocalizedError {
     /// `String(localized:)` interpolation API (the same pattern used
     /// for `privacy.preview.header %lld`).
     private static func localizedCount(_ count: Int, for category: EntityCategory) -> String {
+        let rendered: String
+        let keyPrefix: String
         switch category {
         case .phone:
-            return String(localized: "privacy.error.scrubLeaked.phone \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.phone \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.phone"
         case .email:
-            return String(localized: "privacy.error.scrubLeaked.email \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.email \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.email"
         case .url:
-            return String(localized: "privacy.error.scrubLeaked.url \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.url \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.url"
         case .accountNumber:
-            return String(localized: "privacy.error.scrubLeaked.accountNumber \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.accountNumber \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.accountNumber"
         case .address:
-            return String(localized: "privacy.error.scrubLeaked.address \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.address \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.address"
         case .person:
-            return String(localized: "privacy.error.scrubLeaked.person \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.person \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.person"
         case .date:
-            return String(localized: "privacy.error.scrubLeaked.date \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.date \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.date"
         case .secret:
-            return String(localized: "privacy.error.scrubLeaked.secret \(count)", bundle: .module)
+            rendered = String(
+                localized: "privacy.error.scrubLeaked.secret \(count)",
+                bundle: .module
+            )
+            keyPrefix = "privacy.error.scrubLeaked.secret"
+        }
+
+        if renderedLooksUnresolved(rendered, keyPrefix: keyPrefix) {
+            return "\(count) \(localizedCategoryName(for: category))"
+        }
+        return rendered
+    }
+
+    private static func renderedLooksUnresolved(_ rendered: String, keyPrefix: String) -> Bool {
+        rendered == keyPrefix || rendered.hasPrefix("\(keyPrefix) ")
+    }
+
+    private static func localizedCategoryName(for category: EntityCategory) -> String {
+        switch category {
+        case .phone:
+            return String(localized: "privacy.category.phone", bundle: .module)
+        case .email:
+            return String(localized: "privacy.category.email", bundle: .module)
+        case .url:
+            return String(localized: "privacy.category.url", bundle: .module)
+        case .accountNumber:
+            return String(localized: "privacy.category.accountNumber", bundle: .module)
+        case .address:
+            return String(localized: "privacy.category.address", bundle: .module)
+        case .person:
+            return String(localized: "privacy.category.person", bundle: .module)
+        case .date:
+            return String(localized: "privacy.category.date", bundle: .module)
+        case .secret:
+            return String(localized: "privacy.category.secret", bundle: .module)
         }
     }
 
