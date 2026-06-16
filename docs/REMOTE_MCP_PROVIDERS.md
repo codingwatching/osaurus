@@ -438,10 +438,10 @@ Existing pre-OAuth `mcp.json` files keep working unchanged; missing fields defau
 │  ┌─────────────────────────────────────────────│───────────┐    │
 │  │              MCPProviderManager              │           │    │
 │  │  ┌─────────────────────────────────────────┴────────┐   │    │
-│  │  │       Remote MCP Client (HTTP/SSE only)           │   │    │
+│  │  │       MCP Client (HTTP/SSE + stdio)                │   │    │
 │  │  │     ├── PRM/ASM Discovery                         │   │    │
 │  │  │     ├── DCR + PKCE OAuth flow                     │   │    │
-│  │  │     ├── Loopback callback server                  │   │    │
+│  │  │     ├── Local stdio subprocess runners            │   │    │
 │  │  │     └── Token refresh + 401 retry                 │   │    │
 │  │  └─────────────────────────────────────────┬────────┘   │    │
 │  └─────────────────────────────────────────────│───────────┘    │

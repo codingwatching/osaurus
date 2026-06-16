@@ -247,10 +247,12 @@ Research notes for the next local-runtime compatibility wave live in
 
 **Components:**
 
-- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model (URL, none / bearer / OAuth)
+- `Models/Configuration/MCPProviderConfiguration.swift` — Provider config model (HTTP URL or stdio command, none / bearer / OAuth)
 - `Models/Configuration/MCPProviderTemplate.swift` — Hardcoded catalog of well-known providers
-- `Managers/MCPProviderManager.swift` — HTTP/SSE connection, tool discovery, OAuth refresh & 401 retry
+- `Managers/MCPProviderManager.swift` — HTTP/SSE and stdio connection, tool discovery, OAuth refresh & 401 retry
 - `Services/MCP/MCPProviderKeychain.swift` — Secure token, refresh-token, and client-secret storage
+- `Services/MCP/Stdio/MCPStdioHostTransport.swift` — Host stdio subprocess runner with PATH / `~` command resolution
+- `Services/MCP/Stdio/SandboxStdioRunner.swift` — Sandbox stdio subprocess runner for plugin-imported local MCP servers
 - `Services/MCP/OAuth/MCPOAuthService.swift` — End-to-end OAuth sign-in orchestration
 - `Services/MCP/OAuth/MCPOAuthDiscovery.swift` — RFC 9728 PRM + RFC 8414 ASM discovery (with OIDC fallback)
 - `Services/MCP/OAuth/MCPOAuthRegistration.swift` — RFC 7591 Dynamic Client Registration
@@ -269,8 +271,8 @@ Research notes for the next local-runtime compatibility wave live in
 - Manual-credentials OAuth 2.1 + PKCE for confidential-client vendors that don't publish DCR (HubSpot's MCP Auth Apps), with a fixed-port loopback redirect URI and Keychain-stored client secret
 - API-key templates for vendors without DCR (GitHub, Atlassian, Zapier)
 - Self-hosting templates (Google Workspace) that deeplink to setup docs
-- Custom Server fallback for any URL not in the catalog
-- HTTP/SSE transport for remote providers; no third-party stdio command launching
+- Custom Server fallback for any HTTP/SSE URL or local stdio command not in the catalog
+- HTTP/SSE transport for remote providers plus local stdio command launching on host or in the sandbox
 - Automatic tool discovery on connect, with namespaced tool names (`provider_toolname`)
 - Proactive OAuth token refresh + bounded 401-retry-with-refresh
 - Configurable discovery and execution timeouts
@@ -925,7 +927,7 @@ See [docs/plugins/README.md](plugins/README.md) for the full reference.
 
 - **Unified Plugins tab** — Claude plugins render as cards mixed into the same `Installed` grid as native `PluginCard`s, distinguished by an `Imported` badge; **Skills** tab is now only for user-authored and built-in skills
 - **Marketplace + per-plugin manifest** — Reads both `.claude-plugin/marketplace.json` (legacy flat skill arrays, directory-based, external `url` / `git-subdir` shapes) and `<source>/.claude-plugin/plugin.json` (displayName, version, author, homepage, repository, license, keywords, userConfig)
-- **Five artifact families** — `SKILL.md`, `agents/*.md`, `commands/*.md`, `CLAUDE.md`, `.mcp.json` (HTTP/SSE)
+- **Five artifact families** — `SKILL.md`, `agents/*.md`, `commands/*.md`, `CLAUDE.md`, `.mcp.json` (HTTP/SSE and sandbox stdio)
 - **Plugin id grouping** — Every artifact tagged `github:<owner>/<repo>/<plugin>` so the bundle reinstalls / uninstalls atomically; manifest snapshot persisted at `~/.osaurus/claude-plugins/manifests/<safe-id>.json`
 - **Idempotent re-install + Update flow** — Card and detail view both show an Update capsule when the source's `plugin.json.version` (or marketplace / source SHA) is newer than what's installed; clicking Update calls `ClaudePluginInstaller.install(replaceExisting: true)` to re-fetch and replace the artifact set
 - **`userConfig` prompt sheet** — When `plugin.json` declares `userConfig`, an in-app sheet collects values at install. Non-sensitive values land in `~/.osaurus/claude-plugins/userconfig/<safe-id>.json`; sensitive values go to the macOS Keychain (skipped under `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1`)

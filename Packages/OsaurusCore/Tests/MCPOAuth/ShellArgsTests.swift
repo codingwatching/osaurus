@@ -132,3 +132,56 @@ final class MCPStdioTransportErrorTests: XCTestCase {
         XCTAssertFalse(MCPStdioTransportError.isCommandNotFoundMessage(description))
     }
 }
+
+#if canImport(Darwin)
+    final class MCPStdioHostRunnerPathTests: XCTestCase {
+        func testHostSearchPathAppendsCommonLocalBinFallbacks() throws {
+            let searchPath = MCPStdioHostRunner.executableSearchPathForTesting(
+                env: ["PATH": "/custom/bin:/usr/bin"]
+            )
+            let entries = searchPath.split(separator: ":").map(String.init)
+
+            XCTAssertEqual(entries.first, "/custom/bin")
+            XCTAssertTrue(entries.contains("/opt/homebrew/bin"))
+            XCTAssertTrue(entries.contains("/usr/local/bin"))
+            XCTAssertTrue(entries.contains("/usr/bin"))
+            XCTAssertEqual(entries.filter { $0 == "/usr/bin" }.count, 1)
+        }
+
+        func testHostResolverFindsExecutableOnPath() throws {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-mcp-path-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            defer { try? FileManager.default.removeItem(at: root) }
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let executable = root.appendingPathComponent("fake-mcp")
+            try "#!/bin/sh\nexit 0\n".write(to: executable, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: executable.path
+            )
+
+            let resolved = try MCPStdioHostRunner.resolveExecutablePathForTesting(
+                command: "fake-mcp",
+                env: ["PATH": root.path]
+            )
+
+            XCTAssertEqual(resolved, executable.path)
+        }
+
+        func testHostResolverExpandsUserPaths() throws {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+
+            XCTAssertEqual(
+                MCPStdioHostRunner.expandUserPathForTesting("~/bin/mcp-server"),
+                "\(home)/bin/mcp-server"
+            )
+            XCTAssertEqual(MCPStdioHostRunner.expandUserPathForTesting("~"), home)
+            XCTAssertEqual(
+                MCPStdioHostRunner.expandUserPathForTesting("/usr/local/bin/mcp-server"),
+                "/usr/local/bin/mcp-server"
+            )
+        }
+    }
+#endif

@@ -49,7 +49,7 @@
 
             let mergedEnv = Self.buildEnv(provider: provider)
             let executablePath = try Self.resolveExecutablePath(
-                command: provider.command,
+                command: Self.expandUserPath(provider.command),
                 env: mergedEnv
             )
 
@@ -65,7 +65,10 @@
             // and we surface it in the host logs (which the user can tail).
             process.standardError = FileHandle.standardError
             if let cwd = provider.workingDirectory, !cwd.isEmpty {
-                process.currentDirectoryURL = URL(fileURLWithPath: cwd)
+                process.currentDirectoryURL = URL(
+                    fileURLWithPath: Self.expandUserPath(cwd),
+                    isDirectory: true
+                )
             }
 
             self.process = process
@@ -105,7 +108,7 @@
             if command.contains("/") {
                 return command
             }
-            let searchPath = env["PATH"] ?? "/usr/bin:/bin:/usr/local/bin"
+            let searchPath = executableSearchPath(env: env)
             guard let found = resolveOnPath(command, path: searchPath) else {
                 throw MCPStdioTransportError.commandNotFound(
                     command: command,
@@ -113,6 +116,58 @@
                 )
             }
             return found
+        }
+
+        /// GUI-launched macOS apps often inherit a sparse PATH that misses
+        /// Homebrew, MacPorts, or user-local bins. Keep the user's PATH order
+        /// first, then append safe local command directories so common MCP
+        /// launchers (`npx`, `uvx`, `python`) are discoverable without forcing
+        /// users to paste absolute paths.
+        private static func executableSearchPath(env: [String: String]) -> String {
+            var entries =
+                (env["PATH"]?.isEmpty == false ? env["PATH"] : nil)?
+                .split(separator: ":", omittingEmptySubsequences: true)
+                .map(String.init)
+                ?? []
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            for fallback in [
+                "/opt/homebrew/bin",
+                "/usr/local/bin",
+                "/opt/local/bin",
+                "\(home)/.local/bin",
+                "\(home)/bin",
+                "/usr/bin",
+                "/bin",
+                "/usr/sbin",
+                "/sbin",
+            ] where !entries.contains(fallback) {
+                entries.append(fallback)
+            }
+            return entries.joined(separator: ":")
+        }
+
+        private static func expandUserPath(_ path: String) -> String {
+            guard path == "~" || path.hasPrefix("~/") else { return path }
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            if path == "~" {
+                return home
+            }
+            return home + String(path.dropFirst())
+        }
+
+        static func executableSearchPathForTesting(env: [String: String]) -> String {
+            executableSearchPath(env: env)
+        }
+
+        static func expandUserPathForTesting(_ path: String) -> String {
+            expandUserPath(path)
+        }
+
+        static func resolveExecutablePathForTesting(
+            command: String,
+            env: [String: String]
+        ) throws -> String {
+            try resolveExecutablePath(command: expandUserPath(command), env: env)
         }
 
         /// Set once a global spawn slot is held so `stop()` releases exactly
