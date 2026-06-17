@@ -578,6 +578,7 @@ public final class RemoteProviderManager: ObservableObject {
 
     /// Test seam: when set, used in place of `RemoteProviderService.fetchModels`.
     var testFetchModelsOverride: (@MainActor (RemoteProvider) async throws -> [String])?
+    var testConnectionTransportOverride: (@MainActor (URLRequest) async throws -> (Data, URLResponse))?
 
     /// Re-query `/models` for one connected provider without tearing down its
     /// service, flipping `isConnecting`, or refreshing OAuth.
@@ -769,7 +770,8 @@ public final class RemoteProviderManager: ObservableObject {
         authType: RemoteProviderAuthType,
         providerType: RemoteProviderType = .openaiLegacy,
         apiKey: String?,
-        headers: [String: String]
+        headers: [String: String],
+        manualModelIds: [String] = []
     ) async throws -> [String] {
         if authType == .openAICodexOAuth && providerType == .openAICodex {
             // testConnection runs before sign-in (no OAuth tokens exist yet), so
@@ -797,7 +799,8 @@ public final class RemoteProviderManager: ObservableObject {
             providerType: providerType,
             enabled: true,
             autoConnect: false,
-            timeout: 30
+            timeout: 30,
+            manualModelIds: manualModelIds
         )
 
         // Manually add API key to headers for test (since it's not in Keychain)
@@ -857,7 +860,12 @@ public final class RemoteProviderManager: ObservableObject {
         }
 
         do {
-            let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            let (data, response): (Data, URLResponse)
+            if let override = testConnectionTransportOverride {
+                (data, response) = try await override(request)
+            } else {
+                (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+            }
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 print("[Osaurus] Test Connection: Invalid response type")
@@ -866,14 +874,14 @@ public final class RemoteProviderManager: ObservableObject {
 
             print("[Osaurus] Test Connection: HTTP \(httpResponse.statusCode)")
 
-            if httpResponse.statusCode >= 400 {
-                let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
-                print("[Osaurus] Test Connection: Error response: \(errorMessage)")
-                throw RemoteProviderError.connectionFailed(errorMessage)
-            }
-
             // Parse models response based on provider type
             if providerType == .gemini {
+                if httpResponse.statusCode >= 400 {
+                    let errorMessage = extractErrorMessage(from: data, statusCode: httpResponse.statusCode)
+                    print("[Osaurus] Test Connection: Error response: \(errorMessage)")
+                    throw RemoteProviderError.connectionFailed(errorMessage)
+                }
+
                 let modelsResponse = try JSONDecoder().decode(GeminiModelsResponse.self, from: data)
                 let models = (modelsResponse.models ?? [])
                     .filter { model in
@@ -884,9 +892,13 @@ public final class RemoteProviderManager: ObservableObject {
                 print("[Osaurus] Test Connection (Gemini): Success - found \(models.count) models")
                 return models
             } else {
-                let modelsResponse = try JSONDecoder().decode(ModelsResponse.self, from: data)
-                print("[Osaurus] Test Connection: Success - found \(modelsResponse.data.count) models")
-                return modelsResponse.data.map { $0.id }
+                let models = try RemoteProviderService.decodeOpenAICompatibleModelsResponse(
+                    data: data,
+                    statusCode: httpResponse.statusCode,
+                    provider: tempProvider
+                )
+                print("[Osaurus] Test Connection: Success - found \(models.count) models")
+                return models
             }
         } catch let error as RemoteProviderError {
             throw error
@@ -1021,6 +1033,7 @@ public final class RemoteProviderManager: ObservableObject {
         refreshConnectedTask = nil
         osaurusRouterModelCatalog = [:]
         testFetchModelsOverride = nil
+        testConnectionTransportOverride = nil
         testIdentityExistsOverride = nil
         testRetrySleepOverride = nil
     }
