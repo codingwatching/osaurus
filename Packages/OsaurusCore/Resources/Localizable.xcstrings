@@ -4726,6 +4726,22 @@
         }
       }
     },
+    "Attention" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Achtung"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "注意"
+          }
+        }
+      }
+    },
     "Allow" : {
       "localizations" : {
         "de" : {
@@ -12767,6 +12783,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "复制"
+          }
+        }
+      }
+    },
+    "Copy diagnostics" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Diagnose kopieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "复制诊断"
           }
         }
       }
@@ -22030,6 +22062,28 @@
         }
       }
     },
+    "Global proxy: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Globaler Proxy: %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Global proxy: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "全局代理：%@"
+          }
+        }
+      }
+    },
     "Global Proxy" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -23622,6 +23676,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "忽略"
+          }
+        }
+      }
+    },
+    "Ignored - %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ignoriert - %@"
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Ignored - %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "已忽略 - %@"
           }
         }
       }
@@ -28461,6 +28537,22 @@
         }
       }
     },
+    "MCP Server Hub diagnostics" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "MCP Server Hub-Diagnose"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "MCP Server Hub 诊断"
+          }
+        }
+      }
+    },
     "MCP server health check" : {
       "localizations" : {
         "de" : {
@@ -30180,6 +30272,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "需要权限"
+          }
+        }
+      }
+    },
+    "Needs attention" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Benötigt Aufmerksamkeit"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "需要注意"
           }
         }
       }
@@ -39841,6 +39949,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "探测完成 初始化/工具列表，共找到 %lld 个工具。"
+          }
+        }
+      }
+    },
+    "Probe" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Testen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "探测"
           }
         }
       }
