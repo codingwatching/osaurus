@@ -1236,6 +1236,24 @@ public actor ModelRuntime {
             "loadContainer: local directory model=\(name, privacy: .public) path=\(localURL.path, privacy: .public)"
         )
 
+        let installedModel =
+            ModelManager.findInstalledMLXModel(named: id)
+            ?? ModelManager.findInstalledMLXModel(named: name)
+        let compatibilityReport = ModelCompatibilityDiagnostics.report(
+            modelId: id,
+            modelName: name,
+            modelTypeHint: installedModel?.modelType,
+            bundleURL: localURL,
+            externalSource: installedModel?.externalSource
+        )
+        try ModelCompatibilityDiagnostics.validateLoadAllowed(
+            compatibilityReport,
+            modelName: name
+        )
+        genLog.info(
+            "loadContainer: compatibility preflight model=\(name, privacy: .public) status=\(compatibilityReport.preflight.status.rawValue, privacy: .public) reason=\(compatibilityReport.preflight.reason.rawValue, privacy: .public)"
+        )
+
         let probe = MLXModel(id: id, name: name, description: "", downloadURL: "")
         let completeVerified = await ModelDownloadService.ensureComplete(for: probe, directory: localURL)
         if !completeVerified {

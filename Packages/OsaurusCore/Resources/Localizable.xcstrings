@@ -16988,6 +16988,22 @@
         }
       }
     },
+    "DFlash speculative decoding incomplete" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "DFlash spekulatives Decodieren unvollständig"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "DFlash推测解码不完整"
+          }
+        }
+      }
+    },
     "Diagnostic / Custom" : {
       "localizations" : {
         "de" : {
@@ -39794,6 +39810,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打印"
+          }
+        }
+      }
+    },
+    "Preflight" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Preflight"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预检"
           }
         }
       }
