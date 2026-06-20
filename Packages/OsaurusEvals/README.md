@@ -116,6 +116,103 @@ The lab exits `1` only for blocking regressions: a baseline-passing case that
 no longer passes, or a new case that fails/errors. Existing failures that stay
 red are reported as persistent failures without blocking the comparison.
 
+### Optimization loop (all-domain, cross-model)
+
+The agent-loop lab only diffs `agent_loop` rows. For the full maintainer
+pipeline — measure → scoreboard → diff vs baseline → fix → re-measure across
+*every* domain and model — use the optimization loop:
+
+```bash
+# One command: prep → run all suites per model → cross-model matrix → diff.
+make evals-loop                       # local default: foundation + qwen3-4b
+make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" \
+                BASELINE=build/evals/loop/<previous-run>   # gate vs a baseline
+```
+
+Each run lands in `build/evals/loop/<timestamp>/` (also symlinked as
+`build/evals/loop/latest`) with:
+
+- `det-<Suite>.json` — deterministic / embedder-only suites, run once.
+- `llm-<label>-<Suite>.json` — per-model LLM + sandbox suites.
+- `matrix.json` / `matrix.md` — cross-model scoreboard (domains × models,
+  `passed/scored` cells, plus a decode tok/s · TTFT · peak-RAM rollup).
+- `diff.json` / `diff.md` — when `BASELINE` is set: all-domain pass→fail /
+  fail→pass classification + decode-tps and peak-RAM movements.
+
+The underlying subcommands are usable directly:
+
+```bash
+# Cross-model scoreboard from any dir of *.json reports.
+swift run --package-path Packages/OsaurusEvals osaurus-evals matrix <reports-dir> \
+  --markdown matrix.md
+
+# All-domain before/after diff (exit 1 on blocking regressions with the flag).
+swift run --package-path Packages/OsaurusEvals osaurus-evals diff <baseline> <current> \
+  --markdown diff.md --fail-on-regression
+```
+
+`make evals-matrix DIR=…` and `make evals-diff BASELINE=… CURRENT=…` wrap these.
+
+### Recording a run (committed snapshot + history)
+
+Raw per-case reports are **not** committed — they are large, regenerate every
+run, and merge-conflict when several maintainers run evals. Only two small,
+merge-friendly artifacts live in version control (see `reports/README.md`):
+
+- `reports/SNAPSHOT.{md,json}` — the **latest** cross-model scoreboard,
+  overwritten on each recorded run.
+- `reports/history.jsonl` — an **append-only** trend log, one compact row per
+  model per run (totals + decode tok/s · TTFT · peak RAM · commit · label).
+
+```bash
+# Run the loop AND refresh the committed scoreboard + append a trend row:
+RECORD=1 LABEL="qwen tool-call fix" \
+  MODELS="foundation qwen3-4b xai/grok-4.3" make evals-loop
+
+# Then publish just the small committed files:
+git add reports/SNAPSHOT.md reports/SNAPSHOT.json reports/history.jsonl
+git commit -m "evals: record <what changed>"
+```
+
+Without `RECORD=1` nothing under version control changes (use for throwaway
+experiments). JSONL appends merge cleanly across maintainers; sort by `ts` for
+the timeline. `osaurus-evals matrix … --history <path> --label <str>` is the
+underlying primitive.
+
+### Crowdsourced model compatibility
+
+Anyone can contribute a model-compatibility result from their own Mac — the
+long tail of models/quants/hardware no single maintainer can cover. Each
+contribution is one conflict-free file under `reports/community/`; a maintainer
+folds them into `reports/COMPATIBILITY.md`. See `reports/community/README.md`.
+
+```bash
+# Contributor: run ONE model on your hardware, then PR the single file it writes.
+MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+
+# Maintainer: rebuild the leaderboard (or gate a PR's contributions).
+make evals-compat                 # reports/community/* -> COMPATIBILITY.{md,json}
+VALIDATE=1 make evals-compat      # PR gate: every contribution carries provenance
+```
+
+Every report now carries a `RunEnvironment` provenance block (chip, RAM, macOS,
+Osaurus build/commit, judge, KV regime, and a `catalogHash` that proves two runs
+graded the same case set). `osaurus-evals compat <dir> [--validate]` is the
+underlying primitive.
+
+### Per-case telemetry
+
+Model-driven rows (`agent_loop`, `capability_claims`, `computer_use_loop`,
+`capability_search`) carry an optional `telemetry` block: token-weighted
+**decode tok/s**, **TTFT ms**, first-step **prefill tok/s** (from the runtime
+stats hint), **peak physical footprint MB** (Activity-Monitor "Memory", the
+value the `AGENTS.md` RAM gate reads — sampled on a timer across the case), and
+the **KV prefix-hit delta** (before/after `ModelRuntime.batchDiagnosticsSnapshot`,
+proving prefix reuse across loop iterations). The human-readable report prints a
+`perf:` line per row and a suite-wide rollup; the matrix aggregates per model.
+Fields are nil when not measurable (remote/non-streaming runs, deterministic
+rows), so a missing metric reads as "not measured", never a zeroed regression.
+
 Startup bootstrap is domain-aware. Suites that require installed native plugins
 load them and rebuild search indices so they mirror the host app. `capability_search`
 suites initialize only the selected tool / method / skill index lanes without
@@ -392,7 +489,9 @@ This package is a **separate Swift package**. CI / Xcode builds run `swift build
 
 ## Future hooks (deliberately stubbed)
 
-- `osaurus-evals diff baseline.json current.json` — regression check against a stored baseline.
-- Per-model scoreboards under `reports/<model>/<date>.json`.
 - Auto-run on new model release (CI workflow listening for HF releases).
 - Domain growth: `Suites/ToolCalling/`, `Suites/SkillInjection/`.
+
+Implemented (see "Optimization loop" above): `osaurus-evals diff` (all-domain
+regression check), cross-model scoreboards (`osaurus-evals matrix`), and the
+one-command `make evals-loop` pipeline.

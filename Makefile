@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report
+.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-loop evals-matrix evals-diff evals-contribute evals-compat
 
 help:
 	@echo "Targets:"
@@ -30,6 +30,11 @@ help:
 	@echo "  evals-all           Run every suite under Packages/OsaurusEvals/Suites/* (MODEL=, FILTER=)"
 	@echo "  evals-all-verbose   Same as 'evals-all' plus per-case raw LLM response"
 	@echo "  evals-all-report    Same as 'evals-all' but writes per-suite JSON to EVALS_OUT_DIR (build/evals/)"
+	@echo "  evals-loop          Optimization loop: run all suites per model + scoreboard + diff (MODELS=, BASELINE=, RECORD=1 LABEL= to commit reports/SNAPSHOT+history)"
+	@echo "  evals-matrix        Cross-model scoreboard from a reports dir (DIR=, HISTORY= LABEL= to append a trend row)"
+	@echo "  evals-diff          All-domain before/after diff (BASELINE=, CURRENT=)"
+	@echo "  evals-contribute    Crowdsource: run one model on your Mac -> reports/community/<file>.json (MODEL=)"
+	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
 	@echo "  clean          Remove DerivedData build output"
@@ -238,6 +243,56 @@ evals-all-report: evals-prep
 	echo ""; \
 	echo "Wrote per-suite reports to $(EVALS_OUT_DIR)/"; \
 	exit $$rc
+
+# Optimization-loop backbone: prep → run every suite per model into a
+# timestamped dir → cross-model matrix (scoreboard) → optional diff vs a
+# saved baseline. The maintainer pipeline; see
+# scripts/evals/optimization-loop.sh for env overrides (MODELS=, BASELINE=,
+# FILTER=, STRICT=).
+#   make evals-loop
+#   make evals-loop MODELS="foundation qwen3-4b xai/grok-4.3" BASELINE=build/evals/loop/<prev>
+#   RECORD=1 LABEL="qwen fix" make evals-loop   # also refresh committed reports/SNAPSHOT + history
+evals-loop:
+	@MODELS="$(MODELS)" BASELINE="$(BASELINE)" FILTER="$(FILTER)" STRICT="$(STRICT)" \
+		RECORD="$(RECORD)" LABEL="$(LABEL)" \
+		bash scripts/evals/optimization-loop.sh
+
+# Cross-model scoreboard from an existing dir of *.json reports. Point
+# MATRIX_OUT/MATRIX_MD at reports/SNAPSHOT.{json,md} and HISTORY at
+# reports/history.jsonl to refresh the committed scoreboard by hand.
+#   make evals-matrix DIR=build/evals/loop/latest
+evals-matrix:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals matrix $(DIR) \
+		$(if $(MATRIX_OUT),--out $(MATRIX_OUT),) \
+		$(if $(MATRIX_MD),--markdown $(MATRIX_MD),) \
+		$(if $(HISTORY),--history $(HISTORY),) \
+		$(if $(LABEL),--label "$(LABEL)",)
+
+# All-domain before/after diff between two report dirs/files.
+#   make evals-diff BASELINE=build/evals/loop/<prev> CURRENT=build/evals/loop/latest
+evals-diff:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals diff $(BASELINE) $(CURRENT) \
+		$(if $(DIFF_OUT),--out $(DIFF_OUT),) \
+		$(if $(DIFF_MD),--markdown $(DIFF_MD),) \
+		$(if $(STRICT),--fail-on-regression,)
+
+# Crowdsource model compatibility: run the per-model LLM suites for ONE model on
+# your hardware and emit a single contribution file under reports/community/.
+# Export a strong judge key (e.g. XAI_API_KEY) or JUDGE_MODEL to avoid a
+# self-judged (weaker) run. See reports/community/README.md.
+#   MODEL=mlx-community/Qwen3-4B-4bit make evals-contribute
+evals-contribute:
+	@MODEL="$(MODEL)" bash scripts/evals/contribute.sh $(MODEL)
+
+# Fold every contribution under reports/community/ into the committed
+# COMPATIBILITY.{md,json} leaderboard. Run VALIDATE=1 for the PR gate (verify
+# each contribution decodes and carries provenance) without rebuilding.
+#   make evals-compat
+#   VALIDATE=1 make evals-compat
+COMPAT_DIR ?= reports/community
+evals-compat:
+	@swift run --package-path Packages/OsaurusEvals osaurus-evals compat $(COMPAT_DIR) \
+		$(if $(VALIDATE),--validate,--out reports/COMPATIBILITY.json --markdown reports/COMPATIBILITY.md)
 
 ## ── Housekeeping ─────────────────────────────────────────────────
 
