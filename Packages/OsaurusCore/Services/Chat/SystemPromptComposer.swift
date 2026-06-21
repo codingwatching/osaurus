@@ -27,10 +27,7 @@ public struct SystemPromptComposer: Sendable {
     }
 
     public func render() -> String {
-        sections
-            .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-            .joined(separator: "\n\n")
+        PromptRenderer.render(sections)
     }
 
     public func manifest() -> PromptManifest {
@@ -44,13 +41,13 @@ public struct SystemPromptComposer: Sendable {
     public mutating func appendBasePrompt(systemPrompt: String) {
         append(
             .static(
-                id: "platform",
+                id: PromptSectionID.platform,
                 label: L("Platform"),
                 content: SystemPromptTemplates.platformIdentity
             )
         )
         let effective = SystemPromptTemplates.effectivePersona(systemPrompt)
-        append(.static(id: "persona", label: L("Persona"), content: effective))
+        append(.static(id: PromptSectionID.persona, label: L("Persona"), content: effective))
     }
 
     // MARK: - Memory Assembly

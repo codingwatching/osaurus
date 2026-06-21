@@ -106,8 +106,12 @@ evidence:
 - `visibleOutput` requires non-empty visible assistant text.
 - `noParserMarkerLeak` rejects visible/runtime marker leaks such as tool-call,
   reasoning, DSML, or streaming sentinel fragments.
-- `multiTurnCoherency` and `systemPromptInjection` require explicit positive
-  probes rather than a single happy-path answer.
+- `multiTurnCoherency` requires an explicit positive follow-up probe rather
+  than a single happy-path answer.
+- `systemPromptInjection` requires both source trace evidence showing the
+  configured agent prompt reached the composed static `persona`/prefix surface
+  and a positive live model probe showing the model obeyed that prompt. Source
+  trace alone is contract coverage, not runtime proof.
 - `ramFootprint` and `cancellation` require physical-footprint and cleanup
   evidence before a RAM or cancel row can be called proven.
 - `cacheHit` applies topology-specific checks: full-attention rows need KV,
@@ -150,7 +154,8 @@ Use `scripts/live-proof/render-runtime-proof-matrix.py` to render the latest
 [`RUNTIME_VALIDATION_STANDARD.md`](RUNTIME_VALIDATION_STANDARD.md). The renderer
 also writes a read-only JSON surface for inspection workflows, and it keeps the
 #903 system-prompt-injection and #1163 Hy3/harmony schema rows `unproven` until
-real live artifacts exist.
+real live artifacts exist. A #903 row needs both the source prompt trace and the
+live probe artifact before it can move to `proven`.
 
 osaurus deliberately does not pass `GenerateParameters.maxKVSize` -- a
 global rotating cache window forced from the app layer conflicted with
