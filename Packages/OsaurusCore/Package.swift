@@ -49,6 +49,7 @@ let package = Package(
             revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
         .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
+        .package(path: "../OsaurusNetworking"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
@@ -174,6 +175,7 @@ let package = Package(
                 .product(name: "VMLXTokenizers", package: "vmlx-swift"),
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
+                .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
                 .product(name: "P256K", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),

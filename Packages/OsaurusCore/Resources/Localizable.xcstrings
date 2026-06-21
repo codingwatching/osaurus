@@ -6606,6 +6606,23 @@
         }
       }
     },
+    "Applied to new outbound sessions." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Wird auf neue ausgehende Sitzungen angewendet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "应用于新的出站会话。"
+          }
+        }
+      }
+    },
     "Applied by vmlx at local model load. Known names include: qwen3_6, dsml, minimax_m2." : {
       "localizations" : {
         "de" : {
@@ -12673,6 +12690,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "压缩（保存）"
+          }
+        }
+      }
+    },
+    "Configured" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Konfiguriert"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配置"
           }
         }
       }
@@ -28388,6 +28422,23 @@
         }
       }
     },
+    "Invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ungültig"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无效"
+          }
+        }
+      }
+    },
     "Invalid file content" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -38988,6 +39039,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已禁用出站网络"
+          }
+        }
+      }
+    },
+    "Outbound sessions use direct networking." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Ausgehende Sitzungen verwenden direkte Netzwerkverbindungen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "出站会话使用直连网络。"
           }
         }
       }
