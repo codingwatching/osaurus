@@ -57,6 +57,8 @@ struct FloatingInputCard: View {
     var isEmptyChat: Bool = false
     /// Callback to clear the current chat session (triggered by /clear command).
     var onClearChat: (() -> Void)? = nil
+    /// Callback to capture the current screen as a local chat artifact.
+    var onCaptureScreenshot: (() -> Void)?
     /// Callback when the user selects a skill slash command. Passes the skill UUID so the
     /// caller can inject that skill's instructions as one-off context for the next send.
     var onSkillSelected: ((UUID) -> Void)? = nil
@@ -117,6 +119,7 @@ struct FloatingInputCard: View {
         isCompact: Bool = false,
         isEmptyChat: Bool = false,
         onClearChat: (() -> Void)? = nil,
+        onCaptureScreenshot: (() -> Void)? = nil,
         onSkillSelected: ((UUID) -> Void)? = nil,
         pendingSkillId: Binding<UUID?> = .constant(nil),
         autoSpeakAssistant: Binding<Bool> = .constant(false),
@@ -151,6 +154,7 @@ struct FloatingInputCard: View {
         self.isCompact = isCompact
         self.isEmptyChat = isEmptyChat
         self.onClearChat = onClearChat
+        self.onCaptureScreenshot = onCaptureScreenshot
         self.onSkillSelected = onSkillSelected
         self._pendingSkillId = pendingSkillId
         self._autoSpeakAssistant = autoSpeakAssistant
@@ -1363,6 +1367,15 @@ extension FloatingInputCard {
                 object: nil,
                 userInfo: windowId.map { ["windowId": $0] }
             )
+        case "screenshot":
+            if let capture = onCaptureScreenshot {
+                capture()
+            } else {
+                ToastManager.shared.infoLocalized(
+                    "Screenshot Unavailable",
+                    message: "Pass an onCaptureScreenshot handler to enable /screenshot"
+                )
+            }
         case "help":
             ToastManager.shared.infoLocalized(
                 "Slash Commands",

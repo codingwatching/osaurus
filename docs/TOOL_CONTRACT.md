@@ -207,6 +207,12 @@ envelope's `result.text` string — downstream parsers extract `text` from
 the envelope first, then scan for markers. Prefer not to add new
 marker-based flows; treat them as legacy.
 
+The local `/screenshot` command deliberately does not add a marker flow. It
+writes the PNG directly into the chat artifact store and records it as
+chat-local artifact metadata, not as a tool call or tool result. Chat rebuilds
+the artifact card from that local metadata, so screenshot bytes, base64, and
+artifact host paths do not enter model-visible transcript history.
+
 ### `share_artifact` failure envelopes
 
 The chat-layer wrapper differentiates four failure modes for

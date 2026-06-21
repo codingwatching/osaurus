@@ -5709,18 +5709,18 @@
         }
       }
     },
-    "Allows capturing system audio for transcription. Screen content is not recorded." : {
+    "Allows capturing screenshots and system audio when you approve those features." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Erlaubt das Aufnehmen von System-Audio für Transkription. Bildschirminhalte werden nicht aufgezeichnet."
+            "value" : "Erlaubt das Aufnehmen von Screenshots und System-Audio, wenn du diese Funktionen genehmigst."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许捕获系统音频进行转录。不记录屏幕内容。"
+            "value" : "允许在你批准这些功能时捕获屏幕截图和系统音频。"
           }
         }
       }
@@ -10527,6 +10527,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "捕获失败：%@"
+          }
+        }
+      }
+    },
+    "Capture the current screen as a chat artifact" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Aktuellen Bildschirm als Chat-Artefakt erfassen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将当前屏幕捕获为聊天工件"
           }
         }
       }
@@ -51576,6 +51592,230 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "截图管理器"
+          }
+        }
+      }
+    },
+    "Screen Recording Required" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Bildschirmaufnahme erforderlich"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要屏幕录制"
+          }
+        }
+      }
+    },
+    "Grant Screen Recording in macOS Privacy & Security, then retry /screenshot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Erlaube Bildschirmaufnahme in macOS Datenschutz & Sicherheit und versuche dann /screenshot erneut."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请在 macOS 隐私与安全性中授予屏幕录制权限，然后重试 /screenshot。"
+          }
+        }
+      }
+    },
+    "Screenshot Captured" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Screenshot erfasst"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图已捕获"
+          }
+        }
+      }
+    },
+    "Added the screenshot to this chat." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Screenshot wurde diesem Chat hinzugefuegt."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已将截图添加到此聊天。"
+          }
+        }
+      }
+    },
+    "Screenshot Deferred" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Screenshot aufgeschoben"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图已延后"
+          }
+        }
+      }
+    },
+    "Stop the current response before capturing a screenshot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Stoppe die aktuelle Antwort, bevor du einen Screenshot aufnimmst."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先停止当前回复，然后再捕获截图。"
+          }
+        }
+      }
+    },
+    "Screenshot Failed" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Screenshot fehlgeschlagen"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图失败"
+          }
+        }
+      }
+    },
+    "No active chat session is available for storing the screenshot." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Keine aktive Chat-Sitzung zum Speichern des Screenshots verfuegbar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可用于存储截图的活动聊天会话。"
+          }
+        }
+      }
+    },
+    "Screenshot capture failed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Screenshot-Erfassung fehlgeschlagen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图捕获失败。"
+          }
+        }
+      }
+    },
+    "No capturable display is available." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kein erfassbares Display verfuegbar."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可捕获的显示器。"
+          }
+        }
+      }
+    },
+    "PNG encoding failed." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "PNG-Kodierung fehlgeschlagen."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "PNG 编码失败。"
+          }
+        }
+      }
+    },
+    "The screenshot was captured but could not be written." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Der Screenshot wurde erfasst, konnte aber nicht geschrieben werden."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图已捕获，但无法写入。"
+          }
+        }
+      }
+    },
+    "Screenshot Unavailable" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Screenshot nicht verfuegbar"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "截图不可用"
+          }
+        }
+      }
+    },
+    "Pass an onCaptureScreenshot handler to enable /screenshot" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Uebergib einen onCaptureScreenshot-Handler, um /screenshot zu aktivieren"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "传入 onCaptureScreenshot 处理程序以启用 /screenshot"
           }
         }
       }

@@ -1314,6 +1314,106 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Capture a screenshot from the local `/screenshot` slash command and
+    /// append it through the existing artifact-card renderer. This is a
+    /// user-initiated UI action, not a model-callable tool surface.
+    @MainActor
+    func captureScreenshotFromSlashCommand() {
+        guard !isStreaming else {
+            ToastManager.shared.infoLocalized(
+                "Screenshot Deferred",
+                message: "Stop the current response before capturing a screenshot."
+            )
+            return
+        }
+
+        if sessionId == nil {
+            sessionId = UUID()
+            createdAt = Date()
+            isDirty = true
+        }
+        guard let contextId = sessionId?.uuidString else {
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "No active chat session is available for storing the screenshot."
+            )
+            return
+        }
+
+        Task { [weak self] in
+            do {
+                let captured = try await ScreenshotCaptureService.shared.capture(
+                    options: ScreenshotCaptureOptions(
+                        contextId: contextId,
+                        description: "Screenshot captured from chat"
+                    )
+                )
+                await MainActor.run {
+                    self?.appendCapturedScreenshotArtifact(captured)
+                    ToastManager.shared.successLocalized(
+                        "Screenshot Captured",
+                        message: "Added the screenshot to this chat."
+                    )
+                }
+            } catch let error as ScreenshotCaptureError {
+                await MainActor.run {
+                    self?.showScreenshotCaptureError(error)
+                }
+            } catch {
+                await MainActor.run {
+                    _ = ToastManager.shared.errorLocalized(
+                        "Screenshot Failed",
+                        message: "Screenshot capture failed."
+                    )
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func appendCapturedScreenshotArtifact(_ captured: CapturedScreenshotArtifact) {
+        let turn = ChatTurn(
+            role: .assistant,
+            content: "",
+            sharedArtifacts: [captured.artifact]
+        )
+        turns.append(turn)
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
+    @MainActor
+    private func showScreenshotCaptureError(_ error: ScreenshotCaptureError) {
+        switch error {
+        case .missingScreenRecordingPermission:
+            ToastManager.shared.errorLocalized(
+                "Screen Recording Required",
+                message: "Grant Screen Recording in macOS Privacy & Security, then retry /screenshot."
+            )
+        case .missingSession:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "No active chat session is available for storing the screenshot."
+            )
+        case .noDisplay:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "No capturable display is available."
+            )
+        case .pngEncodingFailed:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "PNG encoding failed."
+            )
+        case .writeFailed:
+            ToastManager.shared.errorLocalized(
+                "Screenshot Failed",
+                message: "The screenshot was captured but could not be written."
+            )
+        }
+    }
+
     /// Clear the Privacy Filter `RedactionMap` for this conversation
     /// (and the chat-side highlight accumulator) without otherwise
     /// affecting the turn history, draft, or attachments. Useful when
@@ -4737,6 +4837,7 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
                                 },

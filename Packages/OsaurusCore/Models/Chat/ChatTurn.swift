@@ -173,6 +173,9 @@ final class ChatTurn: ObservableObject, Identifiable {
 
     /// File attachments (images and documents) for this turn
     @Published var attachments: [Attachment] = []
+    /// Chat-local artifacts rendered in the transcript without being sent as
+    /// model-visible tool calls.
+    @Published var sharedArtifacts: [SharedArtifact] = []
     /// Assistant-issued tool calls attached to this turn (OpenAI compatible)
     @Published var toolCalls: [ToolCall]? = nil
     /// OpenAI Responses reasoning item captured for this assistant turn: the
@@ -319,6 +322,7 @@ final class ChatTurn: ObservableObject, Identifiable {
         role: MessageRole,
         content: String,
         attachments: [Attachment] = [],
+        sharedArtifacts: [SharedArtifact] = [],
         id: UUID = UUID(),
         createdAt: Date = Date()
     ) {
@@ -331,6 +335,7 @@ final class ChatTurn: ObservableObject, Identifiable {
             self._contentLength = content.count
         }
         self.attachments = attachments
+        self.sharedArtifacts = sharedArtifacts
     }
 
     // MARK: - Computed Properties

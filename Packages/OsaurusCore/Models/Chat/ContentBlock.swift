@@ -395,6 +395,7 @@ extension ContentBlock {
             let hasVisibleContent =
                 !turn.visibleContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let hasRenderableThinking = turn.hasRenderableThinking
+            let hasSharedArtifacts = !turn.sharedArtifacts.isEmpty
 
             if hasRenderableThinking {
                 turnBlocks.append(
@@ -422,8 +423,14 @@ extension ContentBlock {
                 turnBlocks.append(contentsOf: chartBlocks)
             }
 
+            if hasSharedArtifacts {
+                for artifact in turn.sharedArtifacts {
+                    turnBlocks.append(.sharedArtifact(turnId: turn.id, artifact: artifact, position: .middle))
+                }
+            }
+
             if isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
             {
                 // During prefill (no content/thinking/tools yet), always show the typing
                 // indicator so the interface doesn't appear frozen.
@@ -445,7 +452,7 @@ extension ContentBlock {
             }
 
             if !isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil,
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil,
                 let billing = turn.routerBilling
             {
                 // The router billed this turn but it produced no visible text,
@@ -455,7 +462,7 @@ extension ContentBlock {
                     .emptyResponseNotice(turnId: turn.id, billing: billing, position: .middle)
                 )
             } else if !isStreaming && !hasVisibleContent && !hasRenderableThinking
-                && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
+                && !hasSharedArtifacts && (turn.toolCalls ?? []).isEmpty && turn.pendingToolName == nil
                 && (turn.generationTokenCount != nil || turn.generationTokensPerSecond != nil)
             {
                 turnBlocks.append(
@@ -560,7 +567,7 @@ extension ContentBlock {
             // turn in a consecutive assistant group — intermediate tool-calling turns in
             // an agent loop don't get their own footer.
             if !isStreaming && turn.role == .assistant && isLastInGroup,
-                hasVisibleContent || hasRenderableThinking || !(turn.toolCalls ?? []).isEmpty
+                hasVisibleContent || hasRenderableThinking || hasSharedArtifacts || !(turn.toolCalls ?? []).isEmpty
             {
                 turnBlocks.append(.assistantActions(turnId: turn.id, position: .last))
             }
