@@ -248,7 +248,40 @@ final class ToolRegistry: ObservableObject {
         if configChanged {
             ToolConfigurationStore.save(configuration)
         }
+
+        for tool in Self.agentChannelTools {
+            registerNativeDynamicTool(tool)
+        }
     }
+
+    private static let agentChannelTools: [OsaurusTool] = [
+        // First-party Agent Channel tools. Discord is the first executable
+        // channel driver, but the model-facing action vocabulary is shared
+        // by future Slack, Telegram, and custom JSON channel connections.
+        AgentChannelListConnectionsTool(),
+        AgentChannelDiagnosticsTool(),
+        AgentChannelListSpacesTool(),
+        AgentChannelListRoomsTool(),
+        AgentChannelReadMessagesTool(),
+        AgentChannelReadThreadTool(),
+        AgentChannelSearchMessagesTool(),
+        AgentChannelDraftMessageTool(),
+        AgentChannelSendMessageTool(),
+        AgentChannelReplyThreadTool(),
+    ]
+
+    nonisolated static let agentChannelToolNames: Set<String> = [
+        "agent_channel_list_connections",
+        "agent_channel_diagnostics",
+        "agent_channel_list_spaces",
+        "agent_channel_list_rooms",
+        "agent_channel_read_messages",
+        "agent_channel_read_thread",
+        "agent_channel_search_messages",
+        "agent_channel_draft_message",
+        "agent_channel_send_message",
+        "agent_channel_reply_thread",
+    ]
 
     /// Register a plain (non-bucketed) tool. Used by built-in registration
     /// and folder-tool installation; sandbox / MCP / plugin paths use the
@@ -342,8 +375,13 @@ final class ToolRegistry: ObservableObject {
     /// arbitrary shell commands. These names refuse with a structured
     /// envelope regardless of registration state and are hidden from
     /// `/mcp/tools` listings.
-    public nonisolated static let externallyDeniedToolNames: Set<String> = [
+    nonisolated public static let externallyDeniedToolNames: Set<String> = [
         "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        "agent_channel_list_connections", "agent_channel_diagnostics",
+        "agent_channel_list_spaces", "agent_channel_list_rooms",
+        "agent_channel_read_messages", "agent_channel_read_thread",
+        "agent_channel_search_messages", "agent_channel_draft_message",
+        "agent_channel_send_message", "agent_channel_reply_thread",
     ]
 
     /// Subset of `externallyDeniedToolNames` that an AUTHENTICATED,
@@ -383,7 +421,7 @@ final class ToolRegistry: ObservableObject {
         ToolEnvelope.failure(
             kind: .rejected,
             message:
-                "'\(tool)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app.",
+                "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
             tool: tool
         )
     }
@@ -405,7 +443,7 @@ final class ToolRegistry: ObservableObject {
                 code: 3,
                 userInfo: [
                     NSLocalizedDescriptionKey:
-                        "'\(name)' is not available to external callers. Folder write and shell tools can only run from the Osaurus app."
+                        "'\(name)' is not available to external callers. This tool can only run from the Osaurus app."
                 ]
             )
         }
@@ -806,8 +844,7 @@ final class ToolRegistry: ObservableObject {
         // marker is a leading root key, so scanning the whole string just to
         // detect it could hang the UI.
         if raw.prefix(4096).contains("\"action\":\"\(SecretPromptAction.actionKey)\""),
-            SecretPromptParser.parse(raw) != nil
-        {
+            SecretPromptParser.parse(raw) != nil {
             return raw
         }
 
@@ -1207,6 +1244,33 @@ final class ToolRegistry: ObservableObject {
 
     // MARK: - Plugin Tool Registration
 
+    /// Register a first-party native tool that should be loaded on demand
+    /// instead of joining the always-loaded built-in baseline. This is for
+    /// system-owned dynamic surfaces such as Agent Channels; plugin-owned tools
+    /// must use `registerPluginTool(_:)` so ownership diagnostics stay correct.
+    func registerNativeDynamicTool(_ tool: OsaurusTool) {
+        let firstTime =
+            toolsByName[tool.name] == nil
+            && !configuration.enabled.keys.contains(tool.name)
+        toolsByName[tool.name] = tool
+        sandboxToolNames.remove(tool.name)
+        builtInSandboxToolNames.remove(tool.name)
+        mcpToolNames.remove(tool.name)
+        pluginToolNames.remove(tool.name)
+        if firstTime {
+            setEnabled(true, for: tool.name)
+        }
+        Task {
+            await ToolIndexService.shared.onToolRegistered(
+                name: tool.name,
+                description: tool.description,
+                runtime: .native,
+                tokenCount: Self.estimateTokenCount(tool),
+                parameters: tool.parameters
+            )
+        }
+    }
+
     /// Register a tool from a native dylib plugin.
     /// Auto-enables the tool on first registration so it is immediately usable;
     /// subsequent registrations (e.g. hot-reload) preserve the user's choice.
@@ -1489,6 +1553,7 @@ final class ToolRegistry: ObservableObject {
     /// Returns the plugin or provider name that a tool belongs to, if any.
     func groupName(for toolName: String) -> String? {
         guard let tool = toolsByName[toolName] else { return nil }
+        if Self.agentChannelToolNames.contains(toolName) { return "agent_channels" }
         if let ext = tool as? ExternalTool { return ext.pluginId }
         if let mcp = tool as? MCPProviderTool { return mcp.providerName }
         if let sandbox = tool as? SandboxPluginTool { return sandbox.plugin.id }
@@ -1498,6 +1563,7 @@ final class ToolRegistry: ObservableObject {
     private func availabilityRuntimeLabel(for toolName: String, builtIn: Bool) -> String {
         if isSandboxTool(toolName) { return L("sandbox") }
         if isMCPTool(toolName) { return "mcp" }
+        if Self.agentChannelToolNames.contains(toolName) { return L("native") }
         if isPluginTool(toolName) { return L("plugin") }
         if builtIn { return L("builtin") }
         return L("native")

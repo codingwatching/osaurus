@@ -122,6 +122,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("chat-history", isDirectory: true)
     }
 
+    /// Provider-neutral Agent Channel message state.
+    public static func agentChannels() -> URL {
+        root().appendingPathComponent("agent-channels", isDirectory: true)
+    }
+
     /// Schedules directory
     public static func schedules() -> URL {
         root().appendingPathComponent("schedules", isDirectory: true)
@@ -459,6 +464,9 @@ public enum OsaurusPaths {
     public static func memoryDatabaseFile() -> URL { memory().appendingPathComponent("memory.sqlite") }
     public static func chatHistoryDatabaseFile() -> URL {
         chatHistory().appendingPathComponent("history.sqlite")
+    }
+    public static func agentChannelMessagesDatabaseFile() -> URL {
+        agentChannels().appendingPathComponent("messages.sqlite")
     }
     public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
     /// Encrypted on-device Osaurus Router billing ledger: `~/.osaurus/billing/ledger.sqlite`.
