@@ -336,6 +336,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Services/Documents/CSVAdapter.swift` — CSV and TSV table parsing with bounded input handling.
 - `Services/Documents/CSVEmitter.swift` — explicit CSV/TSV delimited-text export.
 - `Services/Documents/CSVTableWorkflowService.swift` — schema previews, bounded samples, and safe CSV/TSV conversion/export validation.
+- `Services/Documents/BusinessDocumentStudioService.swift` — one bounded inspect/preview/export orchestration layer across CSV/TSV, XLSX, PDF/PPTX, rich text, and text fallback workflows.
 - `Services/Documents/XLSXAdapter.swift` — XLSX workbook parsing from Office Open XML packages.
 - `Services/Documents/XLSXEmitter.swift` — XLSX workbook emission for round-trip workflows.
 - `Services/Documents/WorkbookWorkflowService.swift` — workbook inspection, export availability, validation issues, and explicit emitter-backed save flow.
@@ -349,6 +350,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 - CSV and TSV tables preserve headers, rows, delimiters, and source metadata. Explicit table workflow previews infer schema types from bounded samples, cap large-file reads, and validate CSV/TSV conversion/export before writing.
 - XLSX workbooks preserve sheets, cells, formulas, merged ranges, shared strings, relationships, and export availability metadata. Explicit workbook save flows validate bounds, formulas, non-finite numbers, XML-safe text, merged ranges, and emitter availability before writing a minimal valid `.xlsx` package.
+- Business Document Studio wraps registry lookup, bounded previews, export availability, safe destination containment, and text-fallback export into one service so UI, plugins, and attachment flows do not reimplement format-specific routing.
 - PPTX/POTX decks preserve slide grouping, text runs, notes, slide tables, and relationships.
 - PDFs preserve page boundaries, anchors, and simple text-layer tables so citations can point back to pages and detected table cells.
 - PDF/PPTX workflow previews expose page/slide/table/notes metadata and report missing structured emitters instead of treating text writes as valid binary output.
