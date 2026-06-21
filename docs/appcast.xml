@@ -3,6 +3,46 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.6</title>
+            <pubDate>Sun, 21 Jun 2026 01:30:04 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.6</sparkle:version>
+            <sparkle:shortVersionString>0.20.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.6/Osaurus-0.20.6.dmg" length="53098492" type="application/octet-stream" sparkle:edSignature="F6i3218NdhXmcXHc66KltH3kh2hWeXpmG9z7cl/ub5lfI+7E3l5DihPCuzqpKZlno5kGlzf2q8w8QbmuNrE2DQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add opt-in frozen screen context for chat (Computer Use) (#1610) by @tpae
+- updated chinese translations (#1607) by @ftzahao
+- Repin vmlx-swift → d35c0744: fix non-JANG Qwen3 tool-calling 'unsupported' regression (#1603) by @jjang-ai
+- Add Provider Connectivity Center (#1558) by @mimeding
+- Add local model compatibility preflight (#1572) by @mimeding
+
+## 🐛 Bug Fixes
+
+- fixed issue with memory distill failure (#1613) by @tpae
+- fixed main thread hangs (#1609) by @RaajeevChandran
+- fixed crash with computer use (#1602) by @tpae
+
+## 🧰 Maintenance
+
+- improved screen context distiller (#1618) by @tpae
+- updated themes view design (#1617) by @tpae
+- gemma 4 12b optimization loop (#1614) by @tpae
+- added additional migration hardening (#1615) by @tpae
+- Make the Default agent configuration-only in chat (#1611) by @tpae
+- Stabilize the default configuration agent and fix disappearing custom agents (#1608) by @tpae
+- evals: optimization loop backbone + W1-W6 harness and local-quality fixes (#1605) by @tpae
+- fixed issue with relay not showing errors (#1604) by @tpae
+- improved evals framework (#1601) by @tpae
+- Make at-rest storage encryption opt-in (plaintext by default, FileVault-gated migration) (#1600) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.5...0.20.6
+]]></description>
+        </item>
+        <item>
             <title>0.20.5</title>
             <pubDate>Fri, 19 Jun 2026 13:30:36 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
