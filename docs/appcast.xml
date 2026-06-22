@@ -3,6 +3,47 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.8</title>
+            <pubDate>Mon, 22 Jun 2026 23:40:42 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.8</sparkle:version>
+            <sparkle:shortVersionString>0.20.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.8/Osaurus-0.20.8.dmg" length="53917115" type="application/octet-stream" sparkle:edSignature="tRhCLoFJ08Ljx1XxTRPEVz45/4S9/L/C3L4uWVIOGWx7IYZ/GSMotj2EsCyAdKYdM64Ucr1LI7hGTrMOEBRgAw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Computer Use evidence pack (#1631) by @mimeding
+- Add Computer Use diagnostics (#1643) by @mimeding
+- Add Screen Context capture lab (#1644) by @mimeding
+- show pasted content preview in chat (#1645) by @RaajeevChandran
+- Add Agent Channel Connection Center (#1616) by @mimeding
+- updated chinese translations (#1633) by @ftzahao
+
+## 🚀 Features
+
+- Privacy filter: opt-in on-device model, no-regex rule builder, settings polish (#1641) by @tpae
+- agent db upgrade (#1640) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed app hangs (#1638) by @RaajeevChandran
+- Fix Computer Use main-thread hangs (#1634) by @tpae
+- Fix and harden remote agent (Mode 2) runs (#1636) by @tpae
+- fix /memory/ingest distillation and harden launch crashes (#1632) (#1635) by @tpae
+
+## 🧰 Maintenance
+
+- disable broken tools (#1650) by @tpae
+- updated onboarding flow (#1649) by @tpae
+- make plain-text answers the primary agent-loop exit (#1639) by @tpae
+- qol improvements (#1637) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.7...0.20.8
+]]></description>
+        </item>
+        <item>
             <title>0.20.7</title>
             <pubDate>Mon, 22 Jun 2026 01:08:21 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
