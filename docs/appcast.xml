@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.20.7</title>
+            <pubDate>Mon, 22 Jun 2026 01:08:21 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.20.7</sparkle:version>
+            <sparkle:shortVersionString>0.20.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.20.7/Osaurus-0.20.7.dmg" length="53685784" type="application/octet-stream" sparkle:edSignature="pUxOWaZkfk60O6RcFHVAoeAmC38Hl+t5MBSQVpA9hn8+OHZ3SN3xFeym7xF1XWP/0wtRJCLtlLjmOLEPl+asBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Agent Channels with Discord connection (#1606) by @mimeding
+- Add permission-gated screenshot slash command (#1570) by @mimeding
+- Add schedule automation history (#1583) by @mimeding
+- Add shared global proxy controls (#1565) by @mimeding
+- Add Business Document Studio service (#1557) by @mimeding
+- Add system prompt injection proof trace (#1527) by @mimeding
+- Repin vmlx-swift -> 643fde27: Kanana-2-30B-A3B (deepseek\_v3) support (#1622) by @jjang-ai
+- Repin vmlx-swift: L2 disk-cache orphan-row + solo seed-boundary fix (#1619) by @jjang-ai
+
+## 🚀 Features
+
+- add lossless tool-output compressor, per-task context-token telemetry, and real remote completion tokens (#1625) by @tpae
+
+## 🧰 Maintenance
+
+- improved remote agent ux (#1628) by @tpae
+- Harden Computer Use privacy, autonomy gate, and consent UX (#1627) by @tpae
+- updated computer use docs (#1626) by @tpae
+- harden remote agent security and reliability (#1623) by @tpae
+- improved screen context evals (#1620) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.6...0.20.7
+]]></description>
+        </item>
+        <item>
             <title>0.20.6</title>
             <pubDate>Sun, 21 Jun 2026 01:30:04 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
