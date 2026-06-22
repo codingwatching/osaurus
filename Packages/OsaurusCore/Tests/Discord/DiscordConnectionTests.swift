@@ -582,6 +582,261 @@ struct DiscordConnectionTests {
         }
     }
 
+    @Test func connectionManagerPersistsValidatedCustomChannel() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let manager = AgentChannelConnectionManager()
+            let connection = AgentChannelConnection(
+                id: " ops-webhook ",
+                name: " Ops Webhook ",
+                kind: .customHTTP,
+                supportedActions: [.diagnostics, .sendMessage, .sendMessage],
+                spaceAllowlist: [" ops ", "ops"],
+                writeRoomAllowlist: ["alerts"],
+                writeEnabled: true,
+                defaultReadLimit: 250,
+                secrets: [
+                    AgentChannelSecretReference(name: " bearer ", keychainId: " ops_webhook_token "),
+                ],
+                customHTTP: AgentChannelCustomHTTPConfiguration(
+                    baseURL: "https://hooks.example.test",
+                    actions: [
+                        "send_message": AgentChannelCustomHTTPAction(
+                            method: "post",
+                            path: "/rooms/{room_id}/messages",
+                            headers: [
+                                "Authorization": "Bearer ${secret:bearer}",
+                            ],
+                            bodyTemplate: #"{"text":"${content}"}"#
+                        ),
+                    ]
+                )
+            )
+
+            try manager.upsertConnection(connection)
+
+            let saved = try #require(manager.connection(id: "ops-webhook"))
+            #expect(saved.name == "Ops Webhook")
+            #expect(saved.supportedActions == [.diagnostics, .sendMessage])
+            #expect(saved.spaceAllowlist == ["ops"])
+            #expect(saved.defaultReadLimit == 100)
+            #expect(saved.secrets == [AgentChannelSecretReference(name: "bearer", keychainId: "ops_webhook_token")])
+            #expect(saved.customHTTP?.actions["send_message"]?.method == "POST")
+
+            let disk = try String(
+                contentsOf: AgentChannelConfigurationStore.configurationFileURL(),
+                encoding: .utf8
+            )
+            #expect(disk.contains("ops_webhook_token"))
+            #expect(!disk.localizedCaseInsensitiveContains("discord-bot-token"))
+        }
+    }
+
+    @Test func connectionManagerRenameRemovesOriginalConnection() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let manager = AgentChannelConnectionManager()
+            try manager.upsertConnection(
+                AgentChannelConnection(
+                    id: "ops-webhook",
+                    name: "Ops Webhook",
+                    kind: .customHTTP,
+                    supportedActions: [.diagnostics],
+                    customHTTP: AgentChannelCustomHTTPConfiguration(
+                        baseURL: "https://hooks.example.test",
+                        actions: [String: AgentChannelCustomHTTPAction]()
+                    )
+                )
+            )
+
+            try manager.upsertConnection(
+                AgentChannelConnection(
+                    id: "incident-webhook",
+                    name: "Incident Webhook",
+                    kind: .customHTTP,
+                    supportedActions: [.diagnostics],
+                    customHTTP: AgentChannelCustomHTTPConfiguration(
+                        baseURL: "https://hooks.example.test",
+                        actions: [String: AgentChannelCustomHTTPAction]()
+                    )
+                ),
+                replacingOriginalId: "ops-webhook"
+            )
+
+            let saved = manager.loadConfiguration().connections
+            #expect(saved.map(\.id) == ["incident-webhook"])
+            #expect(manager.connection(id: "ops-webhook") == nil)
+            #expect(manager.connection(id: "incident-webhook")?.name == "Incident Webhook")
+        }
+    }
+
+    @Test func connectionManagerRejectsDuplicateCreateWithoutRenameContext() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let manager = AgentChannelConnectionManager()
+            let connection = AgentChannelConnection(
+                id: "ops-webhook",
+                name: "Ops Webhook",
+                kind: .customHTTP,
+                supportedActions: [.diagnostics],
+                customHTTP: AgentChannelCustomHTTPConfiguration(
+                    baseURL: "https://hooks.example.test",
+                    actions: [String: AgentChannelCustomHTTPAction]()
+                )
+            )
+
+            try manager.upsertConnection(connection)
+
+            #expect(throws: AgentChannelConnectionManagerError.duplicateConnectionId("ops-webhook")) {
+                try manager.upsertConnection(
+                    AgentChannelConnection(
+                        id: "ops-webhook",
+                        name: "Replacement",
+                        kind: .customHTTP,
+                        supportedActions: [.diagnostics],
+                        customHTTP: AgentChannelCustomHTTPConfiguration(
+                            baseURL: "https://hooks.example.test",
+                            actions: [String: AgentChannelCustomHTTPAction]()
+                        )
+                    )
+                )
+            }
+
+            #expect(manager.connection(id: "ops-webhook")?.name == "Ops Webhook")
+        }
+    }
+
+    @Test func connectionManagerExportExcludesNativeDiscordCredentials() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let token = "discord-bot-token-super-secret"
+            try DiscordConnectionConfigurationStore.save(
+                DiscordConnectionConfiguration(
+                    configuredGuildIds: ["111111111111111111"],
+                    readableChannelIds: ["222222222222222222"],
+                    writableChannelIds: ["333333333333333333"],
+                    writeEnabled: true
+                )
+            )
+            let manager = AgentChannelConnectionManager()
+            try manager.upsertConnection(
+                AgentChannelConnection(
+                    id: "ops-webhook",
+                    name: "Ops Webhook",
+                    kind: .customHTTP,
+                    supportedActions: [.diagnostics],
+                    secrets: [
+                        AgentChannelSecretReference(name: "bearer", keychainId: "ops_webhook_token"),
+                    ],
+                    customHTTP: AgentChannelCustomHTTPConfiguration(
+                        baseURL: "https://hooks.example.test",
+                        actions: [String: AgentChannelCustomHTTPAction]()
+                    )
+                )
+            )
+
+            let exported = try String(
+                data: manager.exportConfigurationData(),
+                encoding: .utf8
+            )
+            let export = try #require(exported)
+            #expect(export.contains("ops_webhook_token"))
+            #expect(!export.contains(token))
+            #expect(!export.contains(#""name" : "bot_token""#))
+            #expect(!export.contains(#""keychainId" : "bot_token""#))
+            #expect(!export.contains("111111111111111111"))
+            #expect(!export.contains("222222222222222222"))
+        }
+    }
+
+    @Test func connectionManagerRejectsReservedIdsAndUnsafeHTTPFields() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let manager = AgentChannelConnectionManager()
+
+            #expect(throws: AgentChannelConnectionManagerError.reservedConnectionId("discord")) {
+                try manager.upsertConnection(
+                    AgentChannelConnection(
+                        id: "discord",
+                        name: "Not Native Discord",
+                        kind: .customHTTP,
+                        supportedActions: [.diagnostics],
+                        customHTTP: AgentChannelCustomHTTPConfiguration(
+                            baseURL: "https://hooks.example.test",
+                            actions: [String: AgentChannelCustomHTTPAction]()
+                        )
+                    )
+                )
+            }
+
+            #expect(throws: AgentChannelConnectionManagerError.invalidCustomHTTPHeader(
+                action: "send_message",
+                header: "Authorization"
+            )) {
+                try manager.upsertConnection(
+                    AgentChannelConnection(
+                        id: "unsafe-webhook",
+                        name: "Unsafe Webhook",
+                        kind: .customHTTP,
+                        supportedActions: [.sendMessage],
+                        customHTTP: AgentChannelCustomHTTPConfiguration(
+                            baseURL: "https://hooks.example.test",
+                            actions: [
+                                "send_message": AgentChannelCustomHTTPAction(
+                                    method: "POST",
+                                    path: "/messages",
+                                    headers: [
+                                        "Authorization": "Bearer ok\nInjected: value",
+                                    ]
+                                ),
+                            ]
+                        )
+                    )
+                )
+            }
+        }
+    }
+
+    @Test func connectionManagerImportRejectsDuplicateIds() async throws {
+        try await withIsolatedDiscordStores { _ in
+            let manager = AgentChannelConnectionManager()
+            let json = """
+            {
+              "schemaVersion": 1,
+              "connections": [
+                {
+                  "id": "ops-webhook",
+                  "name": "Ops Webhook",
+                  "kind": "custom_http",
+                  "enabled": true,
+                  "supportedActions": ["diagnostics"],
+                  "spaceAllowlist": [],
+                  "readRoomAllowlist": [],
+                  "writeRoomAllowlist": [],
+                  "writeEnabled": false,
+                  "defaultReadLimit": 50,
+                  "secrets": [],
+                  "customHTTP": { "baseURL": "https://hooks.example.test", "actions": {} }
+                },
+                {
+                  "id": "ops-webhook",
+                  "name": "Duplicate",
+                  "kind": "custom_http",
+                  "enabled": true,
+                  "supportedActions": ["diagnostics"],
+                  "spaceAllowlist": [],
+                  "readRoomAllowlist": [],
+                  "writeRoomAllowlist": [],
+                  "writeEnabled": false,
+                  "defaultReadLimit": 50,
+                  "secrets": [],
+                  "customHTTP": { "baseURL": "https://hooks.example.test", "actions": {} }
+                }
+              ]
+            }
+            """
+
+            #expect(throws: AgentChannelConnectionManagerError.duplicateConnectionId("ops-webhook")) {
+                try manager.importConfigurationData(Data(json.utf8))
+            }
+        }
+    }
+
     @Test func findRecentMessagesScansOnlyReadableChannels() async throws {
         try await withIsolatedDiscordStores { credentials in
             let fake = FakeDiscordAPIClient()

@@ -33,7 +33,7 @@ enum AgentChannelConnectionServiceError: LocalizedError, Equatable, Sendable {
 final class AgentChannelConnectionService: @unchecked Sendable {
     static let shared = AgentChannelConnectionService(discordService: .shared)
 
-    private static let discordConnectionId = "discord"
+    private static let discordConnectionId = AgentChannelConnection.nativeDiscordConnectionId
     private let discordService: DiscordConnectionService
 
     init(discordService: DiscordConnectionService) {
@@ -43,7 +43,7 @@ final class AgentChannelConnectionService: @unchecked Sendable {
     func listConnections() -> [[String: Any]] {
         var rows = [discordConnectionDictionary()]
         let customRows = AgentChannelConfigurationStore.load().connections
-            .filter { $0.id != Self.discordConnectionId }
+            .filter { $0.id.lowercased() != Self.discordConnectionId }
             .map(connectionDictionary)
         rows.append(contentsOf: customRows)
         return rows

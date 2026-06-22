@@ -142,7 +142,8 @@ private extension ManagementView {
         Binding(
             get: { stateManager.selectedTab.rawValue },
             set: { newValue in
-                if let tab = ManagementTab.resolved(from: newValue) {
+                if let tab = ManagementTab.resolved(from: newValue),
+                   ManagementTab.visibleCases.contains(tab) {
                     stateManager.selectedTab = tab
                 }
             }
@@ -166,6 +167,8 @@ private extension ManagementView {
             AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .plugins:
             PluginsView()
+        case .channels:
+            AgentsView(deeplinkAgentId: deeplinkAgentId)
         case .sandbox:
             SandboxView()
         case .tools:
@@ -211,7 +214,7 @@ private extension ManagementView {
 private extension ManagementView {
 
     var sidebarItems: [SidebarItemData] {
-        ManagementTab.allCases.map { tab in
+        ManagementTab.visibleCases.map { tab in
             tab.sidebarItem(
                 badge: badgeCount(for: tab),
                 badgeHighlight: badgeHighlight(for: tab)
@@ -234,6 +237,10 @@ private extension ManagementView {
 private extension ManagementView {
 
     func handleAppear() {
+        if !ManagementTab.visibleCases.contains(stateManager.selectedTab) {
+            stateManager.selectedTab = .agents
+        }
+
         // Delay fade-in to prevent initial layout jank
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             withAnimation(.easeOut(duration: 0.2)) {
@@ -244,6 +251,11 @@ private extension ManagementView {
     }
 
     func handleTabChange(to newTab: ManagementTab) {
+        guard ManagementTab.visibleCases.contains(newTab) else {
+            stateManager.selectedTab = .agents
+            return
+        }
+
         // Leave a trail of which screen was on-screen so a layout-engine app
         // hang (no first-party frame in the stack) can be localized to a tab.
         CrashReportingService.recordBreadcrumb(

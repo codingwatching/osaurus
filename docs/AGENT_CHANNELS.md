@@ -24,6 +24,12 @@ provider API. Discord is the first executable adapter.
 Non-secret channel definitions live in `agent-channels.json`. Secrets should be
 stored separately in Keychain and referenced by name.
 
+The connection center implementation can create, edit, delete, export, import,
+and diagnose JSON-backed channel definitions, but the management entry remains
+hidden while Agent Channels are still WIP. This keeps unfinished Discord/channel
+settings out of the normal app surface while preserving the reviewable
+configuration foundation.
+
 ```json
 {
   "schemaVersion": 1,
@@ -64,6 +70,17 @@ Custom HTTP execution is intentionally not enabled until the request templating,
 credential substitution, response mapping, and security review are implemented.
 Until then, JSON custom channels can be loaded and diagnosed, while executable
 actions are provided by native adapters such as Discord.
+
+## Connection Center Validation
+
+The connection center validates channel definitions before saving:
+
+- `discord` is reserved for the native Discord adapter.
+- Custom HTTP connections require an HTTP or HTTPS base URL.
+- Custom action names must match supported standard actions.
+- HTTP action paths must start with `/`.
+- Header/query fields and secret references reject line breaks.
+- Secret references store only `name=keychain-id` pointers, not raw credentials.
 
 ## Discord Connection
 

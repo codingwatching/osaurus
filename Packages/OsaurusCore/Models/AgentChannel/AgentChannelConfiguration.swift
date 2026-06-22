@@ -28,6 +28,13 @@ enum AgentChannelAction: String, Codable, CaseIterable, Sendable {
 struct AgentChannelSecretReference: Codable, Equatable, Sendable {
     var name: String
     var keychainId: String
+
+    var normalized: AgentChannelSecretReference {
+        AgentChannelSecretReference(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            keychainId: keychainId.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
+    }
 }
 
 struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
@@ -77,6 +84,8 @@ struct AgentChannelCustomHTTPConfiguration: Codable, Equatable, Sendable {
 }
 
 struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
+    static let nativeDiscordConnectionId = "discord"
+
     var id: String
     var name: String
     var kind: AgentChannelKind
@@ -114,7 +123,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         self.writeRoomAllowlist = Self.normalizedIds(writeRoomAllowlist)
         self.writeEnabled = writeEnabled
         self.defaultReadLimit = Self.clampReadLimit(defaultReadLimit)
-        self.secrets = secrets
+        self.secrets = secrets.map(\.normalized)
         self.customHTTP = customHTTP
     }
 
