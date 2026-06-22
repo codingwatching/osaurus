@@ -24,6 +24,7 @@ Packages/OsaurusEvals/
     ComputerUseLoop/    — E2E Computer Use over a scripted screen (LLM or scripted)
     PrefixHash/         — KV-cache prefix-hash stability
     RequestValidation/  — RequestValidator.unsupportedSamplerReason
+    ScreenContext/      — deterministic AX-text screen-context distillation (no LLM)
     Schema/             — SchemaValidator.validate pinning
     StreamingHint/      — StreamingToolHint encode/decode round-trips
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
@@ -85,6 +86,37 @@ swift run osaurus-evals run --suite Suites/CapabilitySearch --model foundation
 swift run osaurus-evals run --suite Suites/CapabilitySearch --filter browser --out report.json
 swift run osaurus-evals run --suite Suites/CapabilitySearch --bootstrap-plugins
 ```
+
+### Screen Context capture lab
+
+`ScreenContext` cases replay a frozen Accessibility-tree fixture through the
+production `ScreenContextDistiller`. This keeps the suite deterministic and
+CI-safe while still matching the live text-only screen-context path.
+
+Use `capture-screen` locally when tuning a new desktop shape:
+
+```bash
+# Capture the frontmost app into the gitignored local fixture directory.
+swift run --package-path Packages/OsaurusEvals osaurus-evals capture-screen --render
+
+# Capture a named running app.
+swift run --package-path Packages/OsaurusEvals osaurus-evals capture-screen \
+  --app Safari --out Packages/OsaurusEvals/Fixtures/ScreenContext/local/safari.json --render
+
+# Inspect a fixture without Accessibility permission.
+swift run --package-path Packages/OsaurusEvals osaurus-evals capture-screen \
+  --describe Packages/OsaurusEvals/Fixtures/ScreenContext/local/safari.json
+
+# Create a sanitized promotion candidate before hand-editing and committing.
+swift run --package-path Packages/OsaurusEvals osaurus-evals capture-screen \
+  --promote Packages/OsaurusEvals/Fixtures/ScreenContext/local/safari.json --render
+```
+
+Real captures contain local screen text and stay under
+`Packages/OsaurusEvals/Fixtures/ScreenContext/local/`, which is ignored. Only
+commit hand-reviewed synthetic or sanitized fixtures. The promotion helper keeps
+roles, geometry, actions, and focus shape, but redacts captured strings, drops
+secure-field values, removes AX paths, and rewrites element ids.
 
 For maintainer proof on agent-loop changes, use the regression lab. It runs
 selected `agent_loop` suites, writes per-suite JSON artifacts, compares the

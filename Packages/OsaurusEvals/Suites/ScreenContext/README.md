@@ -40,8 +40,14 @@ noted, so CI stays free.
 | `cursor-working-state` | a fuller Cursor working state: the (unsaved-marked) title names the active file and the bottom status bar composes a `Status:` line — git branch, problems count, language, cursor position — while the inaccessible code body stays absent |
 | `safari-article-beats-chrome` | with no focused input, the large article body leads `On screen:` ahead of nav chrome; bare version tokens dropped |
 | `chrome-webarea-article` | a browser page under an `AXWebArea`: the heading + body paragraphs surface ahead of chrome, while nav links, a single-token nav label, a leaked ARIA `true`, and a bare version token are dropped |
+| `browser-form-checkout` | a browser form with a focused text field surfaces its value, the page title, and relevant sibling form context |
 | `slack-draft-and-selection` | the active channel surfaces (`Active: channel #…`), and the focused composer's draft + selection surface for a non-editor app (text field, no viewport); messages show as on-screen content |
 | `slack-scrolled-messages` | a scrolled channel with no focused composer: the active channel surfaces from the title, the message rows inside the scroll area surface as content, while single-token sidebar chrome (Threads / Drafts) is dropped |
+| `chat-shell-compose` | a generic Slack-like Electron shell pins active-channel parsing, focused draft text, selection text, and message-row context |
+| `mail-compose-reply` | a native Mail compose window surfaces the focused message body, selected draft text, and nearby reply context |
+| `finder-selected-file` | a Finder outline/list shape preserves the selected file and useful surrounding file names while dropping sidebar chrome |
+| `terminal-system-settings-dangerous` | a Terminal/System Settings shaped desktop remains read-only screen context evidence and does not imply action-policy permission |
+| `secure-field-never-leaks` | secure text fields keep role/focus context while dropping secure values, selections, and viewport text |
 | `empty-input-minimal` | an empty focused field stays minimal — no fabricated `Viewing:` / `Selected text:` (uses an INLINE `scene`, exercising that path) |
 
 ## Fixtures (`../../Fixtures/ScreenContext/`)
@@ -64,11 +70,23 @@ Committed fixtures are hand-authored, **synthetic** trees that reproduce real AX
 - `chrome-webarea-article.json` — an `AXWebArea` page (heading + body paragraphs)
   under browser chrome (address bar, reload) + nav link/label, a leaked ARIA
   `true`, and a labeled version token (the real Chrome shape).
+- `browser-form-checkout.json` — a browser form with focused-field value, sibling
+  field labels, page heading, and call-to-action context.
 - `slack-thread.json` — a focused composer `textfield` (draft + selection) +
   message `statictext`s.
 - `slack-scrolled-messages.json` — a `scrollarea` of message `statictext` rows +
   single-token sidebar labels, with no focused composer (the scrolled-history
   shape).
+- `chat-shell-compose.json` — a generic Electron chat shell with channel title,
+  composer draft/selection, and message rows.
+- `mail-compose-reply.json` — a native Mail compose/reply shape with selected text
+  and viewport text in the focused message body.
+- `finder-selected-file.json` — a Finder outline/list shape with selected file
+  text and surrounding file rows.
+- `terminal-system-settings-dangerous.json` — a Terminal window plus System
+  Settings window metadata for read-only distillation proof.
+- `safari-secure-login.json` — a secure-field shape that proves password-like
+  values never surface in rendered screen context.
 
 ## What the distiller does with real apps (the AX reality)
 

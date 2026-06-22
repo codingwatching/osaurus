@@ -9,6 +9,8 @@
 //  eval suite replays deterministically via `FixtureCUDriver`.
 //
 //    osaurus-evals capture-screen [--app <name>] [--out <path>]
+//    osaurus-evals capture-screen --describe <fixture>
+//    osaurus-evals capture-screen --promote <local-fixture> [--out <path>]
 //
 //  Local-only: it needs Accessibility permission (granted to the terminal /
 //  binary running it) and a real desktop session, so it never runs in CI. The
@@ -38,6 +40,8 @@ extension OsaurusEvalsCLI {
         var appName: String?
         var outPath: String?
         var render = false
+        var describePath: String?
+        var promotePath: String?
 
         var i = 0
         while i < args.count {
@@ -55,6 +59,18 @@ extension OsaurusEvalsCLI {
                 }
                 outPath = args[i + 1]
                 i += 2
+            case "--describe":
+                guard i + 1 < args.count else {
+                    return failCapture("flag --describe requires a value")
+                }
+                describePath = args[i + 1]
+                i += 2
+            case "--promote":
+                guard i + 1 < args.count else {
+                    return failCapture("flag --promote requires a value")
+                }
+                promotePath = args[i + 1]
+                i += 2
             case "--render":
                 render = true
                 i += 1
@@ -64,6 +80,20 @@ extension OsaurusEvalsCLI {
             default:
                 return failCapture("unknown argument: \(arg)")
             }
+        }
+
+        if let describePath {
+            guard appName == nil, promotePath == nil, outPath == nil, !render else {
+                return failCapture("--describe cannot be combined with --app, --out, --promote, or --render")
+            }
+            return describeScreenFixture(path: describePath)
+        }
+
+        if let promotePath {
+            guard appName == nil else {
+                return failCapture("--promote reads an existing fixture and cannot be combined with --app")
+            }
+            return await promoteScreenFixture(path: promotePath, outPath: outPath, render: render)
         }
 
         let driver = NativeMacDriver()
@@ -190,18 +220,15 @@ extension OsaurusEvalsCLI {
             return failCapture("failed to write fixture: \(error.localizedDescription)")
         }
 
-        let elementCount = snapshot.elements.count
-        let focusNote = focusedContent.map { "role=\($0.role)" } ?? "none"
         print(
             """
             captured \(target.name) → \(outURL.path)
-              apps=\(apps.count) windows=\(windowsByPid.values.reduce(0) { $0 + $1.count }) \
-            elements=\(elementCount) truncated=\(snapshot.truncated) focused=\(focusNote)
             Point a screen_context case at this file (relative to \
             Packages/OsaurusEvals/Fixtures/ScreenContext/) and run:
               make evals EVALS_SUITE=Packages/OsaurusEvals/Suites/ScreenContext --verbose
             """
         )
+        printCaptureSummary(fixture.captureSummary())
 
         // `--render`: replay the just-captured fixture through the production
         // distiller and print the exact block the chat would inject. This is the
@@ -220,6 +247,138 @@ extension OsaurusEvalsCLI {
     }
 
     // MARK: - Helpers
+
+    private static func describeScreenFixture(path: String) -> Int32 {
+        do {
+            let fixture = try loadFixture(at: URL(fileURLWithPath: path))
+            printCaptureSummary(fixture.captureSummary())
+            return 0
+        } catch {
+            return failCapture("failed to describe fixture: \(error.localizedDescription)")
+        }
+    }
+
+    private static func promoteScreenFixture(
+        path: String,
+        outPath: String?,
+        render: Bool
+    ) async -> Int32 {
+        let inputURL = URL(fileURLWithPath: path)
+        do {
+            let fixture = try loadFixture(at: inputURL)
+            let candidate = fixture.sanitizedForPromotion()
+            let outURL = outPath.map { URL(fileURLWithPath: $0) }
+                ?? defaultPromotionURL(inputURL: inputURL, fixture: fixture)
+            try writeFixture(candidate.fixture, to: outURL)
+
+            print(
+                """
+                wrote sanitized promotion candidate → \(outURL.path)
+                source capture → \(inputURL.path)
+                """
+            )
+            printSanitizationReport(candidate.report)
+            printCaptureSummary(candidate.fixture.captureSummary())
+            print(
+                """
+                Review and hand-edit this candidate before committing it. The helper replaces \
+                captured text with placeholders so you can preserve AX shape without carrying \
+                private screen content into committed fixtures.
+                """
+            )
+
+            if render {
+                let distilled = await ScreenContextDistiller().capture(
+                    using: FixtureCUDriver(fixture: candidate.fixture),
+                    selfPid: Int32.max,
+                    selfBundleId: nil,
+                    preferredPid: nil
+                )
+                print("\n--- rendered sanitized block ---")
+                print(distilled.render())
+            }
+            return 0
+        } catch {
+            return failCapture("failed to promote fixture: \(error.localizedDescription)")
+        }
+    }
+
+    private static func loadFixture(at url: URL) throws -> ScreenContextFixture {
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode(ScreenContextFixture.self, from: data)
+    }
+
+    private static func writeFixture(_ fixture: ScreenContextFixture, to url: URL) throws {
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        let data = try encoder.encode(fixture)
+        try data.write(to: url)
+    }
+
+    private static func defaultPromotionURL(
+        inputURL: URL,
+        fixture: ScreenContextFixture
+    ) -> URL {
+        let stamp = Self.captureTimestamp()
+        let sourceSlug = Self.fileSlug(inputURL.deletingPathExtension().lastPathComponent)
+        let appSlug = Self.fileSlug(fixture.activeWindow?.app ?? fixture.snapshot.app)
+        return URL(fileURLWithPath: defaultCaptureDir)
+            .appendingPathComponent("sanitized-\(appSlug)-\(sourceSlug)-\(stamp).json")
+    }
+
+    private static func printCaptureSummary(_ summary: ScreenContextFixture.CaptureSummary) {
+        let focusNote: String
+        if let role = summary.focusedRole {
+            if let label = summary.focusedLabel, !label.isEmpty {
+                focusNote = "\(role) \"\(label)\""
+            } else {
+                focusNote = role
+            }
+        } else {
+            focusNote = "none"
+        }
+        let roleText =
+            summary.topRoles.isEmpty
+            ? "none"
+            : summary.topRoles.map { "\($0.role)=\($0.count)" }.joined(separator: ", ")
+        print(
+            """
+            capture summary:
+              app=\(summary.workingApp) window=\(summary.workingWindowTitle ?? "none")
+              apps=\(summary.appCount) windows=\(summary.windowCount) elements=\(summary.elementCount) \
+            textElements=\(summary.textElementCount) secureFields=\(summary.secureFieldCount) \
+            pathFields=\(summary.pathFieldCount) truncated=\(summary.truncated)
+              focused=\(focusNote)
+              topRoles=\(roleText)
+            """
+        )
+        if !summary.localOnlyReasons.isEmpty {
+            print("  localOnly:")
+            for reason in summary.localOnlyReasons {
+                print("    - \(reason)")
+            }
+        }
+    }
+
+    private static func printSanitizationReport(
+        _ report: ScreenContextFixture.PromotionSanitizationReport
+    ) {
+        print(
+            """
+            sanitization:
+              stringFieldsRedacted=\(report.stringFieldsRedacted) \
+            secureValuesDropped=\(report.secureValuesDropped) \
+            elementIDsRewritten=\(report.elementIDsRewritten)
+              pathFieldsDropped=\(report.pathFieldsDropped) \
+            windowTitlesRedacted=\(report.windowTitlesRedacted) \
+            appMetadataRedacted=\(report.appMetadataRedacted)
+            """
+        )
+    }
 
     private static func captureTimestamp() -> String {
         let formatter = DateFormatter()
@@ -253,6 +412,8 @@ extension OsaurusEvalsCLI {
 
             USAGE:
                 osaurus-evals capture-screen [--app <name>] [--out <path>] [--render]
+                osaurus-evals capture-screen --describe <fixture>
+                osaurus-evals capture-screen --promote <local-fixture> [--out <path>] [--render]
 
             FLAGS:
                 --app <name>   Capture this app (exact, then case-insensitive
@@ -264,6 +425,13 @@ extension OsaurusEvalsCLI {
                 --render       After capturing, replay the fixture through the
                                distiller and print the exact injected block (the
                                fast capture→diagnose loop).
+                --describe <fixture>
+                               Print fixture metadata and local-only risk summary.
+                               No Accessibility permission required.
+                --promote <local-fixture>
+                               Write a sanitized promotion candidate. The helper
+                               keeps geometry/roles but replaces captured text
+                               with placeholders; hand-edit before committing.
 
             REQUIRES:
                 Accessibility permission for the running process (terminal/binary),
@@ -274,6 +442,8 @@ extension OsaurusEvalsCLI {
                 osaurus-evals capture-screen
                 osaurus-evals capture-screen --app Xcode
                 osaurus-evals capture-screen --app Safari --out /tmp/safari.json
+                osaurus-evals capture-screen --describe Packages/OsaurusEvals/Fixtures/ScreenContext/local/xcode.json
+                osaurus-evals capture-screen --promote Packages/OsaurusEvals/Fixtures/ScreenContext/local/xcode.json
             """
         print(usage)
     }
