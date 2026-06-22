@@ -576,6 +576,8 @@ struct ComputerUseSettingsView: View {
                     allowlistSection
                     Divider().background(theme.cardBorder)
                     cloudVisionSection
+                    Divider().background(theme.cardBorder)
+                    ComputerUseDiagnosticsPanel(policy: policy)
                 }
                 .padding(.top, 16)
             } label: {

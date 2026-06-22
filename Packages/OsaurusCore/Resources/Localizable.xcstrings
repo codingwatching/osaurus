@@ -68840,6 +68840,174 @@
           }
         }
       }
+    },
+    "AXButton" : {
+      "shouldTranslate" : false
+    },
+    "Agent availability" : {
+      "shouldTranslate" : false
+    },
+    "Allowlist" : {
+      "shouldTranslate" : false
+    },
+    "Autonomy Gate Inspector" : {
+      "shouldTranslate" : false
+    },
+    "Ceiling contribution" : {
+      "shouldTranslate" : false
+    },
+    "Click" : {
+      "shouldTranslate" : false
+    },
+    "Dangerous-app confirm" : {
+      "shouldTranslate" : false
+    },
+    "Disposition" : {
+      "shouldTranslate" : false
+    },
+    "Double-click" : {
+      "shouldTranslate" : false
+    },
+    "Drag" : {
+      "shouldTranslate" : false
+    },
+    "Effect class" : {
+      "shouldTranslate" : false
+    },
+    "Find" : {
+      "shouldTranslate" : false
+    },
+    "For press_key" : {
+      "shouldTranslate" : false
+    },
+    "For type/set" : {
+      "shouldTranslate" : false
+    },
+    "Gate decision" : {
+      "shouldTranslate" : false
+    },
+    "Give up" : {
+      "shouldTranslate" : false
+    },
+    "Global %@ -> %@" : {
+      "shouldTranslate" : false
+    },
+    "Modifiers" : {
+      "shouldTranslate" : false
+    },
+    "No app allowlist is active." : {
+      "shouldTranslate" : false
+    },
+    "No forced-confirm app match for this preview." : {
+      "shouldTranslate" : false
+    },
+    "No matching per-app override for the preview app." : {
+      "shouldTranslate" : false
+    },
+    "No preview ceiling is applied." : {
+      "shouldTranslate" : false
+    },
+    "Not reached" : {
+      "shouldTranslate" : false
+    },
+    "Note" : {
+      "shouldTranslate" : false
+    },
+    "Observe" : {
+      "shouldTranslate" : false
+    },
+    "Open app" : {
+      "shouldTranslate" : false
+    },
+    "Optional rationale or surrounding context" : {
+      "shouldTranslate" : false
+    },
+    "Per-app contribution" : {
+      "shouldTranslate" : false
+    },
+    "Permission Doctor" : {
+      "shouldTranslate" : false
+    },
+    "Permission Doctor and autonomy gate inspector." : {
+      "shouldTranslate" : false
+    },
+    "Preparing inspection..." : {
+      "shouldTranslate" : false
+    },
+    "Press key" : {
+      "shouldTranslate" : false
+    },
+    "Preview a proposed app action against the current policy without running it." : {
+      "shouldTranslate" : false
+    },
+    "Preview app: %@. Allowed apps: %@." : {
+      "shouldTranslate" : false
+    },
+    "Preview ceiling" : {
+      "shouldTranslate" : false
+    },
+    "Read-only snapshot of the cached permission and consent state Computer Use already uses." : {
+      "shouldTranslate" : false
+    },
+    "Right-click" : {
+      "shouldTranslate" : false
+    },
+    "Role description" : {
+      "shouldTranslate" : false
+    },
+    "Scroll" : {
+      "shouldTranslate" : false
+    },
+    "Set value" : {
+      "shouldTranslate" : false
+    },
+    "Target label" : {
+      "shouldTranslate" : false
+    },
+    "Target role" : {
+      "shouldTranslate" : false
+    },
+    "Target value" : {
+      "shouldTranslate" : false
+    },
+    "The preview app matches the forced-confirm guardrail." : {
+      "shouldTranslate" : false
+    },
+    "This preview verb is handled before app allowlist gating." : {
+      "shouldTranslate" : false
+    },
+    "This preview verb is handled before autonomy gating." : {
+      "shouldTranslate" : false
+    },
+    "Typed text" : {
+      "shouldTranslate" : false
+    },
+    "Verb" : {
+      "shouldTranslate" : false
+    },
+    "Verb baseline: %@" : {
+      "shouldTranslate" : false
+    },
+    "Wait" : {
+      "shouldTranslate" : false
+    },
+    "allowlist blocks before disposition" : {
+      "shouldTranslate" : false
+    },
+    "ceiling %@ -> %@" : {
+      "shouldTranslate" : false
+    },
+    "cmd, shift" : {
+      "shouldTranslate" : false
+    },
+    "dangerous-app floor -> Ask first" : {
+      "shouldTranslate" : false
+    },
+    "per-app %@ -> %@" : {
+      "shouldTranslate" : false
+    },
+    "unknown app" : {
+      "shouldTranslate" : false
     }
   },
   "version" : "1.1"
