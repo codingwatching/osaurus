@@ -5529,7 +5529,7 @@ struct ChatView: View {
                 onConfirmEdit: confirmEditAndRegenerate,
                 onCancelEdit: cancelEditing,
                 onUserImagePreview: openUserAttachmentPreview(attachmentId:),
-                onPastedContentPreview: { pastedContentPreview = $0 },
+                onDocumentPreview: { pastedContentPreview = $0 },
                 onVisibleTopUserTurnChanged: { turnId in
                     activeMinimapTurnId = turnId
                 },
@@ -5699,7 +5699,7 @@ private struct IsolatedThreadView: View {
     let onConfirmEdit: (() -> Void)?
     let onCancelEdit: (() -> Void)?
     let onUserImagePreview: ((String) -> Void)?
-    var onPastedContentPreview: ((Attachment) -> Void)? = nil
+    var onDocumentPreview: ((Attachment) -> Void)? = nil
     var onVisibleTopUserTurnChanged: ((UUID?) -> Void)? = nil
     var scrollToTurnId: UUID? = nil
     var scrollToTurnTrigger: Int = 0
@@ -5735,7 +5735,7 @@ private struct IsolatedThreadView: View {
             onConfirmEdit: onConfirmEdit,
             onCancelEdit: onCancelEdit,
             onUserImagePreview: onUserImagePreview,
-            onPastedContentPreview: onPastedContentPreview,
+            onDocumentPreview: onDocumentPreview,
             onVisibleTopUserTurnChanged: onVisibleTopUserTurnChanged,
             scrollToTurnId: scrollToTurnId,
             scrollToTurnTrigger: scrollToTurnTrigger,
