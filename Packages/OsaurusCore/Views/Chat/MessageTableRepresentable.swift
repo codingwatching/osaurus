@@ -586,9 +586,8 @@ extension MessageTableRepresentable {
             if let row {
                 let blockId = blockIds[row]
                 heightCache.removeValue(forKey: blockId)
-                if let cell = tableView?.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView,
-                    let block = blockLookup[blockId]
-                {
+                let cell = tableView?.view(atColumn: 0, row: row, makeIfNecessary: false) as? NativeMessageCellView
+                if let cell, let block = blockLookup[blockId] {
                     configureCell(cell, with: block)
                 }
                 // let the hosting view settle before re-measuring
@@ -1217,7 +1216,9 @@ extension MessageTableRepresentable {
             else { return 44 }
 
             // return cached height if we have it
-            if let cached = heightCache[block.id] { return cached }
+            if let cached = heightCache[block.id] {
+                return cached
+            }
 
             // `expandedIds` is the sole source of truth and the thinking blocks
             // start collapsed by default and open only when the user taps
