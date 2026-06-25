@@ -113,39 +113,41 @@ public enum SettingsSearchIndex {
             title: "Factory Reset", keywords: ["reset", "wipe", "erase", "maintenance"]
         ),
 
-        // MARK: Settings (Chat)
+        // MARK: Chat (generation knobs now live in the dedicated Chat tab)
         .init(
-            id: "settings.chat.systemPrompt", tab: .settings, section: "Chat",
+            id: "settings.chat.systemPrompt", tab: .chat, section: "Chat",
             title: "System Prompt", keywords: ["persona", "instructions", "system prompt"]
         ),
         .init(
-            id: "settings.chat.temperature", tab: .settings, section: "Chat",
+            id: "settings.chat.temperature", tab: .chat, section: "Chat",
             title: "Temperature", keywords: ["randomness", "creativity", "sampling"]
         ),
         .init(
-            id: "settings.chat.maxTokens", tab: .settings, section: "Chat",
+            id: "settings.chat.maxTokens", tab: .chat, section: "Chat",
             title: "Max Tokens", keywords: ["response length", "output tokens"]
         ),
         .init(
-            id: "settings.chat.contextLength", tab: .settings, section: "Chat",
+            id: "settings.chat.contextLength", tab: .chat, section: "Chat",
             title: "Context Length", keywords: ["context window", "context"]
         ),
         .init(
-            id: "settings.chat.topP", tab: .settings, section: "Chat",
+            id: "settings.chat.topP", tab: .chat, section: "Chat",
             title: "Top P", keywords: ["nucleus sampling", "top-p"]
         ),
         .init(
-            id: "settings.chat.toolAttempts", tab: .settings, section: "Chat",
+            id: "settings.chat.toolAttempts", tab: .chat, section: "Chat",
             title: "Max Tool Attempts", keywords: ["tool calls", "agent loop", "attempts"]
         ),
 
-        // MARK: Settings (Privacy / Notifications / Legal)
+        // MARK: Settings (Notifications / Legal)
+        // Usage-analytics + crash-reporting consent now live at the top of the
+        // Privacy tab's Overview, so these route there (and glow on landing).
         .init(
-            id: "settings.privacy.usage", tab: .settings, section: "Privacy",
+            id: "settings.privacy.usage", tab: .privacy, section: "Data Collection",
             title: "Share Anonymous Usage Data", keywords: ["telemetry", "analytics", "tracking"]
         ),
         .init(
-            id: "settings.privacy.crash", tab: .settings, section: "Privacy",
+            id: "settings.privacy.crash", tab: .privacy, section: "Data Collection",
             title: "Send Crash Reports", keywords: ["crash", "diagnostics", "freeze"]
         ),
         .init(
@@ -153,7 +155,7 @@ public enum SettingsSearchIndex {
             title: "Toast Notifications", keywords: ["toast", "position", "timeout", "alerts"]
         ),
         .init(
-            id: "settings.toolPermissions", tab: .settings, section: "Tool Permissions",
+            id: "settings.toolPermissions", tab: .chat, section: "Tool Permissions",
             title: "Folder Tool Permissions",
             keywords: ["permissions", "shell", "git", "write files", "edit files"]
         ),
