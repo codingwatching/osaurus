@@ -2086,7 +2086,11 @@ final class ChatSession: ObservableObject {
         case .success(let processed):
             return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
         case .failure(let reason):
-            NSLog("[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@", toolName, String(describing: reason))
+            NSLog(
+                "[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@",
+                toolName,
+                String(describing: reason)
+            )
             return toolResult
         }
     }
@@ -3115,7 +3119,8 @@ final class ChatSession: ObservableObject {
                     if images.isEmpty {
                         turn.content = L("Image generation produced no image.")
                     } else {
-                        turn.content = images
+                        turn.content =
+                            images
                             .map { "![\(prompt)](\($0.url.absoluteString))" }
                             .joined(separator: "\n\n")
                     }
@@ -6041,7 +6046,7 @@ extension ChatView {
         guard
             let regex = try? NSRegularExpression(pattern: #"!\[[^\]]*\]\(([^)]+)\)"#)
         else { return nil }
-        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        let range = NSRange(content.startIndex ..< content.endIndex, in: content)
         guard let match = regex.firstMatch(in: content, range: range),
             match.numberOfRanges > 1,
             let urlRange = Range(match.range(at: 1), in: content)

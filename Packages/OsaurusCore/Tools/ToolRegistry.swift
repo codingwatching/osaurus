@@ -202,12 +202,11 @@ final class ToolRegistry: ObservableObject {
             SearchMemoryTool(),
             // Inline data visualization rendered as a chart card.
             RenderChartTool(),
-            // Native local image generation. Tool body enforces the separate
-            // Agent Delegation permission defaults and low-RAM unload policy.
-            LocalTextDelegateTool(),
+            // Native local image generation/editing (one `image` tool; source_paths
+            // → edit). Tool body enforces the separate Agent Delegation permission
+            // defaults and low-RAM unload policy.
             SpawnTool(),
-            NativeImageGenerateTool(),
-            NativeImageEditTool(),
+            ImageTool(),
             // Agent DB feature (spec §6). The system prompt composer
             // gates these per-agent via `Agent.settings.dbEnabled`;
             // registering them as built-ins means agents that *do*
@@ -379,12 +378,13 @@ final class ToolRegistry: ObservableObject {
             + (tool.description.count / TokenEstimator.charsPerToken)
     }
 
-    /// Get specs for specific tools by name (ignores enabled state).
+    /// Get specs for specific tools by name (ignores enabled state). The spawn /
+    /// image delegation family is never excluded here — there is no global master
+    /// switch; the base set is a superset and the per-agent narrowing happens in
+    /// `SystemPromptComposer.resolveTools` where the launching agent is known.
     func specs(forTools toolNames: [String]) -> [Tool] {
-        let delegationExcluded = agentDelegationExcludedToolNames()
-        return toolNames.compactMap { name in
-            guard !delegationExcluded.contains(name) else { return nil }
-            return toolsByName[name]?.asOpenAITool()
+        toolNames.compactMap { name in
+            toolsByName[name]?.asOpenAITool()
         }
     }
 
@@ -483,12 +483,14 @@ final class ToolRegistry: ObservableObject {
 
             // Check system permissions and prompt the user for any that are missing
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
-                from: requirements)
+                from: requirements
+            )
             for permission in missingSystemPermissions {
                 _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
             }
             let stillMissing = await SystemPermissionService.shared.missingPermissions(
-                from: requirements)
+                from: requirements
+            )
             if !stillMissing.isEmpty {
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
                 throw NSError(
@@ -1428,15 +1430,21 @@ final class ToolRegistry: ObservableObject {
         Self.folderToolNames.union(builtInSandboxToolNames)
     }
 
-    static let agentDelegationTextToolNames: Set<String> = ["local_delegate"]
-    static let agentDelegationSpawnToolNames: Set<String> = ["spawn"]
-    static let agentDelegationImageToolNames: Set<String> = ["image_generate", "image_edit"]
-    /// All agent-delegation tool names — used by the authoritative per-agent
+    /// Spawn-family tool names, DERIVED from the capability registry (the SSOT
+    /// for sub-agent tool visibility) — never hand-maintained here.
+    static var agentDelegationSpawnToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.spawn.toolNames)
+    }
+    /// Image-family tool names, derived from the capability registry.
+    static var agentDelegationImageToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.image.toolNames)
+    }
+    /// All agent-delegation tool names (spawn + image), derived from the
+    /// registry's delegation family. Used by the authoritative per-agent
     /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
-    static let agentDelegationAllToolNames: Set<String> =
-        agentDelegationTextToolNames
-        .union(agentDelegationSpawnToolNames)
-        .union(agentDelegationImageToolNames)
+    static var agentDelegationAllToolNames: Set<String> {
+        SubagentToolVisibility.delegationToolNames
+    }
 
     /// Read-only snapshot of the built-in sandbox tool names. Exposed so the
     /// composer's canonical-order helper can group them at the top of the
@@ -1483,22 +1491,14 @@ final class ToolRegistry: ObservableObject {
         if mode.usesHostFolderTools || mode.usesSandboxTools {
             excluded.formUnion(folderConflictingToolNames)
         }
-        excluded.formUnion(agentDelegationExcludedToolNames())
-        return excluded
-    }
-
-    private func agentDelegationExcludedToolNames() -> Set<String> {
-        let config = AgentDelegationConfigurationStore.snapshot()
-        var excluded: Set<String> = []
-        if !config.textDelegationToolAvailable {
-            excluded.formUnion(Self.agentDelegationTextToolNames)
-        }
-        if !config.anyAgentSpawnable {
-            excluded.formUnion(Self.agentDelegationSpawnToolNames)
-        }
-        if !config.imageDelegationActive {
-            excluded.formUnion(Self.agentDelegationImageToolNames)
-        }
+        // The spawn / image delegation family is never excluded from the base
+        // schema — there is no global master switch. The base set stays a
+        // superset; the per-agent / Default-vs-custom narrowing happens in
+        // `SystemPromptComposer.resolveTools` (and the HTTP agent-run path) via
+        // `SubagentToolVisibility`, where the launching agent is known. That is
+        // what lets a custom agent surface `spawn` even when the main-chat pool
+        // is empty. Off-by-default still holds: every agent ships with the
+        // capability disabled until opted in from its Sub-agents tab.
         return excluded
     }
 
@@ -1596,11 +1596,6 @@ final class ToolRegistry: ObservableObject {
         if dynamic, !isEnabled {
             appendReason(.disabled)
             details.append(L("globally disabled"))
-        }
-
-        if agentDelegationExcludedToolNames().contains(toolName) {
-            appendReason(.disabled)
-            details.append(L("agent delegation is disabled in Settings"))
         }
 
         if dynamic, let agentAllowedNames, !agentAllowedNames.contains(toolName) {

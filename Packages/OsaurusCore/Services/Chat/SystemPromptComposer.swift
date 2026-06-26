@@ -888,38 +888,33 @@ public struct SystemPromptComposer: Sendable {
             )
         }
 
-        // Computer Use: rendered only when the `computer_use` tool actually
-        // resolved into the schema. That gate (set in `resolveTools`) is the
-        // single authoritative `computerUseEnabled` check — custom-agent opt-in,
-        // the Default agent never reaches here — so the section can never
-        // advertise desktop automation the model can't invoke. Schema-gated
-        // like codeStyle / riskAware / agentLoopGuidance, so it is
-        // session-constant and KV-cache stable, and it surfaces as its own
-        // context-budget line so an enabled agent can see Computer Use is live.
-        if !effectiveToolsOff, resolvedNames.contains(ComputerUseTool.toolName) {
-            composer.append(
-                .static(
-                    id: "computerUse",
-                    label: L("Computer Use"),
-                    content: SystemPromptTemplates.computerUseGuidance
+        // Sub-agent capability guidance (Computer Use, Image Generation): one
+        // registry-driven loop instead of parallel hand-written blocks. Each
+        // capability's guidance is rendered only when its PRIMARY tool actually
+        // resolved into the schema — the authoritative per-agent gate already
+        // ran in `resolveTools`, so a section can never advertise a sub-agent
+        // the model can't invoke. Schema-gated like codeStyle / riskAware /
+        // agentLoopGuidance, so it stays session-constant + KV-cache stable,
+        // and the registry's stable order keeps the rendered byte sequence
+        // fixed (computerUse before imageGeneration, as before).
+        if !effectiveToolsOff {
+            for capability in SubagentCapabilityRegistry.all {
+                guard let guidance = capability.guidance,
+                    let sectionId = capability.guidanceSectionId,
+                    let labelKey = capability.guidanceLabelKey,
+                    resolvedNames.contains(capability.primaryToolName)
+                else { continue }
+                composer.append(
+                    .static(
+                        id: sectionId,
+                        label: String(
+                            localized: String.LocalizationValue(labelKey),
+                            bundle: .module
+                        ),
+                        content: guidance
+                    )
                 )
-            )
-        }
-
-        // Image generation: authoritative directive, schema-gated on the actual
-        // tool. Without it, a persona-led model (e.g. the Default "Osaurus
-        // configuration assistant") intermittently refuses image requests with
-        // "I can't generate images / I'm text-only" even though image_generate is
-        // in its schema. Only rendered when the tool resolved, so it stays
-        // KV-cache stable and never advertises a tool the model can't call.
-        if !effectiveToolsOff, resolvedNames.contains("image_generate") {
-            composer.append(
-                .static(
-                    id: "imageGeneration",
-                    label: L("Image Generation"),
-                    content: SystemPromptTemplates.imageGenerationGuidance
-                )
-            )
+            }
         }
 
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
@@ -1260,12 +1255,17 @@ public struct SystemPromptComposer: Sendable {
         }
 
         // Native image generation/editing are built-in tools, so they never
-        // show up in the dynamic-tool walk above. When the user has enabled
-        // Image Jobs, surface them as their own group so the model is told
-        // outright that it can create/edit images — otherwise the compacted
-        // baseline skeleton is the only hint and small models reach for the
-        // search tool instead.
-        if AgentDelegationConfigurationStore.snapshot().imageDelegationActive {
+        // show up in the dynamic-tool walk above. When `image` is visible for
+        // THIS agent (Default → global switch; custom → its own toggle), surface
+        // them as their own group so the model is told outright that it can
+        // create/edit images — otherwise the compacted baseline skeleton is the
+        // only hint and small models reach for the search tool instead.
+        let imageVisible = SubagentToolVisibility.imageAvailable(
+            isDefault: agentId == Agent.defaultId,
+            config: SubagentConfigurationStore.snapshot(),
+            perAgentEnabled: AgentManager.shared.effectiveCapabilities(for: agentId).imageEnabled
+        )
+        if imageVisible {
             let imageCaps =
                 ToolRegistry.shared.listTools()
                 .filter { ToolRegistry.agentDelegationImageToolNames.contains($0.name) }
@@ -1986,30 +1986,38 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
-        // Computer Use is an AUTHORITATIVE per-agent gate. Unlike the
-        // lean-by-default built-ins above (which are auto-mode-only and
-        // honour a `capabilities_load` carve-out), `computer_use` is
-        // stripped whenever the flag is off — in BOTH auto and manual mode,
-        // with no `additionalToolNames` bypass. The model can never see the
-        // tool unless the agent explicitly opted in. The Default agent is
-        // additionally excluded by the allowlist filter below, so Computer
-        // Use is a custom-agent-only capability.
-        if !snapshot.computerUseEnabled {
-            byName.removeValue(forKey: ComputerUseTool.toolName)
-        }
-
-        // Spawn / agent delegation gate. For CUSTOM agents this is an
-        // AUTHORITATIVE per-agent gate, same as Computer Use: the spawn /
-        // local_delegate / image_generate / image_edit tools are stripped unless
-        // the agent's `spawnDelegationEnabled` is on (ANDs with the global
-        // `AgentDelegationConfiguration` family gates applied in alwaysLoadedSpecs).
-        // The DEFAULT / main chat is EXEMPT here — it is governed by the global
-        // Agent Delegation switch in the default-agent surface below (the user's
-        // main chat spawns when delegation is globally on; the first actual call
-        // prompts for permission + model). So we never strip it for the default agent.
-        if snapshot.agentId != Agent.defaultId, !snapshot.spawnDelegationEnabled {
-            for name in ToolRegistry.agentDelegationAllToolNames {
-                byName.removeValue(forKey: name)
+        // Authoritative per-agent sub-agent gates, driven by ONE loop over the
+        // capability registry (no per-kind branches here) so adding a kind needs
+        // no edit to this strip. Each capability's `gate` decides the rule:
+        //   * .perAgent (computer_use): stripped whenever the agent's own flag
+        //     is off — in BOTH auto and manual mode, with no `additionalToolNames`
+        //     bypass. The Default agent is additionally excluded by the allowlist
+        //     filter below, so it stays a custom-agent-only capability.
+        //   * .delegation (spawn / image): visibility comes from the shared
+        //     `SubagentToolVisibility` resolver (master gate + Default-vs-custom
+        //     predicate: Default → global pool / image switch; custom → its own
+        //     per-agent toggle + spawnable allow-list). Computed ONCE here and
+        //     reused by the default-agent allowlist below; the HTTP agent-run
+        //     path reads the same resolver (BUG E parity guard).
+        //   * .sandboxExec (sandbox_reduce): never stripped here (gated by sandbox
+        //     registration, not the schema strip).
+        let visibleDelegation = SubagentToolVisibility.visibleDelegationToolNames(
+            agentId: snapshot.agentId,
+            snapshot: snapshot,
+            config: SubagentConfigurationStore.snapshot()
+        )
+        for capability in SubagentCapabilityRegistry.all {
+            switch capability.gate {
+            case .perAgent:
+                if capability.perAgentFlag?.enabled(in: snapshot) == false {
+                    for name in capability.toolNames { byName.removeValue(forKey: name) }
+                }
+            case .delegation:
+                for name in capability.toolNames where !visibleDelegation.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            case .sandboxExec:
+                break
             }
         }
 
@@ -2028,14 +2036,11 @@ public struct SystemPromptComposer: Sendable {
             var allowed = ToolRegistry.defaultAgentAllowedToolNames
                 .union(additionalToolNames)
             // Spawn UX: the main/default chat may call the delegation tools
-            // (image_generate / image_edit / spawn / local_delegate) when the
-            // global Agent Delegation switch is on. They survive the filter only
-            // if still in `byName` — i.e. the global family gates (applied in
-            // alwaysLoadedSpecs) allowed them. The first actual call prompts for
-            // permission + spawn-model choice.
-            if AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled {
-                allowed.formUnion(ToolRegistry.agentDelegationAllToolNames)
-            }
+            // (image / spawn) that survived the per-agent strip above — i.e. the
+            // ones `visibleDelegation` resolved on for the Default agent (spawn
+            // when its pool is non-empty, image when the global switch is on).
+            // The first actual call prompts for permission + spawn-model choice.
+            allowed.formUnion(visibleDelegation)
             byName = byName.filter { allowed.contains($0.key) }
         } else {
             for name in ToolRegistry.configureToolNames {
@@ -2064,13 +2069,13 @@ public struct SystemPromptComposer: Sendable {
 
         let resolved = canonicalToolOrder(Array(byName.values))
 
-        // Debug aid for the image-delegation tool surfacing: confirms whether
-        // `image_generate` actually reached the model's schema and what the
-        // delegation gate evaluated to at compose time.
-        let imageActive = AgentDelegationConfigurationStore.snapshot().imageDelegationActive
-        let hasImageGenerate = resolved.contains { $0.function.name == "image_generate" }
+        // Debug aid for the delegation tool surfacing: confirms whether the
+        // `spawn` / `image` tools actually reached the model's schema, per the
+        // per-agent visibility resolved above.
+        let hasSpawn = resolved.contains { $0.function.name == "spawn" }
+        let hasImage = resolved.contains { $0.function.name == "image" }
         toolResolveLog.debug(
-            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) imageDelegationActive=\(imageActive, privacy: .public) image_generate_in_schema=\(hasImageGenerate, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
+            "resolveTools agent=\(snapshot.agentId.uuidString, privacy: .public) spawn_in_schema=\(hasSpawn, privacy: .public) image_in_schema=\(hasImage, privacy: .public) toolCount=\(resolved.count, privacy: .public)"
         )
 
         return resolved

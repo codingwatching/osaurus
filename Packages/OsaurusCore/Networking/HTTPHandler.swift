@@ -2855,46 +2855,46 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             SystemPromptComposer.injectSystemContent(composed.prompt, into: &enriched.messages)
         }
         SystemPromptComposer.injectMemoryPrefix(composed.memorySection, into: &enriched.messages)
-        // Agent-run / HTTP orchestrators must get the active AgentDelegation
+        // Agent-run / HTTP orchestrators must get the active Subagent
         // tools as callable SCHEMAS too. `composeChatContext` only surfaces the
         // built-in image tools as a prompt-hint capability (not the schema), so
         // without this an agent-run orchestrator is told it can make images /
-        // delegate but `image_generate`/`image_edit`/`local_delegate`/`spawn`
-        // never reach its `<tools>` block. `specs(forTools:)` returns only the
-        // currently active ones (it applies the same delegation gating), and a
-        // name dedupe keeps composeChatContext's surface authoritative.
+        // delegate but `image`/`spawn` never reach its `<tools>` block.
         // Per-agent gate: only inject the delegation schemas when THIS agent has
-        // opted into spawn/delegation (mirrors the authoritative `resolveTools`
-        // strip). Without this, the explicit injection below would re-add the
-        // tools that the per-agent gate just stripped. `specs(forTools:)` still
-        // applies the global delegation gating on top.
+        // actually opted into spawn/image (mirrors the authoritative
+        // `resolveTools` strip). Without this, the explicit injection below would
+        // re-add tools the per-agent gate just stripped.
         // Mirror the authoritative native-chat `resolveTools` surfacing so the
-        // HTTP agent-run path and the in-app chat agree on which agents see the
-        // delegation tools: the DEFAULT agent surfaces them when the GLOBAL
-        // `agentDelegationEnabled` is on (piece #1), and a CUSTOM agent surfaces
-        // them when its per-agent `spawnDelegationEnabled` is on. Without the
-        // default-agent branch, `/agents/default/run` silently lacked
-        // image_generate/image_edit/local_delegate/spawn even with delegation
-        // globally enabled — a surface/behaviour split vs the chat UI.
-        let spawnDelegationEnabled = await MainActor.run { () -> Bool in
-            if agentUUID == Agent.defaultId {
-                return AgentDelegationConfigurationStore.snapshot().agentDelegationEnabled
-            }
-            return AgentManager.shared.effectiveCapabilities(for: agentUUID).spawnDelegationEnabled
+        // HTTP agent-run path and the in-app chat agree on which sub-agent tools
+        // an agent sees: resolve the per-agent visible delegation set through the
+        // shared `SubagentToolVisibility` resolver (the same SSOT the native
+        // `resolveTools` strip reads) — Default → main-chat pool / image switch,
+        // custom → its own per-agent toggles + spawnable allow-list. There is no
+        // global master switch; the per-agent opt-in is the only gate. Without
+        // this parity the `/agents/{id}/run` surface drifts from the chat UI
+        // (BUG E guard). The tool-name set comes from the capability registry,
+        // not a hardcoded list.
+        let visibleDelegation = await MainActor.run { () -> Set<String> in
+            let snapshot = AgentConfigSnapshot.capture(agentId: agentUUID)
+            return SubagentToolVisibility.visibleDelegationToolNames(
+                agentId: agentUUID,
+                snapshot: snapshot,
+                config: SubagentConfigurationStore.snapshot()
+            )
         }
         let delegationSpecs =
-            spawnDelegationEnabled
-            ? await MainActor.run {
-                ToolRegistry.shared.specs(forTools: [
-                    "image_generate", "image_edit", "local_delegate", "spawn",
-                ])
+            visibleDelegation.isEmpty
+            ? []
+            : await MainActor.run {
+                ToolRegistry.shared.specs(forTools: Array(visibleDelegation))
             }
-            : []
         let composedToolNames = Set(composed.tools.map(\.function.name))
         let contextToolsWithDelegation =
             composed.tools + delegationSpecs.filter { !composedToolNames.contains($0.function.name) }
         let mergedTools = await mergeAgentContextTools(
-            contextToolsWithDelegation, clientTools: request.tools)
+            contextToolsWithDelegation,
+            clientTools: request.tools
+        )
         let resolvedToolChoice: ToolChoiceOption? = {
             guard let mergedTools, !mergedTools.isEmpty else { return nil }
             return request.tool_choice ?? .auto
@@ -6083,8 +6083,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         headers.append(contentsOf: stateRef.value.corsHeaders)
         sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
         logRequest(
-            method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
-            responseStatus: Int(status.code), startTime: startTime, errorMessage: message)
+            method: "POST",
+            path: path,
+            userAgent: userAgent,
+            requestBody: requestBody,
+            responseStatus: Int(status.code),
+            startTime: startTime,
+            errorMessage: message
+        )
     }
 
     private static func jsonEscape(_ s: String) -> String {
@@ -6122,7 +6128,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Clamp a caller-supplied image dimension to the same 256–1024 / multiple-of-16
-    /// envelope the agent `image_generate`/`image_edit` tools enforce
+    /// envelope the agent `image` tool enforces
     /// (`NativeImageTools.clampedDimension`). The public REST endpoints previously
     /// passed `width`/`height` through unclamped, so an oversized request could OOM
     /// or trip the GPU watchdog on the exclusive Metal lane.
@@ -6201,7 +6207,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         guidance: m.defaultGuidance.map { Double($0) }
                     ),
                     limits: ImageLimitsDTO(
-                        min_steps: 1, max_steps: 50, size_multiple: 16,
+                        min_steps: 1,
+                        max_steps: 50,
+                        size_multiple: 16,
                         max_pixels: 1024 * 1024,
                         supported_sizes: ["512x512", "768x768", "1024x1024"]
                     ),
@@ -6209,7 +6217,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
             }
             let response = ImageModelsResponseDTO(object: "list", data: dtos)
-            let json = (try? JSONEncoder.osaurusCanonical().encode(response))
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(response))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"object":"list","data":[]}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6217,8 +6226,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
             logSelf.logRequest(
-                method: "GET", path: "/images/models", userAgent: userAgent,
-                requestBody: nil, responseBody: json, responseStatus: 200, startTime: startTime)
+                method: "GET",
+                path: "/images/models",
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: startTime
+            )
         }
     }
 
@@ -6231,27 +6246,38 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let (data, bodyString) = requestBodyData()
         guard let req = try? JSONDecoder().decode(ImageGenerationRequestDTO.self, from: data) else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
-                message: "Invalid request body", path: "/images/generations",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid request body",
+                path: "/images/generations",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         // Resolve the model: explicit request value wins; otherwise fall back to
         // the configured default (Settings → Agent Delegation), matching the
-        // agent image_generate tool.
+        // agent `image` tool.
         let trimmedModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
             let modelId =
                 (trimmedModel?.isEmpty == false ? trimmedModel : nil)
-                ?? AgentDelegationConfigurationStore.snapshot().defaultImageGenerationModelId,
+                    ?? SubagentConfigurationStore.snapshot().defaultImageGenerationModelId,
             !modelId.isEmpty
         else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
+                head: head,
+                context: context,
+                status: .badRequest,
                 message:
                     "No image model specified and no default image generation model is configured (Settings → Agent Delegation).",
                 path: "/images/generations",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
@@ -6274,9 +6300,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
-            head: head, context: context, startTime: startTime, userAgent: userAgent,
-            path: "/images/generations", requestBody: bodyString,
-            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            head: head,
+            context: context,
+            startTime: startTime,
+            userAgent: userAgent,
+            path: "/images/generations",
+            requestBody: bodyString,
+            streaming: req.stream ?? false,
+            responseFormat: req.response_format ?? "url",
             jobID: jobID
         ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
     }
@@ -6290,9 +6321,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let (data, bodyString) = requestBodyData()
         guard let req = try? JSONDecoder().decode(ImageEditRequestDTO.self, from: data) else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
-                message: "Invalid request body", path: "/images/edits",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid request body",
+                path: "/images/edits",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         // Prefer the ordered `images` list; fall back to the single `image`.
@@ -6300,35 +6337,52 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let sources = rawSources.compactMap { Self.decodeImageInput($0) }
         guard !sources.isEmpty else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
-                message: "edit requires a source image", path: "/images/edits",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "edit requires a source image",
+                path: "/images/edits",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         // No model exposes a real mask path today — reject masks up front.
         if req.mask != nil {
             sendImageError(
-                head: head, context: context, status: .notImplemented,
-                message: "mask editing is not supported by this model", path: "/images/edits",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                head: head,
+                context: context,
+                status: .notImplemented,
+                message: "mask editing is not supported by this model",
+                path: "/images/edits",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         // Resolve the model: explicit request value wins; otherwise fall back to
         // the configured default edit model (Settings → Agent Delegation),
-        // matching the agent image_edit tool.
+        // matching the agent `image` tool (edit mode).
         let trimmedEditModel = req.model?.trimmingCharacters(in: .whitespacesAndNewlines)
         guard
             let editModelId =
                 (trimmedEditModel?.isEmpty == false ? trimmedEditModel : nil)
-                ?? AgentDelegationConfigurationStore.snapshot().defaultImageEditModelId,
+                    ?? SubagentConfigurationStore.snapshot().defaultImageEditModelId,
             !editModelId.isEmpty
         else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
+                head: head,
+                context: context,
+                status: .badRequest,
                 message:
                     "No image model specified and no default image edit model is configured (Settings → Agent Delegation).",
                 path: "/images/edits",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
@@ -6348,9 +6402,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
-            head: head, context: context, startTime: startTime, userAgent: userAgent,
-            path: "/images/edits", requestBody: bodyString,
-            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            head: head,
+            context: context,
+            startTime: startTime,
+            userAgent: userAgent,
+            path: "/images/edits",
+            requestBody: bodyString,
+            streaming: req.stream ?? false,
+            responseFormat: req.response_format ?? "url",
             jobID: jobID
         ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
     }
@@ -6366,9 +6425,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let source = Self.decodeImageInput(req.image)
         else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
-                message: "Invalid request body", path: "/images/upscale",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid request body",
+                path: "/images/upscale",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         let params = ImageUpscaleParameters(
@@ -6381,9 +6446,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
         let jobID = Self.shortId(prefix: "img")
         runImageJob(
-            head: head, context: context, startTime: startTime, userAgent: userAgent,
-            path: "/images/upscale", requestBody: bodyString,
-            streaming: req.stream ?? false, responseFormat: req.response_format ?? "url",
+            head: head,
+            context: context,
+            startTime: startTime,
+            userAgent: userAgent,
+            path: "/images/upscale",
+            requestBody: bodyString,
+            streaming: req.stream ?? false,
+            responseFormat: req.response_format ?? "url",
             jobID: jobID
         ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
     }
@@ -6397,9 +6467,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let (data, bodyString) = requestBodyData()
         guard let req = try? JSONDecoder().decode(ImageCancelRequestDTO.self, from: data) else {
             sendImageError(
-                head: head, context: context, status: .badRequest,
-                message: "Invalid request body", path: "/images/cancel",
-                startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+                head: head,
+                context: context,
+                status: .badRequest,
+                message: "Invalid request body",
+                path: "/images/cancel",
+                startTime: startTime,
+                userAgent: userAgent,
+                requestBody: bodyString
+            )
             return
         }
         let cors = stateRef.value.corsHeaders
@@ -6416,8 +6492,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
             logSelf.logRequest(
-                method: "POST", path: "/images/cancel", userAgent: userAgent,
-                requestBody: bodyString, responseBody: json, responseStatus: 200, startTime: startTime)
+                method: "POST",
+                path: "/images/cancel",
+                userAgent: userAgent,
+                requestBody: bodyString,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: startTime
+            )
         }
     }
 
@@ -6448,7 +6530,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
             hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
             func emit(_ event: ImageStreamEventDTO) {
-                let json = (try? JSONEncoder.osaurusCanonical().encode(event))
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(event))
                     .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
                 hop { writer.value.writeRawJSONData(json, context: ctx.value) }
             }
@@ -6461,10 +6544,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         case .loadingModel(let model):
                             emit(ImageStreamEventDTO(type: "loading_model", job_id: jobID, model: model))
                         case .step(let step, let total, let eta):
-                            emit(ImageStreamEventDTO(
-                                type: "step", job_id: jobID, step: step, total: total,
-                                progress: total > 0 ? Double(step) / Double(total) : nil,
-                                eta_seconds: eta))
+                            emit(
+                                ImageStreamEventDTO(
+                                    type: "step",
+                                    job_id: jobID,
+                                    step: step,
+                                    total: total,
+                                    progress: total > 0 ? Double(step) / Double(total) : nil,
+                                    eta_seconds: eta
+                                )
+                            )
                         case .preview(let pngData, let step):
                             let uri = "data:image/png;base64," + pngData.base64EncodedString()
                             emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
@@ -6478,21 +6567,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 } catch {
-                    emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: String(describing: error), hf_auth: false))
+                    emit(
+                        ImageStreamEventDTO(
+                            type: "error",
+                            job_id: jobID,
+                            message: String(describing: error),
+                            hf_auth: false
+                        )
+                    )
                 }
                 hop { writer.value.writeEnd(ctx.value) }
                 logSelf.logRequest(
-                    method: "POST", path: path, userAgent: userAgent,
-                    requestBody: requestBody, responseBody: "[stream]", responseStatus: 200, startTime: startTime)
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: requestBody,
+                    responseBody: "[stream]",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
             }
             return
         }
 
         // Non-streaming: collect to a single response.
         runImageNonStreaming(
-            head: head, ctx: ctx, hop: hop, cors: cors, logSelf: logSelf,
-            startTime: startTime, userAgent: userAgent, path: path, requestBody: requestBody,
-            responseFormat: responseFormat, build: build)
+            head: head,
+            ctx: ctx,
+            hop: hop,
+            cors: cors,
+            logSelf: logSelf,
+            startTime: startTime,
+            userAgent: userAgent,
+            path: path,
+            requestBody: requestBody,
+            responseFormat: responseFormat,
+            build: build
+        )
     }
 
     private func runImageNonStreaming(
@@ -6526,21 +6637,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             if let failure {
                 let status = Self.imageErrorStatus(message: failure.message, hfAuth: failure.hfAuth)
-                let body = #"{"error":{"message":"\#(Self.jsonEscape(failure.message))","type":"invalid_request_error"}}"#
+                let body =
+                    #"{"error":{"message":"\#(Self.jsonEscape(failure.message))","type":"invalid_request_error"}}"#
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
-                    self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: body)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: status,
+                        headers: headers,
+                        body: body
+                    )
                 }
                 logSelf.logRequest(
-                    method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
-                    responseStatus: Int(status.code), startTime: startTime, errorMessage: failure.message)
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: requestBody,
+                    responseStatus: Int(status.code),
+                    startTime: startTime,
+                    errorMessage: failure.message
+                )
                 return
             }
 
             let results = produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
             let response = ImagesResponseDTO(created: Int(Date().timeIntervalSince1970), data: results)
-            let json = (try? JSONEncoder.osaurusCanonical().encode(response))
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(response))
                 .map { String(decoding: $0, as: UTF8.self) } ?? #"{"created":0,"data":[]}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6548,8 +6673,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
             logSelf.logRequest(
-                method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
-                responseBody: json, responseStatus: 200, startTime: startTime)
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: requestBody,
+                responseBody: json,
+                responseStatus: 200,
+                startTime: startTime
+            )
         }
     }
 

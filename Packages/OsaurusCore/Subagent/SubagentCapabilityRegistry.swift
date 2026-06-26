@@ -1,0 +1,393 @@
+//
+//  SubagentCapabilityRegistry.swift
+//  OsaurusCore — Subagent framework
+//
+//  One per-agent capability registry for the nested sub-agent family. Each
+//  capability declares its gate, the tool name(s) it gates, and the
+//  system-prompt guidance to inject when the capability is live. Both the
+//  native `SystemPromptComposer` and the HTTP `enrichWithAgentContext` path
+//  consume `SubagentToolVisibility` so the two surfaces can never drift on
+//  which sub-agent tools an agent sees (the standing BUG E regression guard).
+//
+//  Replaces the parallel hand-written `computerUseEnabled` / `spawnDelegationEnabled`
+//  gate blocks + guidance sections in the composer and the hardcoded
+//  `["image_generate","image_edit","local_delegate","spawn"]` list in the HTTP
+//  path.
+//
+
+import Foundation
+
+/// The single per-kind descriptor (SSOT) for one nested sub-agent capability.
+///
+/// Every sub-agent surface reads this one value: the `resolveTools` strip + the
+/// `ToolRegistry` family gate (`gate`), the AgentsView per-agent toggle
+/// (`perAgentFlag`), the live-feed header + tool chip (`displayLabel` /
+/// `iconName`), and the system-prompt guidance loop (`guidance*`). It is also
+/// the value each `SubagentKind` advertises as its `capability`, so the kind and
+/// the registry entry are literally one object — adding a kind is "add one
+/// descriptor + its kind + its thin tool".
+public struct SubagentCapability: Sendable {
+    /// How a kind sources the model it runs — the local-vs-remote axis a future
+    /// dedicated model-backed kind (e.g. an AppleScript generator) slots into.
+    /// Documents whether a kind needs its own default-model picker + residency
+    /// handoff (`dedicatedConfigured` / `persona`) or simply reuses the parent
+    /// agent's model (`inheritsParent`).
+    public enum ModelSource: Sendable, Equatable {
+        /// A dedicated, separately-configured model (image: gen / edit defaults;
+        /// coordinator owns residency).
+        case dedicatedConfigured
+        /// The chosen persona's model (spawn) — local or remote; the kind runs
+        /// the residency handoff when it clashes with a resident chat model.
+        case persona
+        /// The parent agent's own model (computer_use, sandbox_reduce) — no
+        /// residency change.
+        case inheritsParent
+    }
+
+    /// The per-agent on/off field a capability binds to (the `AgentSettings` /
+    /// `AgentConfigSnapshot` flag). Concentrates the "which flag" mapping in one
+    /// place so the `resolveTools` strip and the AgentsView editor both read /
+    /// write through the descriptor instead of hardcoding field names.
+    public enum PerAgentFlag: Sendable, Hashable {
+        case computerUse
+        case spawn
+        case image
+
+        /// The resolved per-agent flag for the `resolveTools` strip.
+        public func enabled(in snapshot: AgentConfigSnapshot) -> Bool {
+            switch self {
+            case .computerUse: return snapshot.computerUseEnabled
+            case .spawn: return snapshot.spawnDelegationEnabled
+            case .image: return snapshot.imageEnabled
+            }
+        }
+
+        /// The stored per-agent flag, for hydrating the AgentsView editor.
+        public func read(from settings: AgentSettings) -> Bool {
+            switch self {
+            case .computerUse: return settings.computerUseEnabled
+            case .spawn: return settings.spawnDelegationEnabled
+            case .image: return settings.imageEnabled
+            }
+        }
+
+        /// Write the per-agent flag back when saving the AgentsView editor.
+        public func write(_ value: Bool, into settings: inout AgentSettings) {
+            switch self {
+            case .computerUse: settings.computerUseEnabled = value
+            case .spawn: settings.spawnDelegationEnabled = value
+            case .image: settings.imageEnabled = value
+            }
+        }
+    }
+
+    /// How this capability is gated.
+    public enum Gate: Sendable {
+        /// Authoritative per-agent flag, stripped in BOTH auto + manual mode
+        /// (computer_use). The Default agent never enables it.
+        case perAgent
+        /// The spawn / image delegation family. There is no global master
+        /// switch — visibility is resolved per agent by `SubagentToolVisibility`
+        /// (Default / main chat → its own pool / image switch; custom → its own
+        /// per-agent toggle + allow-list). The base schema always carries the
+        /// family (superset); the per-agent narrowing happens where the agent
+        /// context is known. Off-by-default holds because every agent ships with
+        /// the capability disabled until opted in from its Sub-agents tab.
+        case delegation
+        /// Sandbox-scoped (sandbox_reduce): gated by sandbox registration +
+        /// execution mode, NOT stripped in `resolveTools` and not surfaced as a
+        /// per-agent / delegation toggle.
+        case sandboxExec
+    }
+
+    /// Stable id (`"computer_use"`, `"spawn"`, `"image"`, `"sandbox_reduce"`).
+    public let id: String
+    /// Tool names this capability gates. `toolNames.first` is the primary tool
+    /// whose presence in the resolved schema triggers the guidance section.
+    public let toolNames: [String]
+    public let gate: Gate
+    /// The per-agent flag this capability's toggle binds to. `nil` for
+    /// `sandboxExec` capabilities (no per-agent toggle).
+    public let perAgentFlag: PerAgentFlag?
+    /// How this kind gets its model (drives docs + the future model-pick axis).
+    public let modelSource: ModelSource
+    /// Human label for the live-feed header + collapsed tool chip.
+    public let displayLabel: String
+    /// SF Symbol for the live feed + tool chip.
+    public let iconName: String
+    /// System-prompt guidance injected when the primary tool resolves.
+    public let guidance: String?
+    /// Stable composer section id (KV-cache identity) for the guidance block.
+    public let guidanceSectionId: String?
+    /// Localization key for the guidance section label.
+    public let guidanceLabelKey: String?
+
+    public var primaryToolName: String { toolNames.first ?? id }
+
+    public init(
+        id: String,
+        toolNames: [String],
+        gate: Gate,
+        perAgentFlag: PerAgentFlag? = nil,
+        modelSource: ModelSource = .inheritsParent,
+        displayLabel: String? = nil,
+        iconName: String = "sparkles",
+        guidance: String? = nil,
+        guidanceSectionId: String? = nil,
+        guidanceLabelKey: String? = nil
+    ) {
+        self.id = id
+        self.toolNames = toolNames
+        self.gate = gate
+        self.perAgentFlag = perAgentFlag
+        self.modelSource = modelSource
+        self.displayLabel = displayLabel ?? id
+        self.iconName = iconName
+        self.guidance = guidance
+        self.guidanceSectionId = guidanceSectionId
+        self.guidanceLabelKey = guidanceLabelKey
+    }
+}
+
+/// The registry of sub-agent capabilities, in a stable order (so the guidance
+/// sections render in a KV-cache-stable sequence). Each `SubagentKind` exposes
+/// its matching entry here as its `capability`, so this is the one place a
+/// surface needs to read to gate, render, or describe any sub-agent.
+public enum SubagentCapabilityRegistry {
+    public static let computerUse = SubagentCapability(
+        id: "computer_use",
+        toolNames: [ComputerUseTool.toolName],
+        gate: .perAgent,
+        perAgentFlag: .computerUse,
+        modelSource: .inheritsParent,
+        displayLabel: "Computer Use",
+        iconName: "cursorarrow.rays",
+        guidance: SystemPromptTemplates.computerUseGuidance,
+        guidanceSectionId: "computerUse",
+        guidanceLabelKey: "Computer Use"
+    )
+
+    /// The text-spawn family — just `spawn` now that `local_delegate` is gone.
+    /// No guidance section today. Names are declared here as the SSOT (the
+    /// registry is authoritative for sub-agent tool visibility); `ToolRegistry`'s
+    /// derived sets read these for its internal gating.
+    public static let spawn = SubagentCapability(
+        id: "spawn",
+        toolNames: ["spawn"],
+        gate: .delegation,
+        perAgentFlag: .spawn,
+        modelSource: .persona,
+        displayLabel: "Subagent",
+        iconName: "person.2.fill"
+    )
+
+    /// The image family — one `image` tool that both generates and edits
+    /// (`source_paths` → edit). The guidance renders when `image` resolves.
+    public static let image = SubagentCapability(
+        id: "image",
+        toolNames: ["image"],
+        gate: .delegation,
+        perAgentFlag: .image,
+        modelSource: .dedicatedConfigured,
+        displayLabel: "Image",
+        iconName: "photo",
+        guidance: SystemPromptTemplates.imageGenerationGuidance,
+        guidanceSectionId: "imageGeneration",
+        guidanceLabelKey: "Image Generation"
+    )
+
+    /// The reduction family — `sandbox_reduce` runs a read/search/exec-only
+    /// child loop inside the sandbox and hands back only a digest. Gated by
+    /// sandbox registration (NOT a per-agent / delegation toggle), so it never
+    /// strips in `resolveTools`; represented here for display + guidance + tests.
+    public static let sandboxReduce = SubagentCapability(
+        id: "sandbox_reduce",
+        toolNames: ["sandbox_reduce"],
+        gate: .sandboxExec,
+        modelSource: .inheritsParent,
+        displayLabel: "Investigation",
+        iconName: "doc.text.magnifyingglass"
+    )
+
+    /// Every capability, in guidance-render order (computer_use, then image;
+    /// spawn / sandbox_reduce have no guidance and are skipped at render time).
+    public static let all: [SubagentCapability] = [computerUse, spawn, image, sandboxReduce]
+
+    /// The delegation-gated capabilities (spawn + image).
+    public static let delegationFamily: [SubagentCapability] = [spawn, image]
+
+    /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
+    /// image). One entry per *toggle* (deduped, so a future kind that shares a
+    /// flag would collapse) — the AgentsView Sub-agents tab renders exactly one
+    /// card per flag, driven by the registry instead of hand-built groups.
+    public static var perAgentToggleFlags: [SubagentCapability.PerAgentFlag] {
+        var seen = Set<SubagentCapability.PerAgentFlag>()
+        var ordered: [SubagentCapability.PerAgentFlag] = []
+        for capability in all {
+            guard let flag = capability.perAgentFlag else { continue }
+            if seen.insert(flag).inserted { ordered.append(flag) }
+        }
+        return ordered
+    }
+
+    /// The descriptor for a kind id (`SubagentFeed.kindId` / `capability.id`).
+    public static func capability(forKindId id: String) -> SubagentCapability? {
+        all.first { $0.id == id }
+    }
+
+    /// The descriptor that gates a given tool name.
+    public static func capability(forToolName name: String) -> SubagentCapability? {
+        all.first { $0.toolNames.contains(name) }
+    }
+
+    /// Feed-header / tool-chip label for a kind id.
+    public static func displayLabel(forKindId id: String) -> String? {
+        capability(forKindId: id)?.displayLabel
+    }
+
+    /// Tool-chip label for a sub-agent tool name (`nil` for non-sub-agent tools).
+    public static func displayLabel(forToolName name: String) -> String? {
+        capability(forToolName: name)?.displayLabel
+    }
+
+    /// Tool-chip icon for a sub-agent tool name (`nil` for non-sub-agent tools).
+    public static func iconName(forToolName name: String) -> String? {
+        capability(forToolName: name)?.iconName
+    }
+}
+
+/// Shared sub-agent tool-visibility resolver used by BOTH the native
+/// `SystemPromptComposer.resolveTools` and the HTTP `enrichWithAgentContext`
+/// path, so the two surfaces always agree on which sub-agent tools an agent
+/// sees. This is the single point that previously diverged (BUG E).
+public enum SubagentToolVisibility {
+    /// SSOT for the delegation-family tool names both surfaces gate together.
+    public static var delegationToolNames: Set<String> {
+        var names = Set<String>()
+        for cap in SubagentCapabilityRegistry.delegationFamily {
+            names.formUnion(cap.toolNames)
+        }
+        return names
+    }
+
+    /// Whether `spawn` is available for an agent. The Default / main chat is
+    /// governed by its own pool (`anyAgentSpawnable`); a custom agent by its
+    /// own toggle AND a non-empty per-agent allow-list (nothing to spawn → hide).
+    /// There is no global master switch — each agent opts in for itself.
+    static func spawnAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool,
+        perAgentTargets: [String]
+    ) -> Bool {
+        isDefault
+            ? config.anyAgentSpawnable
+            : (perAgentEnabled && !perAgentTargets.isEmpty)
+    }
+
+    /// Whether `image` is available for an agent. The Default / main chat is
+    /// governed by its own image switch (`imageDelegationActive`); a custom
+    /// agent by its own toggle. There is no global master switch.
+    static func imageAvailable(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentEnabled: Bool
+    ) -> Bool {
+        isDefault ? config.imageDelegationActive : perAgentEnabled
+    }
+
+    /// Whether a specific `spawn` TARGET persona is reachable from a launching
+    /// agent — the execution-time check the spawn kind enforces. Default / main
+    /// chat uses its own pool; a custom agent its own allow-list.
+    static func spawnTargetAllowed(
+        _ name: String,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentTargets: [String]
+    ) -> Bool {
+        if isDefault { return config.isAgentSpawnable(name) }
+        return perAgentTargets.contains { $0.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
+    /// The delegation tool names visible to a given agent, applying the master
+    /// gate + the per-capability Default-vs-custom predicate. The single source
+    /// both the native `resolveTools` strip and the HTTP agent-run path read, so
+    /// the two surfaces can never drift (BUG E parity guard).
+    static func visibleDelegationToolNames(
+        agentId: UUID,
+        snapshot: AgentConfigSnapshot,
+        config: SubagentConfiguration
+    ) -> Set<String> {
+        let isDefault = (agentId == Agent.defaultId)
+        var names = Set<String>()
+        if spawnAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.spawnDelegationEnabled,
+            perAgentTargets: snapshot.spawnableAgentNames
+        ) {
+            names.formUnion(SubagentCapabilityRegistry.spawn.toolNames)
+        }
+        if imageAvailable(
+            isDefault: isDefault,
+            config: config,
+            perAgentEnabled: snapshot.imageEnabled
+        ) {
+            names.formUnion(SubagentCapabilityRegistry.image.toolNames)
+        }
+        return names
+    }
+
+    // MARK: - Per-agent effective settings
+
+    // Image models, permissions, and budgets are configured per-agent (each
+    // agent's Sub-agents tab) for custom agents and in the global config for the
+    // Default / main chat. These pure resolvers concentrate that Default-vs-custom
+    // branch so every execution path (the kinds) reads it the same way; they take
+    // the launching agent's `AgentSettings` (nil-safe) plus the global `config`,
+    // so they stay unit-testable without MainActor.
+
+    /// The effective image-model bundle id for an agent + kind. Default / main
+    /// chat uses the global configured default; a custom agent uses its own
+    /// per-agent model. A `nil` result is intentional — it falls through to the
+    /// run-time "first ready model" resolver, so an agent that enabled image
+    /// without picking a model still works.
+    static func effectiveImageModel(
+        isEdit: Bool,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> String? {
+        if isDefault {
+            return isEdit ? config.defaultImageEditModelId : config.defaultImageGenerationModelId
+        }
+        return isEdit ? settings?.imageEditModelId : settings?.imageGenerationModelId
+    }
+
+    /// The effective permission policy for a delegation capability. Default / main
+    /// chat uses the global permission map; a custom agent uses its own. A missing
+    /// entry resolves to the safe `.ask` default.
+    static func effectivePermission(
+        capabilityId: String,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> SubagentPermissionPolicy {
+        let defaults =
+            isDefault
+            ? config.permissionDefaults
+            : (settings?.subagentPermissions ?? SubagentPermissionDefaults())
+        return defaults.policy(for: capabilityId)
+    }
+
+    /// The effective (clamped) `spawn` budgets for an agent. Default / main chat
+    /// uses the global budgets; a custom agent uses its own.
+    static func effectiveBudgets(
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        settings: AgentSettings?
+    ) -> SubagentBudgets {
+        let budgets = isDefault ? config.budgets : (settings?.subagentBudgets ?? SubagentBudgets())
+        return budgets.normalized
+    }
+}

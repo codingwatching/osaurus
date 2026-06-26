@@ -820,21 +820,21 @@ final class NativeToolCallRowView: NSView {
     /// Avoids re-subscribing on every layout-only `configure(item:)`
     /// pass for the same row.
     private var liveExecBoundCallId: String?
-    /// Computer Use activity feed pane. Mounts for `computer_use` rows when
-    /// `ComputerUseFeedRegistry` has a feed for this row's tool-call-id (live
-    /// run or grace tail). A SwiftUI `ComputerUseFeedView` hosted in AppKit —
-    /// the one place this native cell uses an `NSHostingView`, because the
-    /// feed is a small, self-contained streaming list. Mutually exclusive with
-    /// `terminalView` / `resultView` on the `contentContainer` bottom pin.
-    private var computerUseHostingView: NSView?
-    private var computerUseBottomConstraint: NSLayoutConstraint?
-    private var computerUseHeightConstraint: NSLayoutConstraint?
-    private var computerUseFeedSubscription: AnyCancellable?
-    private var computerUseBoundCallId: String?
-    /// Fixed height for the feed pane (header + a few visible rows; the list
-    /// scrolls internally). Kept constant so the row's `measuredHeight` is
-    /// predictable as events stream in.
-    private static let computerUsePaneHeight: CGFloat = 220
+    /// Fixed height for the sub-agent feed pane (header + a few visible rows;
+    /// the list scrolls internally). Kept constant so the row's
+    /// `measuredHeight` is predictable as events stream in.
+    private static let subagentPaneHeight: CGFloat = 220
+    /// Unified sub-agent activity feed pane. Mounts for ANY sub-agent row
+    /// (spawn / image / sandbox_reduce / computer_use) when
+    /// `SubagentFeedRegistry` has a feed for this row's tool-call-id (live run
+    /// or grace tail). A SwiftUI `SubagentFeedView` hosted in AppKit. Mutually
+    /// exclusive with `terminalView` / `resultView` on the `contentContainer`
+    /// bottom pin.
+    private var subagentFeedHostingView: NSView?
+    private var subagentFeedBottomConstraint: NSLayoutConstraint?
+    private var subagentFeedHeightConstraint: NSLayoutConstraint?
+    private var subagentFeedSubscription: AnyCancellable?
+    private var subagentFeedBoundCallId: String?
     private let separatorView = NSView()
     /// pins contentContainer height for hit-testing; toggled when result section is shown
     private var contentBottomToArgs: NSLayoutConstraint?
@@ -963,7 +963,11 @@ final class NativeToolCallRowView: NSView {
 
         // Node: category icon shape in the foreground. The icon/circle colors and
         // the running shimmer are applied in `applyStatusAndShimmer()` below.
-        let category = ToolCategory.from(toolName: item.call.function.name)
+        // Sub-agent tools take their glyph from the capability registry (SSOT)
+        // instead of the generic gear the substring categorizer would assign.
+        let toolName = item.call.function.name
+        let category = ToolCategory.from(toolName: toolName)
+        let glyph = SubagentCapabilityRegistry.iconName(forToolName: toolName) ?? category.icon
         let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
         // Suppress the default `contents` action so the symbol swap doesn't
         // run its own 0.25s implicit fade alongside `playNodeAppearance`'s
@@ -971,7 +975,7 @@ final class NativeToolCallRowView: NSView {
         // before the ring finishes tracing).
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        categoryIcon.image = SymbolImageCache.image(category.icon, accessibilityDescription: nil)?
+        categoryIcon.image = SymbolImageCache.image(glyph, accessibilityDescription: nil)?
             .withSymbolConfiguration(cfg)
         CATransaction.commit()
 
@@ -1099,17 +1103,16 @@ final class NativeToolCallRowView: NSView {
             // dedups on toolCallId, so this is a no-op on the second
             // call for the same row.
             bindLiveOutputIfPresent(toolCallId: item.call.id, theme: theme)
-            // Computer Use rows additionally watch the feed registry so the
-            // activity pane mounts/unmounts as the run registers and drops.
-            if item.call.function.name == ComputerUseTool.toolName {
-                bindComputerUseFeedIfPresent(toolCallId: item.call.id, theme: theme)
-            }
+            // Every expanded row watches the unified sub-agent feed registry so
+            // spawn / image / sandbox_reduce / computer_use rows mount the live
+            // activity pane as the host registers and drops their feed.
+            bindSubagentFeedIfPresent(toolCallId: item.call.id, theme: theme)
         }
 
         // Tear down panes when the row collapses.
         if !isExpanded {
             tearDownTerminalView()
-            tearDownComputerUseView()
+            tearDownSubagentFeedView()
         }
 
         applyHeight()
@@ -1138,8 +1141,8 @@ final class NativeToolCallRowView: NSView {
         } else {
             terminalH = 0
         }
-        let computerUseH: CGFloat = computerUseHostingView != nil ? (8 + Self.computerUsePaneHeight) : 0
-        return rowH + 1 + 8 + sectionTitleH + argsH + terminalH + computerUseH + resultH + 8
+        let subagentH: CGFloat = subagentFeedHostingView != nil ? (8 + Self.subagentPaneHeight) : 0
+        return rowH + 1 + 8 + sectionTitleH + argsH + terminalH + subagentH + resultH + 8
     }
 
     // MARK: - Terminal pane bindings
@@ -1163,18 +1166,18 @@ final class NativeToolCallRowView: NSView {
     private func applyResultOrLiveState(width: CGFloat, theme: any ThemeProtocol) {
         guard let item = currentItem else { return }
 
-        // 0) Computer Use rows render the activity feed (live or grace tail)
-        //    instead of the args/result markdown. Once the feed leaves the
-        //    registry (grace elapsed) we fall through to the markdown summary.
-        if item.call.function.name == ComputerUseTool.toolName,
-            let feed = ComputerUseFeedRegistry.shared.feed(for: item.call.id)
-        {
+        // 0) Unified sub-agent feed: any row whose tool-call-id has a live
+        //    (or grace-tail) `SubagentFeed` renders the shared activity pane.
+        //    Drives spawn / image / sandbox_reduce / computer_use live rows.
+        //    Falls through to the markdown summary once the grace tail drops
+        //    the feed.
+        if let feed = SubagentFeedRegistry.shared.feed(for: item.call.id) {
             tearDownResultSection()
             tearDownTerminalView()
-            mountComputerUseView(feed: feed, theme: theme)
+            mountSubagentFeedView(feed: feed, theme: theme)
             return
         }
-        tearDownComputerUseView()
+        tearDownSubagentFeedView()
 
         // 1) Live path takes priority while a tool is actively running.
         if let entry = LiveExecRegistry.shared.currentEntries()[item.call.id],
@@ -1323,18 +1326,18 @@ final class NativeToolCallRowView: NSView {
         applyHeight()
     }
 
-    // MARK: - Computer Use feed pane
+    // MARK: - Unified sub-agent feed pane
 
-    /// Subscribe to `ComputerUseFeedRegistry` and re-run
-    /// `applyResultOrLiveState` on every snapshot so the pane mounts when a
-    /// run registers its feed and falls through to the markdown summary once
+    /// Subscribe to `SubagentFeedRegistry` and re-run `applyResultOrLiveState`
+    /// on every snapshot so the shared activity pane mounts when the host
+    /// registers a run's feed and falls through to the markdown summary once
     /// the grace tail drops it. Idempotent on the same id.
-    private func bindComputerUseFeedIfPresent(toolCallId: String, theme: any ThemeProtocol) {
-        if computerUseBoundCallId == toolCallId, computerUseFeedSubscription != nil { return }
-        computerUseFeedSubscription?.cancel()
-        computerUseBoundCallId = toolCallId
+    private func bindSubagentFeedIfPresent(toolCallId: String, theme: any ThemeProtocol) {
+        if subagentFeedBoundCallId == toolCallId, subagentFeedSubscription != nil { return }
+        subagentFeedSubscription?.cancel()
+        subagentFeedBoundCallId = toolCallId
         let width = currentWidth
-        computerUseFeedSubscription = ComputerUseFeedRegistry.shared.feedsPublisher
+        subagentFeedSubscription = SubagentFeedRegistry.shared.feedsPublisher
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
@@ -1347,19 +1350,19 @@ final class NativeToolCallRowView: NSView {
     /// Mount (or reuse) the SwiftUI feed pane for `feed`. Mirrors
     /// `mountTerminalView`'s constraint swap so `contentContainer` never has
     /// two active bottom pins.
-    private func mountComputerUseView(feed: ComputerUseFeed, theme: any ThemeProtocol) {
+    private func mountSubagentFeedView(feed: SubagentFeed, theme: any ThemeProtocol) {
         let host: NSView
-        if let existing = computerUseHostingView {
+        if let existing = subagentFeedHostingView {
             host = existing
         } else {
-            let hosting = NSHostingView(rootView: ComputerUseFeedView(feed: feed))
+            let hosting = NSHostingView(rootView: SubagentFeedView(feed: feed))
             hosting.translatesAutoresizingMaskIntoConstraints = false
             contentContainer.addSubview(hosting)
             let av = ensureArgsView()
             let heightConst = hosting.heightAnchor.constraint(
-                equalToConstant: Self.computerUsePaneHeight
+                equalToConstant: Self.subagentPaneHeight
             )
-            computerUseHeightConstraint = heightConst
+            subagentFeedHeightConstraint = heightConst
             NSLayoutConstraint.activate([
                 hosting.leadingAnchor.constraint(
                     equalTo: contentContainer.leadingAnchor,
@@ -1373,27 +1376,27 @@ final class NativeToolCallRowView: NSView {
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: hosting.bottomAnchor)
-            computerUseBottomConstraint = pin
-            computerUseHostingView = hosting
+            subagentFeedBottomConstraint = pin
+            subagentFeedHostingView = hosting
             host = hosting
         }
         // Swap pins atomically (see mountTerminalView for why).
         contentBottomToArgs?.isActive = false
-        computerUseBottomConstraint?.isActive = true
+        subagentFeedBottomConstraint?.isActive = true
         _ = host
         applyHeight()
     }
 
-    private func tearDownComputerUseView() {
-        computerUseFeedSubscription?.cancel()
-        computerUseFeedSubscription = nil
-        computerUseBoundCallId = nil
-        guard let host = computerUseHostingView else { return }
-        computerUseBottomConstraint?.isActive = false
-        computerUseBottomConstraint = nil
-        computerUseHeightConstraint = nil
+    private func tearDownSubagentFeedView() {
+        subagentFeedSubscription?.cancel()
+        subagentFeedSubscription = nil
+        subagentFeedBoundCallId = nil
+        guard let host = subagentFeedHostingView else { return }
+        subagentFeedBottomConstraint?.isActive = false
+        subagentFeedBottomConstraint = nil
+        subagentFeedHeightConstraint = nil
         host.removeFromSuperview()
-        computerUseHostingView = nil
+        subagentFeedHostingView = nil
         contentBottomToArgs?.isActive = true
         applyHeight()
     }

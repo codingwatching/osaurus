@@ -83,7 +83,10 @@ struct SystemPromptComposerToolResolutionTests {
     private func makeSnapshot(
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
-        computerUseEnabled: Bool
+        computerUseEnabled: Bool = false,
+        spawnDelegationEnabled: Bool = false,
+        imageEnabled: Bool = false,
+        spawnableAgentNames: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
             agentId: UUID(),
@@ -95,7 +98,10 @@ struct SystemPromptComposerToolResolutionTests {
             manualToolNames: manualToolNames,
             systemPrompt: "",
             dbEnabled: false,
-            computerUseEnabled: computerUseEnabled
+            computerUseEnabled: computerUseEnabled,
+            spawnDelegationEnabled: spawnDelegationEnabled,
+            imageEnabled: imageEnabled,
+            spawnableAgentNames: spawnableAgentNames
         )
     }
 
@@ -613,6 +619,95 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(!names.contains("cancel_next_run"))
             #expect(!names.contains("notify"))
         }
+    }
+
+    // MARK: - Delegation gates (spawn / image — per-capability, per-agent)
+
+    /// Run `body` in an isolated subagent-store sandbox with a default global
+    /// config, then reset. There is no master switch anymore; delegation
+    /// visibility is driven entirely by the per-agent snapshot in `resolveTools`.
+    /// Mirrors `SubagentToolAvailabilityTests`' cross-suite lock so the global
+    /// config stays stable while we read the delegation-gated schema.
+    private func withSubagentSandbox(_ body: @MainActor @Sendable () async -> Void) async {
+        let lease = await acquireSubagentStoreSandbox("composer-delegation")
+        defer { lease.release() }
+        SubagentConfigurationStore.save(SubagentConfiguration())
+        await body()
+    }
+
+    /// A custom agent surfaces `image` purely on its OWN `imageEnabled` toggle,
+    /// independent of spawn — `image` is its own per-agent flag now, and
+    /// `resolveTools` resolves each delegation capability separately.
+    @Test
+    func autoMode_customAgentSurfacesImageIndependentlyOfSpawn() async {
+        await withSubagentSandbox {
+            let names = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(imageEnabled: true),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(names.contains("image"))
+            // No spawn toggle / list → spawn stays hidden even though image is on.
+            #expect(!names.contains("spawn"))
+        }
+    }
+
+    /// A custom agent surfaces `spawn` only with its own toggle AND a non-empty
+    /// per-agent spawnable list (nothing to spawn ⇒ hidden); `image` stays hidden
+    /// when its own toggle is off.
+    @Test
+    func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
+        await withSubagentSandbox {
+            let withTargets = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        spawnDelegationEnabled: true,
+                        spawnableAgentNames: ["Helper"]
+                    ),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(withTargets.contains("spawn"))
+            #expect(!withTargets.contains("image"))
+
+            // Toggle on but EMPTY list → nothing to spawn → spawn hidden.
+            let noTargets = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        spawnDelegationEnabled: true,
+                        spawnableAgentNames: []
+                    ),
+                    executionMode: .none
+                ).map { $0.function.name }
+            )
+            #expect(!noTargets.contains("spawn"))
+        }
+    }
+
+    /// Off-by-default now lives at the per-agent level (there is no master kill
+    /// switch): a custom agent that opted into nothing surfaces no delegation
+    /// tools — even when the main chat's OWN pool / image switch are populated,
+    /// they must not leak to another agent.
+    @Test
+    func autoMode_customAgentWithNoOptInHidesAllDelegationTools() async {
+        let lease = await acquireSubagentStoreSandbox("composer-no-optin")
+        defer { lease.release() }
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(spawnableAgentNames: ["Helper"], imageDelegationEnabled: true)
+        )
+        let names = Set(
+            SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    spawnDelegationEnabled: false,
+                    imageEnabled: false,
+                    spawnableAgentNames: []
+                ),
+                executionMode: .none
+            ).map { $0.function.name }
+        )
+        #expect(!names.contains("image"))
+        #expect(!names.contains("spawn"))
     }
 
     // MARK: - canonicalToolOrder
