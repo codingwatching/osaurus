@@ -140,6 +140,141 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         XCTAssertFalse(result.metrics.cloudVisionUsed)
     }
 
+    func testBrowserFormLoopFillsFieldsAndSubmitsDeterministically() async {
+        let pid: Int32 = 5150
+        // MockMacDriver advances one snapshot per capture: initial observe,
+        // one post-action verify per acting verb, then one final assertion read.
+        // Keep status as Draft through snapshot 5 so the submit click resolves
+        // against the pre-submit tree, then expose the submitted state on 6-7.
+        let snapshots = [
+            browserFormSnapshot(snapshotId: 1, pid: pid),
+            browserFormSnapshot(snapshotId: 2, pid: pid, team: "Synthetic Platform Team"),
+            browserFormSnapshot(
+                snapshotId: 3,
+                pid: pid,
+                team: "Synthetic Platform Team",
+                email: "ops@example.com"
+            ),
+            browserFormSnapshot(
+                snapshotId: 4,
+                pid: pid,
+                team: "Synthetic Platform Team",
+                email: "ops@example.com",
+                justification: "Automate a repetitive access request."
+            ),
+            browserFormSnapshot(
+                snapshotId: 5,
+                pid: pid,
+                team: "Synthetic Platform Team",
+                email: "ops@example.com",
+                justification: "Automate a repetitive access request.",
+                termsAccepted: true
+            ),
+            browserFormSnapshot(
+                snapshotId: 6,
+                pid: pid,
+                team: "Synthetic Platform Team",
+                email: "ops@example.com",
+                justification: "Automate a repetitive access request.",
+                termsAccepted: true,
+                status: "Submitted request for Synthetic Platform Team"
+            ),
+            browserFormSnapshot(
+                snapshotId: 7,
+                pid: pid,
+                team: "Synthetic Platform Team",
+                email: "ops@example.com",
+                justification: "Automate a repetitive access request.",
+                termsAccepted: true,
+                status: "Submitted request for Synthetic Platform Team"
+            ),
+        ]
+        let driver = MockMacDriver(
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Access request form",
+                x: 0,
+                y: 0,
+                w: 1280,
+                h: 900
+            ),
+            snapshots: [pid: snapshots]
+        )
+        let confirmationRecorder = ConfirmationRecorder()
+
+        let result = await ComputerUseLoop.run(
+            goal: "Fill out and submit the access request web form.",
+            modelId: "scripted-browser-form",
+            driver: driver,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .trusted)),
+            feed: ComputerUseFeed(toolCallId: "evidence-browser-form", goal: "Fill out the form"),
+            interrupt: InterruptToken(),
+            confirm: { preview in
+                await confirmationRecorder.record(preview)
+                return true
+            },
+            limits: RunLimits(maxSteps: 8, wallClockSeconds: 30),
+            vision: .none,
+            sessionId: "evidence-browser-form",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .setValue,
+                    target: AgentTarget(describe: "Team name"),
+                    text: "Synthetic Platform Team"
+                ),
+                AgentAction(
+                    verb: .setValue,
+                    target: AgentTarget(describe: "Email"),
+                    text: "ops@example.com"
+                ),
+                AgentAction(
+                    verb: .setValue,
+                    target: AgentTarget(describe: "Justification"),
+                    text: "Automate a repetitive access request."
+                ),
+                AgentAction(verb: .click, target: AgentTarget(describe: "Agree to terms")),
+                AgentAction(verb: .click, target: AgentTarget(describe: "Submit request")),
+                AgentAction(verb: .done, reason: "The access request form was submitted."),
+            ])
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "Expected form completion; got \(result.outcome)")
+        XCTAssertEqual(result.metrics.maxTier, .ax)
+        XCTAssertFalse(result.metrics.cloudVisionUsed)
+        XCTAssertEqual(result.metrics.targetResolveAttempts, 5)
+        XCTAssertEqual(result.metrics.targetResolveSuccesses, 5)
+        XCTAssertEqual(result.metrics.actsAttempted, 5)
+        XCTAssertEqual(result.metrics.verifyChanged, 5)
+        XCTAssertEqual(result.metrics.confirmsRequested, 1)
+        XCTAssertEqual(result.metrics.confirmsApproved, 1)
+
+        let confirmed = await confirmationRecorder.previews()
+        XCTAssertEqual(confirmed.map(\.effect), [.consequential])
+        XCTAssertEqual(confirmed.first?.targetLabel, "button \"Submit request\"")
+
+        let actions = await driver.elementActions
+        XCTAssertEqual(
+            actionTrace(actions),
+            [
+                "setValue:team=Synthetic Platform Team",
+                "setValue:email=ops@example.com",
+                "setValue:justification=Automate a repetitive access request.",
+                "click:terms",
+                "click:submit",
+            ]
+        )
+        let coordinateActions = await driver.coordinateActions
+        XCTAssertTrue(coordinateActions.isEmpty, "Resolved AX form controls should not need coordinate fallback.")
+
+        let finalSnapshot = await driver.capture(pid: pid, tier: .ax)
+        XCTAssertEqual(value(in: finalSnapshot, id: "team"), "Synthetic Platform Team")
+        XCTAssertEqual(value(in: finalSnapshot, id: "email"), "ops@example.com")
+        XCTAssertEqual(value(in: finalSnapshot, id: "justification"), "Automate a repetitive access request.")
+        XCTAssertEqual(value(in: finalSnapshot, id: "terms"), "checked")
+        XCTAssertEqual(value(in: finalSnapshot, id: "status"), "Submitted request for Synthetic Platform Team")
+    }
+
     func testDangerousAppConfirmGuardrailCannotBeBypassedByAutonomousPreset() async {
         let gate = ComputerUseGate(policy: AutonomyPolicy(globalPreset: .autonomous))
         let decision = await gate.evaluate(
@@ -308,5 +443,141 @@ final class ComputerUseEvidencePackTests: XCTestCase {
             width: cg.width,
             height: cg.height
         )
+    }
+
+    private func browserFormSnapshot(
+        snapshotId: Int,
+        pid: Int32,
+        team: String = "",
+        email: String = "",
+        justification: String = "",
+        termsAccepted: Bool = false,
+        status: String = "Draft"
+    ) -> CUSnapshot {
+        let window = CUWindowSummary(
+            id: 1,
+            title: "Access request form",
+            focused: true,
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 900
+        )
+        let elements = [
+            CUElement(
+                id: "team",
+                role: "textfield",
+                label: "Team name",
+                value: team,
+                windowId: 1,
+                x: 120,
+                y: 120,
+                w: 360,
+                h: 32,
+                actions: ["setValue"]
+            ),
+            CUElement(
+                id: "email",
+                role: "textfield",
+                label: "Email",
+                value: email,
+                windowId: 1,
+                x: 120,
+                y: 180,
+                w: 360,
+                h: 32,
+                actions: ["setValue"]
+            ),
+            CUElement(
+                id: "justification",
+                role: "textview",
+                label: "Justification",
+                value: justification,
+                windowId: 1,
+                x: 120,
+                y: 240,
+                w: 520,
+                h: 120,
+                actions: ["setValue"]
+            ),
+            CUElement(
+                id: "terms",
+                role: "checkbox",
+                label: "Agree to terms",
+                value: termsAccepted ? "checked" : "unchecked",
+                windowId: 1,
+                x: 120,
+                y: 390,
+                w: 220,
+                h: 28,
+                actions: ["press"]
+            ),
+            CUElement(
+                id: "submit",
+                role: "button",
+                label: "Submit request",
+                windowId: 1,
+                x: 120,
+                y: 450,
+                w: 180,
+                h: 36,
+                actions: ["press"]
+            ),
+            CUElement(
+                id: "status",
+                role: "staticText",
+                label: "Status",
+                value: status,
+                windowId: 1,
+                x: 120,
+                y: 520,
+                w: 520,
+                h: 24
+            ),
+        ]
+        return CUSnapshot(
+            snapshotId: snapshotId,
+            pid: pid,
+            app: "Safari",
+            focusedWindow: "Access request form",
+            tier: .ax,
+            truncated: false,
+            windows: [window],
+            elements: elements,
+            image: nil
+        )
+    }
+
+    private func actionTrace(_ actions: [CUElementAction]) -> [String] {
+        actions.map { action in
+            switch action {
+            case .click(let id, _, _):
+                return "click:\(id)"
+            case .setValue(let id, let value):
+                return "setValue:\(id)=\(value)"
+            case .typeText(let id, _, let text, let replace):
+                return "typeText:\(id ?? "pid")=\(text):replace=\(replace)"
+            case .pressKey(_, let key, let modifiers):
+                return "pressKey:\((modifiers + [key]).joined(separator: "+"))"
+            case .clearField(let id):
+                return "clear:\(id)"
+            }
+        }
+    }
+
+    private func value(in snapshot: CUSnapshot, id: String) -> String? {
+        snapshot.elements.first(where: { $0.id == id })?.value
+    }
+}
+
+private actor ConfirmationRecorder {
+    private var stored: [ActionPreview] = []
+
+    func record(_ preview: ActionPreview) {
+        stored.append(preview)
+    }
+
+    func previews() -> [ActionPreview] {
+        stored
     }
 }

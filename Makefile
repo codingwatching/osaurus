@@ -10,7 +10,7 @@ WORKSPACE := osaurus.xcworkspace
 DERIVED := build/DerivedData
 XCODEBUILD_FLAGS ?=
 
-.PHONY: help cli app install-cli serve status test ci-test clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
+.PHONY: help cli app install-cli serve status test ci-test computer-use-evidence clean bench-setup bench-ingest bench-ingest-chunks bench-run bench evals-prep evals evals-verbose evals-report evals-all evals-all-verbose evals-all-report evals-capture-screen evals-loop evals-matrix evals-diff evals-contribute evals-compat
 
 help:
 	@echo "Targets:"
@@ -38,6 +38,7 @@ help:
 	@echo "  evals-compat        Fold reports/community/* into the COMPATIBILITY.md leaderboard (COMPAT_DIR=)"
 	@echo "  test           Run OsaurusCore package tests via 'swift test'"
 	@echo "  ci-test        Reproduce the CI test-core job locally (xcodebuild + xcbeautify)"
+	@echo "  computer-use-evidence Run local Computer Use proof lane into build/computer-use-evidence/"
 	@echo "  clean          Remove DerivedData build output"
 
 cli:
@@ -101,6 +102,10 @@ ci-test:
 		| xcbeautify --renderer terminal
 	@echo ""
 	@echo "Done. Inspect failures with: open build/Tests.xcresult"
+
+computer-use-evidence:
+	@OUT_DIR="$(OUT_DIR)" RUN_EVALS="$(RUN_EVALS)" MODEL="$(MODEL)" STRICT="$(STRICT)" \
+		bash scripts/evals/computer-use-evidence.sh
 
 ## ── LOCOMO Benchmark ──────────────────────────────────────────────
 
