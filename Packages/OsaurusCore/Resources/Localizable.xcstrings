@@ -97728,6 +97728,144 @@
           }
         }
       }
+    },
+    "Account Status" : {
+      "shouldTranslate" : false
+    },
+    "Account details" : {
+      "shouldTranslate" : false
+    },
+    "Account status, usage activity, signed request diagnostics, and support export." : {
+      "shouldTranslate" : false
+    },
+    "Balance" : {
+      "shouldTranslate" : false
+    },
+    "Billing" : {
+      "shouldTranslate" : false
+    },
+    "Billing Ledger" : {
+      "shouldTranslate" : false
+    },
+    "Body SHA-256" : {
+      "shouldTranslate" : false
+    },
+    "Bytes" : {
+      "shouldTranslate" : false
+    },
+    "Credits Activity" : {
+      "shouldTranslate" : false
+    },
+    "Export Router Support Bundle" : {
+      "shouldTranslate" : false
+    },
+    "Flagged" : {
+      "shouldTranslate" : false
+    },
+    "Identity required" : {
+      "shouldTranslate" : false
+    },
+    "Input tokens" : {
+      "shouldTranslate" : false
+    },
+    "Ledger cost" : {
+      "shouldTranslate" : false
+    },
+    "Ledger rows" : {
+      "shouldTranslate" : false
+    },
+    "Loading activity" : {
+      "shouldTranslate" : false
+    },
+    "Local rows" : {
+      "shouldTranslate" : false
+    },
+    "Metadata only" : {
+      "shouldTranslate" : false
+    },
+    "Metadata only - no prompts, replies, tool payloads, private keys, or signatures." : {
+      "shouldTranslate" : false
+    },
+    "Missing" : {
+      "shouldTranslate" : false
+    },
+    "Net credits" : {
+      "shouldTranslate" : false
+    },
+    "No local ledger rows" : {
+      "shouldTranslate" : false
+    },
+    "No signed checks yet" : {
+      "shouldTranslate" : false
+    },
+    "No usage activity" : {
+      "shouldTranslate" : false
+    },
+    "Osaurus Router is off." : {
+      "shouldTranslate" : false
+    },
+    "Output tokens" : {
+      "shouldTranslate" : false
+    },
+    "Rendered" : {
+      "shouldTranslate" : false
+    },
+    "Requests" : {
+      "shouldTranslate" : false
+    },
+    "Router" : {
+      "shouldTranslate" : false
+    },
+    "Router Account" : {
+      "shouldTranslate" : false
+    },
+    "Router off" : {
+      "shouldTranslate" : false
+    },
+    "Router usage appears here after a hosted model request is billed." : {
+      "shouldTranslate" : false
+    },
+    "Run" : {
+      "shouldTranslate" : false
+    },
+    "Run a local signing check to inspect the redacted request shape." : {
+      "shouldTranslate" : false
+    },
+    "Signature" : {
+      "shouldTranslate" : false
+    },
+    "Signed Request Diagnostics" : {
+      "shouldTranslate" : false
+    },
+    "Signed request diagnostics refreshed." : {
+      "shouldTranslate" : false
+    },
+    "Support Export" : {
+      "shouldTranslate" : false
+    },
+    "The encrypted local billing ledger has no rows available." : {
+      "shouldTranslate" : false
+    },
+    "Top-ups" : {
+      "shouldTranslate" : false
+    },
+    "Transaction rows" : {
+      "shouldTranslate" : false
+    },
+    "Usage cost" : {
+      "shouldTranslate" : false
+    },
+    "Usage rows" : {
+      "shouldTranslate" : false
+    },
+    "Wallet" : {
+      "shouldTranslate" : false
+    },
+    "\\(snapshot.ledger.pendingCount) pending / \\(snapshot.ledger.issueCount) flagged" : {
+      "shouldTranslate" : false
+    },
+    "\\(snapshot.transactions.transactionCount) transaction(s)" : {
+      "shouldTranslate" : false
     }
   },
   "version" : "1.1"
