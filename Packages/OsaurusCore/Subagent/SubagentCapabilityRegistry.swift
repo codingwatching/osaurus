@@ -126,6 +126,9 @@ public struct SubagentCapability: Sendable {
     public let iconName: String
     /// System-prompt guidance injected when the primary tool resolves.
     public let guidance: String?
+    /// Compact guidance variant for small local models (`prefersCompactPrompt`).
+    /// When nil the full `guidance` is used regardless of model size.
+    public let guidanceCompact: String?
     /// Stable composer section id (KV-cache identity) for the guidance block.
     public let guidanceSectionId: String?
     /// Localization key for the guidance section label.
@@ -143,6 +146,7 @@ public struct SubagentCapability: Sendable {
         displayLabel: String? = nil,
         iconName: String = "sparkles",
         guidance: String? = nil,
+        guidanceCompact: String? = nil,
         guidanceSectionId: String? = nil,
         guidanceLabelKey: String? = nil
     ) {
@@ -155,6 +159,7 @@ public struct SubagentCapability: Sendable {
         self.displayLabel = displayLabel ?? id
         self.iconName = iconName
         self.guidance = guidance
+        self.guidanceCompact = guidanceCompact
         self.guidanceSectionId = guidanceSectionId
         self.guidanceLabelKey = guidanceLabelKey
     }
@@ -211,6 +216,7 @@ public enum SubagentCapabilityRegistry {
         displayLabel: "Image",
         iconName: "photo",
         guidance: SystemPromptTemplates.imageGenerationGuidance,
+        guidanceCompact: SystemPromptTemplates.imageGenerationGuidanceCompact,
         guidanceSectionId: "imageGeneration",
         guidanceLabelKey: "Image Generation"
     )
