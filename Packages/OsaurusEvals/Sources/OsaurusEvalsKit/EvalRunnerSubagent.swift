@@ -12,13 +12,19 @@
 //      and the feed lifecycle run in CI with no tokens — the deterministic
 //      seam the whole sub-agent family rides on. This lane also runs as
 //      eval-kit unit tests (mirror `ComputerUseLoopEvalTests`).
-//    - spawn: live. The real `SpawnTool` (host + `TextSubagentKind`) against
-//      a user-configured spawnable persona — the text-subagent path.
+//    - spawn: live. The real `spawn_agent` path (host + `TextSubagentKind`)
+//      against a user-configured spawnable agent — the text-subagent path.
+//    - spawn_model: live. The real `spawn_model` path (host + `TextSubagentKind`)
+//      against a bare spawnable model id with NO agent/system prompt.
+//    - spawn_model_residency: live. The PRODUCTION residency path (no eval
+//      passthrough seam) with an independent orchestrator + target, proving the
+//      real unload/reload across all four directions (local↔local, local↔remote,
+//      remote↔local, remote↔remote) with RAM footprint.
 //    - image: live. The real `ImageTool` (host + `ImageSubagentKind`);
 //      `sourcePaths` non-empty selects the edit path, empty selects generate.
 //
 //  Live lanes SKIP (not fail) when the host can't satisfy a happy-path case
-//  (no spawnable persona, image delegation off, model not ready) — same
+//  (no spawnable agent, image delegation off, model not ready) — same
 //  `requirePlugins`-style semantics the other domains use so a report shared
 //  across machines reads "didn't apply" rather than "regressed".
 //
@@ -51,12 +57,14 @@ extension EvalRunner {
             return await scoreScriptedLane(testCase, exp: exp, modelId: modelId, label: label)
         case "spawn":
             return await scoreSpawnLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "spawn_model":
+            return await scoreSpawnModelLane(testCase, exp: exp, modelId: modelId, label: label)
+        case "spawn_model_residency":
+            return await scoreSpawnModelResidencyLane(testCase, exp: exp, modelId: modelId, label: label)
         case "image":
             return await scoreImageLane(testCase, exp: exp, modelId: modelId, label: label)
         case "computer_use":
             return await scoreComputerUseLane(testCase, exp: exp, modelId: modelId, label: label)
-        case "sandbox_reduce":
-            return await scoreSandboxReduceLane(testCase, exp: exp, modelId: modelId, label: label)
         default:
             return .terminal(
                 id: testCase.id,
@@ -65,7 +73,7 @@ extension EvalRunner {
                 outcome: .errored,
                 notes: [
                     "unknown subagent lane '\(exp.lane)' "
-                        + "(expected scripted|spawn|image|computer_use|sandbox_reduce)"
+                        + "(expected scripted|spawn|spawn_model|spawn_model_residency|image|computer_use)"
                 ],
                 modelId: modelId
             )
@@ -130,13 +138,13 @@ extension EvalRunner {
                 modelId: modelId
             )
         }
-        // Pass the run `modelId` so the spawned persona runs on it (instead of
+        // Pass the run `modelId` so the spawned agent runs on it (instead of
         // its own pinned model), making `spawn` a real cross-model column.
-        // Positive cases opt into persona seeding (so they RUN anywhere across
+        // Positive cases opt into agent seeding (so they RUN anywhere across
         // models); negative guards (not-spawnable) must NOT be seeded.
         let transcript: SubagentJobTranscript
-        if exp.seedSpawnablePersona == true {
-            transcript = await SubagentJobEvaluator.withSpawnablePersona(name: agent) {
+        if exp.seedSpawnableAgent == true {
+            transcript = await SubagentJobEvaluator.withSpawnableAgent(name: agent) {
                 await SubagentJobEvaluator.runSpawn(agent: agent, input: input, modelId: modelId)
             }
         } else {
@@ -147,6 +155,101 @@ extension EvalRunner {
             )
         }
         return finishLive(testCase, exp: exp, transcript: transcript, lane: "spawn", modelId: modelId, label: label)
+    }
+
+    // MARK: - Live spawn_model lane
+
+    private static func scoreSpawnModelLane(
+        _ testCase: EvalCase,
+        exp: EvalCase.SubagentExpectations,
+        modelId: String,
+        label: String
+    ) async -> EvalCaseReport {
+        guard let input = exp.input else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: ["spawn_model lane needs `input`"],
+                modelId: modelId
+            )
+        }
+        // Target model: an explicit `model` (negative guards target an
+        // unseeded id) else the RUN model, so a seeded happy-path case is a real
+        // cross-model column. Positive cases opt into seeding the model into the
+        // spawnable pool (so they RUN anywhere); negative guards (not-spawnable)
+        // must NOT be seeded.
+        let target = exp.model ?? modelId
+        let transcript: SubagentJobTranscript
+        if exp.seedSpawnableModel == true {
+            transcript = await SubagentJobEvaluator.withSpawnableModel(id: target) {
+                await SubagentJobEvaluator.runSpawnModel(model: target, input: input)
+            }
+        } else {
+            transcript = await SubagentJobEvaluator.runSpawnModel(model: target, input: input)
+        }
+        return finishLive(
+            testCase,
+            exp: exp,
+            transcript: transcript,
+            lane: "spawn_model",
+            modelId: modelId,
+            label: label
+        )
+    }
+
+    // MARK: - Live spawn_model residency-direction lane
+
+    /// Drive the PRODUCTION `spawn_model` residency path (NOT the eval
+    /// passthrough seam) with an independent `orchestrator` (resident chat
+    /// model) + `model` (target) so the real `SubagentResidency.resolve`
+    /// decision + `ResidencyHandoff` run end-to-end — the only lane that proves
+    /// the actual unload/reload across all four directions. Peak RAM is captured
+    /// by the outer resource-sampled dispatch (`subagent` is a sampled domain),
+    /// so a local→local swap records its footprint automatically. SKIPS (via the
+    /// facade's `unavailable` envelope + `finishLive`) when a required local
+    /// model isn't installed or a remote target isn't routable.
+    ///
+    /// The run `modelId` does NOT drive the decision (the case pins
+    /// orchestrator + target); it only governs which remote provider the CLI
+    /// bootstrapped, so run the suite with a REMOTE `--model` (e.g.
+    /// `xai/grok-4.3`) whenever a direction targets a remote model — local
+    /// targets stay routable regardless.
+    private static func scoreSpawnModelResidencyLane(
+        _ testCase: EvalCase,
+        exp: EvalCase.SubagentExpectations,
+        modelId: String,
+        label: String
+    ) async -> EvalCaseReport {
+        guard let orchestrator = exp.orchestrator, let target = exp.model, let input = exp.input
+        else {
+            return .terminal(
+                id: testCase.id,
+                label: label,
+                domain: testCase.domain,
+                outcome: .errored,
+                notes: [
+                    "spawn_model_residency lane needs `orchestrator` + `model` (target) + `input`"
+                ],
+                modelId: modelId
+            )
+        }
+        let transcript = await SubagentJobEvaluator.runSpawnModelResidency(
+            orchestrator: orchestrator,
+            target: target,
+            handoffEnabled: exp.handoffEnabled ?? true,
+            ensureResident: exp.ensureResident ?? false,
+            input: input
+        )
+        return finishLive(
+            testCase,
+            exp: exp,
+            transcript: transcript,
+            lane: "spawn_model_residency",
+            modelId: modelId,
+            label: label
+        )
     }
 
     // MARK: - Live image lane
@@ -305,72 +408,12 @@ extension EvalRunner {
         )
     }
 
-    // MARK: - Live sandbox_reduce lane (host + container)
-
-    /// Drive the real `sandbox_reduce` host (`SubagentSession` +
-    /// `SandboxReduceKind`) on the run `modelId`. SKIPS cleanly when the
-    /// sandbox child tools aren't registered (no container) — the facade
-    /// pre-flight returns an `unavailable` envelope, and `finishLive` treats
-    /// an unexpected availability envelope as a skip. Tiny-context models
-    /// (which can't drive a tool loop) are pre-skipped.
-    private static func scoreSandboxReduceLane(
-        _ testCase: EvalCase,
-        exp: EvalCase.SubagentExpectations,
-        modelId: String,
-        label: String
-    ) async -> EvalCaseReport {
-        guard let task = exp.task ?? optionalNonEmpty(testCase.query) else {
-            return .terminal(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                outcome: .errored,
-                notes: ["sandbox_reduce lane needs `task` (or a non-empty query)"],
-                modelId: modelId
-            )
-        }
-        let window = ContextSizeResolver.resolve(modelId: modelId)
-        if window.sizeClass.disablesTools {
-            return .terminal(
-                id: testCase.id,
-                label: label,
-                domain: testCase.domain,
-                outcome: .skipped,
-                notes: [
-                    "tools auto-disabled for '\(modelId)': context size class "
-                        + "\(window.sizeClass) (≤\(ContextSizeResolver.tinyCeiling)-token window) "
-                        + "strips the tools the reduction loop needs; live case skipped"
-                ],
-                modelId: modelId
-            )
-        }
-        let transcript = await SubagentJobEvaluator.runSandboxReduce(
-            task: task,
-            modelId: modelId,
-            paths: exp.paths ?? [],
-            maxIterations: exp.maxIterations
-        )
-        return finishLive(
-            testCase,
-            exp: exp,
-            transcript: transcript,
-            lane: "sandbox_reduce",
-            modelId: modelId,
-            label: label
-        )
-    }
-
-    private static func optionalNonEmpty(_ s: String) -> String? {
-        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
-    }
-
     // MARK: - Shared scoring
 
     /// Convert a live-lane transcript into a report, applying the
     /// availability-skip rule: when the run failed with a host-availability
     /// envelope (`rejected`/`unavailable`/`user_denied`) that the case did NOT
-    /// ask for, SKIP rather than fail — a machine without a spawnable persona,
+    /// ask for, SKIP rather than fail — a machine without a spawnable agent,
     /// image delegation, or a ready model reads as "didn't apply" instead of
     /// "regressed" (same semantics as `requirePlugins`). A negative case that
     /// EXPECTS exactly that envelope (e.g. "delegation off → rejected") still

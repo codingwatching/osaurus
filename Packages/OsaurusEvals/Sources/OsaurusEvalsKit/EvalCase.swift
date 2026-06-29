@@ -494,7 +494,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// of three lanes (`scripted` model-free, live `spawn`, live `image`)
         /// and scores the compact result envelope + the unified feed. The
         /// scripted lane is CI-safe (no model); the spawn/image lanes skip
-        /// gracefully when the host has no spawnable persona / image model.
+        /// gracefully when the host has no spawnable agent / image model.
         public let subagent: SubagentExpectations?
 
         public init(
@@ -1617,21 +1617,23 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         }
     }
 
-    /// Expectation for `domain == "subagent"` cases. Selects one of three
+    /// Expectation for `domain == "subagent"` cases. Selects one of the
     /// lanes via `lane` and scores the resulting `SubagentJobTranscript`:
     ///   - `scripted` — model-free. A `ScriptedSubagentKind` drives the real
     ///     `SubagentSession` host so the WHOLE lifecycle (resolve →
     ///     permission → handoff → run → normalize → cleanup), the unified
     ///     recursion guard, and the feed lifecycle run in CI with no tokens.
-    ///   - `spawn` — live. Invokes the real `SpawnTool` (host +
-    ///     `TextSubagentKind`) against a user-configured spawnable persona.
+    ///   - `spawn` — live. Invokes the real `spawn_agent` path (host +
+    ///     `TextSubagentKind`) against a user-configured spawnable agent.
+    ///   - `spawn_model` — live. Invokes the real `spawn_model` path (host +
+    ///     `TextSubagentKind`) against a bare spawnable model id, no agent.
     ///   - `image` — live. Invokes the real `ImageTool` (host +
     ///     `ImageSubagentKind`); `sourcePaths` non-empty selects edit mode.
     /// Live lanes SKIP (not fail) when the host can't satisfy them (no
-    /// spawnable persona / image delegation off / model not ready), mirroring
-    /// `requirePlugins`. Every present matcher must pass.
+    /// spawnable agent/model / image delegation off / model not ready),
+    /// mirroring `requirePlugins`. Every present matcher must pass.
     public struct SubagentExpectations: Sendable, Codable {
-        /// `"scripted"` | `"spawn"` | `"image"`. Selects the lane.
+        /// `"scripted"` | `"spawn"` | `"spawn_model"` | `"image"`. Selects the lane.
         public let lane: String
 
         // --- scripted lane inputs ---
@@ -1653,16 +1655,43 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public let phases: [String]?
 
         // --- live spawn lane inputs ---
-        /// Spawnable persona name for the `spawn` lane.
+        /// Spawnable agent name for the `spawn` lane.
         public let agent: String?
-        /// Task/query handed to the spawned persona.
+        /// Task/query handed to the spawned agent.
         public let input: String?
-        /// When true, the runner seeds a spawnable persona named `agent` (an
+        /// When true, the runner seeds a spawnable agent named `agent` (an
         /// Agent + the Default agent's global spawnable pool) for the duration
         /// of the run and restores it after, so the case RUNS across models on
         /// any host instead of skipping. Leave false/nil for negative guards
         /// (e.g. "not spawnable → rejected") that must NOT be seeded.
-        public let seedSpawnablePersona: Bool?
+        public let seedSpawnableAgent: Bool?
+
+        // --- live spawn_model lane inputs ---
+        /// When true, the runner seeds the target model (explicit `model` else
+        /// the run model) into the Default agent's global spawnable MODEL pool
+        /// for the duration of the run and restores it after, so the
+        /// `spawn_model` case RUNS across models on any host instead of skipping.
+        /// Leave false/nil for negative guards (e.g. "model not spawnable →
+        /// rejected") that must NOT be seeded. `input` is the task; `model` (when
+        /// set) pins the target id, otherwise the run model is used.
+        public let seedSpawnableModel: Bool?
+
+        // --- live spawn_model_residency lane inputs ---
+        /// The chat/core ORCHESTRATOR model the residency decision is made
+        /// against. A LOCAL id (installed) models a resident local orchestrator;
+        /// a remote id models a cloud orchestrator (nothing local to evict).
+        /// Paired with `model` (the spawn target) to exercise one of the four
+        /// directions end-to-end (the only lane that proves the real swap).
+        public let orchestrator: String?
+        /// Toggle the "Local Orchestrator Handoff" switch for the run. `false`
+        /// + a DIFFERENT local target ⇒ reject-before-evict (the gate); `true`
+        /// ⇒ the unload/reload swap is allowed. nil → true.
+        public let handoffEnabled: Bool?
+        /// Preload the LOCAL orchestrator so it is actually GPU-resident before
+        /// the spawn (so a different local target triggers the real swap). Set
+        /// `false` for a remote orchestrator (nothing local to make resident).
+        /// nil → false.
+        public let ensureResident: Bool?
 
         // --- live image lane inputs ---
         /// Prompt for the `image` lane (also the edit instruction).
@@ -1700,14 +1729,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (subsequence). Encodes a required plan shape.
         public let expectVerbsInOrder: [String]?
 
-        // --- live sandbox_reduce lane inputs ---
-        /// Natural-language reduction goal for the `sandbox_reduce` lane.
-        public let task: String?
-        /// Optional file/directory paths scoping where the subagent looks.
-        public let paths: [String]?
-        /// Optional child-loop iteration budget (default 8, cap 12).
-        public let maxIterations: Int?
-
         // --- expectations (any subset; an empty set just records) ---
         /// Whether the run must end in a success envelope.
         public let expectSuccess: Bool?
@@ -1744,7 +1765,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             phases: [String]? = nil,
             agent: String? = nil,
             input: String? = nil,
-            seedSpawnablePersona: Bool? = nil,
+            seedSpawnableAgent: Bool? = nil,
+            seedSpawnableModel: Bool? = nil,
+            orchestrator: String? = nil,
+            handoffEnabled: Bool? = nil,
+            ensureResident: Bool? = nil,
             prompt: String? = nil,
             sourcePaths: [String]? = nil,
             model: String? = nil,
@@ -1757,9 +1782,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             successClicked: [String]? = nil,
             failIfClicked: [String]? = nil,
             expectVerbsInOrder: [String]? = nil,
-            task: String? = nil,
-            paths: [String]? = nil,
-            maxIterations: Int? = nil,
             expectSuccess: Bool? = nil,
             expectEnvelopeKind: String? = nil,
             expectResultKind: String? = nil,
@@ -1780,7 +1802,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.phases = phases
             self.agent = agent
             self.input = input
-            self.seedSpawnablePersona = seedSpawnablePersona
+            self.seedSpawnableAgent = seedSpawnableAgent
+            self.seedSpawnableModel = seedSpawnableModel
+            self.orchestrator = orchestrator
+            self.handoffEnabled = handoffEnabled
+            self.ensureResident = ensureResident
             self.prompt = prompt
             self.sourcePaths = sourcePaths
             self.model = model
@@ -1793,9 +1819,6 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.successClicked = successClicked
             self.failIfClicked = failIfClicked
             self.expectVerbsInOrder = expectVerbsInOrder
-            self.task = task
-            self.paths = paths
-            self.maxIterations = maxIterations
             self.expectSuccess = expectSuccess
             self.expectEnvelopeKind = expectEnvelopeKind
             self.expectResultKind = expectResultKind

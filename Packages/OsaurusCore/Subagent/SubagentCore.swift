@@ -3,8 +3,8 @@
 //  OsaurusCore — Subagent framework
 //
 //  Foundation value types shared by every nested sub-agent KIND (spawn,
-//  image, computer_use, sandbox_reduce). Generalized from the most-mature
-//  computer_use scaffolding so all four paths funnel through one host
+//  image, computer_use). Generalized from the most-mature
+//  computer_use scaffolding so all paths funnel through one host
 //  (`SubagentSession`) and one compact-result contract (`SubagentResult`)
 //  instead of four bespoke implementations.
 //
@@ -29,7 +29,7 @@ public struct SubagentScope: Sendable, Equatable {
     /// The originating tool-call id — the key the live feed/interrupt and
     /// the chat row are addressed by.
     public let toolCallId: String
-    /// The agent persona whose model/settings scope the run.
+    /// The agent whose model/settings scope the run.
     public let agentId: UUID
 
     public init(sessionId: String, toolCallId: String, agentId: UUID) {
