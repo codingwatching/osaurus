@@ -23,16 +23,63 @@ enum ChatSessionStore {
     static func load(id: UUID) -> ChatSessionData? {
         ensureOpen()
         guard let session = ChatHistoryDatabase.shared.loadSession(id: id) else { return nil }
-        return recoverTranscriptTurnsIfNeeded(session)
+        let recovered = recoverTranscriptTurnsIfNeeded(session)
+        // When turns were re-derived from the Memory transcript (the #1737
+        // orphaned-conversation case), persist them back once so later
+        // loads/exports read full rows instead of re-deriving every time.
+        // Best-effort and only when the DB is already open — never force a
+        // Keychain touch on the load path.
+        if session.turns.isEmpty, !recovered.turns.isEmpty, didOpen {
+            do {
+                try ChatHistoryDatabase.shared.saveSession(recovered)
+            } catch {
+                print("[ChatSessionStore] Failed to heal recovered turns for \(id): \(error)")
+            }
+        }
+        return recovered
     }
 
     /// Save a session (creates or updates)
     static func save(_ session: ChatSessionData) {
         ensureOpen()
+        // When the chat-history DB is deferred (storage key not yet resident or
+        // a key rotation is in flight), `ensureOpen()` leaves `didOpen` false.
+        // Writing now throws `.notOpen` and silently drops the turns — the
+        // #1737 regression where finished conversations couldn't be continued or
+        // exported. Queue instead and re-flush once storage becomes ready.
+        guard didOpen else {
+            pendingSaves[session.id] = session
+            return
+        }
         do {
             try ChatHistoryDatabase.shared.saveSession(session)
         } catch {
             print("[ChatSessionStore] Failed to save session \(session.id): \(error)")
+        }
+    }
+
+    /// Sessions whose writes were deferred because the chat-history DB wasn't
+    /// open yet. Keyed by id so repeated saves of the same session collapse to
+    /// the latest snapshot. Drained by `flushPendingSaves()`.
+    private static var pendingSaves: [UUID: ChatSessionData] = [:]
+
+    /// Re-attempt any saves that were deferred while the chat-history DB was
+    /// closed. Call when storage becomes ready (e.g. on the rotation-complete
+    /// notification). No-op when nothing is pending or the DB is still deferred.
+    static func flushPendingSaves() {
+        guard !pendingSaves.isEmpty else { return }
+        ensureOpen()
+        guard didOpen else { return }
+        let drained = pendingSaves
+        pendingSaves.removeAll()
+        for (id, session) in drained {
+            do {
+                try ChatHistoryDatabase.shared.saveSession(session)
+            } catch {
+                print("[ChatSessionStore] Failed to flush deferred save \(id): \(error)")
+                // Keep it queued for the next readiness signal.
+                pendingSaves[id] = session
+            }
         }
     }
 
@@ -121,8 +168,9 @@ enum ChatSessionStore {
             guard !recoveredTurns.isEmpty else { return session }
 
             var recovered = session
-            // Read-only compatibility fallback. Do not write these turns back to
-            // chat-history here; recovery should not mutate storage during load.
+            // Pure transform — write-back is the caller's job (`load` heals the
+            // chat-history row once when the DB is open) so this stays usable
+            // from read-only/non-open contexts without mutating storage.
             recovered.turns = recoveredTurns
             return recovered
         } catch {
@@ -165,7 +213,20 @@ enum ChatSessionStore {
     #if DEBUG
         static func _resetForTesting() {
             didOpen = false
+            pendingSaves.removeAll()
             ChatHistoryDatabase.shared.close()
         }
+
+        /// Mark the store as already open so save/load skip `ensureOpen()`'s
+        /// Keychain-gated path. Pair with `ChatHistoryDatabase.shared.openInMemory()`.
+        static func _markStorageOpenForTesting() { didOpen = true }
+
+        /// Seed the deferred-save queue as if a save had been dropped while the
+        /// DB was closed, so `flushPendingSaves()` can be exercised directly.
+        static func _enqueuePendingSaveForTesting(_ session: ChatSessionData) {
+            pendingSaves[session.id] = session
+        }
+
+        static var _pendingSaveCountForTesting: Int { pendingSaves.count }
     #endif
 }
