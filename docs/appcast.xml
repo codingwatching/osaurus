@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.1</title>
+            <pubDate>Mon, 29 Jun 2026 23:36:39 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.1</sparkle:version>
+            <sparkle:shortVersionString>0.21.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.1/Osaurus-0.21.1.dmg" length="55578130" type="application/octet-stream" sparkle:edSignature="hHh7rM5E9kVMzEVtg+vsbF6PvpuwV/2gBy4Qm0+lzaa+Zv07v9pdOXPLYc0XM/qiK/DOtXHiHa9pnRQh1rd/Cw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- Make built-in Default agent non-configurable; fix sub-agent toggle persistence (#1756) by @tpae
+- Fix chat history loss from non-idempotent schema migrations (#1755) by @tpae
+
+## 🧰 Maintenance
+
+- Improve image models tab: inline Hugging Face link and download sizes (#1759) by @tpae
+- Rename Image Generation tab to Images (#1758) by @tpae
+- Fix native image generation echoing artifact JSON instead of confirming (#1757) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.0...0.21.1
+]]></description>
+        </item>
+        <item>
             <title>0.21.0</title>
             <pubDate>Mon, 29 Jun 2026 19:13:23 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
