@@ -271,10 +271,20 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             )
         }
 
-        let count = finalResult.images.count
+        // Stamp installed edit capability onto the result so its payload's
+        // edit-continuation steer + the loop's post-generation edit nudge are
+        // suppressed when no ready edit model exists (they'd otherwise point the
+        // model at an edit the runtime can't perform). Read off the same warmed
+        // picker cache the schema/guidance gates use.
+        var result = finalResult
+        result.editModelAvailable = await MainActor.run {
+            ModelPickerItemCache.shared.hasReadyImageEditModel
+        }
+
+        let count = result.images.count
         let verb = params.isEdit ? "Edited" : "Generated"
         let summary = "\(verb) \(count) image\(count == 1 ? "" : "s") with \(resolved.name)."
-        return SubagentResult(payload: finalResult.toolPayload, summary: summary)
+        return SubagentResult(payload: result.toolPayload, summary: summary)
     }
 
     // MARK: - Stream consumption (detached)
@@ -320,13 +330,20 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         case .loadingModel:
             feed.emitPhase("loading model", detail: progress.model)
         case .generating:
-            let fraction: Double?
-            if let step = progress.step, let total = progress.total, total > 0 {
-                fraction = Double(step) / Double(total)
-            } else {
-                fraction = nil
-            }
-            feed.emitProgress("generating", fraction: fraction, step: progress.step ?? 0)
+            // One coalesced "generating" row whose bar + "step 12/30 · ~8s left"
+            // detail advance in place, mirroring the manual image panel.
+            let fraction: Double? = {
+                guard let step = progress.step, let total = progress.total, total > 0 else {
+                    return nil
+                }
+                return Double(step) / Double(total)
+            }()
+            feed.emitProgress(
+                "generating",
+                fraction: fraction,
+                step: progress.step ?? 0,
+                detail: Self.generatingDetail(progress)
+            )
         case .unloading:
             feed.emitPhase("unloading image model")
         case .restoringChatModels:
@@ -346,6 +363,24 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         case .cancelled:
             feed.emitPhase("cancelled")
         }
+    }
+
+    /// Compact human detail for a generating tick — "step 12/30 · ~8s left",
+    /// with each piece dropped when the job hasn't reported it yet, and `nil`
+    /// when there's nothing useful to show.
+    private static func generatingDetail(_ progress: NativeImageJobProgress) -> String? {
+        var parts: [String] = []
+        if let step = progress.step {
+            if let total = progress.total, total > 0 {
+                parts.append("step \(step)/\(total)")
+            } else {
+                parts.append("step \(step)")
+            }
+        }
+        if let eta = progress.etaSeconds, eta > 0 {
+            parts.append(String(format: "~%.0fs left", eta))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     // MARK: - Source image loading (edit)
