@@ -3425,7 +3425,7 @@ struct AgentDetailView: View {
                 label: "Permission"
             )
             subagentFootnote(
-                "Image load policy is a system setting in the Image Generation tab."
+                "Image load policy is a system setting in the Images tab."
             )
         }
     }
