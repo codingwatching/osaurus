@@ -19,6 +19,7 @@ public enum RemoteProviderServiceError: LocalizedError {
     case invalidURL
     case notConnected
     case requestFailed(String)
+    case requestFailedWithDiagnostics(String, ProviderReplayDiagnosticBundle)
     case invalidResponse
     case streamingError(String)
     case noModelsAvailable
@@ -30,7 +31,11 @@ public enum RemoteProviderServiceError: LocalizedError {
         case .notConnected:
             return L("Provider is not connected")
         case .requestFailed(let message):
-            return L("Request failed: \(message)")
+            return L("Request failed: \(ProviderDiagnosticRedactor.safe(message, maxLength: 500))")
+        case .requestFailedWithDiagnostics(let message, let diagnostics):
+            return L(
+                "Request failed: \(ProviderDiagnosticRedactor.safe(message, maxLength: 500)). Redacted request evidence: \(diagnostics.summary)"
+            )
         case .invalidResponse:
             return L("Invalid response from provider")
         case .streamingError(let message):
@@ -44,6 +49,27 @@ public enum RemoteProviderServiceError: LocalizedError {
         guard case .streamingError(let message) = self else { return false }
         return message.contains("mid-argument")
             || message.contains("arguments were complete")
+    }
+
+    public var replayDiagnostics: ProviderReplayDiagnosticBundle? {
+        guard case .requestFailedWithDiagnostics(_, let diagnostics) = self else { return nil }
+        return diagnostics
+    }
+
+    func attachingReplayDiagnostics(_ diagnostics: ProviderReplayDiagnosticBundle) -> RemoteProviderServiceError {
+        switch self {
+        case .requestFailed(let message):
+            return .requestFailedWithDiagnostics(
+                ProviderDiagnosticRedactor.safe(message, maxLength: 500),
+                diagnostics
+            )
+        case .invalidResponse:
+            return .requestFailedWithDiagnostics("Invalid response from provider", diagnostics)
+        case .requestFailedWithDiagnostics:
+            return self
+        case .invalidURL, .notConnected, .streamingError, .noModelsAvailable:
+            return self
+        }
     }
 }
 
@@ -4256,17 +4282,53 @@ extension RemoteProviderService {
             timeout: provider.timeout
         )
 
-        let (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw RemoteProviderServiceError.invalidResponse
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+        } catch {
+            let diagnostics = ProviderReplayDiagnosticBundle(
+                phase: "model_discovery",
+                request: request,
+                transportError: error,
+                configuredSecretHeaderKeys: provider.secretHeaderKeys
+            )
+            throw RemoteProviderServiceError.requestFailedWithDiagnostics(
+                "Network error: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))",
+                diagnostics
+            )
         }
 
-        return try decodeOpenAICompatibleModelsResponse(
-            data: data,
-            statusCode: httpResponse.statusCode,
-            provider: provider
+        guard let httpResponse = response as? HTTPURLResponse else {
+            let diagnostics = ProviderReplayDiagnosticBundle(
+                phase: "model_discovery",
+                request: request,
+                configuredSecretHeaderKeys: provider.secretHeaderKeys
+            )
+            throw RemoteProviderServiceError.invalidResponse.attachingReplayDiagnostics(diagnostics)
+        }
+
+        let diagnostics = ProviderReplayDiagnosticBundle(
+            phase: "model_discovery",
+            request: request,
+            response: httpResponse,
+            responseData: data,
+            configuredSecretHeaderKeys: provider.secretHeaderKeys
         )
+        do {
+            return try decodeOpenAICompatibleModelsResponse(
+                data: data,
+                statusCode: httpResponse.statusCode,
+                provider: provider
+            )
+        } catch let error as RemoteProviderServiceError {
+            throw error.attachingReplayDiagnostics(diagnostics)
+        } catch {
+            throw RemoteProviderServiceError.requestFailedWithDiagnostics(
+                "Invalid /models response: \(ProviderDiagnosticRedactor.safe(error.localizedDescription, maxLength: 240))",
+                diagnostics
+            )
+        }
     }
 
     static func decodeOpenAICompatibleModelsResponse(

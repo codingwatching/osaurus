@@ -21460,6 +21460,28 @@
         }
       }
     },
+    "Copy diagnostics and include this redacted request/response evidence with the report." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Kopiere die Diagnosedaten und füge diesen geschwärzten Anfrage-/Antwortnachweis in den Bericht ein."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "진단 정보를 복사하고 이 수정된 요청/응답 증거를 보고서에 포함하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "复制诊断信息，并在报告中包含这份已遮盖的请求/响应证据。"
+          }
+        }
+      }
+    },
     "Copy Image" : {
       "localizations" : {
         "de" : {
@@ -70448,6 +70470,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "请求格式"
+          }
+        }
+      }
+    },
+    "Request evidence" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "Anfragenachweis"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "요청 증거"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "needs_review",
+            "value" : "请求证据"
           }
         }
       }
