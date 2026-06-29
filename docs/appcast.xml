@@ -3,6 +3,76 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.0</title>
+            <pubDate>Mon, 29 Jun 2026 19:13:23 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.0</sparkle:version>
+            <sparkle:shortVersionString>0.21.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.0/Osaurus-0.21.0.dmg" length="55574519" type="application/octet-stream" sparkle:edSignature="W1g3lR+pVA9uPpBpKnz6yT1nGvm3tnESTM3u3XM0z7Kkru6FuxqLS85aim40T0TaTGt7jSjkiEYaliPmMXFmAg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- reduced default agent prefill cost on small local models (#1748) by @RaajeevChandran
+- fixed sentry hangs (#1747) by @RaajeevChandran
+- Add skill policy diagnostics (#1744) by @mimeding
+- Add redacted provider request diagnostics (#1743) by @mimeding
+- Recover chat continuation from transcript fallback (#1742) by @mimeding
+- Add agent collaboration protocol contract (#1630) by @mimeding
+- Add plugin marketplace trust preview (#1647) by @mimeding
+- Add Agent Channel action safety contract (#1646) by @mimeding
+- Complete Simplified Chinese localization (#1612) by @jiajun-dev
+- Add router account usage center (#1586) by @mimeding
+- Reject out-of-range proxy ports in GlobalProxyConfiguration (#1693) by @jax-0n-git
+- Avoid CLI crash on out-of-Int64-range model\_info numbers in `show` (#1702) by @jax-0n-git
+- Add `osaurus serve --supervise` keep-alive loop to survive app quit (#1712) by @jax-0n-git
+- Accept an omitted args in desktop-format MCP bundle manifests (#1692) by @jax-0n-git
+- Tolerate and reap corrupt coordinator lock files (#1690) by @jax-0n-git
+- Fix MCP schema proxy miscasting JSON integers 0 and 1 as booleans (#1687) by @jax-0n-git
+- Don't treat a bare `tools uninstall` name as a CWD path (avoid deleting the wrong directory) (#1713) by @jax-0n-git
+- Add Computer Use forensic evidence runner (#1671) by @mimeding
+- hide non-MLX models that local engine can't load (#1729) by @RaajeevChandran
+- Fix same-turn capability tool activation (#1725) by @mimeding
+- updated chinese translations (#1720) by @ftzahao
+- fix: use veryShortWeekdaySymbols for schedule weekday display (#1722) by @ftzahao
+- fix app hang watchdog stalls across folder, tool listing, permissions, and launch (#1699) by @RaajeevChandran
+- improved plugin discovery for smaller local models (#1685) by @RaajeevChandran
+- Repin vmlx-swift: fix Mistral3/Pixtral VLM model-load crash (#1686) by @jjang-ai
+- Native image generation/editing + agent delegation (spawn / local\_delegate) (#1682) by @jjang-ai
+
+## 🚀 Features
+
+- added file diff cards for folder and sandbox edits (#1683) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Coalesce subagent image progress in place; show step/ETA + elapsed (#1753) by @tpae
+- fixed main thread freezes (#1754) by @RaajeevChandran
+- fix continuing and exporting conversations after the encryption update (#1749) by @RaajeevChandran
+- Fix concurrent-GPU crash on sub-agent residency handoff (unload: drain before free) (#1736) by @jjang-ai
+- fixed app hangs (#1730) by @RaajeevChandran
+- fixed tools page layout hang (#1724) by @RaajeevChandran
+- Fix LFM2 tool-calling: repin vmlx native 'List of tools' format (#1723) by @jjang-ai
+- fix context budget popover crash on System Prompt drill-down (#1684) by @tpae
+- Fix #1680: surface (not silently truncate) multi-step tool tasks on a premature-EOS empty turn (#1681) by @jjang-ai
+
+## 🧰 Maintenance
+
+- minor image generation ux improvements (#1752) by @RaajeevChandran
+- Improve image generation: responsive cancel, live timer/estimate, dynamic OsaurusAI catalog (#1751) by @tpae
+- Split spawn into spawn\_agent + spawn\_model with cross-model residency (#1750) by @tpae
+- Expand and optimize the OsaurusEvals catalog + harness (local vs frontier) (#1741) by @tpae
+- Add a standard per-agent model picker for chat-driven sub-agents (#1738) by @tpae
+- Unify all subagent flows through the eval host and benchmark local vs frontier (#1735) by @tpae
+- Promote Image Generation to its own Settings section (#1734) by @tpae
+- Unify sub-agent delegation under one registry + per-agent Sub-agents tab (#1731) by @tpae
+- improved settings ux (#1716) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.20.9...0.20.10
+]]></description>
+        </item>
+        <item>
             <title>0.20.9</title>
             <pubDate>Tue, 23 Jun 2026 20:52:30 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
