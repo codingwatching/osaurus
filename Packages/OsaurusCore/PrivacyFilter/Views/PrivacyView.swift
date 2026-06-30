@@ -72,6 +72,7 @@ final class PrivacyViewSaveDebouncer: ObservableObject {
 struct PrivacyView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var downloader = PrivacyFilterModelDownloader.shared
+    @ObservedObject private var rampartManager = RampartModelManager.shared
     @ObservedObject private var providerManager = RemoteProviderManager.shared
     @StateObject private var saveDebouncer = PrivacyViewSaveDebouncer()
 
@@ -90,8 +91,14 @@ struct PrivacyView: View {
     /// dry-run tester may use the model. The tabbed surface itself
     /// always renders since the regex layer needs no bundle.
     private var isModelReady: Bool {
-        if case .ready = downloader.state { return true }
-        return false
+        switch configuration.aiDetectionBackend {
+        case .openai:
+            if case .ready = downloader.state { return true }
+            return false
+        case .rampart:
+            if case .ready = rampartManager.state { return true }
+            return RampartModelManager.bundleExists()
+        }
     }
 
     /// Tabs whose content is a centered full-screen state rather than a
@@ -104,7 +111,7 @@ struct PrivacyView: View {
         case .providers:
             return providerManager.configuration.providers.isEmpty
         case .model:
-            return !isModelReady
+            return false
         default:
             return false
         }
@@ -235,39 +242,25 @@ struct PrivacyView: View {
                 onOpenProviders: { ManagementStateManager.shared.selectedTab = .providers }
             )
         case .model:
-            if isModelReady {
-                PrivacyModelTab(
-                    onReverify: downloader.reverify,
-                    onRemove: removeModelAndDisableAI
-                )
-            } else {
-                // Not installed yet: the install hero now lives inside
-                // the Model tab (it used to gate the entire panel).
-                // Everything else in Privacy works without it.
-                PrivacyInstallHero(
-                    state: downloader.state,
-                    hasAppeared: hasAppeared,
-                    onPrimary: { handlePrimaryInstallAction() },
-                    onCancel: { downloader.cancel() }
-                )
+            VStack(alignment: .leading, spacing: 24) {
+                SettingsSection(title: L("Detection Models"), icon: "cube.box.fill") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(
+                            "Choose the on-device model that powers AI detection. Pattern rules in the Rules tab work without any model.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                        PrivacyModelSelector(configuration: $configuration, save: save)
+                    }
+                }
             }
         }
     }
 
     // MARK: - Install action routing
-
-    /// `.idle`/`.failed` -> kick off download. The progress states are
-    /// the only ones that show a Cancel button, which uses a different
-    /// closure on `PrivacyInstallHero` so the hero stays purely
-    /// presentational.
-    private func handlePrimaryInstallAction() {
-        switch downloader.state {
-        case .idle, .failed:
-            downloader.startDownload()
-        case .enumerating, .downloading, .verifying, .ready:
-            break
-        }
-    }
 
     // MARK: - Custom rule mutations
 
@@ -303,21 +296,6 @@ struct PrivacyView: View {
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             forgetActionMessage = nil
         }
-    }
-
-    // MARK: - Model removal
-
-    /// Remove the on-disk bundle AND flip `aiDetectionEnabled` off in
-    /// one motion. Leaving AI detection on with no model would trap
-    /// every cloud send in the pipeline's fail-closed `engineUnavailable`
-    /// branch; turning it off drops cleanly to the regex-only path the
-    /// rest of Privacy already supports.
-    private func removeModelAndDisableAI() {
-        if configuration.aiDetectionEnabled {
-            configuration.aiDetectionEnabled = false
-            save()
-        }
-        downloader.remove()
     }
 
     // MARK: - Persistence
@@ -376,214 +354,243 @@ private enum PrivacyTab: String, CaseIterable, AnimatedTabItem {
         case .overview: return L("Overview")
         case .rules: return L("Rules")
         case .providers: return L("Providers")
-        case .model: return L("Model")
+        case .model: return L("Models")
         }
     }
 }
 
-// MARK: - Install Hero (Model-tab empty state)
+// MARK: - Model selector (radio cards, shared by Overview + Models tabs)
 
-/// Model-tab state for when the on-device bundle isn't installed yet.
-/// Idle / failed reuse the shared `SettingsEmptyState` (glowing icon,
-/// benefit cards, primary CTA) so the prompt matches every other empty
-/// settings tab; the active download states (enumerating → downloading
-/// → verifying) render a compact centered progress card with a Cancel
-/// action. `.ready` draws nothing — the parent swaps in
-/// `PrivacyModelTab` once the bundle verifies.
-private struct PrivacyInstallHero: View {
+/// Radio-style chooser between the available on-device detection models.
+/// Self-contained: reads/writes `configuration.aiDetectionBackend` and
+/// drives each model's download/manage lifecycle through its manager
+/// singleton, so both the Overview and Models tabs can render the same
+/// control with just a configuration binding.
+private struct PrivacyModelSelector: View {
     @Environment(\.theme) private var theme
-    let state: PrivacyFilterDownloadState
-    let hasAppeared: Bool
-    let onPrimary: () -> Void
-    let onCancel: () -> Void
+    @Binding var configuration: PrivacyFilterConfiguration
+    let save: () -> Void
+
+    @ObservedObject private var downloader = PrivacyFilterModelDownloader.shared
+    @ObservedObject private var rampart = RampartModelManager.shared
+    @State private var pendingRemoval: PrivacyAIBackend?
 
     var body: some View {
-        switch state {
-        case .idle, .failed:
-            staticState
-        case .enumerating, .downloading, .verifying:
-            progressState
-        case .ready:
-            EmptyView()
-        }
-    }
-
-    // MARK: - Idle / failed (shared empty state)
-
-    private var staticState: some View {
-        SettingsEmptyState(
-            icon: heroIcon,
-            title: heroTitleKey,
-            subtitle: heroSubtitle,
-            examples: benefits,
-            primaryAction: .init(
-                title: primaryActionTitle,
-                icon: primaryActionIcon,
-                handler: onPrimary
-            ),
-            hasAppeared: hasAppeared
-        )
-    }
-
-    private var benefits: [SettingsEmptyState.Example] {
-        [
-            .init(
-                icon: "wand.and.stars",
-                title: L("On-device detection"),
-                description: L("Runs locally — none of your text touches an external model.")
-            ),
-            .init(
-                icon: "checkmark.shield",
-                title: L("Review redactions"),
-                description: L("Approve every match before sending, or auto-approve once you trust the picks.")
-            ),
-            .init(
-                icon: "arrow.uturn.backward.circle",
-                title: L("Live unscrub"),
-                description: L("Streaming replies are restored on the fly so chat reads naturally.")
-            ),
-        ]
-    }
-
-    private var heroIcon: String {
-        if case .failed = state { return "exclamationmark.triangle.fill" }
-        return "hand.raised.fill"
-    }
-
-    private var heroTitleKey: String {
-        if case .failed = state { return "privacy.install.title.failed" }
-        return "privacy.install.title"
-    }
-
-    /// Failed surfaces the specific failure reason (falling back to the
-    /// generic copy) so the user can act on it; idle shows the pitch.
-    private var heroSubtitle: String {
-        if case .failed(let detail) = state {
-            return detail.isEmpty ? "privacy.install.subtitle.failed" : detail
-        }
-        return "privacy.install.subtitle"
-    }
-
-    private var primaryActionTitle: String {
-        if case .failed = state { return L("Retry") }
-        return L("Install")
-    }
-
-    private var primaryActionIcon: String {
-        if case .failed = state { return "arrow.clockwise" }
-        return "arrow.down.circle.fill"
-    }
-
-    // MARK: - Active download (compact progress card)
-
-    private var progressState: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            VStack(spacing: 16) {
-                progressHeader
-                progressDetail
-                Button(action: onCancel) {
-                    Text("Cancel", bundle: .module)
-                }
-                .buttonStyle(SettingsButtonStyle())
-            }
-            .frame(maxWidth: 460)
-            .padding(24)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, 32)
-    }
-
-    private var progressHeader: some View {
         VStack(spacing: 10) {
-            ZStack {
-                Circle()
-                    .fill(theme.accentColor.opacity(0.12))
-                    .frame(width: 56, height: 56)
-                if case .downloading = state {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                } else {
-                    ProgressView()
-                        .controlSize(.small)
-                        .tint(theme.accentColor)
-                }
+            card(.rampart)
+            card(.openai)
+        }
+        .confirmationDialog(
+            Text("Remove model?", bundle: .module),
+            isPresented: Binding(
+                get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                if let backend = pendingRemoval { remove(backend) }
+                pendingRemoval = nil
+            } label: {
+                Text("Remove Model", bundle: .module)
             }
-            Text(LocalizedStringKey(progressTitleKey), bundle: .module)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-            Text(LocalizedStringKey(progressSubtitleKey), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
+            Button(role: .cancel) { pendingRemoval = nil } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text(
+                "This deletes the on-disk model. Detection for it stops until you re-download.",
+                bundle: .module
+            )
+        }
+    }
+
+    private func meta(_ backend: PrivacyAIBackend) -> (name: String, size: String, summary: String) {
+        switch backend {
+        case .rampart:
+            return (
+                "Rampart", "~37 MB",
+                L("Tiny and fast. Catches names, addresses, and IDs/secrets. No date detection.")
+            )
+        case .openai:
+            return (
+                "OpenAI Privacy Filter", "~2.8 GB",
+                L(
+                    "Highest coverage. Adds names, addresses, dates, and free-form secrets beyond pattern rules."
+                )
+            )
+        }
+    }
+
+    private func isInstalled(_ backend: PrivacyAIBackend) -> Bool {
+        switch backend {
+        case .openai:
+            if case .ready = downloader.state { return true }
+            return false
+        case .rampart:
+            if case .ready = rampart.state { return true }
+            return RampartModelManager.bundleExists()
         }
     }
 
     @ViewBuilder
-    private var progressDetail: some View {
-        if case .downloading(let index, let count, let fileName, let downloaded, let total) = state {
-            VStack(alignment: .leading, spacing: 6) {
-                let fraction: Double = total > 0 ? Double(downloaded) / Double(total) : 0
-                ProgressView(value: fraction, total: 1.0)
-                    .progressViewStyle(.linear)
-                    .tint(theme.accentColor)
-                HStack {
-                    Text(verbatim: "\(fileName)  (\(index + 1)/\(count))")
-                        .font(.system(size: 10))
+    private func card(_ backend: PrivacyAIBackend) -> some View {
+        let selected = configuration.aiDetectionBackend == backend
+        let info = meta(backend)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 16))
+                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(verbatim: info.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(theme.primaryText)
+                        Text(verbatim: info.size)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(theme.secondaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(theme.tertiaryBackground, in: Capsule())
+                        if isInstalled(backend) {
+                            HStack(spacing: 3) {
+                                Image(systemName: "checkmark.seal.fill").font(.system(size: 9))
+                                Text("Installed", bundle: .module).font(.system(size: 10, weight: .medium))
+                            }
+                            .foregroundColor(theme.successColor)
+                        }
+                    }
+                    Text(verbatim: info.summary)
+                        .font(.system(size: 11))
                         .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer()
-                    Text(verbatim: "\(formatBytes(downloaded)) / \(formatBytes(total))")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("The model is large; keep this window open while it downloads.", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
             }
-            .frame(maxWidth: .infinity)
+            HStack { Spacer(); controls(backend) }
+        }
+        .padding(12)
+        .background(theme.cardBackground, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(
+                    selected ? theme.accentColor : theme.cardBorder,
+                    lineWidth: selected ? 1.5 : 1
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if configuration.aiDetectionBackend != backend {
+                configuration.aiDetectionBackend = backend
+                save()
+            }
         }
     }
 
-    private var progressTitleKey: String {
-        switch state {
-        case .enumerating: return "privacy.install.title.enumerating"
-        case .downloading: return "privacy.install.title.downloading"
-        case .verifying: return "privacy.install.title.verifying"
-        default: return "privacy.install.title"
+    @ViewBuilder
+    private func controls(_ backend: PrivacyAIBackend) -> some View {
+        switch backend {
+        case .openai: openAIControls
+        case .rampart: rampartControls
         }
     }
 
-    private var progressSubtitleKey: String {
-        switch state {
-        case .enumerating: return "privacy.install.subtitle.enumerating"
-        case .downloading: return "privacy.install.subtitle.downloading"
-        case .verifying: return "privacy.install.subtitle.verifying"
-        default: return "privacy.install.subtitle"
+    private func actionLabel(_ icon: String, _ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+            Text(verbatim: text)
         }
     }
 
-    private func formatBytes(_ bytes: Int64) -> String {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useMB, .useGB]
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: bytes)
+    @ViewBuilder
+    private var openAIControls: some View {
+        switch downloader.state {
+        case .ready:
+            HStack(spacing: 6) {
+                Button(action: downloader.reverify) {
+                    actionLabel("arrow.clockwise", L("Re-verify"))
+                }
+                .buttonStyle(SettingsButtonStyle())
+                Button(role: .destructive) { pendingRemoval = .openai } label: {
+                    actionLabel("trash", L("Remove"))
+                }
+                .buttonStyle(SettingsButtonStyle(isDestructive: true))
+            }
+        case .idle, .failed:
+            Button(action: { PrivacyFilterModelDownloader.shared.startDownload() }) {
+                actionLabel("arrow.down.circle", L("Install"))
+            }
+            .buttonStyle(SettingsButtonStyle())
+        default:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(verbatim: openAIProgressText)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                Button(action: downloader.cancel) { Text("Cancel", bundle: .module) }
+                    .buttonStyle(SettingsButtonStyle())
+            }
+        }
+    }
+
+    private var openAIProgressText: String {
+        switch downloader.state {
+        case let .downloading(_, _, _, done, total):
+            return total > 0 ? "\(Int(Double(done) / Double(total) * 100))%" : "…"
+        case .verifying:
+            return L("Verifying…")
+        default:
+            return L("Preparing…")
+        }
+    }
+
+    @ViewBuilder
+    private var rampartControls: some View {
+        switch rampart.state {
+        case .ready:
+            Button(role: .destructive) { pendingRemoval = .rampart } label: {
+                actionLabel("trash", L("Remove"))
+            }
+            .buttonStyle(SettingsButtonStyle(isDestructive: true))
+        case .downloading(let progress):
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(verbatim: "\(Int(progress * 100))%")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                Button(action: rampart.cancel) { Text("Cancel", bundle: .module) }
+                    .buttonStyle(SettingsButtonStyle())
+            }
+        case .failed:
+            Button(action: { RampartModelManager.shared.startDownload() }) {
+                actionLabel("arrow.clockwise", L("Retry"))
+            }
+            .buttonStyle(SettingsButtonStyle())
+        case .idle:
+            if RampartModelManager.bundleExists() {
+                Button(role: .destructive) { pendingRemoval = .rampart } label: {
+                    actionLabel("trash", L("Remove"))
+                }
+                .buttonStyle(SettingsButtonStyle(isDestructive: true))
+            } else {
+                Button(action: { RampartModelManager.shared.startDownload() }) {
+                    actionLabel("arrow.down.circle", L("Install"))
+                }
+                .buttonStyle(SettingsButtonStyle())
+            }
+        }
+    }
+
+    private func remove(_ backend: PrivacyAIBackend) {
+        switch backend {
+        case .openai:
+            configuration.aiDetectionEnabled = false
+            save()
+            PrivacyFilterModelDownloader.shared.remove()
+        case .rampart:
+            RampartModelManager.shared.remove()
+        }
     }
 }
 
@@ -603,7 +610,7 @@ private struct PrivacyOverviewTab: View {
     /// the bundle (an AI-on + no-model state would fail-close every
     /// cloud send), so when this is false we show an install prompt.
     let isModelReady: Bool
-    /// Jump to the Model tab so the user can install the bundle.
+    /// Jump to the Models tab so the user can install a bundle.
     let onInstallModel: () -> Void
     /// Read-only — the parent owns this `@State` and re-renders the
     /// tab when it changes; the tab never writes back to it.
@@ -638,7 +645,23 @@ private struct PrivacyOverviewTab: View {
                             )
                         )
 
-                        aiDetectionRow
+                        if configuration.enabled {
+                            SettingsToggle(
+                                title: L("AI detection (on-device model)"),
+                                description: L(
+                                    "Use an on-device model to catch names, addresses, and secrets that pattern rules miss. Pick and install a model below."
+                                ),
+                                isOn: Binding(
+                                    get: { configuration.aiDetectionEnabled },
+                                    set: { newValue in
+                                        configuration.aiDetectionEnabled = newValue
+                                        save()
+                                    }
+                                )
+                            )
+
+                            PrivacyModelSelector(configuration: $configuration, save: save)
+                        }
 
                         if configuration.enabled && !hasActiveDetector {
                             noDetectorNote
@@ -725,55 +748,6 @@ private struct PrivacyOverviewTab: View {
                     CrashReportingService.shared.setEnabled(newValue)
                 }
             }
-        }
-    }
-
-    // MARK: - AI detection layer
-
-    /// When the model is installed: a normal toggle for the AI layer.
-    /// When it isn't: a disabled-looking row with an Install affordance
-    /// pointing at the Model tab — you can't enable AI without the
-    /// bundle.
-    @ViewBuilder
-    private var aiDetectionRow: some View {
-        if isModelReady {
-            SettingsToggle(
-                title: L("AI detection (on-device model)"),
-                description: L(
-                    "Use the on-device model to catch names, addresses, dates, and free-form secrets that pattern rules miss. Runs locally; pattern rules in the Rules tab work without it."
-                ),
-                isOn: Binding(
-                    get: { configuration.aiDetectionEnabled },
-                    set: { newValue in
-                        configuration.aiDetectionEnabled = newValue
-                        save()
-                    }
-                )
-            )
-        } else {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("AI detection (on-device model)", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Install the ~2.8 GB on-device model to also catch names, addresses, dates, and secrets. Pattern rules in the Rules tab already work without it.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                Button(action: onInstallModel) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.down.circle")
-                        Text("Install", bundle: .module)
-                    }
-                }
-                .buttonStyle(SettingsButtonStyle())
-            }
-            .settingsRowCard()
         }
     }
 
@@ -1229,94 +1203,6 @@ private struct PrivacyProvidersTab: View {
             format: L("privacy.providers.row.subtitle %@"),
             host
         )
-    }
-}
-
-// MARK: - Model Tab
-
-/// Where the detection model lives. The Re-verify button used to be
-/// duplicated in the header too; consolidating it here means the
-/// destructive-leaning action (re-runs SHA-256 on the entire ~2.8GB
-/// bundle) is one click away but never accidentally triggered while
-/// the user is reaching for the header.
-private struct PrivacyModelTab: View {
-    @Environment(\.theme) private var theme
-    let onReverify: () -> Void
-    let onRemove: () -> Void
-
-    @State private var showRemoveConfirmation = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            SettingsSection(title: L("Detection Model"), icon: "cube.box.fill") {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.successColor)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Model installed", bundle: .module)
-                                .font(.system(size: 13, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            Text(verbatim: "\(PrivacyFilterModelBundle.version) — verified on disk.")
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer()
-                        Button(action: onReverify) {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.clockwise")
-                                Text("Re-verify", bundle: .module)
-                            }
-                        }
-                        .buttonStyle(SettingsButtonStyle())
-                        .localizedHelp("Re-run the model bundle SHA-256 verification.")
-
-                        // Destructive action lives in the same row as
-                        // Re-verify so the user can audit the bundle
-                        // (re-verify) or wipe it (remove) without
-                        // hunting through a separate "danger zone"
-                        // panel. The confirmation alert protects the
-                        // ~2.8GB redownload the next install would
-                        // need.
-                        Button(role: .destructive) {
-                            showRemoveConfirmation = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "trash")
-                                Text("Remove", bundle: .module)
-                            }
-                        }
-                        .buttonStyle(SettingsButtonStyle(isDestructive: true))
-                        .localizedHelp(
-                            "Delete the on-disk model bundle. You'll need to re-download it from the Install button to use the Privacy Filter again."
-                        )
-                    }
-                }
-                .settingsRowCard()
-            }
-        }
-        .confirmationDialog(
-            Text("Remove Privacy Filter model?", bundle: .module),
-            isPresented: $showRemoveConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button(role: .destructive) {
-                onRemove()
-            } label: {
-                Text("Remove Bundle", bundle: .module)
-            }
-            Button(role: .cancel) {
-            } label: {
-                Text("Cancel", bundle: .module)
-            }
-        } message: {
-            Text(
-                "This deletes the on-disk model (~2.8 GB). The Privacy Filter stops detecting until you re-download it.",
-                bundle: .module
-            )
-        }
     }
 }
 
