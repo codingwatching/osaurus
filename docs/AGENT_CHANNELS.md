@@ -200,3 +200,41 @@ duplicate dispatch for the same message snapshot.
 This PR does not add a live Discord receive relay. It adds the durable message
 and duplicate-filtering foundation that a relay, webhook receiver, Slack
 adapter, or Telegram adapter can share.
+
+## Async Channel Substrate
+
+Async inbound channels should build on the shared substrate in
+`Models/AgentChannel` and `Services/AgentChannel` before dispatching an agent
+turn. The substrate captures the reusable contracts from Telegram-style chat
+bridges and email-style resend bridges:
+
+- Verify the webhook or source first with either a shared-secret header or an
+  HMAC-SHA256 body signature. Verification failures are typed and never include
+  the configured secret in diagnostics.
+- Evaluate sender policy with blocklists, allowlists, default disposition, and
+  bot-sender handling before parsing user-visible content into a prompt.
+- Create an idempotency key from the connection plus the provider event id and
+  register it through the Agent Channel message store. Duplicates should be
+  acknowledged without creating another dispatch.
+- Derive the chat session partition from `(agent_id, connection_id,
+  provider_conversation_id, provider_thread_id, salt)` using a hash-backed
+  external session key. Provider routing ids stay out of model-visible prompt
+  text and sidebar grouping keys.
+- Mint an opaque reply token for each inbound turn. The token is what the agent
+  sees; the token registry holds the provider conversation/thread/reply address,
+  agent scope, session id, task id, issue time, and expiry. The registry prunes
+  expired bindings on issue/resolve activity and exposes explicit pruning for
+  adapter maintenance jobs.
+- Track artifact forwarding with typed statuses (`queued`, `forwarded`,
+  `skipped`, `blocked`, `failed`) so adapters can report whether shared
+  artifacts were actually delivered to the remote channel.
+- Emit bounded in-memory audit events with typed status/failure values and
+  hashed audit keys rather than raw provider event or routing ids. Adapters
+  that need durable audit evidence should drain these events into their own
+  channel store or support artifact.
+
+The substrate is not a provider implementation. Discord, Telegram, Slack,
+email, and custom adapters still own provider payload parsing, provider API
+calls, rate-limit behavior, and channel-specific formatting. They should share
+these contracts so retries, reply routing, session partitioning, and audit
+event semantics behave consistently across channel families.
