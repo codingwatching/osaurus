@@ -177,7 +177,7 @@ final class ComputerUseEvidencePackTests: XCTestCase {
                 email: "ops@example.com",
                 justification: "Automate a repetitive access request.",
                 termsAccepted: true,
-                status: "Submitted request for Synthetic Platform Team"
+                status: "Submitted"
             ),
             browserFormSnapshot(
                 snapshotId: 7,
@@ -186,7 +186,7 @@ final class ComputerUseEvidencePackTests: XCTestCase {
                 email: "ops@example.com",
                 justification: "Automate a repetitive access request.",
                 termsAccepted: true,
-                status: "Submitted request for Synthetic Platform Team"
+                status: "Submitted"
             ),
         ]
         let driver = MockMacDriver(
@@ -259,11 +259,11 @@ final class ComputerUseEvidencePackTests: XCTestCase {
 
         let actions = await driver.elementActions
         XCTAssertEqual(
-            actionTrace(actions),
+            privacySafeActionTrace(actions),
             [
-                "setValue:team=Synthetic Platform Team",
-                "setValue:email=ops@example.com",
-                "setValue:justification=Automate a repetitive access request.",
+                "setValue:team:length=23",
+                "setValue:email:length=15",
+                "setValue:justification:length=37",
                 "click:terms",
                 "click:submit",
             ]
@@ -272,11 +272,190 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         XCTAssertTrue(coordinateActions.isEmpty, "Resolved AX form controls should not need coordinate fallback.")
 
         let finalSnapshot = await driver.capture(pid: pid, tier: .ax)
-        XCTAssertEqual(value(in: finalSnapshot, id: "team"), "Synthetic Platform Team")
-        XCTAssertEqual(value(in: finalSnapshot, id: "email"), "ops@example.com")
-        XCTAssertEqual(value(in: finalSnapshot, id: "justification"), "Automate a repetitive access request.")
-        XCTAssertEqual(value(in: finalSnapshot, id: "terms"), "checked")
-        XCTAssertEqual(value(in: finalSnapshot, id: "status"), "Submitted request for Synthetic Platform Team")
+        XCTAssertTrue(value(in: finalSnapshot, id: "team") == "Synthetic Platform Team", "Team field did not match.")
+        XCTAssertTrue(value(in: finalSnapshot, id: "email") == "ops@example.com", "Email field did not match.")
+        XCTAssertTrue(
+            value(in: finalSnapshot, id: "justification") == "Automate a repetitive access request.",
+            "Justification field did not match."
+        )
+        XCTAssertTrue(value(in: finalSnapshot, id: "terms") == "checked", "Terms checkbox did not stay checked.")
+        XCTAssertTrue(value(in: finalSnapshot, id: "status") == "Submitted", "Status field did not match.")
+    }
+
+    func testAmbiguousWebFormTargetStopsBeforeTyping() async {
+        let pid: Int32 = 5151
+        let window = CUWindowSummary(
+            id: 1,
+            title: "Access request form",
+            focused: true,
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 900
+        )
+        let snapshot = CUSnapshot(
+            snapshotId: 1,
+            pid: pid,
+            app: "Safari",
+            focusedWindow: "Access request form",
+            tier: .ax,
+            truncated: false,
+            windows: [window],
+            elements: [
+                CUElement(id: "primary-email", role: "textfield", label: "Email", value: "", windowId: 1),
+                CUElement(id: "recovery-email", role: "textfield", label: "Email", value: "", windowId: 1),
+                CUElement(id: "submit", role: "button", label: "Submit request", windowId: 1),
+            ],
+            image: nil
+        )
+        let driver = MockMacDriver(
+            availability: MacDriverAvailability(accessibility: true, screenRecording: false, skyLight: true),
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Access request form",
+                x: 0,
+                y: 0,
+                w: 1280,
+                h: 900
+            ),
+            snapshots: [pid: [snapshot]]
+        )
+
+        let result = await ComputerUseLoop.run(
+            goal: "Fill the email field.",
+            modelId: "scripted-ambiguous-form",
+            driver: driver,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .trusted)),
+            feed: SubagentFeed(
+                toolCallId: "evidence-ambiguous-form",
+                kindId: "computer_use",
+                title: "Fill email"
+            ),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(
+                maxSteps: 5,
+                maxConsecutiveReobserve: 2,
+                maxConsecutiveDeadEnd: 1,
+                wallClockSeconds: 30
+            ),
+            vision: .none,
+            sessionId: "evidence-ambiguous-form",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .type,
+                    target: AgentTarget(describe: "Email"),
+                    text: "ops@example.com"
+                )
+            ])
+        )
+
+        guard case .deadEnd(let reason) = result.outcome else {
+            return XCTFail("Expected ambiguous target to dead-end; got \(result.outcome)")
+        }
+        XCTAssertTrue(reason.localizedCaseInsensitiveContains("resolve"), "Unexpected dead-end reason: \(reason)")
+        XCTAssertEqual(result.metrics.targetResolveAttempts, 2)
+        XCTAssertEqual(result.metrics.targetResolveSuccesses, 0)
+        let elementActions = await driver.elementActions
+        let coordinateActions = await driver.coordinateActions
+        XCTAssertTrue(elementActions.isEmpty, "Ambiguous target must never reach element actions.")
+        XCTAssertTrue(coordinateActions.isEmpty, "Ambiguous target must not fall back to coordinates.")
+    }
+
+    func testTextInputRoutesToResolvedWebFormField() async {
+        let pid: Int32 = 5152
+        let driver = MockMacDriver(
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Access request form",
+                x: 0,
+                y: 0,
+                w: 1280,
+                h: 900
+            ),
+            snapshots: [
+                pid: [
+                    browserFormSnapshot(snapshotId: 1, pid: pid),
+                    browserFormSnapshot(snapshotId: 2, pid: pid, email: "ops@example.com"),
+                ]
+            ]
+        )
+
+        let result = await ComputerUseLoop.run(
+            goal: "Type the email address into the email field.",
+            modelId: "scripted-text-routing",
+            driver: driver,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .trusted)),
+            feed: SubagentFeed(
+                toolCallId: "evidence-text-routing",
+                kindId: "computer_use",
+                title: "Type email"
+            ),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(maxSteps: 3, wallClockSeconds: 30),
+            vision: .none,
+            sessionId: "evidence-text-routing",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(
+                    verb: .type,
+                    target: AgentTarget(describe: "Email"),
+                    text: "ops@example.com"
+                ),
+                AgentAction(verb: .done, reason: "Email typed."),
+            ])
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "Expected resolved text routing; got \(result.outcome)")
+        let actions = await driver.elementActions
+        XCTAssertEqual(actions.count, 1)
+        guard case .typeText(let id, let routedPid, let text, let replace) = actions.first else {
+            return XCTFail("Expected typeText into the resolved field; got \(actions)")
+        }
+        XCTAssertEqual(id, "email")
+        XCTAssertEqual(routedPid, pid)
+        XCTAssertEqual(text, "ops@example.com")
+        XCTAssertTrue(replace)
+        let coordinateActions = await driver.coordinateActions
+        XCTAssertTrue(coordinateActions.isEmpty, "Resolved text input should not use coordinates.")
+    }
+
+    func testWebFormFixtureIsLocalOnlyAndMatchesProofControls() throws {
+        let request = try String(contentsOf: webFormFixtureFile("request.html"), encoding: .utf8)
+        let submitted = try String(contentsOf: webFormFixtureFile("submitted.html"), encoding: .utf8)
+        let combined = request + "\n" + submitted
+
+        XCTAssertTrue(request.contains(#"action="./submitted.html""#))
+        XCTAssertTrue(request.contains(#"autocomplete="off""#))
+        XCTAssertTrue(request.contains(#"method="post""#))
+        XCTAssertTrue(request.contains("form-action 'self'"))
+        XCTAssertTrue(submitted.contains(#"href="./request.html""#))
+
+        for forbidden in ["http://", "https://", "fetch(", "XMLHttpRequest", "sendBeacon", "src="] {
+            XCTAssertFalse(
+                combined.localizedCaseInsensitiveContains(forbidden),
+                "The local web-form fixture must not reference external resources: \(forbidden)"
+            )
+        }
+        for rawValue in ["Synthetic Platform Team", "ops@example.com", "Automate a repetitive access request."] {
+            XCTAssertFalse(
+                combined.contains(rawValue),
+                "The fixture page should not contain proof-run typed contents."
+            )
+        }
+
+        let requiredControls = [
+            #"id="team""#,
+            #"id="email""#,
+            #"id="justification""#,
+            #"id="terms""#,
+            ">Submit request<",
+        ]
+        for control in requiredControls {
+            XCTAssertTrue(request.contains(control), "Missing expected form control marker: \(control)")
+        }
     }
 
     func testDangerousAppConfirmGuardrailCannotBeBypassedByAutonomousPreset() async {
@@ -293,6 +472,192 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         }
         XCTAssertEqual(preview.appName, "Terminal.app")
         XCTAssertEqual(preview.effect, .navigate)
+    }
+
+    func testDangerousOpenDeclineKeepsActionsInCurrentWebForm() async {
+        let pid: Int32 = 5153
+        let driver = MockMacDriver(
+            apps: [
+                CUAppListing(pid: pid, bundleId: "com.apple.Safari", name: "Safari", active: true, hidden: false)
+            ],
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Access request form",
+                x: 0,
+                y: 0,
+                w: 1280,
+                h: 900
+            ),
+            snapshots: [pid: [browserFormSnapshot(snapshotId: 1, pid: pid)]]
+        )
+        let confirmationRecorder = ConfirmationRecorder()
+
+        let result = await ComputerUseLoop.run(
+            goal: "Try to open Terminal, then click the web form team field.",
+            modelId: "scripted-dangerous-open",
+            driver: driver,
+            gate: ComputerUseGate(
+                policy: AutonomyPolicy(
+                    globalPreset: .autonomous,
+                    allowlist: ["Safari", "Terminal"]
+                )
+            ),
+            feed: SubagentFeed(
+                toolCallId: "evidence-dangerous-open",
+                kindId: "computer_use",
+                title: "Open boundary"
+            ),
+            interrupt: InterruptToken(),
+            confirm: { preview in
+                await confirmationRecorder.record(preview)
+                return false
+            },
+            limits: RunLimits(maxSteps: 3, wallClockSeconds: 30),
+            vision: .none,
+            sessionId: "evidence-dangerous-open",
+            nextAction: ComputerUseLoop.scriptedProvider([
+                AgentAction(verb: .open, app: "Terminal.app"),
+                AgentAction(verb: .click, target: AgentTarget(describe: "Team name")),
+                AgentAction(verb: .done, reason: "Stayed in the form."),
+            ])
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "Expected run to recover after declined open; got \(result.outcome)")
+        let confirmed = await confirmationRecorder.previews()
+        XCTAssertEqual(confirmed.count, 1)
+        XCTAssertEqual(confirmed.first?.appName, "Terminal.app")
+        XCTAssertEqual(confirmed.first?.effect, .navigate)
+        XCTAssertEqual(result.metrics.confirmsDeclined, 1)
+        let openCalls = await driver.openCalls
+        XCTAssertTrue(openCalls.isEmpty, "Declining the dangerous open must prevent the driver open call.")
+        let actions = await driver.elementActions
+        XCTAssertEqual(actions.count, 1)
+        guard case .click(let id, _, _) = actions.first else {
+            return XCTFail("Expected the follow-up action to click the original form; got \(actions)")
+        }
+        XCTAssertEqual(id, "team")
+    }
+
+    func testSecureWebFormFieldValuesStayOutOfScreenContextEvidence() async {
+        let pid: Int32 = 5154
+        let secret = "p@ssw0rd-do-not-leak"
+        let window = CUWindowSummary(
+            id: 1,
+            title: "Access request form",
+            focused: true,
+            x: 0,
+            y: 0,
+            w: 1280,
+            h: 900
+        )
+        let snapshot = CUSnapshot(
+            snapshotId: 1,
+            pid: pid,
+            app: "Safari",
+            focusedWindow: "Access request form",
+            tier: .ax,
+            truncated: false,
+            windows: [window],
+            elements: [
+                CUElement(id: "email", role: "textfield", label: "Email", value: "ops@example.com", windowId: 1),
+                CUElement(
+                    id: "password",
+                    role: "securetextfield",
+                    label: "Password",
+                    value: secret,
+                    selectedText: secret,
+                    placeholder: "Password",
+                    windowId: 1,
+                    focused: true
+                ),
+            ],
+            image: nil
+        )
+        let driver = MockMacDriver(
+            apps: [
+                CUAppListing(pid: pid, bundleId: "com.apple.Safari", name: "Safari", active: true, hidden: false)
+            ],
+            windowsByPid: [
+                pid: [
+                    CUWindowInfo(
+                        windowId: 1,
+                        title: "Access request form",
+                        focused: true,
+                        minimized: false,
+                        x: 0,
+                        y: 0,
+                        w: 1280,
+                        h: 900
+                    )
+                ]
+            ],
+            activeWindow: CUActiveWindow(
+                pid: pid,
+                app: "Safari",
+                title: "Access request form",
+                x: 0,
+                y: 0,
+                w: 1280,
+                h: 900
+            ),
+            snapshots: [pid: [snapshot]],
+            focusedContent: [
+                pid: CUFocusedContent(
+                    role: "securetextfield",
+                    label: "Password",
+                    placeholder: "Password",
+                    value: secret,
+                    selectedText: secret,
+                    viewport: secret
+                )
+            ]
+        )
+        let transcriptRecorder = TranscriptRecorder()
+
+        let captured = await ScreenContextDistiller().capture(
+            using: driver,
+            selfPid: 9999,
+            selfBundleId: "ai.osaurus.osaurus",
+            preferredPid: nil
+        )
+        let rendered = captured.render()
+
+        XCTAssertEqual(captured.focusedElement?.label, "Password")
+        XCTAssertNil(captured.focusedElement?.value)
+        XCTAssertNil(captured.focusedElement?.selectedText)
+        XCTAssertNil(captured.focusedElement?.viewing)
+        XCTAssertFalse(rendered.contains(secret))
+        XCTAssertFalse(captured.sampledContents.contains { $0.contains(secret) })
+
+        let result = await ComputerUseLoop.run(
+            goal: "Inspect the secure web form.",
+            modelId: "scripted-secure-field",
+            driver: driver,
+            gate: ComputerUseGate(policy: AutonomyPolicy(globalPreset: .trusted)),
+            feed: SubagentFeed(
+                toolCallId: "evidence-secure-field",
+                kindId: "computer_use",
+                title: "Inspect secure field"
+            ),
+            interrupt: InterruptToken(),
+            confirm: { _ in true },
+            limits: RunLimits(maxSteps: 1, wallClockSeconds: 30),
+            vision: .none,
+            sessionId: "evidence-secure-field",
+            nextAction: { input in
+                await transcriptRecorder.record(input.transcript)
+                let action = AgentAction(verb: .done, reason: "Secure field inspected.")
+                return ModelActionCall(id: "scripted-secure-field", arguments: action.argumentsJSON())
+            }
+        )
+
+        XCTAssertTrue(result.outcome.isSuccess, "Expected secure-field inspection to finish; got \(result.outcome)")
+        let transcript = await transcriptRecorder.text()
+        XCTAssertTrue(transcript.contains("Email"))
+        XCTAssertTrue(transcript.contains("ops@example.com"))
+        XCTAssertTrue(transcript.contains("Password"))
+        XCTAssertFalse(transcript.contains(secret), "Secure field value leaked into the loop transcript.")
     }
 
     func testCloudVisionRequiresConsentAndScrubbedFrameRoute() async {
@@ -449,6 +814,13 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         )
     }
 
+    private func webFormFixtureFile(_ name: String) -> URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("Fixtures/WebForm", isDirectory: true)
+            .appendingPathComponent(name)
+    }
+
     private func browserFormSnapshot(
         snapshotId: Int,
         pid: Int32,
@@ -552,15 +924,15 @@ final class ComputerUseEvidencePackTests: XCTestCase {
         )
     }
 
-    private func actionTrace(_ actions: [CUElementAction]) -> [String] {
+    private func privacySafeActionTrace(_ actions: [CUElementAction]) -> [String] {
         actions.map { action in
             switch action {
             case .click(let id, _, _):
                 return "click:\(id)"
             case .setValue(let id, let value):
-                return "setValue:\(id)=\(value)"
+                return "setValue:\(id):length=\(value.count)"
             case .typeText(let id, _, let text, let replace):
-                return "typeText:\(id ?? "pid")=\(text):replace=\(replace)"
+                return "typeText:\(id ?? "pid"):length=\(text.count):replace=\(replace)"
             case .pressKey(_, let key, let modifiers):
                 return "pressKey:\((modifiers + [key]).joined(separator: "+"))"
             case .clearField(let id):
@@ -583,5 +955,17 @@ private actor ConfirmationRecorder {
 
     func previews() -> [ActionPreview] {
         stored
+    }
+}
+
+private actor TranscriptRecorder {
+    private var turns: [AgentStepInput.Turn] = []
+
+    func record(_ transcript: [AgentStepInput.Turn]) {
+        turns = transcript
+    }
+
+    func text() -> String {
+        turns.map(\.text).joined(separator: "\n")
     }
 }

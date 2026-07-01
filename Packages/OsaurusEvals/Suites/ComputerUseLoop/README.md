@@ -51,6 +51,7 @@ asserts each scripted case passes.
 | `recover-after-driver-error` | a stale-ref click (`clickFailures`) recovers via the coordinate fallback |
 | `async-wait-load` | an async reveal (`revealAfterCaptures`) requires a `wait` before the control appears |
 | `drag-reorder` | the `drag` verb resolves both `target` (start) and `to` (destination) and issues one coordinate drag |
+| `web-form-proof-lab` | local static form fixture: fill fields, accept terms, confirm consequential submit, verify state, and keep evidence redacted |
 
 ## Adding a case
 

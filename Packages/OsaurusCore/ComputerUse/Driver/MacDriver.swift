@@ -89,6 +89,16 @@ public struct CUElement: Sendable, Equatable, Codable {
     public var center: (x: Int, y: Int) { (x + w / 2, y + h / 2) }
 }
 
+enum CUSecureFieldRole {
+    static func contains(_ role: String) -> Bool {
+        secureRoles.contains(role.lowercased())
+    }
+
+    private static let secureRoles: Set<String> = [
+        "securetextfield", "axsecuretextfield", "securefield",
+    ]
+}
+
 public struct CUWindowSummary: Sendable, Equatable, Codable {
     public let id: Int
     public let title: String?

@@ -223,8 +223,7 @@ public struct ScreenContextDistiller: Sendable {
         // 2. The app the user was on right before Osaurus took focus.
         if let preferredPid,
             let match = apps.first(where: { $0.pid == preferredPid }),
-            !identity.owns(match)
-        {
+            !identity.owns(match) {
             return WorkingApp(pid: match.pid, name: match.name, windowTitle: nil)
         }
         // 3. Best-effort: the first visible non-Osaurus app, else any non-Osaurus app.
@@ -285,15 +284,14 @@ public struct ScreenContextDistiller: Sendable {
             // Secure fields: never surface value/selection/viewport even if the
             // driver somehow read one (it shouldn't). Defense-in-depth so a
             // password never reaches the model via screen context.
-            let isSecure = Self.secureFieldRoles.contains(direct.role.lowercased())
+            let isSecure = CUSecureFieldRole.contains(direct.role)
             let viewing = isSecure ? nil : contentValue(direct.viewport, limit: maxViewingChars)
             let value = isSecure ? nil : contentValue(direct.value, limit: maxValueChars)
             let selected = isSecure ? nil : contentValue(direct.selectedText, limit: maxValueChars)
             let label = labelValue(direct.label, limit: maxItemChars)
             let placeholder = labelValue(direct.placeholder, limit: maxItemChars)
             if viewing != nil || value != nil || selected != nil || label != nil
-                || placeholder != nil
-            {
+                || placeholder != nil {
                 return ScreenContextSnapshot.FocusedElement(
                     role: friendlyRole(direct.role),
                     label: label,
@@ -322,14 +320,13 @@ public struct ScreenContextDistiller: Sendable {
         guard let element = snapshot.elements.first(where: { $0.focused }) else { return nil }
         // Same secure-field guard on the breadth-limited traversal fallback: a
         // focused password field surfaces only its role/label, never its value.
-        let isSecure = Self.secureFieldRoles.contains(element.role.lowercased())
+        let isSecure = CUSecureFieldRole.contains(element.role)
         let value = isSecure ? nil : contentValue(element.value, limit: maxValueChars)
         let selected = isSecure ? nil : contentValue(element.selectedText, limit: maxValueChars)
         let label = labelValue(element.label, limit: maxItemChars)
         let placeholder = labelValue(element.placeholder, limit: maxItemChars)
         if value == nil, selected == nil, label == nil, placeholder == nil,
-            !Self.rawInputRoles.contains(element.role.lowercased())
-        {
+            !Self.rawInputRoles.contains(element.role.lowercased()) {
             return nil
         }
         return ScreenContextSnapshot.FocusedElement(
@@ -622,13 +619,6 @@ public struct ScreenContextDistiller: Sendable {
         "textfield", "textarea", "searchfield", "securetextfield", "combobox",
     ]
 
-    /// Secure-text roles whose `value`/`selectedText` must never be surfaced —
-    /// raw AX + friendly forms. The driver already refuses to read these; this is
-    /// a belt-and-suspenders guard in the distiller.
-    private static let secureFieldRoles: Set<String> = [
-        "securetextfield", "axsecuretextfield", "securefield",
-    ]
-
     /// Characters that carry no signal alone: keyboard-shortcut glyphs plus the
     /// brackets/spaces that wrap them in hints like "(⌘J)". A string made only
     /// of these is chrome, not content.
@@ -801,8 +791,7 @@ public struct ScreenContextDistiller: Sendable {
         // Pure noise: versions, commit hashes, ARIA booleans, AX sentinels, bare
         // counts, icon-only / shortcut glyphs.
         if isLowSignal(status) || isBooleanToken(status) || looksLikeBareToken(status)
-            || looksLikeHashToken(status) || isUnavailablePlaceholder(status)
-        {
+            || looksLikeHashToken(status) || isUnavailablePlaceholder(status) {
             return nil
         }
         // A generic feature button with no state ("remote", "Notifications",

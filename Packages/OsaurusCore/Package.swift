@@ -211,7 +211,8 @@ let package = Package(
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],
-            path: "Tests"
+            path: "Tests",
+            resources: [.process("ComputerUse/Fixtures")]
         ),
     ]
 )

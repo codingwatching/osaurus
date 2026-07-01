@@ -1671,6 +1671,9 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// to get there fails. `0` for scripted runs (no model call), so this
         /// is effectively only scored on live cases. nil → reported, not scored.
         public let scoredMaxModelTokens: Int?
+        /// When true, failure notes report lengths instead of raw final values
+        /// and summaries. Use for fixtures with form contents or user-like data.
+        public let redactEvidenceValues: Bool?
         /// Optional scripted model: a sequence of `agent_action` arguments-JSON
         /// strings that DRIVE the loop deterministically in place of a live
         /// model (via the `AgentStepProvider` seam). Lets failure-recovery and
@@ -1693,6 +1696,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             scoredMaxSteps: Int? = nil,
             expectVerbsInOrder: [String]? = nil,
             scoredMaxModelTokens: Int? = nil,
+            redactEvidenceValues: Bool? = nil,
             scriptedActions: [String]? = nil
         ) {
             self.app = app
@@ -1709,6 +1713,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.scoredMaxSteps = scoredMaxSteps
             self.expectVerbsInOrder = expectVerbsInOrder
             self.scoredMaxModelTokens = scoredMaxModelTokens
+            self.redactEvidenceValues = redactEvidenceValues
             self.scriptedActions = scriptedActions
         }
     }

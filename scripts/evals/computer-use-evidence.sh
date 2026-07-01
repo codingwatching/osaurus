@@ -38,6 +38,7 @@ timestamp="$(date -u +"%Y%m%d-%H%M%S")"
 OUT_DIR="${OUT_DIR:-build/computer-use-evidence/${timestamp}}"
 LOG_DIR="${OUT_DIR}/logs"
 RESULTS_TSV="${OUT_DIR}/command-results.tsv"
+WEB_FORM_CASE="Packages/OsaurusEvals/Suites/ComputerUseLoop/web-form-proof-lab.json"
 STRICT="${STRICT:-1}"
 RUN_EVALS="${RUN_EVALS:-0}"
 OSAURUS_TEST_ROOT="${OSAURUS_TEST_ROOT:-/tmp/osaurus-computer-use-evidence}"
@@ -98,6 +99,11 @@ run_step computer-use-evidence-pack \
 run_step computer-use-suite \
   env OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS=1 OSAURUS_TEST_ROOT="$OSAURUS_TEST_ROOT" \
   swift test --package-path Packages/OsaurusCore --quiet --filter ComputerUse
+run_step computer-use-web-form-privacy \
+  "$PYTHON_BIN" scripts/evals/assert-computer-use-web-form-evidence-privacy.py \
+    "$WEB_FORM_CASE" \
+    "$LOG_DIR/computer-use-evidence-pack.log" \
+    "$LOG_DIR/computer-use-suite.log"
 
 if [[ "$RUN_EVALS" == "1" ]]; then
   run_step evals-build swift build --package-path Packages/OsaurusEvals --product osaurus-evals
@@ -179,6 +185,9 @@ manifest = {
         "summary": "summary.md",
         "environment": "environment.txt",
         "command_results": "command-results.tsv",
+    },
+    "fixtures": {
+        "web_form": "Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/",
     },
 }
 

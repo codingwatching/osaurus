@@ -114,6 +114,7 @@ public struct AgentView: Sendable, Equatable {
 
         for (index, element) in snapshot.elements.enumerated() {
             let key = matchKey(role: element.role, label: element.label)
+            let visibleValue = visibleValue(for: element)
             let changed: Bool
             if previous == nil {
                 changed = false
@@ -122,7 +123,7 @@ public struct AgentView: Sendable, Equatable {
                 if already < candidates.count {
                     let prevValue = candidates[already]
                     consumed[key] = already + 1
-                    changed = normalize(prevValue) != normalize(element.value)
+                    changed = normalize(prevValue) != normalize(visibleValue)
                 } else {
                     // More of this element than before → an extra one appeared.
                     changed = true
@@ -137,7 +138,7 @@ public struct AgentView: Sendable, Equatable {
                     elementId: element.id,
                     role: element.role,
                     label: element.label,
-                    value: element.value,
+                    value: visibleValue,
                     enabled: element.enabled,
                     changed: changed
                 )
@@ -178,6 +179,12 @@ public struct AgentView: Sendable, Equatable {
 
     private static func normalize(_ value: String?) -> String {
         (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func visibleValue(for element: CUElement) -> String? {
+        // Secure fields are never diffed by value; a change marker would reveal
+        // that secret input changed even when the value itself is hidden.
+        CUSecureFieldRole.contains(element.role) ? nil : element.value
     }
 
     // MARK: Model rendering

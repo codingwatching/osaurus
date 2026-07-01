@@ -33,11 +33,12 @@ public actor MockMacDriver: MacDriver {
 
     public private(set) var elementActions: [CUElementAction] = []
     public private(set) var coordinateActions: [CUCoordinateAction] = []
+    public private(set) var openCalls: [(identifier: String, background: Bool)] = []
     public private(set) var narrations: [(note: String, step: Int?, total: Int?)] = []
     public private(set) var captureCount: Int = 0
     /// `interactiveOnly` argument from the most recent `capture` call, so tests
     /// can assert the screen-context distiller requests a content-inclusive tree.
-    public private(set) var lastCaptureInteractiveOnly: Bool?
+    public private(set) var lastCaptureInteractiveOnly: Bool?  // swiftlint:disable:this discouraged_optional_boolean
 
     // MARK: Init
 
@@ -92,6 +93,7 @@ public actor MockMacDriver: MacDriver {
         identifier: String,
         background: Bool
     ) async -> Result<CUAppInfo, MacDriverError> {
+        openCalls.append((identifier: identifier, background: background))
         if let openOverride { return openOverride }
         if let match = apps.first(where: {
             $0.name.lowercased() == identifier.lowercased()

@@ -1,0 +1,86 @@
+{
+  "id": "computer_use_loop.web-form-proof-lab",
+  "domain": "computer_use_loop",
+  "label": "CU loop • local web form proof lab",
+  "query": "Fill every required field in the local access request fixture, accept the terms checkbox, submit the form, then finish.",
+  "notes": "Deterministic local fixture mirrored from Packages/OsaurusCore/Tests/ComputerUse/Fixtures/WebForm/request.html. The scripted driver exercises perceive -> gate -> act -> verify with AX-only controls; the submit button runs through the consequential confirmation path.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Local Fixture Browser",
+      "preset": "trusted",
+      "maxSteps": 8,
+      "elements": [
+        {
+          "id": "team",
+          "role": "textfield",
+          "label": "Team name",
+          "value": "",
+          "placeholder": "Team name",
+          "editable": true
+        },
+        {
+          "id": "email",
+          "role": "textfield",
+          "label": "Email",
+          "value": "",
+          "placeholder": "Email",
+          "editable": true
+        },
+        {
+          "id": "justification",
+          "role": "textview",
+          "label": "Justification",
+          "value": "",
+          "placeholder": "Why access is needed",
+          "editable": true
+        },
+        {
+          "id": "terms",
+          "role": "checkbox",
+          "label": "Agree to terms",
+          "value": "off",
+          "onClick": { "toggle": true }
+        },
+        {
+          "id": "submit",
+          "role": "button",
+          "label": "Submit request",
+          "onClick": {
+            "setValues": [
+              { "id": "status", "value": "submitted" }
+            ]
+          }
+        },
+        {
+          "id": "status",
+          "role": "statictext",
+          "label": "Status",
+          "value": "draft"
+        }
+      ],
+      "expectOutcome": ["done"],
+      "successValues": [
+        { "id": "team", "equals": "Synthetic Platform Team" },
+        { "id": "email", "equals": "ops@example.com" },
+        { "id": "justification", "equals": "Automate a repetitive access request." },
+        { "id": "terms", "equals": "on" },
+        { "id": "status", "equals": "submitted" }
+      ],
+      "successClicked": ["terms", "submit"],
+      "maxInvalidActions": 0,
+      "scoredMaxSteps": 8,
+      "expectVerbsInOrder": ["set_value", "set_value", "set_value", "click", "click"],
+      "scoredMaxModelTokens": 0,
+      "redactEvidenceValues": true,
+      "scriptedActions": [
+        "{\"verb\":\"set_value\",\"target\":{\"mark\":1},\"text\":\"Synthetic Platform Team\"}",
+        "{\"verb\":\"set_value\",\"target\":{\"mark\":2},\"text\":\"ops@example.com\"}",
+        "{\"verb\":\"set_value\",\"target\":{\"mark\":3},\"text\":\"Automate a repetitive access request.\"}",
+        "{\"verb\":\"click\",\"target\":{\"mark\":4},\"note\":\"accept terms\"}",
+        "{\"verb\":\"click\",\"target\":{\"mark\":5},\"note\":\"submit form\"}",
+        "{\"verb\":\"done\",\"reason\":\"Submitted the local form.\"}"
+      ]
+    }
+  }
+}

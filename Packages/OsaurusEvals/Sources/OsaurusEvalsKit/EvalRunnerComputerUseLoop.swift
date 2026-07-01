@@ -119,6 +119,7 @@ extension EvalRunner {
         let verbTrace = await driver.verbTrace()
         let metrics = result.metrics
         let outcomeName = Self.outcomeName(result.outcome)
+        let redactEvidenceValues = exp.redactEvidenceValues == true
 
         var passed = true
         var notes: [String] = []
@@ -140,17 +141,24 @@ extension EvalRunner {
             let value = (finalValues[predicate.id] ?? "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if let exact = predicate.equals {
+                let expected = exact.trimmingCharacters(in: .whitespacesAndNewlines)
                 check(
-                    value == exact.trimmingCharacters(in: .whitespacesAndNewlines),
-                    pass: "value[\(predicate.id)] == '\(exact)'",
-                    fail: "value[\(predicate.id)] = '\(value)' != '\(exact)'"
+                    value == expected,
+                    pass: "value[\(predicate.id)] matched exact expectation",
+                    fail: redactEvidenceValues
+                        ? "value[\(predicate.id)] did not match exact expectation "
+                            + "(actualLength=\(value.count) expectedLength=\(expected.count))"
+                        : "value[\(predicate.id)] expected '\(expected)' but was '\(value)'"
                 )
             }
             if let needle = predicate.contains {
                 check(
                     value.localizedCaseInsensitiveContains(needle),
-                    pass: "value[\(predicate.id)] contains '\(needle)'",
-                    fail: "value[\(predicate.id)] = '\(value)' missing '\(needle)'"
+                    pass: "value[\(predicate.id)] contained expected substring",
+                    fail: redactEvidenceValues
+                        ? "value[\(predicate.id)] did not contain expected substring "
+                            + "(actualLength=\(value.count) expectedLength=\(needle.count))"
+                        : "value[\(predicate.id)] expected to contain '\(needle)' but was '\(value)'"
                 )
             }
         }
@@ -180,8 +188,11 @@ extension EvalRunner {
         for needle in exp.finalSummaryContains ?? [] {
             check(
                 result.outcome.summary.localizedCaseInsensitiveContains(needle),
-                pass: "final summary contains '\(needle)'",
-                fail: "final summary missing '\(needle)' (got: \(result.outcome.summary))"
+                pass: "final summary contained expected substring",
+                fail: redactEvidenceValues
+                    ? "final summary missed expected substring "
+                        + "(summaryLength=\(result.outcome.summary.count) expectedLength=\(needle.count))"
+                    : "final summary expected to contain '\(needle)' but was '\(result.outcome.summary)'"
             )
         }
 
@@ -233,7 +244,11 @@ extension EvalRunner {
         }
 
         // Telemetry summary (always present so a pass is still legible).
-        notes.append("outcome: \(result.outcome.summary)")
+        if redactEvidenceValues {
+            notes.append("outcome: \(outcomeName) summaryLength=\(result.outcome.summary.count)")
+        } else {
+            notes.append("outcome: \(outcomeName) summary='\(result.outcome.summary)'")
+        }
         notes.append(
             "telemetry: steps=\(metrics.steps) proposed=\(proposed) acted=\(acted) "
                 + "verifyChanged=\(metrics.verifyChanged) blocked=\(metrics.blocked) "
@@ -258,12 +273,21 @@ extension EvalRunner {
                         acted: acted
                     )
             )
-            notes.append(
-                "final values: "
-                    + finalValues.keys.sorted()
-                    .map { "\($0)='\(finalValues[$0] ?? "")'" }
-                    .joined(separator: " ")
-            )
+            if redactEvidenceValues {
+                notes.append(
+                    "final value lengths: "
+                        + finalValues.keys.sorted()
+                        .map { "\($0)=\((finalValues[$0] ?? "").count)" }
+                        .joined(separator: " ")
+                )
+            } else {
+                notes.append(
+                    "final values: "
+                        + finalValues.keys.sorted()
+                        .map { "\($0)=\(finalValues[$0] ?? "")" }
+                        .joined(separator: " ")
+                )
+            }
         }
 
         return EvalCaseReport(

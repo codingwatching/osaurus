@@ -240,6 +240,25 @@ struct ComputerUseLoopEvalTests {
         #expect(report.outcome == .failed)
     }
 
+    @Test func defaultComputerUseFailuresKeepRawValuesForDebugging() async {
+        let scene = Scene(
+            app: "Form",
+            elements: [
+                El(id: "name", role: "textfield", label: "Name", value: "", editable: true),
+            ],
+            successValues: [Scene.ValuePredicate(id: "name", equals: "Ada")],
+            scriptedActions: [
+                AgentAction(verb: .setValue, target: AgentTarget(mark: 1), text: "Bob").argumentsJSON(),
+                AgentAction(verb: .done, reason: "filled").argumentsJSON(),
+            ]
+        )
+
+        let report = await scoreCase(scene)
+
+        #expect(report.outcome == .failed)
+        #expect(report.notes.contains { $0.contains("expected 'Ada' but was 'Bob'") })
+    }
+
     @Test func verbOrderScoringPassesForSubsequence() async {
         let scene = Scene(
             app: "Notes",
@@ -331,6 +350,6 @@ struct ComputerUseLoopEvalTests {
             )
             scriptedRan += 1
         }
-        #expect(scriptedRan >= 4, "Expected ≥4 deterministic scripted scenarios; ran \(scriptedRan)")
+        #expect(scriptedRan >= 5, "Expected >=5 deterministic scripted scenarios; ran \(scriptedRan)")
     }
 }

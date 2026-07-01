@@ -152,4 +152,37 @@ final class AgentViewTests: XCTestCase {
         )
         XCTAssertTrue(next.renderForModel().contains("* ["), "Changed elements should render a `*` marker")
     }
+
+    func testSecureFieldValueDoesNotRenderForModel() {
+        let view = AgentView.build(
+            from: snapshot([
+                el("email", "textfield", "Email", value: "ops@example.com"),
+                el("password", "securetextfield", "Password", value: "p@ssw0rd-do-not-leak"),
+            ]),
+            previous: nil
+        )
+        let render = view.renderForModel()
+
+        XCTAssertTrue(render.contains("Email"))
+        XCTAssertTrue(render.contains("ops@example.com"))
+        XCTAssertTrue(render.contains("Password"))
+        XCTAssertFalse(render.contains("p@ssw0rd-do-not-leak"))
+        XCTAssertNil(view.items.first(where: { $0.elementId == "password" })?.value)
+    }
+
+    func testSecureFieldValueChangeDoesNotRenderMarker() {
+        let prev = AgentView.build(
+            from: snapshot([el("password", "securetextfield", "Password", value: "old-secret")]),
+            previous: nil
+        )
+        let next = AgentView.build(
+            from: snapshot([el("password", "securetextfield", "Password", value: "new-secret")], id: 2),
+            previous: prev
+        )
+
+        XCTAssertFalse(next.hasChanges)
+        XCTAssertFalse(next.items.first?.changed ?? true)
+        XCTAssertFalse(next.renderForModel().contains("* ["))
+        XCTAssertFalse(next.renderForModel().contains("new-secret"))
+    }
 }
