@@ -399,7 +399,9 @@ private struct PrivacyModelSelector: View {
                 } label: {
                     Text("Remove Model", bundle: .module)
                 }
-                Button(role: .cancel) { pendingRemoval = nil } label: {
+                Button(role: .cancel) {
+                    pendingRemoval = nil
+                } label: {
                     Text("Cancel", bundle: .module)
                 }
             } message: {

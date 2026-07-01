@@ -258,6 +258,16 @@ public final class ToolRegistry: ObservableObject {
             // PermissionedTool: execution preflights Accessibility +
             // Screen Recording before the loop runs.
             ComputerUseTool(),
+            // AppleScript subagent. Like the other delegation-family tools it
+            // is registered as a built-in so the runtime can execute it and
+            // ChatView can intercept its feed, but the composer strips it
+            // unless the agent has AppleScript enabled AND a model installed
+            // (gated via `SubagentToolVisibility`). Its on-device AppleScript
+            // model generates the script; macOS prompts for Automation consent
+            // at script-send time. `mac_query` is its read-only sibling (same
+            // capability + model + gating), so both register and gate together.
+            AppleScriptTool(),
+            MacQueryTool(),
         ]
         var configChanged = false
         for tool in builtIns {
@@ -1452,9 +1462,14 @@ public final class ToolRegistry: ObservableObject {
     static var agentDelegationImageToolNames: Set<String> {
         Set(SubagentCapabilityRegistry.image.toolNames)
     }
-    /// All agent-delegation tool names (spawn + image), derived from the
-    /// registry's delegation family. Used by the authoritative per-agent
-    /// `spawnDelegationEnabled` gate in `SystemPromptComposer.resolveTools`.
+    /// AppleScript-family tool names, derived from the capability registry.
+    static var agentDelegationAppleScriptToolNames: Set<String> {
+        Set(SubagentCapabilityRegistry.appleScript.toolNames)
+    }
+    /// All agent-delegation tool names (spawn + image + applescript), derived
+    /// from the registry's delegation family. Used by the authoritative
+    /// per-agent `spawnDelegationEnabled` gate in
+    /// `SystemPromptComposer.resolveTools`.
     static var agentDelegationAllToolNames: Set<String> {
         SubagentToolVisibility.delegationToolNames
     }
