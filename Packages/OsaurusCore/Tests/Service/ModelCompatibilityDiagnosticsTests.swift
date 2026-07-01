@@ -21,6 +21,7 @@ struct ModelCompatibilityDiagnosticsTests {
         config: String = #"{"model_type":"qwen3"}"#,
         tokenizerConfig: String? = nil,
         generationConfig: String? = nil,
+        jangConfig: String? = nil,
         tokenizer: Bool = true,
         weights: Bool = true
     ) {
@@ -35,6 +36,11 @@ struct ModelCompatibilityDiagnosticsTests {
         if let generationConfig {
             try? Data(generationConfig.utf8).write(
                 to: dir.appendingPathComponent("generation_config.json")
+            )
+        }
+        if let jangConfig {
+            try? Data(jangConfig.utf8).write(
+                to: dir.appendingPathComponent("jang_config.json")
             )
         }
         if tokenizer {
@@ -63,6 +69,12 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.preflight.status == .unproven)
         #expect(report.preflight.blocksRuntimeLoad == false)
         #expect(report.runtime.reason == .externalBundleUnproven)
+        #expect(report.toolUse.status == .unproven)
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "unproven"
+            }
+        )
         #expect(report.benchmark.kind == .missingProof)
         #expect(report.featureHooks.map(\.code) == [.dflashSpeculativeDecoding, .tensorParallelism])
     }
@@ -130,6 +142,13 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.preflight.status == .supported)
         #expect(report.preflight.reason == .localBundleReady)
         #expect(report.preflight.blocksRuntimeLoad == false)
+        #expect(report.toolUse.status == .unproven)
+        #expect(report.toolUse.title == "Tool use proof required")
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "unproven"
+            }
+        )
         #expect(
             report.evidence.contains {
                 $0.source == "tokenizer_config.json" && $0.key == "chat_template"
@@ -139,6 +158,122 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(
             report.evidence.contains {
                 $0.source == "generation_config.json" && $0.key == "top_k" && $0.value == "20"
+            }
+        )
+    }
+
+    @Test func bundleWithToolParserMetadata_reportsUnprovenToolUseWithEvidence() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"deepseek_v4","architectures":["DeepseekV4ForCausalLM"]}"#,
+            tokenizerConfig: #"{"chat_template":"{{ messages }}"}"#,
+            jangConfig: #"{"chat":{"tool_calling":{"parser":"dsml","format":"xml"}}}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "org/dsv4",
+            modelName: "DSV4",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.toolUse.status == .unproven)
+        #expect(report.toolUse.detail.contains("dsml"))
+        #expect(report.localBundle.config?.toolCalling?.parser == "dsml")
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json"
+                    && $0.key == "chat.tool_calling.parser"
+                    && $0.value == "dsml"
+            }
+        )
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use"
+                    && $0.key == "status"
+                    && $0.value == "unproven"
+            }
+        )
+    }
+
+    @Test func bundleWithRootToolParserMetadata_reportsRootEvidencePath() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"qwen3","architectures":["Qwen3ForCausalLM"]}"#,
+            tokenizerConfig: #"{"chat_template":"{{ messages }}"}"#,
+            jangConfig: #"{"tool_calling":{"parser":"qwen","format":"json"}}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "org/qwen",
+            modelName: "Qwen",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.localBundle.config?.toolCalling?.parser == "qwen")
+        #expect(
+            report.evidence.contains {
+                $0.source == "jang_config.json"
+                    && $0.key == "tool_calling.parser"
+                    && $0.value == "qwen"
+            }
+        )
+    }
+
+    @Test func gemma3nBundle_reportsUnsupportedToolUse() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"gemma3n_text","architectures":["Gemma3nForConditionalGeneration"]}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "mlx-community/gemma-3n-E2B-it-4bit",
+            modelName: "gemma-3n-e2b-it-4bit",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: nil
+        )
+
+        #expect(report.runtime.kind == .ready)
+        #expect(report.toolUse.status == .unsupported)
+        #expect(report.toolUse.detail.contains("unsupported"))
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "unsupported"
+            }
+        )
+    }
+
+    @Test func externalGemma3nBundle_reportsUnsupportedToolUse() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        writeBundle(
+            at: root,
+            config: #"{"model_type":"gemma3n_text","architectures":["Gemma3nForConditionalGeneration"]}"#
+        )
+
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "mlx-community/gemma-3n-E2B-it-4bit",
+            modelName: "gemma-3n-e2b-it-4bit",
+            modelTypeHint: nil,
+            bundleURL: root,
+            externalSource: ExternalModelLocator.Source.huggingFaceCache.rawValue
+        )
+
+        #expect(report.runtime.kind == .unproven)
+        #expect(report.toolUse.status == .unsupported)
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "unsupported"
             }
         )
     }
@@ -164,6 +299,12 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.runtime.reason == .unsupportedHunyuanDense)
         #expect(report.preflight.status == .unsupported)
         #expect(report.preflight.blocksRuntimeLoad)
+        #expect(report.toolUse.status == .failed)
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "failed"
+            }
+        )
         #expect(report.benchmark.kind == .notApplicable)
     }
 
@@ -233,6 +374,12 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.runtime.kind == .partial)
         #expect(report.runtime.reason == .partialDFlashSpeculativeDecoding)
         #expect(report.preflight.status == .partial)
+        #expect(report.toolUse.status == .unproven)
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "unproven"
+            }
+        )
         #expect(report.preflight.blocksRuntimeLoad)
         #expect(report.featureHooks.isEmpty)
         #expect(
@@ -335,5 +482,11 @@ struct ModelCompatibilityDiagnosticsTests {
         #expect(report.localBundle.kind == .incomplete)
         #expect(report.localBundle.title == "Safetensors missing")
         #expect(report.runtime.reason == .incompleteBundle)
+        #expect(report.toolUse.status == .failed)
+        #expect(
+            report.evidence.contains {
+                $0.source == "tool_use" && $0.key == "status" && $0.value == "failed"
+            }
+        )
     }
 }

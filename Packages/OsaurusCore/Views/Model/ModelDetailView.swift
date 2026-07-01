@@ -407,6 +407,10 @@ struct ModelDetailView: View, Identifiable {
                     label: L("Preflight"),
                     value: report.preflight.status.rawValue.capitalized
                 )
+                DiagnosticFact(
+                    label: L("Tool use"),
+                    value: report.toolUse.title
+                )
                 if let modelType = report.localBundle.config?.displayModelType {
                     DiagnosticFact(label: L("Model Type"), value: modelType)
                 }

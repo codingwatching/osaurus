@@ -17,6 +17,7 @@ enum ModelCompatibilityDiagnostics {
         let localBundle: LocalBundleStatus
         let runtime: RuntimeStatus
         let preflight: PreflightStatus
+        let toolUse: ToolUseStatus
         let benchmark: BenchmarkStatus
         let featureHooks: [FeatureHook]
         let evidence: [Evidence]
@@ -60,6 +61,7 @@ enum ModelCompatibilityDiagnostics {
         let hasJANGTQSidecar: Bool
         let tokenizer: TokenizerSummary?
         let generation: GenerationSummary?
+        let toolCalling: ToolCallingSummary?
 
         var displayModelType: String? {
             modelType ?? textModelType
@@ -79,6 +81,17 @@ enum ModelCompatibilityDiagnostics {
         let maxNewTokens: Int?
         let topK: Int?
         let hasDFlashReference: Bool
+    }
+
+    struct ToolCallingSummary: Equatable {
+        let parser: String?
+        let parserKey: String?
+        let format: String?
+        let formatKey: String?
+
+        var displayValue: String? {
+            parser ?? format
+        }
     }
 
     struct RuntimeStatus: Equatable {
@@ -124,6 +137,18 @@ enum ModelCompatibilityDiagnostics {
         var blocksRuntimeLoad: Bool {
             status == .unsupported || status == .partial
         }
+    }
+
+    struct ToolUseStatus: Equatable {
+        enum Status: String {
+            case unsupported
+            case failed
+            case unproven
+        }
+
+        let status: Status
+        let title: String
+        let detail: String
     }
 
     struct Evidence: Equatable, Identifiable {
@@ -208,15 +233,23 @@ enum ModelCompatibilityDiagnostics {
             localBundle: localBundle,
             config: config
         )
+        let preflight = preflightStatus(runtime: runtime)
+        let toolUse = toolUseStatus(
+            modelId: modelId,
+            modelName: modelName,
+            runtime: runtime,
+            localBundle: localBundle,
+            config: config
+        )
         let evidence = evidenceRows(
             modelId: modelId,
             modelName: modelName,
             modelTypeHint: modelTypeHint,
             source: source,
             localBundle: localBundle,
-            config: config
+            config: config,
+            toolUse: toolUse
         )
-        let preflight = preflightStatus(runtime: runtime)
         let benchmark = benchmarkStatus(runtime: runtime, localBundle: localBundle)
         return Report(
             modelId: modelId,
@@ -224,6 +257,7 @@ enum ModelCompatibilityDiagnostics {
             localBundle: localBundle,
             runtime: runtime,
             preflight: preflight,
+            toolUse: toolUse,
             benchmark: benchmark,
             featureHooks: runtime.kind == .blocked || runtime.kind == .partial
                 ? []
@@ -397,6 +431,92 @@ enum ModelCompatibilityDiagnostics {
         )
     }
 
+    private static func toolUseStatus(
+        modelId: String,
+        modelName: String,
+        runtime: RuntimeStatus,
+        localBundle: LocalBundleStatus,
+        config: ConfigSummary?
+    ) -> ToolUseStatus {
+        switch localBundle.kind {
+        case .notDownloaded:
+            return ToolUseStatus(
+                status: .unproven,
+                title: L("Tool use unproven"),
+                detail: L("Download or import the model before Osaurus can inspect or prove local tool use.")
+            )
+        case .incomplete:
+            return ToolUseStatus(
+                status: .failed,
+                title: L("Tool use blocked"),
+                detail: L("The bundle is incomplete, so Osaurus cannot run a tool-call proof.")
+            )
+        case .available:
+            break
+        }
+
+        switch runtime.kind {
+        case .blocked:
+            return ToolUseStatus(
+                status: .failed,
+                title: L("Tool use blocked"),
+                detail: L("Runtime preflight blocks this bundle, so Osaurus cannot run a tool-call proof.")
+            )
+        case .partial:
+            return ToolUseStatus(
+                status: .unproven,
+                title: L("Tool use unproven"),
+                detail:
+                    L(
+                        "Runtime support is incomplete; a live tool-call proof is not meaningful until the runtime blocker is resolved."
+                    )
+            )
+        case .needsDownload:
+            return ToolUseStatus(
+                status: .unproven,
+                title: L("Tool use unproven"),
+                detail: L("The bundle still needs a live tool-call proof before Osaurus should call it tool-use capable.")
+            )
+        case .unproven:
+            break
+        case .ready:
+            break
+        }
+
+        let directory = localBundle.path.map { URL(fileURLWithPath: $0) }
+        if !MLXService.supportsLocalToolCalling(
+            modelName: modelName,
+            modelId: modelId,
+            modelDirectory: directory
+        ) {
+            return ToolUseStatus(
+                status: .unsupported,
+                title: L("Tool use unsupported"),
+                detail: L("Model capability detection reports local tool calling as unsupported for this bundle.")
+            )
+        }
+
+        if let parser = config?.toolCalling?.displayValue {
+            return ToolUseStatus(
+                status: .unproven,
+                title: L("Tool use proof required"),
+                detail: String(
+                    format:
+                        L(
+                            "The bundle declares a tool-call parser (%@), but Osaurus still needs a live tool-call proof before marking it proven."
+                        ),
+                    parser
+                )
+            )
+        }
+
+        return ToolUseStatus(
+            status: .unproven,
+            title: L("Tool use proof required"),
+            detail: L("No live tool-call proof is recorded for this exact bundle yet.")
+        )
+    }
+
     private static func unsupportedFamilyStatus(
         modelId: String,
         modelName: String,
@@ -525,13 +645,15 @@ enum ModelCompatibilityDiagnostics {
         modelTypeHint: String?,
         source: SourceStatus,
         localBundle: LocalBundleStatus,
-        config: ConfigSummary?
+        config: ConfigSummary?,
+        toolUse: ToolUseStatus
     ) -> [Evidence] {
         var rows: [Evidence] = [
             Evidence(source: "model", key: "id", value: modelId),
             Evidence(source: "model", key: "name", value: modelName),
             Evidence(source: "source", key: "kind", value: source.kind.rawValue),
             Evidence(source: "bundle", key: "status", value: localBundle.kind.rawValue),
+            Evidence(source: "tool_use", key: "status", value: toolUse.status.rawValue),
         ]
         if let path = localBundle.path {
             rows.append(Evidence(source: "bundle", key: "path", value: path))
@@ -611,6 +733,21 @@ enum ModelCompatibilityDiagnostics {
                     )
                 )
             }
+        }
+
+        if let toolCalling = config.toolCalling {
+            appendOptional(
+                &rows,
+                source: "jang_config.json",
+                key: toolCalling.parserKey ?? "chat.tool_calling.parser",
+                value: toolCalling.parser
+            )
+            appendOptional(
+                &rows,
+                source: "jang_config.json",
+                key: toolCalling.formatKey ?? "chat.tool_calling.format",
+                value: toolCalling.format
+            )
         }
 
         if let generation = config.generation {
@@ -697,7 +834,8 @@ enum ModelCompatibilityDiagnostics {
                 atPath: bundleURL.appendingPathComponent("jangtq_runtime.safetensors").path
             ),
             tokenizer: readTokenizerSummary(at: bundleURL),
-            generation: readGenerationSummary(at: bundleURL)
+            generation: readGenerationSummary(at: bundleURL),
+            toolCalling: readToolCallingSummary(at: bundleURL)
         )
     }
 
@@ -726,6 +864,27 @@ enum ModelCompatibilityDiagnostics {
             maxNewTokens: intValue(object["max_new_tokens"]),
             topK: intValue(object["top_k"]),
             hasDFlashReference: containsDFlashReference(object)
+        )
+    }
+
+    private static func readToolCallingSummary(at bundleURL: URL) -> ToolCallingSummary? {
+        let url = bundleURL.appendingPathComponent("jang_config.json")
+        guard let root = readJSONObject(at: url) else { return nil }
+        let chat = root["chat"] as? [String: Any]
+        let chatToolCalling = chat?["tool_calling"] as? [String: Any]
+        let rootToolCalling = root["tool_calling"] as? [String: Any]
+        let chatParser = stringValue(chatToolCalling?["parser"])
+        let rootParser = stringValue(rootToolCalling?["parser"])
+        let chatFormat = stringValue(chatToolCalling?["format"])
+        let rootFormat = stringValue(rootToolCalling?["format"])
+        let parser = chatParser ?? rootParser
+        let format = chatFormat ?? rootFormat
+        guard parser != nil || format != nil else { return nil }
+        return ToolCallingSummary(
+            parser: parser,
+            parserKey: chatParser != nil ? "chat.tool_calling.parser" : "tool_calling.parser",
+            format: format,
+            formatKey: chatFormat != nil ? "chat.tool_calling.format" : "tool_calling.format"
         )
     }
 
@@ -765,4 +924,5 @@ enum ModelCompatibilityDiagnostics {
         }
         return false
     }
+
 }
