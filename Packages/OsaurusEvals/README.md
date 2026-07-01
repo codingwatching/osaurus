@@ -30,6 +30,7 @@ Packages/OsaurusEvals/
     StreamingHint/      — StreamingToolHint encode/decode round-trips
     Subagent/           — SubagentSession host: scripted model-free + live spawn/image/computer_use
     ToolEnvelope/       — ToolEnvelope.{success,failure} JSON shape
+    ToolResultGrounding/ — transcript fixtures checking final-answer grounding against tool results
 ```
 
 A "suite" is just a directory of `*.json` case files. Add a new case by dropping a JSON file in — no Swift edit required.

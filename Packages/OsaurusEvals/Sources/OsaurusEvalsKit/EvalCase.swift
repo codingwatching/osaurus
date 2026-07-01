@@ -431,6 +431,11 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// `maximum` rules from regressing.
         public let schema: SchemaExpectations?
         public let toolEnvelope: ToolEnvelopeExpectations?
+        /// Transcript-grounding expectation for `domain == "tool_result_grounding"`.
+        /// Pure-data: replays a frozen tool-call/result/final-answer transcript
+        /// and scores whether the final answer is grounded in the named tool
+        /// result rather than tool-call arguments.
+        public let toolResultGrounding: ToolResultGroundingExpectations?
         public let streamingHint: StreamingHintExpectations?
         public let prefixHash: PrefixHashExpectations?
         public let argumentCoercion: ArgumentCoercionExpectations?
@@ -510,6 +515,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         public init(
             schema: SchemaExpectations? = nil,
             toolEnvelope: ToolEnvelopeExpectations? = nil,
+            toolResultGrounding: ToolResultGroundingExpectations? = nil,
             streamingHint: StreamingHintExpectations? = nil,
             prefixHash: PrefixHashExpectations? = nil,
             argumentCoercion: ArgumentCoercionExpectations? = nil,
@@ -527,6 +533,7 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         ) {
             self.schema = schema
             self.toolEnvelope = toolEnvelope
+            self.toolResultGrounding = toolResultGrounding
             self.streamingHint = streamingHint
             self.prefixHash = prefixHash
             self.argumentCoercion = argumentCoercion
@@ -541,6 +548,83 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             self.screenContext = screenContext
             self.subagent = subagent
             self.appleScript = appleScript
+        }
+    }
+
+    /// Expectation for `domain == "tool_result_grounding"` cases. The runner
+    /// does not call a model. It scores a committed transcript fixture so proof
+    /// artifacts can state: a tool was called, a result was returned, the final
+    /// answer happened after that result, and specific answer fragments came
+    /// from the result payload rather than from call arguments.
+    public struct ToolResultGroundingExpectations: Sendable, Codable {
+        public let events: [Event]
+        public let assertions: [Assertion]
+        /// Default true: the scored assistant answer must appear after at least
+        /// one tool result. Set false only for negative/unit fixtures.
+        public let requireFinalAfterToolResults: Bool?
+        /// Default true: every tool result must match a prior tool call by id.
+        public let requireMatchedResults: Bool?
+
+        public init(
+            events: [Event],
+            assertions: [Assertion],
+            requireFinalAfterToolResults: Bool? = nil,
+            requireMatchedResults: Bool? = nil
+        ) {
+            self.events = events
+            self.assertions = assertions
+            self.requireFinalAfterToolResults = requireFinalAfterToolResults
+            self.requireMatchedResults = requireMatchedResults
+        }
+
+        public struct Event: Sendable, Codable {
+            public let kind: String
+            public let callId: String?
+            public let tool: String?
+            public let arguments: String?
+            public let content: String?
+
+            public init(
+                kind: String,
+                callId: String? = nil,
+                tool: String? = nil,
+                arguments: String? = nil,
+                content: String? = nil
+            ) {
+                self.kind = kind
+                self.callId = callId
+                self.tool = tool
+                self.arguments = arguments
+                self.content = content
+            }
+        }
+
+        public struct Assertion: Sendable, Codable {
+            /// The tool result that grounds this assertion.
+            public let callId: String
+            /// Every fragment must appear in the final answer and in the named
+            /// result payload. This makes "answer copied from arguments" fail.
+            public let answerMustContain: [String]?
+            /// Every fragment must be absent from the final answer.
+            public let answerMustNotContain: [String]?
+            /// Every fragment must appear in the named result payload.
+            public let resultMustContain: [String]?
+            /// Every fragment must be absent from the original tool arguments.
+            public let argumentsMustNotContain: [String]?
+
+            public init(
+                callId: String,
+                answerMustContain: [String]? = nil,
+                answerMustNotContain: [String]? = nil,
+                resultMustContain: [String]? = nil,
+                argumentsMustNotContain: [String]? = nil
+            ) {
+                self.callId = callId
+                self.answerMustContain = answerMustContain
+                self.answerMustNotContain = answerMustNotContain
+                self.resultMustContain = resultMustContain
+                self.argumentsMustNotContain = argumentsMustNotContain
+            }
         }
     }
 

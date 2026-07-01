@@ -493,6 +493,8 @@ public enum EvalRunner {
             return runSchemaCase(testCase, modelId: modelId)
         case "tool_envelope":
             return runToolEnvelopeCase(testCase, modelId: modelId)
+        case "tool_result_grounding":
+            return runToolResultGroundingCase(testCase, modelId: modelId)
         case "streaming_hint":
             return runStreamingHintCase(testCase, modelId: modelId)
         case "prefix_hash":

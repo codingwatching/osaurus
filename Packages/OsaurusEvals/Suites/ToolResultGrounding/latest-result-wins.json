@@ -1,0 +1,50 @@
+{
+  "id": "tool_result_grounding.latest-result-wins",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: latest result beats stale earlier data",
+  "query": "Read the status twice and report the current release gate.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "read-previous",
+          "tool": "file_read",
+          "arguments": "{\"path\":\"status.txt\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "read-previous",
+          "tool": "file_read",
+          "content": "release gate: green-17\n"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "read-latest",
+          "tool": "file_read",
+          "arguments": "{\"path\":\"status.txt\",\"fresh\":true}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "read-latest",
+          "tool": "file_read",
+          "content": "release gate: amber-42\n"
+        },
+        {
+          "kind": "assistant",
+          "content": "The current release gate is amber-42."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "read-latest",
+          "answerMustContain": ["amber-42"],
+          "answerMustNotContain": ["green-17"],
+          "resultMustContain": ["release gate: amber-42"],
+          "argumentsMustNotContain": ["amber-42"]
+        }
+      ]
+    }
+  }
+}

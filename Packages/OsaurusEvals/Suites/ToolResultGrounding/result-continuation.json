@@ -1,0 +1,37 @@
+{
+  "id": "tool_result_grounding.result-continuation",
+  "domain": "tool_result_grounding",
+  "label": "tool result grounding: final answer continues from executed result",
+  "query": "Summarize the blocker counts after running the project report tool.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "report-1",
+          "tool": "project_status",
+          "arguments": "{\"scope\":\"release\",\"format\":\"summary\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "report-1",
+          "tool": "project_status",
+          "content": "{\"ok\":true,\"summary\":\"3 blocked, 2 ready\",\"owner\":\"runtime\"}"
+        },
+        {
+          "kind": "assistant",
+          "content": "The release report shows 3 blocked, 2 ready."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "report-1",
+          "answerMustContain": ["3 blocked, 2 ready"],
+          "resultMustContain": ["\"summary\":\"3 blocked, 2 ready\""],
+          "argumentsMustNotContain": ["3 blocked", "2 ready"]
+        }
+      ]
+    }
+  }
+}
