@@ -3,6 +3,45 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.3</title>
+            <pubDate>Wed, 01 Jul 2026 15:21:48 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.3</sparkle:version>
+            <sparkle:shortVersionString>0.21.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.3/Osaurus-0.21.3.dmg" length="55822193" type="application/octet-stream" sparkle:edSignature="8S6AFX40rKePJh6gdxu1KsUfefbHM/GBSAvrR4+P/MZlGzr5rB+8U8oAL5U29EmAwgakVZpq3zw0VPD4fChdCg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add channel remote safety gate (#1768) by @mimeding
+- updated chinese translations (#1762) by @ftzahao
+- Add Computer Use web form proof lane (#1746) by @mimeding
+- Add tool result grounding evals (#1740) by @mimeding
+- Add model tool-use diagnostics (#1739) by @mimeding
+- added Mistral provider support with reasoning effort control (#1777) by @RaajeevChandran
+- Fix sweep: Mistral chat fix + hunyuan\_v1\_dense + Rampart PII (repin) + plugin auth (#1719) + MCP triage (#1761) by @jjang-ai
+- cap tool rows in remote and plugin cards to prevent layout hang (#1767) by @RaajeevChandran
+
+## 🚀 Features
+
+- Add AppleScript Computer Use subagent with safe on-device execution (#1771) by @tpae
+
+## 🐛 Bug Fixes
+
+- fixed app hang sentry issues (#1776) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Restore Ideogram in the image model download catalog (#1778) by @tpae
+- minor UI tweaks (#1775) by @RaajeevChandran
+- Unify the model-download tabs on a shared ModelListRow (#1774) by @tpae
+- Standardize on "subagent" spelling (drop hyphenated "sub-agent") (#1769) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.2...0.21.3
+]]></description>
+        </item>
+        <item>
             <title>0.21.2</title>
             <pubDate>Tue, 30 Jun 2026 14:25:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
