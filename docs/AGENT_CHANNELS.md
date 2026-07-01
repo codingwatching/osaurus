@@ -190,6 +190,20 @@ plugin pattern:
 5. Dispatch only the normalized stored snapshot as untrusted external data.
 6. Preserve the cursor returned by the provider when one exists.
 
+Before step 5, adapters should also pass the normalized external text through
+`ChannelRemoteSafetyGate.shared`. The shared remote safety gate rate-limits
+authorized senders, requires fresh reply-token proof before dangerous remote
+approvals or Computer Use starts, limits concurrent remote Computer Use tasks
+per sender, and produces a typed untrusted-content assessment. Channel-returned
+status, result, and artifact text should be sanitized with the same gate so
+reply tokens, credentials, and oversized result payloads are not echoed back
+into a shared room.
+
+When a remote action requires a reply token, adapters must pass the raw token
+through `ChannelReplyTokenService` first and send only the service-produced
+validation into the remote safety gate. The gate assumes that cryptographic
+signature verification and durable nonce consumption have already happened.
+
 The helper performs the event dedupe insert, normalized inbound message
 snapshot write, per-room pruning, and optional cursor update in one transaction.
 Adapters should not dispatch before this call succeeds. When a connection opts

@@ -20,6 +20,19 @@ struct ChannelReplyTokenIssue: Equatable, Sendable {
     var payload: ChannelReplyTokenPayload
 }
 
+struct ChannelVerifiedReplyTokenValidation: Equatable, Sendable {
+    fileprivate var validation: ChannelReplyTokenValidation
+
+    var accepted: Bool { validation.accepted }
+    var reason: ChannelSecurityDiagnosticReason { validation.reason }
+    var message: String { validation.message }
+    var payload: ChannelReplyTokenPayload? { validation.payload }
+
+    fileprivate init(_ validation: ChannelReplyTokenValidation) {
+        self.validation = validation
+    }
+}
+
 final class ChannelReplyTokenService: @unchecked Sendable {
     static let tokenPrefix = "osaurus_channel_reply_v1"
     static let minimumSigningKeyBytes = 32
@@ -185,5 +198,25 @@ final class ChannelReplyTokenService: @unchecked Sendable {
             diff |= lhsBytes[index] ^ rhsBytes[index]
         }
         return diff == 0
+    }
+}
+
+extension ChannelReplyTokenService {
+    func validateRemoteActionToken(
+        _ token: String,
+        policy: ChannelRemoteSafetyPolicy = ChannelRemoteSafetyPolicy(),
+        remoteAction: ChannelRemoteActionClass,
+        identity: ChannelIdentity,
+        now: Date = Date()
+    ) -> ChannelVerifiedReplyTokenValidation {
+        ChannelVerifiedReplyTokenValidation(
+            validateToken(
+                token,
+                expectedPurpose: policy.replyTokenPurpose,
+                expectedAction: remoteAction.requiredReplyTokenAction,
+                identity: identity,
+                now: now
+            )
+        )
     }
 }

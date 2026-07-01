@@ -102,6 +102,49 @@ specific reasons for sender, group, thread, write-disabled, expired, replayed,
 revoked, identity mismatch, disabled kill switch, and replay-store failure
 cases so operators can fix policy without seeing secrets.
 
+## Remote Action Safety
+
+`ChannelRemoteSafetyGate.shared` adds a provider-neutral helper layer for live
+remote receive, reply, and Computer Use handoff flows. It is intentionally
+separate from provider adapters so Discord, Slack, Telegram, and JSON channels
+can share the same safety vocabulary before they dispatch into an agent loop. A
+live adapter is not protected by this helper until it explicitly invokes the
+shared gate instance.
+
+The default policy:
+
+- requires a fresh accepted reply token before dangerous approvals or remote
+  Computer Use starts, and re-checks that the accepted token payload matches
+  the current identity, expected purpose, expected action, write-gate
+  generation, and expiry time before consuming the proof for single use;
+- rate-limits remote channel actions per normalized channel identity;
+- allows only one active remote Computer Use task per identity until the task is
+  finished or its in-memory lease expires;
+- classifies inbound channel text as untrusted external data and records
+  prompt-injection-like signals without treating the text as policy;
+- redacts reply tokens and credentials, then truncates long result/status text
+  before it is returned to a channel.
+
+Adapters must validate raw reply-token strings with `ChannelReplyTokenService`
+before passing the service-produced validation to `ChannelRemoteSafetyGate`.
+The remote safety gate re-checks the accepted payload and adds in-memory
+rate/task/replay defenses, but it does not replace cryptographic signature
+verification or durable nonce consumption.
+
+Inbound message text can still be passed to the model, but adapters should wrap
+it with `ChannelRemoteSafetyGate.wrapUntrustedContent` so the source, risk
+classification, and non-authoritative data boundary are explicit. A suspicious
+classification is diagnostic evidence, not an automatic authorization grant or
+denial. Authorization remains controlled by allowlists, reply tokens, rate
+limits, task limits, and the global write kill switch.
+
+Remote safety rate windows and task leases are in-memory process state. They
+are defense-in-depth limits for active adapters, not durable authorization
+records. Durable authorization still belongs to channel allowlists, reply-token
+validation, nonce replay protection, message-store dedupe, and the write kill
+switch. The helper prunes stale in-memory rate windows and task leases lazily
+when authorized channel requests are evaluated.
+
 ## Local State Assumption
 
 The nonce table and kill-switch state are local JSON files. They are intended to
