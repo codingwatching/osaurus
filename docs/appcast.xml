@@ -3,6 +3,43 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.4</title>
+            <pubDate>Thu, 02 Jul 2026 16:39:32 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.4</sparkle:version>
+            <sparkle:shortVersionString>0.21.4</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.4/Osaurus-0.21.4.dmg" length="56180502" type="application/octet-stream" sparkle:edSignature="nkmIV4S9hpMVY/3TeZwN9UDprhieWaSdi43MWV0E+eBOEpftOzH9L3qxUsPDOOHQym5qx0CR7ycshF5eWFluAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add Russian localization (#1782) by @DrMaks22
+- Add safe custom JSON Agent Channel runner (#1652) by @mimeding
+- Add Agent Channel inbox audit workbench (#1784) by @mimeding
+- Repin vmlx-swift to c976fcbd — Ornith prefill counter advances (vmlx #105) (#1779) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- gated Rampart PII scan and media prep as exclusive GPU producers (#1799) by @RaajeevChandran
+- Disconnect must not evict the BatchEngine (cold-load hangup crashed the server) (#1796) by @jjang-ai
+- Generation params: wire seed into the sampler, accept string stop, native penalties, min\_p (#1793) by @jjang-ai
+- triage and fix sentry app hangs and crashes (#1781) by @RaajeevChandran
+- Repin vmlx-swift b6eda04f — MLX Metal stream-map thread-safety (fixes concurrent-GPU EXC\_BAD\_ACCESS crashes) (#1780) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Model catalog IA cleanup: family-grouped cards, variant picker, chat-only org fetch (#1800) by @tpae
+- Cut per-turn prompt cost: remote prompt caching + local KV prefix reuse + measured text trims (#1798) by @tpae
+- Subagent harness hardening: admission gate, mid-run interrupt, tool-capable workers, RAM coexistence, residency crash lane (#1797) by @tpae
+- Repin vmlx-swift: deterministic RMSNorm shift + Mistral VLM full-resolution images (#1791) by @jjang-ai
+- Settings IA cleanup: grouped sidebar, relocations, unified card primitives (#1792) by @tpae
+- Upgrade evals harness: repeat/resume runs, judge audit + calibration, micro-perf and prompt-injection suites (#1789) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.3...0.21.4
+]]></description>
+        </item>
+        <item>
             <title>0.21.3</title>
             <pubDate>Wed, 01 Jul 2026 15:21:48 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
