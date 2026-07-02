@@ -159,6 +159,10 @@ The schema is intentionally provider-neutral:
   `connection_id + provider_event_id`.
 - `channel_receive_cursors` stores optional per-room cursors for polling or
   relay catch-up.
+- `channel_audit_events` stores redacted receive/action decisions so operators
+  can prove whether an external message was accepted, denied, or treated as a
+  duplicate while keeping copied support evidence bounded and best-effort
+  redacted.
 
 Native adapters should write message snapshots whenever they read or send a
 message. Discord does this for `read_messages`, `search_messages`, and
@@ -211,9 +215,37 @@ out of provider event ids, the helper still requires an allow decision and uses
 the normalized provider message id, bound into that allow decision, to suppress
 duplicate dispatch for the same message snapshot.
 
-This PR does not add a live Discord receive relay. It adds the durable message
-and duplicate-filtering foundation that a relay, webhook receiver, Slack
-adapter, or Telegram adapter can share.
+Receive decisions also write a redacted audit row. Accepted rows record whether
+the normalized snapshot was inserted and dispatchable. Duplicate rows record
+that the provider event or message snapshot was acknowledged without a second
+dispatch. Denied rows record the typed denial reason before any message reaches
+agent context. Audit summaries are redacted at write time and exports omit raw
+payload JSON so support bundles can be copied without intentionally leaking
+channel secrets. Redaction is best-effort and targets known credential, token,
+email, and phone shapes; unknown secret shapes should still be handled with the
+same care as any diagnostic export.
+
+The audit ledger is retention-bounded. The store keeps at most 10,000 audit rows
+per connection by default and also exposes explicit time-based pruning for
+maintenance jobs. This keeps repeated denied or replayed traffic from growing
+the channel database without bound.
+
+## Inbox And Audit Workbench
+
+The Agent Channels connection center includes an Inbox & Audit workbench backed
+by `AgentChannelAuditWorkbenchService`. It can show recent redacted message
+snapshots, receive decisions, accepted/denied/duplicate counts, and a copyable
+redacted JSON export for the selected connection or all connections.
+
+This workbench is diagnostic evidence, not an authorization layer. Adapters
+must still run provider verification, inbound authorization, replay checks,
+reply-token validation, and remote safety gates before dispatching or writing to
+a channel. The workbench helps maintainers and operators answer: "Did this
+group message come from an authorized sender, and if not, why was it dropped?"
+
+This foundation does not add a live Discord receive relay. It adds the durable
+message, duplicate-filtering, and redacted audit foundation that a relay,
+webhook receiver, Slack adapter, or Telegram adapter can share.
 
 ## Async Channel Substrate
 
