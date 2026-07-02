@@ -987,6 +987,64 @@ struct DeltaContent: Codable, Sendable {
         self.tool_calls = tool_calls
         self.reasoning_content = reasoning_content
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case role, content, refusal, tool_calls, reasoning_content
+    }
+
+    /// One entry of Mistral's structured `content` array. Mistral streams
+    /// reasoning models as `content: [{type:"thinking", thinking:[{type:"text",
+    /// text:…}]}, {type:"text", text:…}]` rather than the OpenAI-standard plain
+    /// `content` string plus separate `reasoning_content`. Decoded here so
+    /// thinking chunks route to `reasoning_content` and text chunks to `content`,
+    /// letting the rest of the streaming pipeline handle Mistral like every other
+    /// separate-channel reasoning provider.
+    private struct MistralContentChunk: Decodable {
+        let type: String?
+        let text: String?
+        let thinking: [InnerText]?
+
+        struct InnerText: Decodable {
+            let type: String?
+            let text: String?
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        // Preserve the synthesized decoder's throwing `decodeIfPresent`
+        // semantics for every field: a present-but-malformed value must throw so
+        // the stream parser's split-JSON recovery path can retry, rather than
+        // being silently dropped. Only `content` adds a string-or-array fallback.
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.role = try container.decodeIfPresent(String.self, forKey: .role)
+        self.refusal = try container.decodeIfPresent(String.self, forKey: .refusal)
+        self.tool_calls = try container.decodeIfPresent([DeltaToolCall].self, forKey: .tool_calls)
+        let explicitReasoning = try container.decodeIfPresent(String.self, forKey: .reasoning_content)
+
+        do {
+            // Standard OpenAI-compatible shape: `content` is a string (or absent).
+            self.content = try container.decodeIfPresent(String.self, forKey: .content)
+            self.reasoning_content = explicitReasoning
+        } catch DecodingError.typeMismatch(_, _) {
+            // Mistral reasoning models stream `content` as a structured array of
+            // thinking/text chunks. Route thinking to `reasoning_content` and
+            // text to `content`. A genuine structural error (not a type mismatch)
+            // propagates from here so recovery can retry.
+            let chunks = try container.decode([MistralContentChunk].self, forKey: .content)
+            var visible = ""
+            var thinking = ""
+            for chunk in chunks {
+                if chunk.type == "thinking" {
+                    for part in chunk.thinking ?? [] { thinking += part.text ?? "" }
+                } else {
+                    visible += chunk.text ?? ""
+                }
+            }
+            self.content = visible.isEmpty ? nil : visible
+            let mergedReasoning = (explicitReasoning ?? "") + thinking
+            self.reasoning_content = mergedReasoning.isEmpty ? nil : mergedReasoning
+        }
+    }
 }
 
 /// Streaming choice
