@@ -33,12 +33,15 @@ let package = Package(
         // Pinned to vmlx main with the deterministic qwen3.5 RMSNorm-shift fix,
         // the full order-dependent-load sweep (#108, no more ~7.5% degenerate
         // loads), the Mistral3 VLM fix that honors the bundle's longest_edge
-        // instead of clamping images to 336px, the stop-string fix (#109) that
-        // stops post-stop text leaking into responses, and the Mistral
-        // bare-JSON-array tool-call recovery (#110) for VL-history turns.
+        // instead of clamping images to 336px, the stop-string fix (#109), the
+        // Mistral bare-JSON-array tool-call recovery (#110), chunk-level
+        // prefill cancellation (#111), shutdown-drains-producers (#112), and
+        // serialized disk-restore evals (#113) — together closing the
+        // client-disconnect crash train (engine teardown returns only after
+        // producers are off the GPU; restores can't race input tokenization).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "5b4eb5bcbc099e73986f13cc4560e5c2f355d4e3"
+            revision: "cee0f8e234a352fcc6d09fba9a78dd24c0b15238"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
