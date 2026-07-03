@@ -29,6 +29,7 @@ struct TranscriptionModeSettingsTab: View {
     @State private var pauseDuration: Double = 1.5
     @State private var confirmationDelay: Double = 2.0
     @State private var silenceTimeoutSeconds: Double = 30.0
+    @State private var postProcessTranscription: Bool = true
 
     /// Polls accessibility permission while the tab is visible, since
     /// `AXIsProcessTrusted()` won't notify us when the user grants it externally.
@@ -55,6 +56,7 @@ struct TranscriptionModeSettingsTab: View {
         pauseDuration = config.pauseDuration
         confirmationDelay = config.confirmationDelay
         silenceTimeoutSeconds = config.silenceTimeoutSeconds
+        postProcessTranscription = config.postProcessTranscription
     }
 
     private func saveVoiceSettings() {
@@ -64,9 +66,34 @@ struct TranscriptionModeSettingsTab: View {
         config.pauseDuration = pauseDuration
         config.confirmationDelay = confirmationDelay
         config.silenceTimeoutSeconds = silenceTimeoutSeconds
+        config.postProcessTranscription = postProcessTranscription
         SpeechConfigurationStore.save(config)
 
         NotificationCenter.default.post(name: .voiceConfigurationChanged, object: nil)
+    }
+
+    /// Description for the cleanup toggle. When enabled, "core model" is styled
+    /// as an underlined accent-colored link that deep-links to its setting.
+    private var cleanupDescription: AttributedString {
+        guard postProcessTranscription else {
+            var text = AttributedString(L("Keep the natural transcription, including filler words"))
+            text.foregroundColor = theme.tertiaryText
+            return text
+        }
+        var text = AttributedString(L("The core model removes filler words like \"uh\" and \"mm\""))
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
+    }
+
+    /// Deep-links to the Core Model picker in the General settings tab.
+    private func navigateToCoreModelSetting() {
+        SettingsHighlightCoordinator.shared.request("settings.general.coreModel")
+        ManagementStateManager.shared.selectedTab = .settings
     }
 
     /// Formatted display for silence timeout
@@ -275,6 +302,7 @@ struct TranscriptionModeSettingsTab: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -419,6 +447,45 @@ struct TranscriptionModeSettingsTab: View {
                 Text("Applies to both chat voice input and Transcription Mode", bundle: .module)
                     .font(.system(size: 12))
                     .foregroundColor(theme.secondaryText)
+
+                // Post-processing toggle. The description highlights "core model"
+                // as a deep link into the General settings tab, since users may
+                // not know what the core model is.
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Clean Up Transcription", bundle: .module)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(theme.primaryText)
+                        Text(cleanupDescription)
+                            .font(.system(size: 11))
+                            .tint(theme.accentColor)
+                            .environment(
+                                \.openURL,
+                                OpenURLAction { _ in
+                                    navigateToCoreModelSetting()
+                                    return .handled
+                                }
+                            )
+                    }
+
+                    Spacer()
+
+                    Toggle("", isOn: $postProcessTranscription)
+                        .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                        .labelsHidden()
+                        .onChange(of: postProcessTranscription) { _, _ in
+                            saveVoiceSettings()
+                        }
+                }
+                .padding(12)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(theme.inputBackground)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(theme.inputBorder, lineWidth: 1)
+                        )
+                )
 
                 // Voice Stop Mode Picker
                 VStack(alignment: .leading, spacing: 10) {

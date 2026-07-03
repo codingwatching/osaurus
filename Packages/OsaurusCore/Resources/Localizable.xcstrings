@@ -19384,6 +19384,9 @@
         }
       }
     },
+    "Cancel (Esc)" : {
+
+    },
     "Cancel a running task" : {
       "localizations" : {
         "de" : {
@@ -22690,6 +22693,9 @@
         }
       },
       "shouldTranslate" : false
+    },
+    "Clean Up Transcription" : {
+
     },
     "Clear" : {
       "localizations" : {
@@ -28496,6 +28502,9 @@
           }
         }
       }
+    },
+    "core model" : {
+
     },
     "Core model" : {
       "extractionState" : "manual",
@@ -35899,6 +35908,7 @@
       }
     },
     "Done (Esc)" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -55350,6 +55360,9 @@
           }
         }
       }
+    },
+    "Keep the natural transcription, including filler words" : {
+
     },
     "Keep this chat running?" : {
       "localizations" : {
@@ -109087,6 +109100,9 @@
         }
       }
     },
+    "Stop and insert" : {
+
+    },
     "Stop Mode" : {
       "localizations" : {
         "de" : {
@@ -112929,6 +112945,9 @@
           }
         }
       }
+    },
+    "The core model removes filler words like \"uh\" and \"mm\"" : {
+
     },
     "The current model is text-only." : {
       "localizations" : {
