@@ -41,7 +41,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .models: [.models, .providers, .imageGeneration]
         case .agentsAutomation:
             [
-                .agents, .memory, .tools, .skills, .commands, .plugins,
+                .agents, .agentChannels, .memory, .tools, .skills, .commands, .plugins,
                 .schedules, .watchers, .sandbox, .computerUse,
             ]
         case .server: [.server]
@@ -63,6 +63,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case providers
     case imageGeneration
     case agents
+    case agentChannels
     case memory
     case tools
     case skills
@@ -92,7 +93,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .settings, .chat, .voice, .themes: .general
         case .models, .providers, .imageGeneration: .models
-        case .agents, .memory, .tools, .skills, .commands, .plugins,
+        case .agents, .agentChannels, .memory, .tools, .skills, .commands, .plugins,
             .schedules, .watchers, .sandbox, .computerUse:
             .agentsAutomation
         case .server: .server
@@ -101,12 +102,12 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Resolves a sidebar tab id, including legacy raw values that no longer
-    /// exist as cases (`"dashboard"` → Credits, `"channels"` → Agents).
+    /// Resolves a sidebar tab id, including legacy raw values whose destination
+    /// has moved (`"dashboard"` → Credits, `"channels"` → Agent Channels).
     public static func resolved(from rawValue: String) -> ManagementTab? {
         switch rawValue {
         case "dashboard": .credits
-        case "channels": .agents
+        case "channels", "integrations", "agent-channels": .agentChannels
         default: ManagementTab(rawValue: rawValue)
         }
     }
@@ -117,6 +118,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .models: "cube.box.fill"
         case .providers: "cloud.fill"
         case .agents: "person.2.fill"
+        case .agentChannels: "bubble.left.and.bubble.right.fill"
         case .plugins: "puzzlepiece.extension.fill"
         case .sandbox: "shippingbox.fill"
         case .tools: "wrench.and.screwdriver.fill"
@@ -146,6 +148,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .models: L("Models")
         case .providers: L("Providers")
         case .agents: L("Agents")
+        case .agentChannels: L("Agent Channels")
         case .plugins: L("Plugins")
         case .sandbox: L("Sandbox")
         case .tools: L("Tools")
