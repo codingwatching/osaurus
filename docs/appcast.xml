@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.5</title>
+            <pubDate>Fri, 03 Jul 2026 13:51:22 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.5</sparkle:version>
+            <sparkle:shortVersionString>0.21.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.5/Osaurus-0.21.5.dmg" length="56409560" type="application/octet-stream" sparkle:edSignature="hG6C1Xw8PCgvBnAH91H60oryAoMiw7c5s/SZG32BbKPH7us6kl/RD9ASh4e1BdNmV5wXMSG/oRL4s5A3USzPCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Polish Slack and Telegram Agent Channels (#1808) by @mimeding
+- added transcription cleanup toggle and redesign the dictation overlay (#1816) by @RaajeevChandran
+
+## 🚀 Features
+
+- added favourite tab in the model selector (#1811) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- stopped image composer chips from wrapping in a narrow window (#1809) by @RaajeevChandran
+- fixed Mistral reasoning format (#1804) by @RaajeevChandran
+- skip gpu teardown on quit so exit does not cause race condition (#1805) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Local-model harness fixes from the gemma-4-12B optimization loop (#1819) by @tpae
+- Repin vmlx-swift: strip orphan tool-call closer tags (#115) (#1817) by @jjang-ai
+- AppleScript subagent upgrade: capability reach, latency, consent UX, reliability (#1812) by @tpae
+- Korean localization: more natural terminology for Providers, Watchers, Computer Use, Identity, and quick actions (#1807) by @tpae
+- Onboarding model step: explicit resource costs, one pick per family, low-disk preflight (#1806) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.4...0.21.5
+]]></description>
+        </item>
+        <item>
             <title>0.21.4</title>
             <pubDate>Thu, 02 Jul 2026 16:39:32 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
