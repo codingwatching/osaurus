@@ -2794,6 +2794,18 @@ final class ChatSession: ObservableObject {
     /// Processes the streaming delta loop from the chat engine, updating the given
     /// assistant turn and UI state. Returns any parsed tool invocations and the
     /// final updated assistant turn.
+    /// Clears the transient `pendingToolName` placeholder seeded by the
+    /// tool-call-progress branch when — and only when — it is still the
+    /// sentinel at stream end (i.e. no committed tool name ever overwrote it).
+    /// A real tool name replaces the sentinel at `\u{FFFE}tool:`, so this is a
+    /// no-op for genuine pending tool calls; it only prevents a "Preparing tool
+    /// call" card from surviving on a cancelled or reclassified turn.
+    private static func clearPendingToolCallProgressPlaceholder(on turn: ChatTurn) {
+        if turn.pendingToolName == ToolDisplayName.pendingToolSentinel {
+            turn.pendingToolName = nil
+        }
+    }
+
     private func processStreamDeltas(
         stream: AsyncThrowingStream<String, Error>,
         assistantTurn: ChatTurn,
@@ -2803,6 +2815,12 @@ final class ChatSession: ObservableObject {
         selectedModel: String?
     ) async throws -> (invocations: [ServiceToolInvocation], finalTurn: ChatTurn) {
         var currentTurn = assistantTurn
+        // On every exit — clean end, cancel, tool-invocation throw, or a
+        // mid-stream error — drop a tool-call-progress placeholder if it never
+        // resolved to a committed tool name, so the "Preparing tool call" card
+        // can't persist on the finalized turn. No-op for real pending calls
+        // (the committed `\u{FFFE}tool:` name overwrites the sentinel first).
+        defer { Self.clearPendingToolCallProgressPlaceholder(on: currentTurn) }
         var uiDeltaCount = 0
         var uiReasoningDeltaCount = 0
         var uiToolSentinelCount = 0
@@ -2930,6 +2948,26 @@ final class ChatSession: ObservableObject {
                     uiToolSentinelCount += 1
                     currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
                     rebuildVisibleBlocks()
+                    continue
+                }
+                // A tool call is still being generated: the model is emitting the
+                // raw envelope (e.g. a large `write_file` argument) but it hasn't
+                // closed yet, so the parsed name/args aren't available. Local MLX
+                // buffers the whole envelope, so without this the assistant turn
+                // has no visible content and no `pendingToolName`, leaving only the
+                // frozen typing indicator for the entire (multi-second) write.
+                // Seed a neutral in-progress tool card so the view flips from the
+                // static dots to the shimmering pending-tool row; the committed
+                // `StreamingToolHint.decode` above overwrites the placeholder with
+                // the real tool name once the envelope closes. The raw envelope
+                // text itself is intentionally NOT rendered (it isn't parsed args
+                // and could be any format), so it never leaks as message text.
+                if StreamingToolCallProgressHint.decode(delta) != nil {
+                    uiToolSentinelCount += 1
+                    if currentTurn.pendingToolName == nil {
+                        currentTurn.pendingToolName = ToolDisplayName.pendingToolSentinel
+                        rebuildVisibleBlocks()
+                    }
                     continue
                 }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
