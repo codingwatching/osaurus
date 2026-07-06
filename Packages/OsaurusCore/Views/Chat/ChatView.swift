@@ -155,6 +155,13 @@ final class ChatSession: ObservableObject {
     /// than force-expanding in the cell) lets the user collapse the block
     /// afterward; this set stops us re-expanding it on the next rebuild.
     private var autoExpandedReasoningBlockIds: Set<String> = []
+
+    /// Thinking-block ids auto-expanded while their turn was actively
+    /// streaming reasoning (opt-in "Expand Thinking While Streaming"
+    /// setting). Each id is expanded at most once so a manual collapse
+    /// mid-stream sticks, and collapsed exactly once when the thinking
+    /// phase ends.
+    private var streamingAutoExpandedThinkingBlockIds: Set<String> = []
     @Published var input: String = ""
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
@@ -252,15 +259,6 @@ final class ChatSession: ObservableObject {
     /// `cachedContext` is reset so a new agent/session recomposes fresh.
     private var cachedPreviewContext: ComposedContext?
 
-    private var thinkingEnabledForCurrentModel: Bool {
-        guard let selectedModel else {
-            return activeModelOptions["disableThinking"]?.boolValue == false
-        }
-        return ModelProfileRegistry.thinkingEnabled(
-            for: selectedModel,
-            values: activeModelOptions
-        ) ?? false
-    }
     /// Estimated memory-section token cost for the next send. Populated by
     /// `refreshMemoryTokens` and surfaced through `estimatedContextBreakdown`
     /// so the Context Budget popover shows a "Memory" line even before the
@@ -969,8 +967,7 @@ final class ChatSession: ObservableObject {
             let newBlocks = blockMemoizer.blocks(
                 from: mockTurns,
                 streamingTurnId: nil,
-                agentName: displayName,
-                thinkingEnabled: thinkingEnabledForCurrentModel
+                agentName: displayName
             )
             let newHeaderMap = blockMemoizer.groupHeaderMap
             withAnimation(.none) {
@@ -981,12 +978,12 @@ final class ChatSession: ObservableObject {
         }
 
         seedAutoExpandedReasoningBlocks(streamingTurnId: streamingTurnId)
+        updateStreamingThinkingExpansion(streamingTurnId: streamingTurnId)
 
         let newBlocks = blockMemoizer.blocks(
             from: turns,
             streamingTurnId: streamingTurnId,
-            agentName: displayName,
-            thinkingEnabled: thinkingEnabledForCurrentModel
+            agentName: displayName
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
 
@@ -1014,6 +1011,47 @@ final class ChatSession: ObservableObject {
             guard !autoExpandedReasoningBlockIds.contains(blockId) else { continue }
             autoExpandedReasoningBlockIds.insert(blockId)
             expandedBlocksStore.expand(blockId)
+        }
+    }
+
+    /// While the streaming turn is in its reasoning-only phase (no answer
+    /// content or tool calls yet), keep its thinking block expanded so the
+    /// user can watch the reasoning live; once the phase ends, collapse it
+    /// again to keep the thread clean. Opt-in via the Chat settings toggle
+    /// (`chatExpandThinkingWhileStreamingEnabled`, default off). Runs on
+    /// every visible-blocks rebuild, which fires per streaming delta and
+    /// once more from `completeRunCleanup`, so the collapse also lands when
+    /// a run ends or is cancelled mid-thought.
+    private func updateStreamingThinkingExpansion(streamingTurnId: UUID?) {
+        let activeThinkingBlockId: String? = {
+            guard
+                UserDefaults.standard.bool(forKey: "chatExpandThinkingWhileStreamingEnabled"),
+                let streamingTurnId,
+                let turn = turns.last, turn.id == streamingTurnId,
+                turn.role == .assistant,
+                turn.hasRenderableThinking,
+                turn.contentIsBlank,
+                (turn.toolCalls ?? []).isEmpty
+            else { return nil }
+            return ContentBlock.thinkingBlockId(turnId: streamingTurnId)
+        }()
+
+        // Collapse blocks whose thinking phase has ended — unless the
+        // completed-reasoning-only seeding above wants them expanded.
+        for blockId in streamingAutoExpandedThinkingBlockIds where blockId != activeThinkingBlockId {
+            streamingAutoExpandedThinkingBlockIds.remove(blockId)
+            if !autoExpandedReasoningBlockIds.contains(blockId) {
+                expandedBlocksStore.collapse(blockId)
+            }
+        }
+
+        // Expand at most once per block so a manual collapse mid-stream
+        // isn't fought on the next delta.
+        if let activeThinkingBlockId,
+            !streamingAutoExpandedThinkingBlockIds.contains(activeThinkingBlockId)
+        {
+            streamingAutoExpandedThinkingBlockIds.insert(activeThinkingBlockId)
+            expandedBlocksStore.expand(activeThinkingBlockId)
         }
     }
 
