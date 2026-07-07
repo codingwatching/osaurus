@@ -3,6 +3,46 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.8</title>
+            <pubDate>Tue, 07 Jul 2026 14:06:19 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.8</sparkle:version>
+            <sparkle:shortVersionString>0.21.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.8/Osaurus-0.21.8.dmg" length="57283790" type="application/octet-stream" sparkle:edSignature="MRNmmePbyDu4JxJkodDJR5CtJSFS+6yN45GqZt0bg7Quyob4D5HatvUHomnj8CSJf5lRQJsqq5AM9YDqEELIDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- improved ram tight fit banner UI (#1910) by @RaajeevChandran
+- Add RAM tight-fit send gate and make model switches immediate (#1908) by @tpae
+- Add Trendshift badge to README (#1906) by @tpae
+- Run native-MTP cold warmup at model load, not on the first user request (#1903) by @mimeding
+- Show live tool-call progress card during buffered tool generation (#1894) by @jjang-ai
+
+## 🚀 Features
+
+- Proactive model warm-up: prefill-ahead KV caching for faster TTFT (#1897) by @tpae
+
+## 🐛 Bug Fixes
+
+- qwen3.5 agent-loop nudge + JANGTQ\_K unblock + ZAYA tool-arg parser repin (#1907) by @jjang-ai
+- Fix folder file-write bugs: firmlinked-root rejection + new-file diff count (#1900) by @jjang-ai
+- Reflect tool-call failure in the collapsed card title (#1899) by @jjang-ai
+- Fix 0.21.7 Sentry issues: notch display-reconfig hangs and TextKit downgrade crash (#1898) by @tpae
+- improved favorite models UI (#1889) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- improved chat thread performance (#1891) by @RaajeevChandran
+- Shorten chat-close unload grace from 60s to 15s (#1904) by @tpae
+- Free model memory on chat close, respond to memory pressure, and cap unbounded caches (#1901) by @tpae
+- added per-model API exposure controls with a Models tab in Server settings (#1893) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.7...0.21.8
+]]></description>
+        </item>
+        <item>
             <title>0.21.7</title>
             <pubDate>Mon, 06 Jul 2026 15:32:51 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
