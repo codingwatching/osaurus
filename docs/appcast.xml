@@ -3,6 +3,24 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.10</title>
+            <pubDate>Tue, 07 Jul 2026 21:42:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.10</sparkle:version>
+            <sparkle:shortVersionString>0.21.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.10/Osaurus-0.21.10.dmg" length="57291211" type="application/octet-stream" sparkle:edSignature="DUUp9H6QR0Sdg+D3M/mhl9IBtl3H9RGWIVNNjPADMk4wVUNnnyCY2dKgGYPiz+KmymI5Xt5rI8q13WKE5HxECg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Update Simplified Chinese and Traditional Chinese translations (#1909) by @ftzahao
+- added ram banner dismiss button (#1924) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.9...0.21.10
+]]></description>
+        </item>
+        <item>
             <title>0.21.9</title>
             <pubDate>Tue, 07 Jul 2026 18:18:57 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
