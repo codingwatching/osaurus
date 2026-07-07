@@ -3,6 +3,26 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.9</title>
+            <pubDate>Tue, 07 Jul 2026 18:18:57 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.9</sparkle:version>
+            <sparkle:shortVersionString>0.21.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.9/Osaurus-0.21.9.dmg" length="57278993" type="application/octet-stream" sparkle:edSignature="I3YAwHYJ56QpwuMIrGOOshVRbn9V8I5utnGjKL+TDdPchqs/qqlLtYEwIBhFO4XRNr9xcHLSLBDw0ohzzA/KDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fixed sentry hangs \& crashes (#1920) by @RaajeevChandran
+- Skip proactive model warm-up when the projected load exceeds the hard RAM ceiling (#1918) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.8...0.21.9
+]]></description>
+        </item>
+        <item>
             <title>0.21.8</title>
             <pubDate>Tue, 07 Jul 2026 14:06:19 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
