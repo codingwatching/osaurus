@@ -526,6 +526,13 @@ struct FloatingInputCard: View {
 
     private var mainContent: some View {
         VStack(spacing: 12) {
+            // RAM tight-fit banner is a real row above the selector row (not a
+            // floating overlay) so it sits directly above the model picker
+            // chip it refers to and can never overlap the chip or token count.
+            if !showVoiceOverlay {
+                ramPressureRow
+            }
+
             // Read-only screen-context indicator sits on its OWN row above the
             // selector row, right-aligned so it stacks directly over the
             // context-token count, rendered as quiet muted text (not a chip)
@@ -624,7 +631,6 @@ struct FloatingInputCard: View {
                 RAMTightFitModifier(
                     severity: ramPressureSeverity,
                     selectedModel: selectedModel,
-                    banner: ramPressureOverlay,
                     refresh: refreshLoadFeasibility
                 )
             )
@@ -925,19 +931,63 @@ fileprivate func voiceDebugLog(
 /// Groups the RAM tight-fit banner overlay and its refresh triggers into one
 /// modifier so the already-enormous `FloatingInputCard.body` chain doesn't
 /// gain four more inference nodes (the type-checker times out otherwise).
-private struct RAMTightFitModifier<Banner: View>: ViewModifier {
+/// The RAM tight-fit banner's full popover silhouette: a rounded rectangle
+/// whose bottom edge flows into a downward pointer triangle as one continuous
+/// path, so stroking it draws a single unbroken border around banner and
+/// pointer alike (no border line across the triangle's flat top).
+private struct RAMBannerShape: Shape {
+    static let pointerWidth: CGFloat = 18
+    static let pointerHeight: CGFloat = 8
+    static let cornerRadius: CGFloat = 14
+
+    /// X position of the pointer's tip, in the shape's own coordinates.
+    let pointerCenterX: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let r = Self.cornerRadius
+        let halfPointer = Self.pointerWidth / 2
+        let bodyBottom = rect.maxY - Self.pointerHeight
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + r, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
+        path.addArc(
+            center: CGPoint(x: rect.maxX - r, y: rect.minY + r),
+            radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: bodyBottom - r))
+        path.addArc(
+            center: CGPoint(x: rect.maxX - r, y: bodyBottom - r),
+            radius: r, startAngle: .degrees(0), endAngle: .degrees(90), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: pointerCenterX + halfPointer, y: bodyBottom))
+        path.addLine(to: CGPoint(x: pointerCenterX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: pointerCenterX - halfPointer, y: bodyBottom))
+        path.addLine(to: CGPoint(x: rect.minX + r, y: bodyBottom))
+        path.addArc(
+            center: CGPoint(x: rect.minX + r, y: bodyBottom - r),
+            radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
+        path.addArc(
+            center: CGPoint(x: rect.minX + r, y: rect.minY + r),
+            radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct RAMTightFitModifier: ViewModifier {
     let severity: ModelRuntime.RAMFeasibility.LoadPressureSeverity
     let selectedModel: String?
-    let banner: Banner
     let refresh: () -> Void
 
     func body(content: Content) -> some View {
         content
-            // Float the tight-fit disclaimer above the card, same overlay
-            // mechanics as the configuration-context error banner.
-            .overlay(alignment: .top) {
-                banner
-            }
+            // The tight-fit banner itself is an in-flow row above the model
+            // picker chip (`ramPressureRow`); this modifier only owns the
+            // refresh triggers and the show/hide animation.
             .animation(.easeOut(duration: 0.2), value: severity)
             .onChange(of: selectedModel) { _, _ in
                 refresh()
@@ -3376,14 +3426,28 @@ extension FloatingInputCard {
         }
     }
 
-    /// Floating wrapper for `ramPressureBanner`, same overlay mechanics as
-    /// `configContextErrorOverlay`. The config-context error wins when both
-    /// apply — the two toasts share the space above the card.
+    /// Fixed banner width so a short model name (e.g. "gpt-5.5") never shrinks
+    /// the banner into a cramped container.
+    private static let ramBannerWidth: CGFloat = 320
+
+    /// In-flow wrapper for `ramPressureBanner`: a fixed-width, popover-style
+    /// toast at the top of the composer stack, left-aligned with the model
+    /// picker chip it refers to (same 20pt leading inset), with the pointer
+    /// fixed near the banner's left so it lands on the front of the chip
+    /// regardless of the chip's width. The config-context error (still a
+    /// floating overlay) wins when both apply.
     @ViewBuilder
-    private var ramPressureOverlay: some View {
+    private var ramPressureRow: some View {
         if !configContextTooSmall, let feasibility = pendingLoadFeasibility {
-            ramPressureBanner(feasibility)
-                .alignmentGuide(.top) { dimensions in dimensions.height + 10 }
+            ramPressureBanner(feasibility, pointerCenterX: 28)
+                .frame(width: Self.ramBannerWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 20)
+                .padding(.top, 8)
+                // The pointer is inside the banner's frame now; the negative
+                // padding cancels most of the stack spacing + selector row top
+                // padding so the pointer tip sits ~4pt above the chip.
+                .padding(.bottom, -16)
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
@@ -3392,7 +3456,10 @@ extension FloatingInputCard {
     /// selected model would be a tight RAM fit. Orange = warn (send allowed),
     /// red = blocked (send paused until memory frees; the 2s feasibility
     /// re-check clears it automatically).
-    private func ramPressureBanner(_ feasibility: ModelRuntime.RAMFeasibility) -> some View {
+    private func ramPressureBanner(
+        _ feasibility: ModelRuntime.RAMFeasibility,
+        pointerCenterX: CGFloat
+    ) -> some View {
         let blocked = feasibility.loadPressureSeverity == .block
         let tint: Color = blocked ? .red : .orange
         let modelName = selectedPickerItem?.displayName ?? feasibility.modelName
@@ -3400,54 +3467,48 @@ extension FloatingInputCard {
         let usage = "\(ramBannerUsagePercent)"
         let total = "\(ramBannerTotalGB)"
 
-        return HStack(spacing: 8) {
-            Image(systemName: blocked ? "memorychip.fill" : "memorychip")
-                .font(.system(size: CGFloat(theme.captionSize)))
+        let message: Text =
+            blocked
+            ? Text(
+                "This model needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
+                bundle: .module
+            )
+            : Text(
+                "This model needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
+                bundle: .module
+            )
+
+        // One continuous popover silhouette: the rounded rect and the pointer
+        // triangle are a single shape, so the fill and the border flow around
+        // the combined outline with no seam where they meet.
+        let clampedX = min(
+            max(pointerCenterX, 14 + RAMBannerShape.pointerWidth / 2),
+            Self.ramBannerWidth - 14 - RAMBannerShape.pointerWidth / 2
+        )
+        let shape = RAMBannerShape(pointerCenterX: clampedX)
+
+        // Icon is concatenated into the text as a first-line prefix (not an
+        // HStack sibling) so wrapped lines use the banner's full width.
+        return
+            (Text(Image(systemName: blocked ? "memorychip.fill" : "memorychip"))
                 .foregroundColor(tint)
-
-            Group {
-                if blocked {
-                    Text(
-                        "\(modelName) needs ~\(neededGB) GB to load, but memory is at \(usage)% of \(total) GB. Sending is paused until memory frees — close other apps or pick a smaller model.",
-                        bundle: .module
-                    )
-                } else {
-                    Text(
-                        "\(modelName) needs ~\(neededGB) GB to load and memory is at \(usage)% of \(total) GB. Close other apps for best performance.",
-                        bundle: .module
-                    )
-                }
-            }
+                + Text(verbatim: "  ")
+                + message.foregroundColor(theme.primaryText))
             .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-            .foregroundColor(theme.primaryText)
             .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                showModelPicker = true
-            } label: {
-                Text("Choose model", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-            }
-            .buttonStyle(.plain)
-            .pointingHandCursor()
-        }
         .padding(.horizontal, 14)
-        .padding(.vertical, 9)
+        .padding(.top, 9)
+        // The shape's bottom edge sits above the pointer, so reserve its
+        // height inside the frame.
+        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
         .background(
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(.regularMaterial)
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(tint.opacity(0.12))
+                shape.fill(.regularMaterial)
+                shape.fill(tint.opacity(0.12))
             }
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(tint.opacity(0.35), lineWidth: 1)
-        )
+        .overlay(shape.stroke(tint.opacity(0.35), lineWidth: 1))
         .shadow(color: Color.black.opacity(0.12), radius: 8, x: 0, y: 3)
-        .frame(maxWidth: 560)
         .accessibilityLabel(
             blocked
                 ? Text("Sending paused: not enough memory to load \(modelName)", bundle: .module)
