@@ -2946,8 +2946,27 @@ final class ChatSession: ObservableObject {
                 }
                 if let toolName = StreamingToolHint.decode(delta) {
                     uiToolSentinelCount += 1
-                    currentTurn.pendingToolName = toolName.isEmpty ? nil : toolName
-                    rebuildVisibleBlocks()
+                    // Local models stream the raw envelope as args fragments
+                    // BEFORE the parsed call's name hint. When the hint lands
+                    // the runtime re-sends the full canonical argsJSON, so
+                    // drop the envelope accumulation — the canonical args
+                    // rebuild the preview without envelope wrapper noise.
+                    // Remote providers send the hint before any fragment
+                    // (size 0), so this is a no-op there.
+                    if currentTurn.pendingToolArgSize > 0 {
+                        currentTurn.clearPendingToolArgs()
+                    }
+                    let newName = toolName.isEmpty ? nil : toolName
+                    // Only rebuild when the name actually changed. On the
+                    // envelope-first flow the name was already derived
+                    // mid-stream — rebuilding here (right after the args
+                    // clear, right before the canonical args re-send) would
+                    // blank the live diff preview for one frame.
+                    let nameChanged = currentTurn.pendingToolName != newName
+                    currentTurn.pendingToolName = newName
+                    if nameChanged {
+                        rebuildVisibleBlocks()
+                    }
                     continue
                 }
                 // A tool call is still being generated: the model is emitting the
@@ -2962,10 +2981,29 @@ final class ChatSession: ObservableObject {
                 // the real tool name once the envelope closes. The raw envelope
                 // text itself is intentionally NOT rendered (it isn't parsed args
                 // and could be any format), so it never leaks as message text.
-                if StreamingToolCallProgressHint.decode(delta) != nil {
+                if let envelopeDelta = StreamingToolCallProgressHint.decode(delta) {
                     uiToolSentinelCount += 1
+                    // Also accumulate the raw envelope: the live diff preview
+                    // extracts path/content from it mid-stream, and the tool
+                    // NAME usually completes within the first fragments —
+                    // upgrading the neutral placeholder card to the real
+                    // "Writing file…" chip + growing diff card. The committed
+                    // name hint clears this buffer and re-sends canonical args.
+                    currentTurn.appendToolArgFragment(envelopeDelta)
+                    if currentTurn.pendingToolName == nil
+                        || currentTurn.pendingToolName == ToolDisplayName.pendingToolSentinel,
+                        let full = currentTurn.pendingToolArgFull,
+                        let name = FileDiff.partialToolName(inArgs: full)
+                    {
+                        currentTurn.pendingToolName = name
+                    }
                     if currentTurn.pendingToolName == nil {
                         currentTurn.pendingToolName = ToolDisplayName.pendingToolSentinel
+                    }
+                    let count = currentTurn.pendingToolArgFragmentCount
+                    let now = Date()
+                    if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
+                        lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()
                     }
                     continue
@@ -2982,6 +3020,16 @@ final class ChatSession: ObservableObject {
                 if let argFragment = StreamingToolHint.decodeArgs(delta) {
                     uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
+                    // Envelope-first flow (local models): the tool name rides
+                    // inside the streamed envelope, no name hint yet. Derive
+                    // it as soon as the "name" field completes so the pending
+                    // chip / live diff preview appear mid-generation.
+                    if currentTurn.pendingToolName == nil,
+                        let full = currentTurn.pendingToolArgFull,
+                        let name = FileDiff.partialToolName(inArgs: full)
+                    {
+                        currentTurn.pendingToolName = name
+                    }
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
                     // so the table stays responsive during long arg streams
