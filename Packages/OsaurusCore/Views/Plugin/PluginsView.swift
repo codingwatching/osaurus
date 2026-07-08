@@ -403,6 +403,15 @@ struct PluginsView: View {
             return
         }
 
+        // A superseded plugin that isn't installed has no Browse card to land
+        // on (native search replaced it) — send the deeplink to the Search
+        // settings tab instead of dead-ending.
+        if PluginManager.supersededPluginIds.contains(pluginId), !plugin.isInstalled {
+            managementState.pendingPluginDetailId = nil
+            AppDelegate.shared?.showManagementWindow(initialTab: .search)
+            return
+        }
+
         if !installedPlugins.contains(where: { $0.pluginId == pluginId }) {
             selectedTab = .browse
         }
@@ -897,7 +906,15 @@ struct PluginsView: View {
 
         let (browseResult, installedResult, claudeResult, marketplaceResult, chipCounts) =
             await Task.detached(priority: .userInitiated) {
-                let browse = currentPlugins.filter { Self.pluginMatchesQuery($0, query: query) }
+                // Superseded plugins (native search replaced osaurus.search)
+                // are hidden from Browse unless already installed — new users
+                // shouldn't be offered a plugin whose tools never register.
+                // Existing installs keep their card (with the "Built into
+                // Osaurus" banner) so the uninstall path stays reachable.
+                let browse = currentPlugins.filter {
+                    Self.pluginMatchesQuery($0, query: query)
+                        && ($0.isInstalled || !PluginManager.supersededPluginIds.contains($0.pluginId))
+                }
                 let installed =
                     currentPlugins
                     .filter { $0.isInstalled && Self.pluginMatchesQuery($0, query: query) }
@@ -1229,7 +1246,13 @@ private struct PluginCard: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        if plugin.hasLoadError {
+        if PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled {
+            StatusCapsuleBadge(
+                icon: "checkmark.seal.fill",
+                text: L("Built into Osaurus"),
+                color: theme.accentColor
+            )
+        } else if plugin.hasLoadError {
             StatusCapsuleBadge(icon: "exclamationmark.triangle.fill", text: L("Error"), color: .red)
         } else if hasMissingSecrets {
             StatusCapsuleBadge(icon: "key.fill", text: L("Key Required"), color: theme.warningColor)
@@ -1454,15 +1477,19 @@ private struct PluginDetailView: View {
                     heroHeader
                         .padding(.bottom, 8)
 
+                    if isSuperseded {
+                        supersededBanner
+                    }
+
                     if plugin.hasLoadError {
                         errorSection
                     }
 
-                    if hasMissingSecrets && !plugin.hasLoadError {
+                    if hasMissingSecrets && !plugin.hasLoadError && !isSuperseded {
                         secretsBanner
                     }
 
-                    if !missingPermissions.isEmpty && !plugin.hasLoadError {
+                    if !missingPermissions.isEmpty && !plugin.hasLoadError && !isSuperseded {
                         permissionsBanner
                     }
 
@@ -1856,6 +1883,53 @@ private struct PluginDetailView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Superseded Banner
+
+    private var isSuperseded: Bool {
+        PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled
+    }
+
+    /// Native search replaced this plugin's tools; point the user at the
+    /// Search settings tab instead of the plugin's own configuration.
+    private var supersededBanner: some View {
+        detailCard {
+            HStack(spacing: 12) {
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(theme.accentColor)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Built into Osaurus", bundle: .module)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Web search is now a native feature. This plugin's tools are no longer loaded — configure providers in Settings → Search. You can uninstall this plugin.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 12))
+                    .foregroundColor(theme.secondaryText)
+                }
+
+                Spacer()
+
+                Button {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .search)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "magnifyingglass").font(.system(size: 10))
+                        Text("Open Search Settings", bundle: .module)
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.accentColor))
+                }
+                .buttonStyle(PlainButtonStyle())
             }
         }
     }
