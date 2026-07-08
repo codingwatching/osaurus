@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.11</title>
+            <pubDate>Wed, 08 Jul 2026 17:43:57 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.11</sparkle:version>
+            <sparkle:shortVersionString>0.21.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.11/Osaurus-0.21.11.dmg" length="57765124" type="application/octet-stream" sparkle:edSignature="3LEEsHHg0dT873LV9mtYalpK0VvcZLVSDJPV9NuUwvyDoKonGmPRztShbu0bSjNF4QBeesuDDUjdD/Q7xDVXCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- added timestamps to user message cells (#1939) by @RaajeevChandran
+- Onboarding: recommend Ornith MXFP8 + official OsaurusAI Gemma; drop Gemma QAT/MXFP4 (#1936) by @jjang-ai
+- speed up Hugging Face model downloads (#1937) by @RaajeevChandran
+- Polish release UX details (#1931) by @mimeding
+- Add provider connectivity issue triage (#1895) by @mimeding
+- Add `osaurus bench`: standardized TTFT/prefill/decode benchmark CLI (#1863) by @mimeding
+- Add Agent Channels live proof readiness (#1882) by @mimeding
+- Repin vmlx-swift: default-on hybrid-SSM prefix cache reuse (#1930) by @jjang-ai
+
+## 🚀 Features
+
+- Native web search: pluggable providers + Search settings tab (#1938) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix DeepSeek thinking-mode tool\_choice HTTP 400 (#1940) by @tpae
+
+## 🧰 Maintenance
+
+- chat UI polish (#1932) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.10...0.21.11
+]]></description>
+        </item>
+        <item>
             <title>0.21.10</title>
             <pubDate>Tue, 07 Jul 2026 21:42:25 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
