@@ -3,6 +3,32 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.13</title>
+            <pubDate>Thu, 09 Jul 2026 16:05:30 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.13</sparkle:version>
+            <sparkle:shortVersionString>0.21.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.13/Osaurus-0.21.13.dmg" length="57886225" type="application/octet-stream" sparkle:edSignature="17vWt6tRJxWVXLiORoNNd4Znh3d/UZzYj5e9Cmvjg8u05mzt9Uz1EeBg1dKNo48FWFexsOU5LZe3W/gGFgbBDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🚀 Features
+
+- added an option to update all plugins in one go instead of individual update (#1949) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix ChatGPT/Codex test-button model count mismatch; add grok-4.5 to xAI catalog (#1954) by @tpae
+- Fix warm-up KV cache misses and sandbox tool-registration thrash (#1953) by @tpae
+- Repin vmlx to 0d3444ca (gemma4 parser fix #128) + fix reasoning-toggle default display (#1950) by @jjang-ai
+- fixed main thread hangs (#1948) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.12...0.21.13
+]]></description>
+        </item>
+        <item>
             <title>0.21.12</title>
             <pubDate>Thu, 09 Jul 2026 03:18:10 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
