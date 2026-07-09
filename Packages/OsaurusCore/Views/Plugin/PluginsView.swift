@@ -21,6 +21,7 @@ struct PluginsView: View {
     @State private var isRefreshButtonLoading = false
 
     @State private var isRepoRefreshing = false
+    @State private var isUpdatingAll = false
     @State private var updatesAvailableCount = 0
     @State private var repoLastError: String?
     @State private var missingPermissionsPerPlugin: [String: [SystemPermission]] = [:]
@@ -359,6 +360,54 @@ struct PluginsView: View {
         await updateFilteredLists()
     }
 
+    /// The combined number of installed plugins (repo + Claude) that have an
+    /// update available. Drives both the badge and the "Update all" button's
+    /// visibility.
+    private var totalUpdatesAvailable: Int {
+        updatesAvailableCount + claudeAggregator.plugins.filter { $0.hasUpdate }.count
+    }
+
+    /// Upgrade every installed plugin that has an update available, across both
+    /// the repository plugins and the imported Claude plugins. Updates run
+    /// serially so we don't hammer GitHub or race on the shared skill / plugin
+    /// managers; a single failure is skipped rather than aborting the rest.
+    /// Surfaces a summary toast when finished.
+    private func updateAllPlugins() async {
+        guard !isUpdatingAll else { return }
+        isUpdatingAll = true
+        defer { isUpdatingAll = false }
+
+        let outdatedRepo = repoService.plugins.filter { $0.hasUpdate }
+        let outdatedClaude = claudeAggregator.plugins.filter { $0.hasUpdate }
+        let total = outdatedRepo.count + outdatedClaude.count
+        guard total > 0 else { return }
+
+        var succeeded = 0
+        for plugin in outdatedRepo {
+            do {
+                try await repoService.upgrade(pluginId: plugin.pluginId)
+                succeeded += 1
+            } catch {
+                // Skip this plugin and continue with the rest.
+            }
+        }
+        for plugin in outdatedClaude {
+            do {
+                try await updateClaudePlugin(plugin)
+                succeeded += 1
+            } catch {
+                // Skip this plugin and continue with the rest.
+            }
+        }
+
+        reload()
+        if succeeded == total {
+            showSuccess(L("Updated \(succeeded) plugins"))
+        } else {
+            showSuccess(L("Updated \(succeeded) of \(total) plugins"))
+        }
+    }
+
     private func uninstallClaudePlugin(_ plugin: ClaudePluginInstalled) async {
         _ = await ClaudePluginInstaller.shared.uninstall(pluginId: plugin.pluginId)
         await claudeSkillManager.refresh()
@@ -515,6 +564,13 @@ struct PluginsView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
+                        if totalUpdatesAvailable > 0 {
+                            UpdateAllPluginsBanner(
+                                count: totalUpdatesAvailable,
+                                isUpdating: isUpdatingAll,
+                                action: { Task { await updateAllPlugins() } }
+                            )
+                        }
                         if pluginsWithMissingPermissionsCount > 0 {
                             ToolPermissionBanner(count: pluginsWithMissingPermissionsCount)
                         }
@@ -2515,5 +2571,78 @@ private struct MarketplaceSkeletonCard: View {
             .fill(theme.tertiaryBackground)
             .frame(width: width, height: height)
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+    }
+}
+
+// MARK: - Update All Plugins Banner
+
+/// Full-width banner surfaced at the top of the Installed tab whenever one or
+/// more installed plugins (repository + Claude) have an update available.
+/// Mirrors `ToolPermissionBanner`'s styling so the two call-to-action cards
+/// read as a family. A single tap upgrades every outdated plugin.
+struct UpdateAllPluginsBanner: View {
+    @Environment(\.theme) private var theme
+    let count: Int
+    let isUpdating: Bool
+    let action: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(theme.accentColor.opacity(0.15))
+                    .frame(width: 36, height: 36)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(theme.accentColor)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(
+                    "\(count) plugin\(count == 1 ? "" : "s") ha\(count == 1 ? "s" : "ve") an update available",
+                    bundle: .module
+                )
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(theme.primaryText)
+                Text("Update them all at once", bundle: .module)
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.secondaryText)
+            }
+
+            Spacer()
+
+            Button(action: action) {
+                HStack(spacing: 4) {
+                    if isUpdating {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .frame(width: 12, height: 12)
+                    } else {
+                        Image(systemName: "arrow.up.circle")
+                            .font(.system(size: 11))
+                    }
+                    Text(isUpdating ? "Updating..." : "Update all", bundle: .module)
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(theme.accentColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(theme.accentColor.opacity(0.1))
+                )
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(isUpdating)
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(theme.accentColor.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(theme.accentColor.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 }
