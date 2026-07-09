@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.21.12</title>
+            <pubDate>Thu, 09 Jul 2026 03:18:10 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.21.12</sparkle:version>
+            <sparkle:shortVersionString>0.21.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.21.12/Osaurus-0.21.12.dmg" length="57858339" type="application/octet-stream" sparkle:edSignature="xcWnjY0wz0jdzq3gFEzw+TCa9s1i5GdlDx/nXA9XgaFvuYPlRuV+e1CAN389njlolOzjhfPkml3CHllLyrRMBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Harden search diagnostics and extraction (#1944) by @mimeding
+- Support installing plugin project directories (#1843) by @mimeding
+- Harden plugin repository refresh diagnostics (#1845) by @mimeding
+- Decouple startup completion from plugin loading (#1838) by @mimeding
+- Add recoverable agent backup restore path (#1837) by @mimeding
+
+## 🐛 Bug Fixes
+
+- Fix Privacy Filter false "URLs were not scrubbed" send block (#1946) by @tpae
+
+## 🧰 Maintenance
+
+- Fix RAM banner false positives for resident and in-flight models (#1941) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.11...0.21.12
+]]></description>
+        </item>
+        <item>
             <title>0.21.11</title>
             <pubDate>Wed, 08 Jul 2026 17:43:57 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
