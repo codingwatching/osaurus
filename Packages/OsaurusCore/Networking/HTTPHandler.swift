@@ -9030,6 +9030,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let obj: [String: Any] = [
                 "status": "healthy",
                 "timestamp": Date().ISO8601Format(),
+                "hardware": ChipProfile.current.healthJSONObject(),
                 "loaded": loaded,
                 "current_model": current,
                 "inflight": inflightObj,
