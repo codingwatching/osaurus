@@ -3,6 +3,48 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.0</title>
+            <pubDate>Fri, 10 Jul 2026 21:33:22 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.0</sparkle:version>
+            <sparkle:shortVersionString>0.22.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.0/Osaurus-0.22.0.dmg" length="58143133" type="application/octet-stream" sparkle:edSignature="rff/aQK+l9huPoRZYgI5HlsZo4o89K13tNqrCzPRa+fRQwMMSmtxPqjW4yyre/e/QdEPolk07S7H7BeTOHx1Bw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Improve Telegram channel recovery diagnostics (#1942) by @mimeding
+- evals(community): OsaurusAI/gemma-4-E2B-it-8bit on Apple M4 Max (#1970) by @mimeding
+- speed up onboarding model downloads via authenticated proxy (#1965) by @RaajeevChandran
+- Update Simplified Chinese and Traditional Chinese translations (#1947) by @ftzahao
+- Polish Russian localization (#1822) by @DrMaks22
+- added get\_current\_time built-in tool (#1956) by @RaajeevChandran
+- added in-app github token to fix plugin update rate limit errors (#1955) by @RaajeevChandran
+
+## 🚀 Features
+
+- added toggle for notch overlay placement on or below the menu bar (#1957) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fixed crashes and hangs (#1971) by @RaajeevChandran
+- fixed in-chat search bar focus, per occurrence navigation, and current match highlighting (#1969) by @RaajeevChandran
+- Fix Router 409 IDEMPOTENCY\_CONFLICT on refunded agent-loop iterations (#1968) by @tpae
+- Size model fit against the GPU working set, not physical RAM (#1958) by @jjang-ai
+- Flush pending stream text before tool-call frames; repin vmlx (stall + prose-cut fixes) (#1963) by @jjang-ai
+
+## 🧰 Maintenance
+
+- minor tweak in favorite models UI (#1973) by @RaajeevChandran
+- Evals harness overhaul: new domains, runtime fixes, community contribution flow (#1967) by @tpae
+- Remote provider hardening: crash/hang fixes, endpoint trust, Router spend safety, streaming perf (#1961) by @tpae
+- Credits UI improvements: composer wallet panel and refreshed Credits page (#1959) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.21.13...0.21.14
+]]></description>
+        </item>
+        <item>
             <title>0.21.13</title>
             <pubDate>Thu, 09 Jul 2026 16:05:30 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
