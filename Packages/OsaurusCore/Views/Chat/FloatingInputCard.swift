@@ -225,6 +225,24 @@ struct FloatingInputCard: View {
     private var slashRegistry = SlashCommandRegistry.shared
     @State private var slashSelectedIndex: Int = 0
 
+    // MARK: - "@" File Menu State
+
+    /// Highlighted row in the "@" file completion popup.
+    @State private var atSelectedIndex: Int = 0
+    /// Filesystem entries for the current "@" query. Populated off the main
+    /// actor by `atMenuTask` so directory enumeration never blocks the UI.
+    @State private var atMenuItems: [AtFileItem] = []
+    /// Outcome of the latest listing; `.denied` drives the recovery affordance.
+    @State private var atMenuStatus: AtFileMenuStatus = .ok
+    /// Resolved directory for the latest listing; used to label + re-grant a
+    /// denied folder.
+    @State private var atMenuDirectory: String = ""
+    /// True while a listing is in flight for a brand-new query (no prior items
+    /// to keep showing). Suppresses an empty-state flash before results arrive.
+    @State private var atMenuLoading: Bool = false
+    /// In-flight listing task; cancelled and replaced on every query change.
+    @State private var atMenuTask: Task<Void, Never>?
+
     // MARK: - Input History State
 
     /// Terminal-style history navigation position + stashed draft.
@@ -257,6 +275,47 @@ struct FloatingInputCard: View {
 
     private var showSlashPopup: Bool {
         activeSlashQuery != nil && !slashFilteredCommands.isEmpty
+    }
+
+    /// Non-nil when the cursor is inside an "@" file token (e.g. "@src/ma" or
+    /// "look at @src/ma"). The "@" must start the text or follow whitespace.
+    /// Unlike the slash token, the query may contain "/" (a path); it ends only
+    /// at a space or newline. Returns nil once the token is completed/dismissed.
+    private var activeAtQuery: String? {
+        guard let atRange = localText.range(of: "@", options: .backwards) else { return nil }
+
+        // The "@" must be at the start of the text or preceded by whitespace,
+        // so email-style "name@host" tokens don't trigger the menu.
+        let before = localText[..<atRange.lowerBound]
+        if let lastChar = before.last, !lastChar.isWhitespace { return nil }
+
+        // Everything after "@" is the path query; a space or newline ends it.
+        let afterAt = String(localText[atRange.upperBound...])
+        guard !afterAt.contains(" ") && !afterAt.contains("\n") else { return nil }
+
+        return afterAt
+    }
+
+    /// Show the "@" menu when a query is active and there's something useful to
+    /// display: entries, a denied-folder recovery row, or an empty-folder
+    /// notice. Hidden for a not-found path (still being typed) and while the
+    /// first results for a new query are loading (avoids an empty flash).
+    /// Never shown at the same time as the slash popup.
+    private var showAtPopup: Bool {
+        guard activeAtQuery != nil, !showSlashPopup else { return false }
+        if !atMenuItems.isEmpty { return true }
+        switch atMenuStatus {
+        case .denied: return true
+        case .notFound: return false
+        case .ok: return !atMenuLoading  // empty folder / no matches, once loaded
+        }
+    }
+
+    /// Whether the current "@" query is narrowing by a partial name (vs. listing
+    /// a whole directory), used to pick the right empty-state wording.
+    private var atMenuIsFiltering: Bool {
+        guard let query = activeAtQuery else { return false }
+        return !query.isEmpty && !query.hasSuffix("/")
     }
 
     // Local state for text input to prevent parent re-renders on every keystroke
@@ -625,6 +684,9 @@ struct FloatingInputCard: View {
                         )
                     }
 
+                    // "@" file menu popup — appears above the input card
+                    atFileMenuPopupView
+
                     inputCard
                         .padding(.horizontal, 20)
                         .padding(.bottom, 20)
@@ -781,13 +843,19 @@ struct FloatingInputCard: View {
             .onChange(of: localText) { _, _ in
                 // Reset popup selection whenever the typed query changes
                 slashSelectedIndex = 0
+                atSelectedIndex = 0
+                // Re-list the "@" menu off the main actor for the new query.
+                // (folds in the registry sync so it costs no extra body chain
+                // link — the whole chain is at the type-checker's limit.)
+                refreshAtMenu()
             }
-            .onChange(of: showSlashPopup) { _, isVisible in
+            .onChange(of: showSlashPopup) { _, _ in
                 // Keep registry in sync so the global key monitor can suppress
-                // Escape from closing the window while the popup is open.
-                SlashCommandRegistry.shared.isPopupVisible = isVisible
+                // Escape from closing the window while either popup is open.
+                syncPopupVisibility()
             }
             .onDisappear {
+                atMenuTask?.cancel()
                 SlashCommandRegistry.shared.isPopupVisible = false
             }
             .onChange(of: focusTrigger) { _, _ in
@@ -1675,6 +1743,152 @@ extension FloatingInputCard {
             isFocused = true
             onSkillSelected?(command.id)
         }
+    }
+
+    // MARK: - "@" File Menu
+
+    /// Replace the trailing "@…" token with `replacement`, preserving the text
+    /// before the "@".
+    private func replacingAtToken(with replacement: String) -> String {
+        guard let atRange = localText.range(of: "@", options: .backwards) else {
+            return replacement
+        }
+        return String(localText[..<atRange.lowerBound]) + replacement
+    }
+
+    /// Apply a selected file/folder to the input. Folders keep the popup open
+    /// with a trailing "/" so the user can drill deeper CLI-style; files insert
+    /// the path followed by a space, which closes the token.
+    private func applyAtItem(_ item: AtFileItem) {
+        let inserted = item.isDirectory ? "@\(item.path)/" : "@\(item.path) "
+        let newText = replacingAtToken(with: inserted)
+        localText = newText
+        text = newText
+        isFocused = true
+    }
+
+    /// Refresh `atMenuItems` for the current "@" query off the main actor.
+    /// Cancels any prior listing so fast typing can't pile up work. A nil query
+    /// (token dismissed) clears the list synchronously.
+    private func refreshAtMenu() {
+        atMenuTask?.cancel()
+        guard let query = activeAtQuery else {
+            atMenuItems = []
+            atMenuStatus = .ok
+            atMenuLoading = false
+            syncPopupVisibility()
+            return
+        }
+        // Only treat this as a blocking "load" when we have nothing to show yet;
+        // when refining an existing list we keep the current rows visible.
+        atMenuLoading = atMenuItems.isEmpty
+        // Snapshot the folder root here (main actor); the enumeration itself
+        // runs detached so filesystem I/O never blocks the UI.
+        let rootPath = FolderContextService.cachedRootPath
+        atMenuTask = Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                AtFileMenu.list(query: query, rootPath: rootPath)
+            }.value
+            if Task.isCancelled { return }
+            atMenuItems = result.items
+            atMenuStatus = result.status
+            atMenuDirectory = result.directory
+            atMenuLoading = false
+            syncPopupVisibility()
+        }
+    }
+
+    /// Recover from a denied folder. macOS won't re-prompt after a denial, but
+    /// because the app is non-sandboxed, the user explicitly picking the folder
+    /// in an open panel re-grants TCC access. On success we re-list so browsing
+    /// resumes in place. The panel is a main-actor modal (user interaction);
+    /// the listing it triggers stays off the main thread.
+    private func grantAtMenuAccess() {
+        let directory = atMenuDirectory
+        guard !directory.isEmpty else { return }
+        Task {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.canCreateDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = URL(fileURLWithPath: directory)
+            panel.prompt = L("Grant Access")
+            panel.message = L("Grant osaurus access to this folder")
+            guard await panel.beginModal() == .OK else { return }
+            isFocused = true
+            refreshAtMenu()
+        }
+    }
+
+    /// Mirror whether either completion popup is showing into the shared
+    /// registry so the global key monitor can suppress Escape (which would
+    /// otherwise close the window) while a popup is open. Folded into
+    /// `refreshAtMenu` and the slash `onChange` so it adds no body chain link.
+    private func syncPopupVisibility() {
+        SlashCommandRegistry.shared.isPopupVisible = showSlashPopup || showAtPopup
+    }
+
+    // MARK: - Input Key Handling
+
+    /// Return/Enter in the text field: apply the highlighted popup entry when a
+    /// popup is open, otherwise send the message.
+    private func handleInputCommit() {
+        if showSlashPopup {
+            let cmds = slashFilteredCommands
+            if slashSelectedIndex < cmds.count {
+                applySlashCommand(cmds[slashSelectedIndex])
+            }
+        } else if showAtPopup {
+            if atSelectedIndex < atMenuItems.count {
+                applyAtItem(atMenuItems[atSelectedIndex])
+            }
+        } else {
+            syncAndSend()
+        }
+    }
+
+    /// Up arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowUp() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = max(0, slashSelectedIndex - 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = max(0, atSelectedIndex - 1)
+            return true
+        }
+        return handleHistoryArrowUp()
+    }
+
+    /// Down arrow: move the open popup's selection, else navigate input history.
+    private func handleInputArrowDown() -> Bool {
+        if showSlashPopup {
+            slashSelectedIndex = min(slashFilteredCommands.count - 1, slashSelectedIndex + 1)
+            return true
+        }
+        if showAtPopup {
+            atSelectedIndex = min(atMenuItems.count - 1, atSelectedIndex + 1)
+            return true
+        }
+        return handleHistoryArrowDown()
+    }
+
+    /// Escape while a popup is open: dismiss it. The slash popup clears the
+    /// prefix; the "@" menu removes just its token so surrounding text survives.
+    private func handlePopupEscape() -> Bool {
+        if showSlashPopup {
+            localText = ""
+            text = ""
+            return true
+        }
+        if showAtPopup {
+            let newText = replacingAtToken(with: "")
+            localText = newText
+            text = newText
+            return true
+        }
+        return false
     }
 
     private func handleBuiltInSlashAction(_ name: String) {
@@ -4593,6 +4807,30 @@ extension FloatingInputCard {
         }
     }
 
+    /// The "@" file completion popup, extracted from `mainContent` to keep that
+    /// view builder within the Swift type-checker's reach.
+    @ViewBuilder
+    private var atFileMenuPopupView: some View {
+        if showAtPopup {
+            AtFileMenuPopup(
+                items: atMenuItems,
+                status: atMenuStatus,
+                deniedDirectoryName: (atMenuDirectory as NSString).lastPathComponent,
+                emptyMessage: atMenuIsFiltering ? L("No matching files") : L("This folder is empty"),
+                selectedIndex: $atSelectedIndex,
+                onSelect: applyAtItem,
+                onGrantAccess: grantAtMenuAccess
+            )
+            .padding(.horizontal, 20)
+            .transition(
+                .asymmetric(
+                    insertion: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)),
+                    removal: .opacity.combined(with: .scale(scale: 0.98, anchor: .bottom))
+                )
+            )
+        }
+    }
+
     private var textInputArea: some View {
         EditableTextView(
             text: $localText,
@@ -4603,35 +4841,11 @@ extension FloatingInputCard {
             isComposing: $isComposing,
             maxHeight: maxHeight,
             focusController: textViewFocusController,
-            onCommit: {
-                if showSlashPopup {
-                    let cmds = slashFilteredCommands
-                    if slashSelectedIndex < cmds.count {
-                        applySlashCommand(cmds[slashSelectedIndex])
-                    }
-                } else {
-                    syncAndSend()
-                }
-            },
+            onCommit: { handleInputCommit() },
             onShiftCommit: nil,
-            onArrowUp: showSlashPopup
-                ? {
-                    slashSelectedIndex = max(0, slashSelectedIndex - 1)
-                    return true
-                } : { handleHistoryArrowUp() },
-            onArrowDown: showSlashPopup
-                ? {
-                    let maxIndex = slashFilteredCommands.count - 1
-                    slashSelectedIndex = min(maxIndex, slashSelectedIndex + 1)
-                    return true
-                } : { handleHistoryArrowDown() },
-            onEscape: showSlashPopup
-                ? {
-                    // Dismiss popup by clearing the slash prefix
-                    localText = ""
-                    text = ""
-                    return true
-                } : nil,
+            onArrowUp: { handleInputArrowUp() },
+            onArrowDown: { handleInputArrowDown() },
+            onEscape: (showSlashPopup || showAtPopup) ? { handlePopupEscape() } : nil,
             onPasteText: { pasted in
                 guard pasted.utf8.count >= Self.pastedContentThreshold else { return false }
                 withAnimation(theme.springAnimation()) {
