@@ -185,7 +185,25 @@ public enum OpenAICodexOAuthService {
         public let rawEntryCount: Int
         public let compatibleCount: Int
         public let filteredModels: [FilteredModel]
+        /// Picker-visible models that require Codex's Responses Lite wire
+        /// contract. This comes from the live catalog's
+        /// `use_responses_lite` field; do not infer it from model names.
+        public let responsesLiteModels: Set<String>
         public let fetchedAt: Date
+
+        public init(
+            rawEntryCount: Int,
+            compatibleCount: Int,
+            filteredModels: [FilteredModel],
+            responsesLiteModels: Set<String> = [],
+            fetchedAt: Date
+        ) {
+            self.rawEntryCount = rawEntryCount
+            self.compatibleCount = compatibleCount
+            self.filteredModels = filteredModels
+            self.responsesLiteModels = responsesLiteModels
+            self.fetchedAt = fetchedAt
+        }
     }
 
     private static let lastDiscoverySummaryBox = OSAllocatedUnfairLock<ModelDiscoverySummary?>(initialState: nil)
@@ -195,6 +213,16 @@ public enum OpenAICodexOAuthService {
     /// Codex catalog endpoint regardless of how many providers point at it.
     public static var lastModelDiscoverySummary: ModelDiscoverySummary? {
         lastDiscoverySummaryBox.withLock { $0 }
+    }
+
+    /// Whether the latest authenticated Codex catalog says `modelId` requires
+    /// Responses Lite. A missing catalog entry deliberately returns false:
+    /// fallback models predate the Lite contract, while live GPT-5.6 entries
+    /// carry the authoritative flag.
+    public static func usesResponsesLite(modelId: String) -> Bool {
+        lastDiscoverySummaryBox.withLock {
+            $0?.responsesLiteModels.contains(modelId) == true
+        }
     }
 
     /// Live model catalog fetched from the ChatGPT/Codex backend, matching what
@@ -215,6 +243,7 @@ public enum OpenAICodexOAuthService {
         request.setValue(tokens.accountId, forHTTPHeaderField: "chatgpt-account-id")
         request.setValue("codex_cli_rs", forHTTPHeaderField: "originator")
         request.setValue("responses=experimental", forHTTPHeaderField: "OpenAI-Beta")
+        request.setValue(codexUserAgent(), forHTTPHeaderField: "User-Agent")
 
         let data = try await performRequest(request, operation: .modelCatalog)
         let (models, summary) = try decodeModelCatalog(data)
@@ -251,6 +280,11 @@ public enum OpenAICodexOAuthService {
             rawEntryCount: decoded.models.count,
             compatibleCount: models.count,
             filteredModels: filtered,
+            responsesLiteModels: Set(
+                compatible
+                    .filter { $0.use_responses_lite == true }
+                    .map(\.slug)
+            ),
             fetchedAt: Date()
         )
         return (models, summary)
@@ -406,6 +440,27 @@ public enum OpenAICodexOAuthService {
     /// current Codex CLI release when new models stop appearing in discovery.
     public static let codexClientVersion = "0.144.1"
 
+    /// Codex CLI-style `User-Agent`, mirroring codex-rs's
+    /// `get_codex_user_agent()` format:
+    /// `codex_cli_rs/<version> (<os> <version>; <arch>) <terminal>`.
+    /// The Codex backend routes some models (e.g. gpt-5.6-luna) to internal
+    /// engines based on the originator + User-Agent identity; requests with a
+    /// non-Codex user agent land in a cohort whose engine does not exist and
+    /// fail with HTTP 404 "Model not found" even though the catalog lists the
+    /// model (openai/codex#31967).
+    public static func codexUserAgent() -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        #if arch(arm64)
+            let arch = "arm64"
+        #elseif arch(x86_64)
+            let arch = "x86_64"
+        #else
+            let arch = "unknown"
+        #endif
+        return
+            "codex_cli_rs/\(codexClientVersion) (Mac OS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion); \(arch)) unknown"
+    }
+
     // MARK: Wire types
 
     private struct ModelsResponse: Decodable {
@@ -417,6 +472,7 @@ public enum OpenAICodexOAuthService {
         let visibility: String?
         let priority: Int?
         let shell_type: String?
+        let use_responses_lite: Bool?
     }
 
     private struct TokenResponse: Decodable {
