@@ -3,6 +3,38 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.1</title>
+            <pubDate>Sat, 11 Jul 2026 06:45:27 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.1</sparkle:version>
+            <sparkle:shortVersionString>0.22.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.1/Osaurus-0.22.1.dmg" length="58207914" type="application/octet-stream" sparkle:edSignature="CtENVxuKJAq0vxu7Ss+PaTUd5R5Ne2T0C8NZNrUssB9Xo3bBaWHuWs4GHuFQLohOChirjDNe0rs91LBhHPQMDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- evals(community): OsaurusAI/Ornith-1.0-35B-MXFP8 on Apple M4 Max (#1979) by @mimeding
+- added cli like @ filesystem menu to chat input (#1980) by @RaajeevChandran
+- evals(community): OsaurusAI/gemma-4-12B-it-MXFP8 on Apple M4 Max (#1977) by @mimeding
+- evals(community): OsaurusAI/Ornith-1.0-9B-MXFP8 on Apple M4 Max (#1975) by @mimeding
+- Add measured per-model prefill step tuning (`osaurus bench --tune-prefill`) (#1905) by @mimeding
+- Add ModelCapabilityLedger skeleton; migrate the production blocklist to it (#1913) by @mimeding
+- Fix residency-default doc, expose batch diagnostics in /health, log effective policy (#1865) by @mimeding
+- Add ChipProfile hardware capability detection, surface in /health (#1861) by @mimeding
+- evals(community): OsaurusAI/gemma-4-E4B-it-8bit on Apple M4 Max (#1974) by @mimeding
+- docs: refresh translator leaderboard and promote Traditional Chinese to community-maintained (#1972) by @tpae
+
+## 🐛 Bug Fixes
+
+- fix: Codex model discovery returned unusable gpt-5.5-\*-wm slugs (#1981) by @tpae
+- Update Kagi, You.com, and Tavily search providers to current APIs (#1978) by @tpae
+- spawn\_agent: carry the target agent's own tool policy into the child run (#1976) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.0...0.22.1
+]]></description>
+        </item>
+        <item>
             <title>0.22.0</title>
             <pubDate>Fri, 10 Jul 2026 21:33:22 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
