@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.2</title>
+            <pubDate>Sun, 12 Jul 2026 22:38:00 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.2</sparkle:version>
+            <sparkle:shortVersionString>0.22.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.2/Osaurus-0.22.2.dmg" length="58529325" type="application/octet-stream" sparkle:edSignature="Su4vCKBmHsHW1zjZF5nACzdNYNgQ62iCazkYTU4oXMLTzlOqVUf4xBjBwZYW4Dmti2FIaTTuB/+JAkAD7SiiCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Harden plugin and registry archive extraction (#1987) by @mimeding
+- HY3 official: repin vmlx + fix the load path that kept 94 GB packs from ever serving (#1984) by @jjang-ai
+- evals(compat): leaderboard redesign — latest-run precedence, skip accounting, strengths (#1982) by @tpae
+
+## 🐛 Bug Fixes
+
+- Refuse background model loads inside the actor, not before it (#1994) by @jjang-ai
+- Fix Product Hunt launch window to 24 hours (#2000) by @tpae
+- Key the prefix cache to the weights, not just the model's name (#1989) by @jjang-ai
+- Repin vmlx (for real this time) and push the memory-safety level to the cache-store gate (#1988) by @jjang-ai
+- Background work must never evict the model the user is using (+ vmlx repin) (#1986) by @jjang-ai
+- fix: support Codex Responses Lite for GPT-5.6 models (#1983) by @tpae
+
+## 🧰 Maintenance
+
+- Show the Product Hunt kitty next to the dinosaur in the launch dialog (#2011) by @tpae
+- Make local-first onboarding immediately usable (#2008) by @tpae
+- Add one-time Product Hunt launch dialog (July 2026) (#1998) by @tpae
+- evals: hermetic run storage — eval runs can never touch the user's real contexts (#1992) by @tpae
+- feat: catalog-driven reasoning controls + unified model options in the picker (#1991) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.1...0.22.2
+]]></description>
+        </item>
+        <item>
             <title>0.22.1</title>
             <pubDate>Sat, 11 Jul 2026 06:45:27 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
