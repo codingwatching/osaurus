@@ -126,7 +126,8 @@ public struct MCPProviderProbeResult: Codable, Identifiable, Sendable, Equatable
             stage: .listTools,
             reasonCode: .succeeded,
             toolCount: tools.count,
-            toolNames: tools.map(\.name).sorted(),
+            // Server order, which for a paginated tools/list is page order.
+            toolNames: tools.map(\.name),
             message: L("Probe completed initialize/listTools and found \(tools.count) tool(s)."),
             action: nil
         )
@@ -299,8 +300,8 @@ public enum MCPProviderProbeService {
             try await withTimeout(seconds: provider.discoveryTimeout) {
                 _ = try await client.connect(transport: transport)
             }
-            let (tools, _) = try await withTimeout(seconds: provider.discoveryTimeout) {
-                try await client.listTools()
+            let tools = try await withTimeout(seconds: provider.discoveryTimeout) {
+                try await client.listAllTools()
             }
             // Probes are short-lived by contract: disconnect the client so
             // HTTP transports invalidate their URLSession (and stop any SSE
