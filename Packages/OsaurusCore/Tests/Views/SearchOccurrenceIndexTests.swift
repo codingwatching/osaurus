@@ -56,4 +56,35 @@ struct SearchOccurrenceIndexTests {
             "surface the producer in debug rather than quietly returning nil forever"
         )
     }
+
+    @Test("The owning child's answer is final — no fall-through to later siblings")
+    func owningChildDoesNotFallThrough() throws {
+        let src = try Self.source("Views/Chat/NativeMarkdownView.swift")
+
+        guard let start = src.range(of: "func rectOfSearchOccurrence(") else {
+            Issue.record("rectOfSearchOccurrence not found")
+            return
+        }
+        // Slice to the end of the function (the next member declaration) rather
+        // than a fixed-length prefix — comment growth inside the function must
+        // not silently shrink what this test inspects.
+        let tail = src[start.lowerBound...]
+        let body =
+            tail.range(of: "\n    var searchOccurrenceTotal").map { String(tail[..<$0.lowerBound]) }
+            ?? String(tail)
+
+        // The shipped producer of the negative index: when `index - consumed`
+        // fell inside a child's range but that child returned nil for the rect,
+        // the loop continued and bumped `consumed` past `index`, so the next
+        // sibling received a negative index. Once a child owns the index, its
+        // result — rect or nil — must be returned, never skipped.
+        #expect(
+            !body.contains("if index - consumed < childCount,"),
+            "combining ownership and rect availability in one condition recreates the fall-through that produced the negative index (Sentry APPLE-MACOS-10V)"
+        )
+        #expect(
+            body.contains("if index - consumed < childCount {"),
+            "ownership must be decided before asking the child for a rect"
+        )
+    }
 }
