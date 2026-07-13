@@ -203,6 +203,19 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// Whether this session's model loads may evict a model someone else is using.
+    ///
+    /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
+    /// autonomous runs (cron fire, watcher, agent self-wake) arrive `.background`
+    /// and will decline rather than take the GPU from an active chat; everything
+    /// a human is waiting on -- including the "Run Now" buttons that share those
+    /// same code paths -- stays `.interactive`.
+    ///
+    /// This exists because the engine's own `RequestSource` has only four cases
+    /// (chatUI / httpAPI / plugin / p2p) and every headless session was being
+    /// flattened into `.chatUI` on its way to the model, losing the distinction
+    /// entirely.
+    var loadIntent: ModelLoadIntent = .interactive
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -368,8 +381,12 @@ final class ChatSession: ObservableObject {
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
     private var stopRequested: Bool = false
-    var chatEngineFactory: @MainActor () -> ChatEngineProtocol = {
-        ChatEngine(source: .chatUI)
+    /// Takes the session's own inference provenance. It used to hardcode
+    /// `.chatUI` and ignore `source` entirely, so every headless run -- cron
+    /// schedule, file watcher, agent self-wake -- reached the model claiming to
+    /// be the user typing in the chat window.
+    var chatEngineFactory: @MainActor (InferenceSource) -> ChatEngineProtocol = {
+        ChatEngine(source: $0)
     }
     // nonisolated(unsafe) allows deinit to access these for cleanup
     nonisolated(unsafe) private var remoteModelsObserver: NSObjectProtocol?
@@ -3071,6 +3088,10 @@ final class ChatSession: ObservableObject {
         // invariant across {thinking on/off, tools yes/no, local/remote}.
         // See `RollingTokenRate` doc for the window-choice rationale.
         var rollingRate = RollingTokenRate()
+        // The engine's own decode rate: generated tokens over the real decode
+        // wall-clock, measured from the end of prefill. Used when the rolling
+        // window never converges (short replies) — see the final stamp below.
+        var engineTokensPerSecond: Double? = nil
         // Throttle UI updates of the live rolling rate. The stream may
         // produce 100+ deltas/sec; clamping rate refreshes to ~5Hz keeps
         // SwiftUI repaints cheap without losing visible smoothness.
@@ -3260,14 +3281,18 @@ final class ChatSession: ObservableObject {
                     }
                 } else if let stats = StreamingStatsHint.decode(delta) {
                     uiStatsHintCount += 1
-                    // Final stats from vmlx — captured for the post-loop
-                    // stamp. We DELIBERATELY do NOT overwrite the rolling
-                    // rate here: vmlx's `tokensPerSecond` is the full-
-                    // generation average, which has the same first-token-
-                    // amortisation problem the rolling rate was added to
-                    // fix. The rolling rate's steady-state value is used
-                    // for the visible bubble after the stream ends; vmlx's
-                    // tokenCount is preserved as the authoritative count.
+                    // Final stats from vmlx — captured for the post-loop stamp.
+                    // We do NOT overwrite the live rolling rate here: while the
+                    // window has converged it is the better steady-state read.
+                    // But we no longer THROW THIS AWAY either. It is a real
+                    // measurement (tokens over the decode wall-clock, timed from
+                    // the end of prefill), and it is the only honest number
+                    // available for replies too short for the window to converge
+                    // — the case that used to be filled in with an average over
+                    // the delivery burst and render as `2397.3 tok/s • 7 tokens`.
+                    if stats.tokensPerSecond.isFinite, stats.tokensPerSecond > 0 {
+                        engineTokensPerSecond = stats.tokensPerSecond
+                    }
                     currentTurn.generationTokenCount = stats.tokenCount
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
@@ -3371,12 +3396,23 @@ final class ChatSession: ObservableObject {
         if let first = firstDeltaTime {
             currentTurn.timeToFirstToken = first.timeIntervalSince(streamStartTime)
             // Stamp the steady-state tok/s. Single source of truth across
-            // local-MLX, remote-API, with-tools, and thinking-on/off paths
-            // — the rolling rate observed every text-bearing delta during
-            // the loop above. Falls back to full-generation average if the
-            // response was too short for the warm-up to elapse (see
-            // `RollingTokenRate.finalRate`).
-            currentTurn.generationTokensPerSecond = rollingRate.finalRate()
+            // local-MLX, remote-API, with-tools, and thinking-on/off paths.
+            //
+            // Order matters, and every rung is a real measurement:
+            //   1. the converged rolling window — best steady-state read, and
+            //      immune to first-token amortisation;
+            //   2. the engine's decode rate — a true tokens-over-decode-wall
+            //      figure for replies too short for the window to converge;
+            //   3. nothing.
+            //
+            // Rung 3 is the point. There is no fourth rung that guesses. The old
+            // fallback divided the token count by the span between the first and
+            // last *arrival*, which for a short reply delivered in one coalesced
+            // burst is a few milliseconds — hence the impossible thousands of
+            // tok/s on a 7-token answer. A blank cell is honest; that number was
+            // not.
+            currentTurn.generationTokensPerSecond =
+                rollingRate.finalRate() ?? engineTokensPerSecond
             // Token count: prefer vmlx's authoritative count (already
             // assigned in the stats sentinel branch above) — only fall back
             // to our chars/4 estimate if the stats sentinel never fired
@@ -3920,7 +3956,7 @@ final class ChatSession: ObservableObject {
                     let ttftTrace: TTFTTrace? = nil
                 #endif
                 do {
-                    let engine = chatEngineFactory()
+                    let engine = chatEngineFactory(source.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
 
                     // MARK: - Capability Setup
@@ -4860,6 +4896,7 @@ final class ChatSession: ObservableObject {
                                 ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
                             req.modelOptions =
                                 self.activeModelOptions.isEmpty ? nil : self.activeModelOptions
+                            req.backgroundModelLoad = (self.loadIntent == .background)
                             req.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
@@ -5134,6 +5171,7 @@ final class ChatSession: ObservableObject {
                                 isRemoteAgentTarget
                                 ? windowState?.pinnedRemoteAgentEffectiveModel : nil
                             finalReq.modelOptions = activeModelOptions.isEmpty ? nil : activeModelOptions
+                            finalReq.backgroundModelLoad = (loadIntent == .background)
                             finalReq.turnId = assistantTurn.id
                             // Distinct logical step (the post-cap summarizing
                             // call) so it bills once and dedupes on its own
