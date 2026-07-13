@@ -3,6 +3,34 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.3</title>
+            <pubDate>Mon, 13 Jul 2026 08:05:10 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.3</sparkle:version>
+            <sparkle:shortVersionString>0.22.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.3/Osaurus-0.22.3.dmg" length="58533982" type="application/octet-stream" sparkle:edSignature="lApgRFVELwyWxU5bTI8CndSKIpvgrBrwwZvO0P3pcSHIdCDAO3RVOWJ6wnEtUTClEckAC3NGLXZfjC1SFWArDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+## 🐛 Bug Fixes
+
+- fixed find bar crash when scrolling to a match in a partially rendered message (#2020) by @RaajeevChandran
+- fixed mcp tool discovery dropping paginated tools/list results (#2017) by @RaajeevChandran
+- A request may only execute the tools it exposed (#2018) by @jjang-ai
+- Stop TTS from going silent after the output device changes (#2016) by @jjang-ai
+- Checkpoint: stop the gemma tool-loop, two crashes, and lying tok/s (#2015) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Faster, stronger sandbox runtime: resumable delivery, CoW rootfs, per-agent egress (#2022) by @tpae
+- Repin vmlx-swift: tool-call delimiter leak + batch prose cut (#2021) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.2...0.22.3
+]]></description>
+        </item>
+        <item>
             <title>0.22.2</title>
             <pubDate>Sun, 12 Jul 2026 22:38:00 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
