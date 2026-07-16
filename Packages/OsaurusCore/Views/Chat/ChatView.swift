@@ -476,6 +476,10 @@ final class ChatSession: ObservableObject {
     /// remote provider shows up in the picker live, without reopening the
     /// window (mirrors `AgentsView`'s `$items` subscription).
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
+    /// Runtime residency changes can originate outside this window (HTTP,
+    /// plugins, subagents, other chats). Observe them so a model evicted behind
+    /// the window's back cannot keep a stale green warm indicator.
+    nonisolated(unsafe) private var runtimeResidencyObserver: NSObjectProtocol?
     /// Flag to prevent auto-persist during initial load or programmatic resets
     private var isLoadingModel: Bool = false
     /// The model the user last picked by hand this session. Picker-list
@@ -593,6 +597,21 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] items in
                 Task { @MainActor in self?.applyPickerItems(items) }
             }
+
+        runtimeResidencyObserver = NotificationCenter.default.addObserver(
+            forName: .modelRuntimeResidencyChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let residentModelNames = note.object as? [String] ?? []
+            Task { @MainActor in
+                guard let self else { return }
+                self.warmupController.reconcileRuntimeResidency(
+                    selectedModel: self.selectedModel,
+                    residentModelNames: residentModelNames
+                )
+            }
+        }
 
         // Mirror AgentTodoStore -> currentTodo so the inline UI block
         // updates whenever the agent calls `todo`. Filter by this window's
@@ -816,6 +835,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = storageMutationObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = runtimeResidencyObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         modelSelectionCancellable = nil
@@ -3876,7 +3898,9 @@ final class ChatSession: ObservableObject {
     ) {
         guard activeRunId == nil, !isStreaming else {
             rollbackPreAppendedUserTurn(
-                preAppendedUserTurn, restoringDraft: (trimmed, attachments))
+                preAppendedUserTurn,
+                restoringDraft: (trimmed, attachments)
+            )
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
@@ -4339,11 +4363,11 @@ final class ChatSession: ObservableObject {
 
                     ttftTrace?.mark("pre_ttft_done")
 
-                    // Per-call card override for native image results: the model
-                    // keeps the compact `toolPayload` (a small quantized model
-                    // parrots the enriched metadata JSON as its answer), while the
-                    // artifact card needs the enriched SHARED_ARTIFACT block.
-                    var nativeImageCardOverrides: [String: String] = [:]
+                    // Per-call presentation override: the model keeps a compact
+                    // result while the card retains the full chart/image payload.
+                    // This prevents a large display artifact from being re-prefilled
+                    // through the model on the next agent-loop iteration.
+                    var toolCardOverrides: [String: String] = [:]
 
                     // Build the matching tool-result turn for a call. Every
                     // assistant `tool_use` MUST be paired with a tool turn
@@ -4370,7 +4394,7 @@ final class ChatSession: ObservableObject {
                             }) ?? assistantTurn
                         // Card uses the override when present (native image);
                         // every other tool falls back to the model-facing result.
-                        owner.setToolResult(nativeImageCardOverrides[callId] ?? result, for: callId)
+                        owner.setToolResult(toolCardOverrides[callId] ?? result, for: callId)
                         let toolTurn = ChatTurn(role: .tool, content: result)
                         toolTurn.toolCallId = callId
                         return toolTurn
@@ -4504,7 +4528,16 @@ final class ChatSession: ObservableObject {
                             }
                         }
 
-                        if inv.toolName == "share_artifact" {
+                        if inv.toolName == "render_chart",
+                            let compactResult = RenderChartTool.compactModelResult(from: resultText)
+                        {
+                            // The full marker renders the chart card, while the
+                            // model gets a compact confirmation instead of
+                            // re-prefilling every category/value and inventing
+                            // a second artifact-sharing step.
+                            toolCardOverrides[callId] = resultText
+                            resultText = compactResult
+                        } else if inv.toolName == "share_artifact" {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
                                 executionMode: executionMode
@@ -4522,7 +4555,7 @@ final class ChatSession: ObservableObject {
                                 toolResult: resultText
                             )
                             if enriched != resultText {
-                                nativeImageCardOverrides[callId] = enriched
+                                toolCardOverrides[callId] = enriched
                                 if let artifact = SharedArtifact.fromEnrichedToolResult(enriched) {
                                     await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
                                 }
@@ -4772,7 +4805,8 @@ final class ChatSession: ObservableObject {
                             ) { inv, callId in
                                 try await ChatExecutionContext.$toolExecutionScope.withValue(toolScope) {
                                     try await ChatExecutionContext.$currentSessionId.withValue(sessionIdForTools) {
-                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools) {
+                                        try await ChatExecutionContext.$currentAssistantTurnId.withValue(turnIdForTools)
+                                        {
                                             try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
                                                 try await ToolRegistry.shared.execute(
                                                     name: inv.toolName,
