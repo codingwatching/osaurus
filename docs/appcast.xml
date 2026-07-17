@@ -3,6 +3,49 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.5</title>
+            <pubDate>Fri, 17 Jul 2026 14:51:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.5</sparkle:version>
+            <sparkle:shortVersionString>0.22.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.5/Osaurus-0.22.5.dmg" length="65946724" type="application/octet-stream" sparkle:edSignature="RDKFZ34U9P5tlLBgt3Loz4Yr+6KAomoPzRUcIIqhvj09R3lR+xP4dqgT5m3oOZv6+H98USVKRdAIksS0y6nsCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Recover observed Bonsai chart argument drift (#2065) by @jjang-ai
+- Fix AppleScript query completion outcomes (#2064) by @jjang-ai
+- Fix spawned agent tool execution scope (#2062) by @jjang-ai
+- Harden manual plugin receipt metadata (#1842) by @mimeding
+- Handle empty voice transcriptions (#1852) by @mimeding
+- Pin schema-1 JANG loader fix (#2047) by @jjang-ai
+
+## 🚀 Features
+
+- knowledge collections (#1815) by @RaajeevChandran
+- added cmd+= and cmd+- font zoom shortcuts (#2054) by @RaajeevChandran
+- Premium web search through the Osaurus router with search credits (#2055) by @tpae
+- Redesign agent feature flags into an Abilities overview with live context estimate (#2053) by @tpae
+- Universal skills library and tools-only agent UX (#2050) by @tpae
+
+## 🐛 Bug Fixes
+
+- updated knowledge empty state copy (#2067) by @RaajeevChandran
+- mcp bearer 401 classification (#2048) by @RaajeevChandran
+- Enforce selected memory safety limits during model loads (#2045) by @jjang-ai
+- Fix Bonsai structured charts and hybrid memory safety (#2041) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Redesign agent Database workspace and settings navigation UX (#2052) by @tpae
+- Reduce redundant agent prompt context (#2051) by @tpae
+- improved AppleScript model search UX (#2046) by @RaajeevChandran
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.4...0.22.5
+]]></description>
+        </item>
+        <item>
             <title>0.22.4</title>
             <pubDate>Wed, 15 Jul 2026 14:09:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
