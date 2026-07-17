@@ -998,7 +998,11 @@ private enum DetailTabGroup: String, CaseIterable {
         case .abilities: return L("Abilities")
         case .connections: return L("Connections")
         case .automation: return L("Automation")
-        case .knowledge: return L("Knowledge")
+        // Labeled "Memory" (the group holds the Memory and Database tabs)
+        // so it can't be confused with the knowledge-collections feature,
+        // which lives in Abilities and in the main window's Knowledge
+        // section.
+        case .knowledge: return L("Memory")
         }
     }
 
@@ -1108,6 +1112,15 @@ struct AgentDetailView: View {
     /// `Agent.memoryEnabled` (default true). The Abilities overview cards
     /// bind directly; `saveAgent` folds them back into the persisted agent.
     @State private var toolsEnabled: Bool = true
+    /// Turning a tool-backed ability on while Tools is off (or tapping its
+    /// "Inactive while Tools is off" chip) scrolls to the Tools card and
+    /// pulses the shared search-highlight glow on it, pointing at the
+    /// master switch that unlocks the ability. The nonce keys the scroll;
+    /// the generation counter lets a pulse's delayed auto-clear detect
+    /// that a newer tap superseded it.
+    @State private var scrollToToolsNonce = 0
+    @State private var toolsHighlightActive = false
+    @State private var toolsHighlightGeneration = 0
     @State private var memoryEnabled: Bool = true
     /// Local mirror of `Agent.settings.dbEnabled` (spec §5.5). The
     /// Abilities overview binds a card to this; `debouncedSave`
@@ -1123,6 +1136,14 @@ struct AgentDetailView: View {
     /// Native `web_search` gate — default ON (free providers need no setup).
     @State private var webSearchEnabled: Bool = true
     @State private var selfSchedulingEnabled: Bool = false
+    /// Local mirrors of the knowledge feature (`AgentSettings.knowledgeEnabled`
+    /// + collection grants). The Features section binds these; `saveAgent`
+    /// folds them back into the persisted `AgentSettings` block.
+    @State private var knowledgeEnabled: Bool = false
+    @State private var knowledgeCollectionIds: [UUID] = []
+    @State private var knowledgeCuratorEnabled: Bool = false
+    /// Registry of knowledge collections for the grants checklist.
+    @ObservedObject private var knowledgeManager = KnowledgeManager.shared
     /// Per-agent subagent capability toggles, keyed by the capability
     /// registry's `PerAgentFlag` (computer_use, spawn, image). Hydrated in
     /// `loadAgent` by looping the registry and folded back into `AgentSettings`
@@ -1410,14 +1431,21 @@ struct AgentDetailView: View {
             .environment(\.theme, themeManager.currentTheme)
             .id(selectedTab)
         default:
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    scrollableTabContent
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        scrollableTabContent
+                    }
+                    .padding(24)
+                    .id(selectedTab)
                 }
-                .padding(24)
-                .id(selectedTab)
+                .animation(nil, value: selectedTab)
+                .onChange(of: scrollToToolsNonce) { _, _ in
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        proxy.scrollTo(Self.toolsToggleScrollId, anchor: .center)
+                    }
+                }
             }
-            .animation(nil, value: selectedTab)
         }
     }
 
@@ -2810,6 +2838,8 @@ struct AgentDetailView: View {
             searchMemoryEnabled: searchMemoryEnabled,
             webSearchEnabled: webSearchEnabled,
             selfSchedulingEnabled: selfSchedulingEnabled,
+            knowledgeEnabled: knowledgeEnabled,
+            knowledgeCuratorEnabled: knowledgeCuratorEnabled,
             codeExecutionEnabled:
                 agentManager.effectiveAutonomousExec(for: agent.id)?.enabled == true,
             model: selectedModel
@@ -2826,6 +2856,7 @@ struct AgentDetailView: View {
                 renderChartEnabled,
                 speakEnabled,
                 searchMemoryEnabled,
+                knowledgeEnabled,
                 webSearchEnabled,
                 selfSchedulingEnabled,
                 dbEnabled,
@@ -2834,6 +2865,47 @@ struct AgentDetailView: View {
             ]
         }
         return flags
+    }
+
+    /// Per-collection grant checkmark row inside the Knowledge ability
+    /// card. Grants are re-enforced at tool execution time, so this UI is
+    /// the only way to widen an agent's knowledge scope.
+    private func knowledgeGrantRow(_ collection: KnowledgeCollection) -> some View {
+        let granted = knowledgeCollectionIds.contains(collection.id)
+        return Button {
+            if granted {
+                knowledgeCollectionIds.removeAll { $0 == collection.id }
+            } else {
+                knowledgeCollectionIds.append(collection.id)
+            }
+            debouncedSave()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: granted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundColor(granted ? theme.accentColor : theme.tertiaryText)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(collection.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    if !collection.summary.isEmpty {
+                        Text(collection.summary)
+                            .font(.system(size: 11))
+                            .foregroundColor(theme.tertiaryText)
+                            .lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                if !collection.isEnabled {
+                    Text("Disabled", bundle: .module)
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.tertiaryText)
+                }
+            }
+            .padding(8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     /// Wrap a local `@State` flag binding so writes also schedule the
@@ -2856,6 +2928,51 @@ struct AgentDetailView: View {
         toolsEnabled ? nil : "Inactive while Tools is off"
     }
 
+    /// Scroll anchor for the Tools master card in the Abilities overview.
+    private static let toolsToggleScrollId = "abilities-tools-card"
+
+    /// `abilitySaveBinding` for tool-backed abilities: while Tools is off
+    /// the switch refuses to turn ON — the write is dropped so the toggle
+    /// snaps back, and the view scrolls to and pulses the Tools master
+    /// card instead. Turning OFF still lands, so a paused ability can be
+    /// unconfigured without re-enabling Tools first.
+    private func toolBackedSaveBinding(_ source: Binding<Bool>) -> Binding<Bool> {
+        Binding(
+            get: { source.wrappedValue },
+            set: { newValue in
+                if newValue, !toolsEnabled {
+                    // Re-assert false so the optimistic switch animation
+                    // snaps back even though the value never changed.
+                    source.wrappedValue = false
+                    flashToolsToggle()
+                    return
+                }
+                source.wrappedValue = newValue
+                debouncedSave()
+            }
+        )
+    }
+
+    /// Scroll the Tools card into view and run one highlight breath on
+    /// it. Dropping the flag first gives `settingsSearchHighlight` a
+    /// fresh rising edge so a repeat tap re-fires; the delayed clear only
+    /// lands if no newer tap has bumped the generation, so a rapid second
+    /// tap can't cut its own glow short.
+    private func flashToolsToggle() {
+        scrollToToolsNonce += 1
+        toolsHighlightGeneration += 1
+        let generation = toolsHighlightGeneration
+        toolsHighlightActive = false
+        DispatchQueue.main.async {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            guard generation == toolsHighlightGeneration else { return }
+            toolsHighlightActive = false
+        }
+    }
+
     @ViewBuilder
     private var abilityCards: some View {
         let isCustomAgent = agent.id != Agent.defaultId
@@ -2873,6 +2990,8 @@ struct AgentDetailView: View {
             configureLabel: "Choose tools & skills",
             onConfigure: { selectedTab = .builtIn(.capabilities) }
         )
+        .id(Self.toolsToggleScrollId)
+        .settingsSearchHighlight(toolsHighlightActive)
         // The default agent has no per-agent memory flag: its memory is
         // governed globally (Settings > Enable memory), so a per-agent
         // toggle here would be a dead control.
@@ -2907,16 +3026,18 @@ struct AgentDetailView: View {
                 title: "Charts",
                 subtitle: "Render data as inline chart cards.",
                 icon: "chart.bar.xaxis",
-                isOn: abilitySaveBinding($renderChartEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($renderChartEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
             AgentAbilityCard(
                 title: "Speak Tool",
                 subtitle:
                     "Give the agent a tool it can call to read a reply aloud when you ask. For always-speak, use Auto Speak Responses in the Voice section.",
                 icon: "speaker.wave.2",
-                isOn: abilitySaveBinding($speakEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($speakEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
 
             AgentAbilityGroupHeader(
@@ -2928,9 +3049,52 @@ struct AgentDetailView: View {
                 subtitle:
                     "Let the agent search its own memory mid-conversation to pull up past details on demand. Separate from Memory above, which only auto-injects and saves.",
                 icon: "magnifyingglass",
-                isOn: abilitySaveBinding($searchMemoryEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($searchMemoryEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
+
+            AgentAbilityGroupHeader(
+                label: "Knowledge",
+                description: "Curated reference material the agent can consult on demand."
+            )
+            AgentAbilityCard(
+                title: "Knowledge",
+                subtitle:
+                    "Let the agent search and read the knowledge collections granted below: curated guides, templates, and standards. Separate from memory, knowledge is yours to edit and never written by the agent.",
+                icon: "books.vertical",
+                isOn: toolBackedSaveBinding($knowledgeEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
+            ) {
+                if knowledgeEnabled {
+                    if knowledgeManager.collections.isEmpty {
+                        Text(
+                            "No knowledge collections yet. Add one in the Knowledge section of this window.",
+                            bundle: .module
+                        )
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.tertiaryText)
+                    } else {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(knowledgeManager.collections) { collection in
+                                knowledgeGrantRow(collection)
+                            }
+                        }
+                    }
+                }
+            }
+            if knowledgeEnabled {
+                AgentAbilityCard(
+                    title: "Curator",
+                    subtitle:
+                        "Let this agent draft document updates as pending proposals (it can also file and work staleness tickets). Nothing changes in a collection until you approve a proposal in the Knowledge section.",
+                    icon: "checkmark.seal",
+                    isOn: toolBackedSaveBinding($knowledgeCuratorEnabled),
+                    pausedNote: toolsPausedNote,
+                    onPausedNoteTap: flashToolsToggle
+                )
+            }
 
             AgentAbilityGroupHeader(
                 label: "Web",
@@ -2941,8 +3105,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Let the agent search the web through your search providers. Works out of the box with built-in sources; configure providers in Settings > Search.",
                 icon: "globe",
-                isOn: abilitySaveBinding($webSearchEnabled),
-                pausedNote: toolsPausedNote
+                isOn: toolBackedSaveBinding($webSearchEnabled),
+                pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle
             )
 
             AgentAbilityGroupHeader(
@@ -2954,8 +3119,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Let the agent schedule its own follow-up runs and send you notifications. Run frequency and limits live in General → Configure → Scheduling.",
                 icon: "calendar.badge.clock",
-                isOn: abilitySaveBinding($selfSchedulingEnabled),
+                isOn: toolBackedSaveBinding($selfSchedulingEnabled),
                 pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle,
                 configureLabel: "Schedules & watchers",
                 onConfigure: { selectedTab = .builtIn(.automation) }
             )
@@ -2969,8 +3135,9 @@ struct AgentDetailView: View {
                 subtitle:
                     "Give this agent a private encrypted database to remember structured data across runs.",
                 icon: "cylinder.split.1x2",
-                isOn: abilitySaveBinding($dbEnabled),
+                isOn: toolBackedSaveBinding($dbEnabled),
                 pausedNote: toolsPausedNote,
+                onPausedNoteTap: flashToolsToggle,
                 configureLabel: "Open Database",
                 onConfigure: { selectedTab = .builtIn(.database) }
             ) {
@@ -6282,6 +6449,9 @@ struct AgentDetailView: View {
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
         selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        knowledgeEnabled = agent.settings.knowledgeEnabled
+        knowledgeCollectionIds = agent.settings.knowledgeCollectionIds
+        knowledgeCuratorEnabled = agent.settings.knowledgeCuratorEnabled
         subagentToggles = SubagentCapabilityRegistry.perAgentToggleFlags.reduce(into: [:]) {
             acc,
             flag in
@@ -6535,6 +6705,13 @@ struct AgentDetailView: View {
                 subagentPermissions: subagentPermissions,
                 subagentBudgets: subagentBudgets,
                 subagentModelOverrides: subagentModelOverrides,
+                // Knowledge grants persist unconditionally (like the image
+                // model picks): a toggle round-trip keeps the user's
+                // selection, and the tools stay hidden while the feature is
+                // off regardless.
+                knowledgeEnabled: knowledgeEnabled,
+                knowledgeCollectionIds: knowledgeCollectionIds,
+                knowledgeCuratorEnabled: knowledgeCuratorEnabled,
                 spawnToolAccess: spawnToolAccess
             ),
             order: current.order

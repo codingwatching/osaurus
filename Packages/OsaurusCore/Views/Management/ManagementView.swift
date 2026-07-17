@@ -204,6 +204,8 @@ private extension ManagementView {
             SlashCommandsView()
         case .memory:
             MemoryView()
+        case .knowledge:
+            KnowledgeView()
         case .schedules:
             SchedulesView()
         case .watchers:

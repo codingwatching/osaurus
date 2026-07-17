@@ -131,6 +131,20 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Optional "when/how to use" note per spawnable model id, surfaced in the
     /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
     public let spawnableModelNotes: [String: String]
+    /// Per-agent opt-in for the knowledge tools, pre-folded with "has at
+    /// least one granted collection" — false strips `search_knowledge` /
+    /// `read_knowledge` / `list_knowledge` from the model-visible schema.
+    /// Execution-time scoping happens in the tools themselves.
+    public let knowledgeEnabled: Bool
+    /// Curator role, pre-folded like `knowledgeEnabled` — false strips
+    /// `propose_knowledge_update` from the model-visible schema. The tool
+    /// re-checks the role at execution time.
+    public let knowledgeCuratorEnabled: Bool
+    /// Granted collections resolved to enabled ones at capture time
+    /// (name + summary only). Feeds the `## Knowledge` prompt section —
+    /// `knowledgeEnabled` alone only gates the tools into the schema; this
+    /// is what tells the model WHAT the granted corpora contain.
+    public let knowledgeCollections: [KnowledgeGrantDescriptor]
 
     public init(
         agentId: UUID,
@@ -154,7 +168,10 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentNames: [String] = [],
         spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:]
+        spawnableModelNotes: [String: String] = [:],
+        knowledgeEnabled: Bool = false,
+        knowledgeCuratorEnabled: Bool = false,
+        knowledgeCollections: [KnowledgeGrantDescriptor] = []
     ) {
         self.agentId = agentId
         self.toolsDisabled = toolsDisabled
@@ -178,6 +195,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.spawnableAgentNames = spawnableAgentNames
         self.spawnableModelNames = spawnableModelNames
         self.spawnableModelNotes = spawnableModelNotes
+        self.knowledgeEnabled = knowledgeEnabled
+        self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.knowledgeCollections = knowledgeCollections
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -222,7 +242,17 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             appleScriptEnabled: caps.appleScriptEnabled,
             spawnableAgentNames: caps.spawnableAgentNames,
             spawnableModelNames: caps.spawnableModelNames,
-            spawnableModelNotes: caps.spawnableModelNotes
+            spawnableModelNotes: caps.spawnableModelNotes,
+            // Pre-fold the "anything to search?" half of the gate, like the
+            // spawn tools: enabled with zero grants keeps the tools hidden.
+            knowledgeEnabled: caps.knowledgeEnabled && !caps.knowledgeCollectionIds.isEmpty,
+            knowledgeCuratorEnabled: caps.knowledgeCuratorEnabled
+                && !caps.knowledgeCollectionIds.isEmpty,
+            // Same grant resolution the tools use at execution time
+            // (`effectiveKnowledgeCollections`), captured here so the
+            // prompt section can't race a mid-compose grant edit.
+            knowledgeCollections: mgr.effectiveKnowledgeCollections(for: agentId)
+                .map(\.grantDescriptor)
         )
     }
 }

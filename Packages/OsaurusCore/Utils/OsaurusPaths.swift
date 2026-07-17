@@ -287,6 +287,39 @@ public enum OsaurusPaths {
         root().appendingPathComponent("methods", isDirectory: true)
     }
 
+    /// Knowledge system data directory (`~/.osaurus/knowledge/`)
+    public static func knowledge() -> URL {
+        root().appendingPathComponent("knowledge", isDirectory: true)
+    }
+
+    /// Knowledge collection registry directory — one JSON file per collection.
+    public static func knowledgeCollections() -> URL {
+        knowledge().appendingPathComponent("collections", isDirectory: true)
+    }
+
+    /// Derived knowledge index database: `~/.osaurus/knowledge/knowledge.sqlite`.
+    /// Rebuildable from the collection folders (the markdown source of truth).
+    public static func knowledgeDatabaseFile() -> URL {
+        knowledge().appendingPathComponent("knowledge.sqlite")
+    }
+
+    /// Per-collection VecturaKit vector index directory. Like the memory
+    /// vectors, always a derivable artifact of the indexed corpus.
+    public static func knowledgeVecturaDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent("vectura", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// Managed content directory for a collection cloned from a git
+    /// remote: `~/.osaurus/knowledge/<uuid>/content/`. Collections that
+    /// point at a user-chosen folder never use this.
+    public static func knowledgeManagedContentDirectory(for id: UUID) -> URL {
+        knowledge()
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+            .appendingPathComponent("content", isDirectory: true)
+    }
+
     /// On-device Osaurus Router billing ledger directory (`~/.osaurus/billing/`).
     public static func billing() -> URL {
         root().appendingPathComponent("billing", isDirectory: true)

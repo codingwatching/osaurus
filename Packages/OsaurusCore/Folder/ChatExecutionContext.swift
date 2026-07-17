@@ -163,4 +163,36 @@ public enum ChatExecutionContext {
     /// relaxation can't be reached from an untrusted surface. Module-internal
     /// so out-of-module callers cannot bind it.
     @TaskLocal static var authenticatedHostFolderRoot: URL?
+
+    /// True when the current execution is an UNATTENDED, app-authored
+    /// background dispatch — a recurring schedule, a self-scheduled
+    /// wake-up, or a file-system watcher trigger — fired with no
+    /// interactive user present to answer an approval card. Bound `true`
+    /// by `BackgroundTaskManager.dispatchChat` for those sources only, and
+    /// only when the run is NOT an external surface (loopback/HTTP/MCP/
+    /// plugin dispatches never set it). `ToolRegistry.runPermissionGate`
+    /// consults it to auto-approve the narrow set of `.ask` tools in
+    /// `ToolRegistry.unattendedAutoApprovableToolNames` — today only the
+    /// curator's `propose_knowledge_update`, whose output is an inert
+    /// draft that still requires a separate human diff-approval in the
+    /// Knowledge tab before anything is written. Every other `.ask` tool
+    /// is unaffected. Module-internal so out-of-module callers cannot bind
+    /// it.
+    @TaskLocal static var isUnattendedDispatch: Bool = false
+
+    /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
+    /// curator role against. A spawned worker keeps `currentAgentId` inherited
+    /// from its launcher (so budget/limiter/sandbox routing bill the launcher),
+    /// but knowledge is an access-control boundary that must follow the agent
+    /// actually running — otherwise a spawned helper would silently inherit its
+    /// launcher's collection grants and curator role. `TextSubagentKind` binds
+    /// this to the target agent's id for the duration of the child run; knowledge
+    /// tools read `knowledgeAgentId` (this when set, else `currentAgentId`).
+    /// Module-internal so out-of-module callers cannot rebind the boundary.
+    @TaskLocal static var knowledgeGrantAgentIdOverride: UUID? = nil
+
+    /// The agent identity knowledge tools use for grant / curator-role
+    /// resolution: the subagent override when a spawned worker is running, else
+    /// the normal `currentAgentId`.
+    static var knowledgeAgentId: UUID? { knowledgeGrantAgentIdOverride ?? currentAgentId }
 }

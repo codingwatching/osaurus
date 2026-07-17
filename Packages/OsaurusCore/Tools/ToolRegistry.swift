@@ -206,6 +206,26 @@ public final class ToolRegistry: ObservableObject {
             CapabilitiesLoadTool(),
             // Persistent memory recall — one tool, dispatched by `scope`.
             SearchMemoryTool(),
+            // Knowledge collection retrieval (read-only). Registered as
+            // built-ins so the runtime can execute them; the system prompt
+            // composer strips them unless the agent opts in via
+            // `knowledgeEnabled` with at least one granted collection.
+            // Collection scoping is additionally enforced at execution
+            // time inside each tool.
+            SearchKnowledgeTool(),
+            ReadKnowledgeTool(),
+            ListKnowledgeTool(),
+            // Knowledge curation loop: staleness tickets (annotation only,
+            // same gate as the retrieval tools). The corpus itself is never
+            // written by a tool.
+            FlagKnowledgeStaleTool(),
+            ListKnowledgeTicketsTool(),
+            // Curator-only draft path (`.ask` policy, external-surface
+            // denied). Creates pending proposals; the user approves them
+            // in the Knowledge tab before anything lands in the corpus.
+            ProposeKnowledgeUpdateTool(),
+            // Curator queue coordination (claim/release tickets).
+            UpdateKnowledgeTicketTool(),
             // Native web search (Settings → Search providers). Always loaded;
             // the composer strips it per-agent via `webSearchEnabled`. Its
             // sibling `search_and_extract` is registered as a dynamic native
@@ -431,6 +451,8 @@ public final class ToolRegistry: ObservableObject {
     /// tool family.
     nonisolated static let externallyDeniedHostToolNames: Set<String> = [
         "file_write", "file_edit", "shell_run", "git_commit", "file_undo",
+        // Curator draft path: never invocable from external surfaces.
+        "propose_knowledge_update",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
@@ -456,6 +478,19 @@ public final class ToolRegistry: ObservableObject {
     /// on every external surface regardless of authentication.
     nonisolated static let hostFolderAllowedWhenAuthenticated: Set<String> = [
         "file_write", "file_edit",
+    ]
+
+    /// `.ask` tools that may run without an approval card on an UNATTENDED,
+    /// app-authored background dispatch (`ChatExecutionContext.isUnattendedDispatch`
+    /// — schedule / self-schedule / watcher, never external). Membership is
+    /// justified per tool by a SEPARATE human gate downstream: the curator's
+    /// `propose_knowledge_update` only queues an inert draft that the user must
+    /// still review and approve (with a diff) in the Knowledge tab before any
+    /// document is written. Without this, a scheduled Knowledge/Curator agent
+    /// stalls forever on an approval card nobody is present to click. The
+    /// interactive chat surface is unaffected — it still shows the card.
+    nonisolated static let unattendedAutoApprovableToolNames: Set<String> = [
+        "propose_knowledge_update",
     ]
 
     /// Whether `name` is blocked for the current execution because an
@@ -562,6 +597,13 @@ public final class ToolRegistry: ObservableObject {
                 } else if ChatExecutionContext.isExternalSurface {
                     // External MCP/HTTP callers cannot interact with GUI prompts.
                     approved = false
+                } else if ChatExecutionContext.isUnattendedDispatch
+                    && Self.unattendedAutoApprovableToolNames.contains(name)
+                {
+                    // Unattended schedule/watcher run with no user to click the
+                    // card. Approved only for tools whose real human gate is
+                    // downstream (see `unattendedAutoApprovableToolNames`).
+                    approved = true
                 } else {
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,

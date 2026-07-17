@@ -1020,6 +1020,35 @@ public struct SystemPromptComposer: Sendable {
             }
         }
 
+        // Knowledge grant manifest: schema-gated like `spawn` above. The
+        // retrieval tools resolving into the schema is not enough affordance
+        // on its own — their descriptions don't say what the granted corpora
+        // contain, so a small model never connects a domain question to
+        // `search_knowledge` and answers from thin air. Enumerating the
+        // ACTUAL grants (name + summary, captured on `snapshot`) makes the
+        // collection's own description the trigger. Static: the grant set is
+        // session-constant; a grant or summary edit re-renders it (a
+        // one-time cached-prefix bust, like the other config-driven
+        // sections).
+        if !effectiveToolsOff,
+            !resolvedNames.isDisjoint(with: Self.knowledgeToolNames),
+            !snapshot.knowledgeCollections.isEmpty
+        {
+            composer.append(
+                .static(
+                    id: "knowledge",
+                    label: L("Knowledge"),
+                    content: SystemPromptTemplates.knowledgeGuidance(
+                        collections: snapshot.knowledgeCollections,
+                        // Curator line only when the proposal tool actually
+                        // resolved — mirrors the section's own schema gate.
+                        curator: !resolvedNames.isDisjoint(
+                            with: Self.knowledgeCuratorToolNames)
+                    )
+                )
+            )
+        }
+
         // Agent-loop guidance: short cheat-sheet for the chat-layer-
         // intercepted tools (todo / complete / clarify / share_artifact).
         // Always rendered when any loop tool resolves into the schema:
@@ -1628,6 +1657,24 @@ public struct SystemPromptComposer: Sendable {
         "schedule_next_run", "cancel_next_run", "notify",
     ]
 
+    /// Knowledge retrieval tools. Registered as built-ins but gated on
+    /// `AgentConfigSnapshot.knowledgeEnabled` (per-agent opt-in, pre-folded
+    /// with "has at least one granted collection") in `resolveTools`.
+    /// Collection scoping is enforced again at execution time inside the
+    /// tools, so this strip is a token-cost optimization, not the boundary.
+    static let knowledgeToolNames: Set<String> = [
+        "search_knowledge", "read_knowledge", "list_knowledge",
+        "flag_knowledge_stale", "list_knowledge_tickets",
+    ]
+
+    /// Curator-only knowledge tools, gated on
+    /// `AgentConfigSnapshot.knowledgeCuratorEnabled` in `resolveTools`.
+    /// The tool re-checks the role at execution time, so this strip is a
+    /// token-cost optimization, not the boundary.
+    static let knowledgeCuratorToolNames: Set<String> = [
+        "propose_knowledge_update", "update_knowledge_ticket",
+    ]
+
     /// Render the schema snapshot block injected after the onboarding
     /// prompt when `dbEnabled` is true. Best-effort: a failure to open
     /// the DB (e.g. the user just enabled the toggle and the first
@@ -2157,6 +2204,16 @@ public struct SystemPromptComposer: Sendable {
             }
             if !snapshot.selfSchedulingEnabled {
                 for name in schedulerToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            if !snapshot.knowledgeEnabled {
+                for name in knowledgeToolNames where !keep.contains(name) {
+                    byName.removeValue(forKey: name)
+                }
+            }
+            if !snapshot.knowledgeCuratorEnabled {
+                for name in knowledgeCuratorToolNames where !keep.contains(name) {
                     byName.removeValue(forKey: name)
                 }
             }

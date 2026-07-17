@@ -831,6 +831,59 @@ public enum SystemPromptTemplates {
         - Both return `status` + `values` + `errors` (with AppleScript error numbers) — read `values` to confirm, use `errors` to retry/fix. Not for shell, files, or web.
         """
 
+    // MARK: - Knowledge
+
+    /// Grant manifest + retrieval nudge for the knowledge tools, rendered
+    /// by the composer when any retrieval tool resolves into the schema.
+    /// The tool descriptions alone say "curated reference material: guides,
+    /// templates, standards" — that gives a small model no signal that a
+    /// question about a granted corpus's actual domain (a product FAQ, a
+    /// company handbook) is answerable via search, so it answers from thin
+    /// air. Enumerating each grant's name + summary makes the collection's
+    /// own description the affordance. Editing a grant or a collection's
+    /// name/summary re-renders the block (a one-time cached-prefix bust),
+    /// matching the other config-driven sections.
+    public static func knowledgeGuidance(
+        collections: [KnowledgeGrantDescriptor],
+        curator: Bool = false
+    ) -> String {
+        var lines: [String] = ["## Knowledge", ""]
+        lines.append("Knowledge collections granted to this agent:")
+        for collection in collections {
+            let summary = collection.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+            lines.append(
+                summary.isEmpty
+                    ? "- **\(collection.name)**"
+                    : "- **\(collection.name)** — \(summary)"
+            )
+        }
+        lines.append("")
+        lines.append(
+            "- For any question these collections could answer, call `search_knowledge` "
+                + "FIRST and ground your answer in what it returns — do not answer from memory."
+        )
+        lines.append(
+            "- When a matched excerpt is not enough, `read_knowledge` the result's path; "
+                + "`list_knowledge` browses a collection's documents."
+        )
+        lines.append(
+            "- You cannot edit collection documents. When the user reports a change or "
+                + "asks you to update one — or you find outdated content yourself — file it "
+                + "with `flag_knowledge_stale`; the ticket starts the human-reviewed update "
+                + "and IS the correct way to fulfil an update request. Tell the user the "
+                + "report was filed for review."
+        )
+        if curator {
+            lines.append(
+                "- You are a curator: after filing the ticket, draft the corrected document "
+                    + "with `propose_knowledge_update`. The proposal stays pending until the "
+                    + "user approves it in the Knowledge tab — nothing changes on disk before "
+                    + "then."
+            )
+        }
+        return lines.joined(separator: "\n")
+    }
+
     // MARK: - Spawn (delegation)
 
     /// Dynamic guidance for the spawn family, rendered by the composer when
