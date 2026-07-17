@@ -41,7 +41,7 @@ struct KnowledgeView: View {
                         icon: "books.vertical.fill",
                         title: L("Add Your First Knowledge Collection"),
                         subtitle: L(
-                            "Point Osaurus at a folder of markdown (guides, templates, standards) and grant it to agents so they can consult it on demand."
+                            "Point Osaurus at a folder of guides, templates, and standards and grant it to agents so they can consult it on demand. Markdown, plain text, code, PDF, Word, Excel, PowerPoint, and CSV files are supported."
                         ),
                         examples: [
                             .init(
@@ -422,7 +422,7 @@ struct KnowledgeView: View {
     private var headerView: some View {
         ManagerHeaderWithActions(
             title: L("Knowledge"),
-            subtitle: L("Folders of markdown your agents can search and read on demand"),
+            subtitle: L("Folders of documents your agents can search and read on demand"),
             count: knowledgeManager.collections.isEmpty ? nil : knowledgeManager.collections.count
         ) {
             HeaderIconButton("arrow.clockwise", help: "Re-index all collections") {
@@ -741,7 +741,7 @@ private struct KnowledgeCollectionEditorSheet: View {
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(theme.primaryText)
                 HStack(spacing: 10) {
-                    TextField("/path/to/markdown-folder", text: $folderPath)
+                    TextField("/path/to/knowledge-folder", text: $folderPath)
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundColor(theme.primaryText)
