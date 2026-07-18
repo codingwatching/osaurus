@@ -3,6 +3,36 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.6</title>
+            <pubDate>Sat, 18 Jul 2026 04:46:49 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.6</sparkle:version>
+            <sparkle:shortVersionString>0.22.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.6/Osaurus-0.22.6.dmg" length="66045178" type="application/octet-stream" sparkle:edSignature="xJzsbZwnaTc5X7LVpfisRt1D76Lf59/bjjWjrPYtGYFt0EygyyRnCIVMMmuZX1i3QZQy7USYzc0bz+SoLzbSBA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix AppleScript Computer Use finalization and failure containment (#2071) by @jjang-ai
+- Add eval watcher scoreboard artifacts (#1708) by @mimeding
+- Stabilize Watchers pane layout (#1794) by @mimeding
+- Add runtime installation doctor (#2043) by @mimeding
+- Reliability audit: install integrity, loader/ABI validation, route timeouts, lifecycle ordering, CI coverage (#2061) by @tpae
+
+## 🧰 Maintenance
+
+- Fix singular and plural count labels (#2074) by @tpae
+- Overhaul Tools management UX around an everyday-user catalog (#2073) by @tpae
+- Redesign agent detail navigation and restyle the Tools tab (#2072) by @tpae
+- Normalize Bonsai recommendations for onboarding (#2069) by @tpae
+- Improve Models catalog browsability and tuck runtime diagnostics away (#2070) by @tpae
+- Polish context budget popover (#2068) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.5...0.22.6
+]]></description>
+        </item>
+        <item>
             <title>0.22.5</title>
             <pubDate>Fri, 17 Jul 2026 14:51:45 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
