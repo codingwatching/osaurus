@@ -1210,10 +1210,15 @@ public enum SystemPromptTemplates {
             hostWritable
             ? "- Multi-line code/scripts: `file_write` the script to a `/workspace/...` path, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
             : "- Multi-line code/scripts: `sandbox_write_file` the script, then `sandbox_exec` to run it (e.g. `python3 script.py`). NEVER embed multi-line code in `python3 -c` / `node -e`: the JSON→shell→code escaping breaks."
+        let copyBullet =
+            hostWritable
+            ? "- Move a file between the two areas: `file_copy(source, destination)` — raw byte copy, binary-safe (PDFs, images, archives). Same path rule: relative = workspace, `/workspace/...` = sandbox."
+            : "- Stage a workspace file into the sandbox: `file_copy(source, destination)` — raw byte copy, binary-safe (PDFs, images, archives); the destination must be a `/workspace/...` path."
         return """
             Tool dispatch:
             - Read files / list dirs / search: `file_read` (reads a file or lists a directory — the path decides), `file_search` (they reach both your workspace and `/workspace/...` sandbox paths — see `## Files`).
             \(writeBullet)
+            \(copyBullet)
             \(shellBullet)
             \(scriptBullet)
             - Run independent calls in parallel; chain dependent shell steps with `&&`.
@@ -1261,8 +1266,8 @@ public enum SystemPromptTemplates {
             : "`sandbox_exec` (single-line)"
         let filesLine =
             hostWritable
-            ? "- Read/list/search: `file_read`, `file_search`; write/edit: `file_write` / `file_edit`. The path picks the filesystem: relative = the user's workspace (tracked, undoable), `/workspace/...` = sandbox — see `## Files`."
-            : "- Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`path` FIRST, then `content` whole-file or `old_string`+`new_string` edit; workspace is read-only)."
+            ? "- Read/list/search: `file_read`, `file_search`; write/edit: `file_write` / `file_edit`. The path picks the filesystem: relative = the user's workspace (tracked, undoable), `/workspace/...` = sandbox — see `## Files`. `file_copy(source, destination)` moves a file (binary-safe) between the areas."
+            : "- Read/list/search: `file_read`, `file_search` (reach your workspace and `/workspace/...` sandbox paths — see `## Files`). Sandbox writes: `sandbox_write_file` (`path` FIRST, then `content` whole-file or `old_string`+`new_string` edit; workspace is read-only). `file_copy(source, destination)` stages a workspace file (binary-safe) into a `/workspace/...` path for commands."
         let scriptWriter = hostWritable ? "`file_write` a `/workspace/...` script" : "`sandbox_write_file` a script"
         return """
             Tool dispatch:
@@ -1510,7 +1515,7 @@ public enum SystemPromptTemplates {
                 Rules:
                 - Read / list / search either area with `file_read` and `file_search`.
                 - Write either area with `file_write` (whole file) or `file_edit` (`old_string`+`new_string`).
-                - Commands run ONLY in the sandbox (`sandbox_exec`), which has no copy of the workspace. To run code against a workspace file, `file_read` it and pass the content in; write results back with `file_write`.
+                - Commands run ONLY in the sandbox (`sandbox_exec`), which has no copy of the workspace. To process a workspace file with a command, first copy it into the sandbox with `file_copy(source, destination)` — a raw byte copy that also works for binaries (PDFs, images, archives) that `file_read`/`file_write` cannot carry. Copy results back to a relative path to put them in the folder.
                 - Prefer `/workspace/...` for scratch and iterative work; write to the workspace when the user wants the file in their folder. Surface chat deliverables with `share_artifact`. \(secretLine) Secret files also cannot be written.
                 """
         }
@@ -1521,7 +1526,7 @@ public enum SystemPromptTemplates {
             - **Workspace** (your read-only host folder) — the default. For "what's in my workspace / on my Desktop", use `file_read` (it reads a file or lists a directory) and `file_search`. Relative paths and `/Users/...` paths are the workspace.
             - **Sandbox** scratch area — pass a `/workspace/...` path to the SAME `file_read` / `file_search`.
 
-            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — `file_read` a workspace file and pass its content in if a command needs it). Surface results with `share_artifact`. \(secretLine)
+            The workspace is read-only — you cannot create, edit, or delete files in it, so never offer to; say so if asked (the user can enable folder writes in the agent's sandbox settings). Create or change files with `sandbox_write_file` (pass `content` to write the whole file, or `old_string`+`new_string` to edit one match — it writes the sandbox), and run commands with `sandbox_exec` (it runs in the sandbox, which has no copy of the workspace — to process a workspace file with a command, first stage it into a `/workspace/...` path with `file_copy`, a byte copy that also carries binaries `file_read` cannot open). Surface results with `share_artifact`. \(secretLine)
             """
     }
 
