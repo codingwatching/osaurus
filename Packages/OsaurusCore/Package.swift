@@ -77,7 +77,7 @@ let package = Package(
         // keeps every unproven cache topology fail-closed.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "4b431c6a3f229e2150810b9dea9afe57790ca60b"
+            revision: "f2b184841e98d969e46dec83109f27cd7bb57357"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

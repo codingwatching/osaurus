@@ -709,7 +709,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "4b431c6a3f229e2150810b9dea9afe57790ca60b"
+        let expectedRuntimeHardenedRevision = "f2b184841e98d969e46dec83109f27cd7bb57357"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
         let appRevision = try Self.vmlxPinRevision(in: appResolved)
@@ -1056,6 +1056,7 @@ struct RuntimePolicySourceTests {
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
         #expect(httpHandler.contains(#""paged_cache""#))
+        #expect(httpHandler.contains(#""requires_paged_boundary_companion""#))
         #expect(httpHandler.contains(#""block_disk_store""#))
         #expect(httpHandler.contains(#""disk_l2_hits""#))
         #expect(httpHandler.contains(#""prefix_hits""#))
@@ -2302,11 +2303,13 @@ struct RuntimePolicySourceTests {
         let diagnosticsSnapshot = try Self.source("Services/ModelRuntime/BatchDiagnosticsSnapshot.swift")
         #expect(diagnosticsSnapshot.contains("nativeMTPDepthSummary"))
         #expect(diagnosticsSnapshot.contains("prefixHits"))
+        #expect(diagnosticsSnapshot.contains("pagedEvictions"))
         #expect(diagnosticsSnapshot.contains("ssmCompanionReDerives"))
 
         let diagnosticsView = try Self.source("Views/Settings/ServerSettings/BatchDiagnosticsView.swift")
         #expect(diagnosticsView.contains("\"Native MTP\""))
         #expect(diagnosticsView.contains("\"Prefix hits / misses\""))
+        #expect(diagnosticsView.contains("\"Paged evictions\""))
         #expect(diagnosticsView.contains("\"SSM hits / misses / re-derives\""))
 
         let httpHandler = try Self.source("Networking/HTTPHandler.swift")
