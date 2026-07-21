@@ -3,6 +3,42 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.8</title>
+            <pubDate>Tue, 21 Jul 2026 05:06:25 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.8</sparkle:version>
+            <sparkle:shortVersionString>0.22.8</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.8/Osaurus-0.22.8.dmg" length="66478990" type="application/octet-stream" sparkle:edSignature="NMD/yn/1q3ljaDJaxXqBpURyrh+q0IyMdmtPOpLdFcQ0JcGmdBWTVFT/F62ofXbI4ePw5i0q51HpGHSEuUIEBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Pin explicit Gemma 4 paged cache support (#2109) by @jjang-ai
+- Preserve visible generation telemetry across chat warmups (#2106) by @jjang-ai
+- fix: honor reasoning toggle across agent tool loops (#2105) by @jjang-ai
+- Preserve explicit Thinking mode across agent tool turns (#2101) by @jjang-ai
+
+## 🚀 Features
+
+- multi select chats to delete/archive in sidebar with Cmd+Click shortcut (#2114) by @RaajeevChandran
+- pin chats in sidebar (#2113) by @RaajeevChandran
+- add openai compatible tts server support (#2099) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Continue cap-truncated file\_read to the end of the file (#2112) by @tpae
+- Fix truncated remote tool arguments (#2108) by @tpae
+- fix prompt text deleted when escape dismisses the slash command   popup (#2103) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Adopt native macOS theme defaults with system accent following (#2115) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.7...0.22.8
+]]></description>
+        </item>
+        <item>
             <title>0.22.7</title>
             <pubDate>Mon, 20 Jul 2026 05:45:40 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
