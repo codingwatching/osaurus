@@ -20,6 +20,118 @@ TurboQuant-off-by-default policy change. This is the source of truth for
 
 **The only default cache is SSD prefix + block-disk L2. No paged RAM cache for any model. No TurboQuant encode/decode for any model.**
 
+### New-chat SSD checkpoint reuse gate (reported 2026-07-20)
+
+Users report that ending a chat and starting a new one repeatedly pays an
+initial prompt warmup from zero. This is **PARTIAL-LIVE / ORNITH MXFP8 FIX
+PROVEN IN THE REBUILT RELEASE UI; OTHER REQUIRED FAMILY/SETTING ROWS REMAIN
+OPEN**. A new chat must start with a fresh semantic
+transcript, but that does not require recomputing an identical stable prefix.
+The model/template system prefix, enabled tool schemas, and other byte-identical
+leading blocks should be eligible for the SSD prefix/block-L2 longest-prefix
+restore across new chats, model unload/reload, and process restart.
+
+The cache key must invalidate affected blocks when any state that changes the
+rendered prefix or cache representation changes, including model artifact or
+revision, runtime/cache format, attention topology, RoPE/context settings,
+reasoning template kwargs, system prompt, enabled tool schemas, live KV codec
+and TurboQuant bit widths, processor/media configuration, and media salt. A
+new chat/session identifier by itself must not invalidate otherwise identical
+prefix bytes. UI-only settings that do not affect inference must not erase a
+valid checkpoint. Reuse must never carry user conversation state from the old
+chat into the new one.
+
+The live proof must distinguish model weight load/kernel preparation from
+prompt prefill: SSD KV restore can reduce TTFT/prefill but does not imply that
+an unloaded model has no weight-loading cost. Every row must record the stable
+prefix token count, restored boundary, remaining raw-prefill tokens, TTFT,
+token/s, disk hit/miss/store counters, companion hit/rederive counters, cache
+bytes on disk, and visible coherent output.
+
+Required Release-UI matrix:
+
+| Family/topology | Cold and new-chat sequence | Required warm evidence |
+| --- | --- | --- |
+| Gemma 4 | Rotating SWA plus full-attention KV; paged RAM Off; SSD On; native codec default | A second brand-new chat and a fresh-process run restore the longest valid SSD prefix, rebuild/restore every rotating/full companion consistently, and avoid a full zero-prefix prefill |
+| Qwen 3.5 text, Ornith, Bonsai | Hybrid KV plus GDN/SSM recurrent companion state; paged RAM Off; SSD On | Disk hit and matching async companion restore/rederive are both observed; output, reasoning state, and tool calls remain coherent across exact and partial prefix matches |
+| Qwen 3.5 VL | Same hybrid state plus media processor/mRoPE inputs | Same-media reuse hits the valid media-salted prefix; different media misses at the changed boundary; text-only and post-media turns do not cross-hit incorrectly |
+| Explicit paged RAM On | Bounded hot blocks over the same SSD tier | RAM hit wins when present; eviction falls back to the matching SSD block; a fresh process proves SSD rather than stale RAM supplied the restore |
+| Explicit TurboQuant On | Separate cache representation/key from native | Only supported KV layers are encoded; rotating/SSM/GDN/media companion state stays in its correct native/typed form; returning to default native must not consume the TQ entry |
+| Configuration change controls | Change one inference-affecting setting at a time, then restore it | Changed configuration misses only where required; restoring the prior configuration can find its prior compatible SSD checkpoint; no global cache flush or cross-config poisoning |
+
+The visible Settings state and effective runtime telemetry must agree. The
+intended defaults for this gate are Prefix/SSD On, paged RAM Off, and
+TurboQuant Off, but no current-version default is promoted solely from this
+document; it must be observed in the development Release app and confirmed by
+the next request's effective counters.
+
+Current Ornith evidence from the isolated Release app
+`com.dinoki.osaurus.applescriptemergency20260720` (SHA-256
+`114fbe282e9e2872abe88ca8c991da6ebc1b7c9e19f0ef5029bd94c54511fd9b`)
+shows that SSD L2 is enabled and persistent, but the hybrid full-hit selection
+is wrong. With Prefix and Disk Cache visibly On, paged RAM Off, Codec Engine
+Selected, and SSM rederive On, a fresh process hit the 2,201-token disk
+boundary with 48 recurrent states. A second new chat reported an exact
+2,234-token disk hit with `remaining=0`, yet the UI then visibly advanced raw
+prefill in 512-token chunks. Source trace in the pinned vMLX revision explains
+the contradiction: callers set `skipExactDiskBoundary=true` for
+path-dependent cache topologies, but `CacheCoordinator.fetch` re-admits the
+exact boundary through `candidateTokenCounts`. The later GDN full-hit guard
+cannot safely seed N-1 without a matching companion and rolls back to full
+prefill. The candidate change excludes the exact boundary from every probe so
+the longest safe partial boundary (2,201 of 2,234 here) can be restored.
+
+The same pre-fix live trace also showed unconditional post-generation rewrites of
+already-restored boundaries (roughly 125-143 MB KV files plus roughly 26 MB
+SSM companion files) and repeated quota eviction at the 10 GB cap. The vMLX
+candidate adds a process-validated, fingerprint-checked no-rewrite path; a
+fresh process or changed/missing/corrupt/index-mismatched file still takes the
+full healing write.
+
+Current rebuilt-app evidence uses `/private/tmp/Osaurus SSD Cache Proof
+20260720.app`, ad-hoc signed as
+`com.dinoki.osaurus.ssdcacheproof20260720`. Its Release executable SHA-256 is
+`8dcb022e282b28a2b800a7cdef858a86f300c3999db12c1fdb97f67f24ba3516`,
+and the resolved Xcode checkout was the exact vMLX revision
+`74caefd907e6df15780a454d8523b78bf889964c`.
+
+Fresh-preferences setup was performed through onboarding and Settings in the
+real app. Server -> Settings -> Cache visibly showed Prefix Cache **On**, Disk
+Cache **On**, GPU Cache (paged KV) **Off**, Codec **Engine Selected**, and SSM
+rederive **On**. The model picker visibly selected the locally installed
+`Ornith 1.0 9B MXFP8`; Thinking remained visibly **Off**.
+
+Observed rows:
+
+- First real chat after selection: the runtime logged
+  `HIT disk boundary=1734 remaining=18 ssm=48 ... skipExactDisk=true` instead
+  of admitting the unsafe exact hybrid boundary. The visible response was the
+  requested exact `CACHE PROOF ONE.` at TTFT 0.50s, 49.0 tok/s, 5 tokens, with
+  no reasoning deltas.
+- Brand-new chat in the same process: background warmup logged
+  `HIT disk boundary=1731 remaining=3 ssm=48 ... skipExactDisk=true`. The
+  write-through then emitted `disk-store SKIP validated` for both the 1,734-
+  and 1,731-token KV payloads and matching `ssm-store SKIP validated` lines
+  for both 48-state companions. The repeated visible answer was exact at TTFT
+  0.33s, 49.1 tok/s, 5 tokens.
+- Full app quit/restart, preserving only the isolated app root and SSD cache:
+  warmup again logged `HIT disk boundary=1731 remaining=3 ssm=48`; the UI
+  reached `Model warm` without a zero-prefix raw prefill. The first visible
+  answer after restart was exact at TTFT 0.39s, 49.4 tok/s, 6 tokens.
+
+This closes the reported Ornith/Qwen-hybrid new-chat and restart reuse defect:
+SSD is not merely enabled or populated; the live runtime restores a safe
+partial KV+SSM boundary and computes only the suffix. It also proves
+same-process rewrite suppression for a currently validated KV/companion pair.
+It does **not** close the entire cache campaign. The safe exact 1,734-token
+boundary is deliberately not restored for this GDN topology, so a fresh
+process rewrote that exact post-warmup payload once while the restored
+1,731-token checkpoint was skipped; whether that one healing write should be
+replaced by an independent read-validation path remains an explicit follow-up.
+Gemma 4 rotating-SWA, Bonsai, Qwen VL/media salt, paged-On hot-to-SSD fallback,
+TurboQuant-On, corruption recovery, and configuration-change invalidation all
+remain separate unproven Release-UI rows.
+
 ## 2. TurboQuant KV — OFF by default for ALL families (policy 2026-06-12)
 
 ### Why
@@ -111,3 +223,66 @@ dev-built Osaurus app** (pinned to the exact code) confirms: real tool calls,
 clean coherent text (no missing/garbled/random-char output), no marker leaks,
 correct cache telemetry, and RAM verdicts. CI + unit tests are necessary but
 not sufficient.
+
+## 2026-07-21 merged-pin new-chat and restart evidence
+
+Status: **VERIFIED-LIVE for the named Gemma and Ornith/Qwen-derived native-SSD
+rows only; PARTIAL for every other family, TurboQuant, paged-On, and media
+row.**
+
+The exact ad-hoc-signed Release app was
+`/private/tmp/osaurus-ssd-stable-release-derived-20260721/Build/Products/Release/osaurus.app`,
+bundle id `com.dinoki.osaurus.ssdstableproof20260721`, executable SHA-256
+`e28cc1a1aad58514fa2cb325cf7f95bb098b6a93cd2a82f7e4f1ceae9244fb7d`,
+isolated root
+`/private/tmp/osaurus-ssd-stable-finalproof-root-20260721-0320`, and exact
+resolved vMLX revision
+`b87cdd6b2a9f05f600461e41b239b7197151d9ff`. Server -> Settings -> Cache
+visibly showed Prefix Cache On, GPU/Paged Cache Off, Disk Cache On, Codec
+Engine Selected, and SSM Re-derive On; the UI confirmed that the changes were
+saved. Thinking was visibly Off for both text models.
+
+Current Osaurus source supplies the byte/token-identical warmup intersection
+as both a stable boundary and an ordinary store boundary. That is essential:
+merely identifying a stable boundary without placing it in the persisted
+boundary list would still make each new session prefill it from zero. Current
+vMLX source excludes an unsafe exact hybrid/GDN candidate when
+`skipExactDiskBoundary` is requested and restores the corresponding recurrent
+companion only at the matched partial boundary.
+
+Observed real-UI rows:
+
+- **Ornith 1.0 9B MXFP8 / Qwen-derived hybrid:** a brand-new chat returned the
+  exact visible answer `ORNITH-CACHE-OK`, TTFT 0.46 seconds, 49.8 tok/s, and 6
+  tokens. The same request restored SSD boundary 2,325 with 276 suffix tokens
+  remaining and all 48 SSM/recurrent states. Background warmup separately
+  restored boundary 2,322 with only 3 tokens remaining. The disk store enforced
+  the configured 10 GiB quota and evicted complete KV/companion records.
+- **Gemma 4 E2B QAT JANG_4M / rotating plus full attention:** after selection,
+  warmup persisted stable boundary 2,263. A new chat returned exact
+  `GEMMA-CACHE-OK`, TTFT 0.30 seconds, 94.9 tok/s, and 6 tokens. The user turn
+  restored boundary 2,266 with 255 tokens remaining and persisted 2,521/2,527.
+- **Fresh-process Gemma restore:** the app was quit completely and relaunched
+  with the same isolated root. The valid source-defined model-root override is
+  `OSU_MODELS_DIR`; one discarded diagnostic accidentally used the nonexistent
+  `OSAURUS_MODELS_DIR` key and therefore saw only the fallback image models.
+  With the correct key, the UI immediately showed the exact Gemma model warm
+  and Thinking Off. Warmup restored SSD boundary 2,263 with only 3 tokens
+  remaining. The first visible post-restart response was coherent at TTFT 0.37
+  seconds and 92.6 tok/s; its request restored boundary 2,266 with 242 tokens
+  remaining. It added an unrequested explanatory sentence, so that single row
+  is not promoted as exact-instruction compliance.
+
+These rows prove that the scoped native SSD cache is more than a populated
+directory: a new semantic chat and a new process restore a byte-identical
+stable prefix, retain architecture-specific companion state where required,
+prefill only the novel suffix, stream coherent output, and write the extended
+boundary back. The AppleScript helper in the same binary also used progressive
+SSD partial hits across its clean per-job transcript and completed coherently.
+
+Not proven by these rows: Bonsai itself, base Qwen 3.5 or Qwen VL/media salt,
+Gemma 4 VL/media, LFM, MiniMax, DSV4, Nemotron, explicit paged RAM On and
+hot-to-SSD fallback, explicit TurboQuant On, corruption recovery, cache-key
+configuration invalidation, or Activity Monitor physical-footprint limits.
+TurboQuant remained Off/default-native throughout and no TurboQuant topology
+claim is made.
