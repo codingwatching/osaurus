@@ -1,10 +1,13 @@
 # Prefill Queue Emergency Gate — 2026-07-22
 
-Status: **PARTIAL — the released queue symptom predates current main; a distinct
-current-main LFM disk-restore bypass is fixed and live-proven on the exact
-merged vMLX pin in the isolated Release app. Bonsai/Qwen-hybrid and Gemma 4
-rotating-SWA representatives also pass that exact-pin cache gate, while the
-complete all-family/all-setting matrix is not closed.**
+Status: **VERIFIED-LIVE FOR THE SCOPED EMERGENCY — a cancelled direct B=1
+generation is drained before its process-wide solo lease is released, and
+cancelled/errored chat runs no longer schedule a hidden proactive replay of the
+abandoned prompt. An isolated Release app passed Stop -> immediate new chat,
+cross-chat partial SSD restore, and process-restart restore with paged RAM off
+for Ornith, Bonsai, Gemma 4, Qwen MXFP8, and Laguna S 2.1. Broader paged,
+TurboQuant, unsupported-family, AppleScript, and model-quality rows remain
+outside this emergency closure.**
 
 Scope: shared Osaurus/vMLX request, warm-up, and cache lifecycle. This is not a
 Bonsai-only workaround. AppleScript, Laguna expansion, routing guidance, and
@@ -62,6 +65,125 @@ model unloading, SSD restore, cancellation, or UI progress projection.
   that warm-up to finish so the just-materialized SSD prefix can be reused. This
   can display the warm-up's queued/prefill phase in the foreground assistant row.
   Current-main live timing below did not strand the wait.
+
+## Current-main cancellation reproduction — 2026-07-22 follow-up
+
+The earlier current-main proof did not exercise the reported interruption hard
+enough and must not be treated as closure. A fresh isolated Release build of
+Osaurus `24af4289ff8338de9bd8796ae6fce3517d96ee4f`, pinned to vMLX
+`c59024a1b4b1314bf98ce962f99e1ffaaebfc247`, reproduced the failure with
+Bonsai 27B Ternary JANG through the real chat UI:
+
+- Prefix Cache On, GPU/Paged Cache Off, Disk Cache On, codec Engine Selected,
+  SSM Re-derive On, and Thinking Off were visibly active.
+- Completed new-chat turns did use SSD state: examples restored `3612/4067`,
+  `4060/5163`, and `3282/3283` prompt tokens.
+- A unique 15,109-token prompt restored its cached 3,282-token static prefix and
+  entered live prefill. Starting a new chat while that run was active left the
+  old runtime request alive after the chat UI had moved on.
+- The trace reached `STEP-PREFILL complete 15109/15109` but emitted no matching
+  `STREAM-DRAINED` or `LEASE-RELEASED`. At 97 seconds after the interruption,
+  the app process was still active at about 84% CPU and the next local send was
+  blocked by the old owner.
+
+Source owner:
+
+1. `MLXBatchAdapter.generate` wraps `BatchEngine.generate` in another
+   `AsyncStream` and owns the process-wide solo lease.
+2. Cancelling the chat cancels the wrapper producer, but its loop previously
+   kept iterating the upstream stream while merely dropping non-info events.
+3. Because the upstream iterator never terminated, vMLX's stream termination
+   handler never cancelled its direct B=1 generation task. Osaurus therefore
+   could not reach its lease-release code.
+4. Repeated new-chat warm-ups can also leave cancelled tasks in
+   `SoloGenerationGate`'s FIFO because its continuations were not
+   cancellation-aware.
+
+Scoped repair under test:
+
+- vMLX adds an awaited, idempotent direct-generation cancellation/drain
+  boundary. It cancels the producer, waits for its GPU/cache work to exit, and
+  clears the same solo id before a serving layer admits the next request.
+- Osaurus invokes that boundary immediately when the wrapping stream is
+  cancelled and again before releasing its solo/Metal leases.
+- The Osaurus solo FIFO removes cancelled waiters instead of letting abandoned
+  warm-ups acquire and hand off the lease later.
+- No sampler, prompt, parser, model-family, cache-boundary, paged-cache default,
+  or TurboQuant setting is changed. No new image artifact is part of this fix.
+
+The first exact-pin Release rerun caught a second owner before merge. With
+Ornith 1.0 9B JANG_4M selected, the UI visibly entered prefill at
+`1778/17485`; Stop drained and released the cancelled engine in 1.293 seconds.
+However, `completeRunCleanup()` then unconditionally scheduled a proactive
+warm-up over the abandoned 17k-token user turn. That hidden request began 585
+ms later, owned the same solo lease for another 7.555 seconds, and made the UI
+look idle while the next chat would still have to wait. This is the reported
+"third session stays queued" shape even though the original producer drain is
+now bounded.
+
+The follow-up policy repair is intentionally lifecycle-scoped: successful
+runs still schedule the completed-transcript checkpoint, while user-cancelled
+or errored runs cancel scheduled warm-up instead of replaying abandoned work.
+Focused tests prove both sides of that decision, alongside the full
+`MLXBatchAdapterTests` suite. The exact rebuilt Release app proof is recorded
+below.
+
+## Cancellation/drain Release proof — scoped PR head
+
+Exact candidate:
+
+- Osaurus source: `933186a2b317c293f34f11892e22ba83df2ea4be`
+- vMLX pin: merged PR #177,
+  `85d752e501240bfe2d5c39c6f5d08e7d4e139a68`
+- App: `/private/tmp/Osaurus Prefill Queue Drain 933186a2 20260722.app`
+- Bundle ID: `com.dinoki.osaurus.prefillqueueproof20260722`
+- Executable SHA-256:
+  `a9b5b6ad061733bdf8276adfbdf200328b19032cc290d36ff5363f7f03ef4aa9`
+- Isolated root:
+  `/private/tmp/osaurus-prefill-queue-drain-root-20260722-1309`
+
+Computer Use visibly confirmed Prefix Cache On, GPU/Paged Cache Off, Disk
+Cache On, Engine-selected codec, SSM re-derive On, and saved settings. No new
+image file was added to the repository for this proof.
+
+Live rows:
+
+- **Ornith 1.0 9B JANG_4M:** a 17,490-token prompt restored 1,778 tokens;
+  Stop drained/released in 1.514 seconds. No hidden 17k replay followed. A new
+  chat returned `ORNITH-AFTER-CANCEL` at 0.31s TTFT/68.3 tok/s after restoring
+  1,778/1,802. Relaunch against the same root restored 1,772/1,773 from disk
+  before any user turn.
+- **Bonsai 27B Ternary JANG CRACK:** an 18,068-token prompt restored 1,552
+  tokens; Stop drained/released in 2.041 seconds and did not replay. A new-chat
+  user turn restored 2,100/2,126, returned `BONSAI-AFTER-CANCEL` at 0.66s
+  TTFT/32.2 tok/s, and changed the chip from warming to warm.
+- **Gemma 4 12B QAT JANG_4M:** a 14,618-token mixed full-attention/rotating-SWA
+  prompt restored 1,708 tokens; Stop drained/released in 2.213 seconds. The
+  next new-chat turn restored 1,731/1,749 and returned
+  `GEMMA-AFTER-CANCEL` at 0.52s TTFT/31.9 tok/s.
+- **Qwen3.6 35B A3B MXFP8 CRACK MTP:** a 15,940-token hybrid prompt restored
+  1,623 tokens; Stop drained/released in 2.061 seconds. A natural new-chat
+  control restored 2,172/2,205 and answered coherently at 0.55s TTFT/77.5
+  tok/s. A second full app process restored 2,172/2,173 in 77ms from SSD and
+  showed the warm indicator. An exact-phrase agent prompt separately
+  over-selected tools and left empty content; that is retained as a model/tool
+  finalization issue, not hidden as a cache pass.
+- **Laguna S 2.1 JANG_2L:** after a full app restart, startup restored
+  1,644/1,647 from SSD with `KVCacheSimple:12 + RotatingKVCache:36`, paged
+  blocks zero. An 86,557-token prompt restored 1,647 tokens; Stop drained and
+  released in 5.410 seconds. No 86k replay followed. A user turn sent while
+  the new-chat indicator was still warming restored 1,647/1,677 and completed
+  in 0.91 seconds; the immediate same-chat control restored 1,691/1,708 and
+  returned `Four.` at 0.73s TTFT/39.6 tok/s. Laguna Thinking On rendered the
+  exact prompt tail `<assistant><think>`; the model elected to emit an
+  immediate `</think>` and therefore stored zero reasoning characters on
+  those turns. This is bundle decode behavior, not a missing UI/template flag,
+  and no forced-thinking workaround was added.
+
+Across all cancellation rows, the current trace contains a matching
+`STREAM-DRAINED` and `LEASE-RELEASED`; cancelled prompts have no subsequent
+same-length proactive warm-up. Successful turns still produce the expected
+small completed-transcript warm-up and partial SSD store.
 
 ## Current-main isolated Release evidence
 
@@ -210,7 +332,7 @@ visible UI. CLI tests may diagnose but cannot close a row.
 | Same chat, second turn | Leaves Queued; enters prefill/decode; coherent answer; TTFT | PASS — Bonsai, Gemma |
 | New chat, same model | SSD counters before/after; restored tokens; remaining prefill; TTFT | PASS — Bonsai |
 | Send while background warm-up owns load | One load owner; foreground request cannot starve | PASS — Bonsai |
-| Stop/cancel then send | Cancelled slot/producer exits; next request starts | PARTIAL — stop recovered, immediate post-cancel send not isolated |
+| Stop/cancel then send | Cancelled slot/producer exits; next request starts | PASS — isolated Release UI rows for Ornith, Bonsai, Gemma 4, Qwen MXFP8, and Laguna; every cancelled stream drained/released, no abandoned long prompt replayed, and the immediate new-chat request left queued and completed |
 | Switch model and return | Old engine lifecycle completes; returned model starts | PARTIAL — forward switches passed; return-to-prior not rerun |
 | Quit/relaunch and send | Disk L2 restore is attached before request publication | PASS — Bonsai folded hybrid restore |
 | Paged RAM cache off, SSD on | Default user path; partial/exact disk hit truth | PASS — Bonsai, Gemma |
@@ -226,12 +348,13 @@ visible UI. CLI tests may diagnose but cannot close a row.
 
 ## Release gate
 
-The reported Bonsai queue stall belongs to the shipped build and did not
-reproduce permanently on current main. The distinct LFM tool-schema bypass is
-current and justifies a narrow vMLX follow-up plus Osaurus pin PR because the
-rebuilt Release app now proves the before/after fetch delta. It must not be
-conflated with the already-merged Bonsai/Gemma repair series or described as
-closing unsupported/incoherent family rows.
+The shipped-build symptom had two current owners under real interruption: the
+wrapped direct-generation producer was not awaited through cancellation, and
+chat cleanup unconditionally scheduled a proactive warm-up for the abandoned
+prompt. The scoped vMLX drain API plus Osaurus lifecycle policy repair close
+those owners in the exact Release app. The distinct LFM tool-schema bypass was
+already handled by the earlier narrow vMLX/Osaurus pin and is not reimplemented
+here. None of this closes unsupported/incoherent family rows.
 
 Before claiming the broader all-setting campaign complete:
 
