@@ -82,6 +82,18 @@ public actor KnowledgeIndexService {
         DocumentAdaptersBootstrap.registerBuiltIns()
         let files = scanIndexableFiles(in: folderURL)
         let existingHashes = (try? KnowledgeDatabase.shared.documentHashes(collectionId: collectionId)) ?? [:]
+        // Existing rows' categories, for backfilling inference on the skip
+        // path: rows indexed before inference existed have an unchanged
+        // content hash, so the full upsert never revisits them.
+        let existingDocuments =
+            (try? KnowledgeDatabase.shared.listDocuments(
+                collectionIds: [collectionId],
+                limit: Self.maxFilesPerCollection
+            )) ?? []
+        var typesByPath: [String: (docType: String, inferredType: String)] = [:]
+        for document in existingDocuments {
+            typesByPath[document.relPath] = (document.docType, document.inferredType)
+        }
         var seenPaths: Set<String> = []
 
         for file in files {
@@ -100,6 +112,16 @@ public actor KnowledgeIndexService {
 
             let hash = Self.sha256Hex(data)
             if !force, existingHashes[relPath] == hash {
+                if let types = typesByPath[relPath], types.docType.isEmpty {
+                    let inferred = KnowledgeTypeInference.infer(relPath: relPath)
+                    if inferred != types.inferredType {
+                        try? KnowledgeDatabase.shared.updateInferredType(
+                            collectionId: collectionId,
+                            relPath: relPath,
+                            inferredType: inferred
+                        )
+                    }
+                }
                 summary.skipped += 1
                 continue
             }
@@ -166,6 +188,28 @@ public actor KnowledgeIndexService {
             .map(\.relPath)
     }
 
+    /// Documents with no category at all — no explicit frontmatter
+    /// `type` and nothing the indexer could infer. This is what the UI
+    /// badge reports; `okfNonconformingDocuments` (explicit type only)
+    /// remains the strict OKF conformance check.
+    public func uncategorizedDocuments(collectionId: String) -> [String] {
+        guard openDatabaseIfNeeded() else { return [] }
+        let documents =
+            (try? KnowledgeDatabase.shared.listDocuments(
+                collectionIds: [collectionId],
+                limit: Self.maxFilesPerCollection
+            )) ?? []
+        let reserved: Set<String> = ["index.md", "log.md"]
+        return documents
+            .filter { document in
+                document.effectiveType.isEmpty
+                    && !reserved.contains(document.relPath.lowercased())
+                    && Self.markdownExtensions.contains(
+                        (document.relPath as NSString).pathExtension.lowercased())
+            }
+            .map(\.relPath)
+    }
+
     /// Purge every derived artifact of a deleted collection (SQLite rows
     /// + vector directory). The user's folder is untouched.
     public func removeCollectionArtifacts(collectionId: UUID) async {
@@ -219,6 +263,14 @@ public actor KnowledgeIndexService {
         )
         let chunks = KnowledgeDocumentParser.chunk(body: body)
 
+        // No explicit frontmatter `type` → infer one from the folder
+        // structure so the collection stays type-filterable without the
+        // user editing files. Explicit frontmatter always wins.
+        let inferredType =
+            frontmatter.docType.isEmpty
+            ? KnowledgeTypeInference.infer(relPath: relPath) : ""
+        let effectiveType = frontmatter.docType.isEmpty ? inferredType : frontmatter.docType
+
         let values = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey])
         let modifiedAt = values?.contentModificationDate.map {
             ISO8601DateFormatter().string(from: $0)
@@ -230,6 +282,7 @@ public actor KnowledgeIndexService {
             relPath: relPath,
             title: title,
             docType: frontmatter.docType,
+            inferredType: inferredType,
             summary: frontmatter.summary,
             tagsCSV: frontmatter.tagsCSV,
             contentHash: contentHash,
@@ -260,7 +313,7 @@ public actor KnowledgeIndexService {
                 collectionId: collectionId,
                 relPath: relPath,
                 title: title,
-                docType: frontmatter.docType,
+                docType: effectiveType,
                 tagsCSV: frontmatter.tagsCSV
             )
         }

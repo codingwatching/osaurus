@@ -110,26 +110,6 @@ struct KnowledgeView: View {
                                             showSuccess(outcome.message)
                                         }
                                     },
-                                    onValidateOKF: {
-                                        Task.detached(priority: .userInitiated) {
-                                            let failing = await KnowledgeIndexService.shared
-                                                .okfNonconformingDocuments(collectionId: collection.id.uuidString)
-                                            await MainActor.run {
-                                                if failing.isEmpty {
-                                                    showSuccess(L("Every document has a category (type)"))
-                                                } else {
-                                                    let sample = failing.prefix(3).joined(separator: ", ")
-                                                    let summary =
-                                                        failing.count == 1
-                                                        ? "1 document needs a category"
-                                                        : "\(failing.count) documents need a category"
-                                                    showSuccess(
-                                                        "\(summary) — add a `type:` line to: \(sample)\(failing.count > 3 ? "…" : "")"
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    },
                                     onEdit: {
                                         editingCollection = collection
                                     },
@@ -510,7 +490,6 @@ private struct KnowledgeCollectionCard: View {
     let onReindex: () -> Void
     let isIndexing: Bool
     let onSync: () -> Void
-    let onValidateOKF: () -> Void
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onOpenDetail: () -> Void
@@ -524,27 +503,34 @@ private struct KnowledgeCollectionCard: View {
     }
     @State private var okfStatus: OKFStatus = .unknown
 
+    /// Alert shown when the category chip is tapped: the uncategorized
+    /// paths (empty when everything has a category).
+    @State private var showingCategoryAlert = false
+    @State private var uncategorizedPaths: [String] = []
+
     private var okfIcon: String {
         switch okfStatus {
         case .conformant: return "checkmark.seal.fill"
-        case .nonconforming: return "exclamationmark.triangle.fill"
+        case .nonconforming: return "tag.slash"
         case .unknown: return "checkmark.seal"
         }
     }
 
     private var okfLabel: String {
         switch okfStatus {
-        case .conformant: return "All categorized"
+        case .conformant: return L("All categorized")
         case .nonconforming(let count):
-            return count == 1 ? "1 doc needs a category" : "\(count) docs need a category"
-        case .unknown: return "Checking categories…"
+            return count == 1
+                ? L("1 doc uncategorized")
+                : String(format: L("%lld docs uncategorized"), count)
+        case .unknown: return L("Checking categories…")
         }
     }
 
     private var okfColor: Color {
         switch okfStatus {
         case .conformant: return .green
-        case .nonconforming: return .orange
+        case .nonconforming: return theme.secondaryText
         case .unknown: return theme.secondaryText
         }
     }
@@ -606,20 +592,47 @@ private struct KnowledgeCollectionCard: View {
     private var okfHelp: String {
         switch okfStatus {
         case .conformant:
-            return
-                "Every document has a category, so agents can filter the library by it. Following the Open Knowledge Format (OKF)."
+            return L(
+                "Every document has a category, so agents can filter the library by it. Categories come from frontmatter `type:` or are inferred automatically from folder names."
+            )
         case .nonconforming(let count):
             return count == 1
-                ? "1 document has no category. Add a `type:` line (e.g. `type: policy`) to the top of the file so agents can filter by it. Click for the list."
-                : "\(count) documents have no category. Add a `type:` line (e.g. `type: policy`) to the top of each file so agents can filter by it. Click for the list."
+                ? L(
+                    "1 document has no category. This is optional, agents can still search and read it. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of the file. Click for the list."
+                )
+                : String(
+                    format: L(
+                        "%lld documents have no category. This is optional, agents can still search and read them. To let agents filter by category, add a `type:` line (e.g. `type: policy`) to the top of each file. Click for the list."
+                    ), count)
         case .unknown:
-            return "Checking that every document declares a category (its `type`)…"
+            return L("Checking that every document declares a category (its `type`)…")
         }
+    }
+
+    private var categoryAlertTitle: String {
+        if uncategorizedPaths.isEmpty { return L("All documents categorized") }
+        return uncategorizedPaths.count == 1
+            ? L("1 document has no category")
+            : String(format: L("%lld documents have no category"), uncategorizedPaths.count)
+    }
+
+    private var categoryAlertMessage: String {
+        if uncategorizedPaths.isEmpty {
+            return L(
+                "Every document has a category, from its frontmatter `type:` or inferred from its folder name. Agents can filter this collection by category."
+            )
+        }
+        let sample = uncategorizedPaths.prefix(8).joined(separator: "\n")
+        let more = uncategorizedPaths.count - min(8, uncategorizedPaths.count)
+        return L(
+            "This is optional. Agents can still search and read these documents.\n\nTo let agents filter by category, move them into a folder (the folder name becomes the category) or add a `type:` line to their frontmatter.\n\n"
+        ) + sample + (more > 0 ? "\n" + String(format: L("and %lld more"), more) : "")
     }
 
     private func refreshOKFStatus() async {
         let failing = await KnowledgeIndexService.shared
-            .okfNonconformingDocuments(collectionId: collection.id.uuidString)
+            .uncategorizedDocuments(collectionId: collection.id.uuidString)
+        uncategorizedPaths = failing
         okfStatus = failing.isEmpty ? .conformant : .nonconforming(failing.count)
     }
 
@@ -646,36 +659,14 @@ private struct KnowledgeCollectionCard: View {
                     .labelsHidden()
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: collection.folderExists ? "folder.fill" : "folder.badge.questionmark")
-                    .font(.system(size: 11))
-                    .foregroundColor(collection.folderExists ? theme.tertiaryText : .orange)
-                Text(collection.folderPath)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                if collection.isGitRepository {
-                    Text("git", bundle: .module)
-                        .font(.system(size: 9, weight: .bold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.18)))
-                        .foregroundColor(theme.accentColor)
-                        .help(collection.gitRemoteURL ?? "Local git repository (no remote)")
-                }
-            }
-            if collection.isGitRepository, let remote = collection.gitRemoteURL {
-                Text(remote)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
+            // Folder path and git remote intentionally omitted — they
+            // crowd the card and live in the detail sheet (tap the card).
             grantedAgentsRow
             Button(action: {
-                onValidateOKF()
-                Task { await refreshOKFStatus() }
+                Task {
+                    await refreshOKFStatus()
+                    showingCategoryAlert = true
+                }
             }) {
                 HStack(spacing: 4) {
                     Image(systemName: okfIcon)
@@ -690,6 +681,12 @@ private struct KnowledgeCollectionCard: View {
             }
             .buttonStyle(.plain)
             .help(okfHelp)
+            .themedAlert(
+                categoryAlertTitle,
+                isPresented: $showingCategoryAlert,
+                message: categoryAlertMessage,
+                primaryButton: .cancel(L("OK"))
+            )
             .task(id: collection.updatedAt) { await refreshOKFStatus() }
             .onChange(of: isIndexing) { indexing in
                 // Recompute the category badge once the pass completes and
@@ -1541,11 +1538,11 @@ private struct KnowledgeCollectionDetailSheet: View {
                 if docsLoaded && !documents.isEmpty {
                     let categorized = documents.count - nonconformingCount
                     statPill(
-                        icon: nonconformingCount == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill",
+                        icon: nonconformingCount == 0 ? "checkmark.seal.fill" : "tag.slash",
                         text: nonconformingCount == 0
                             ? L("All categorized")
                             : String(format: L("%lld of %lld categorized"), categorized, documents.count),
-                        color: nonconformingCount == 0 ? .green : .orange
+                        color: nonconformingCount == 0 ? .green : theme.secondaryText
                     )
                 }
                 if isIndexing {
@@ -1656,16 +1653,27 @@ private struct KnowledgeCollectionDetailSheet: View {
                     .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            Text(verbatim: doc.docType.isEmpty ? L("Uncategorized") : doc.docType)
-                .font(.system(size: 9, weight: .bold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(
-                    Capsule().fill(
-                        doc.docType.isEmpty ? Color.orange.opacity(0.15) : theme.accentColor.opacity(0.15)
-                    )
+            Text(
+                verbatim: doc.effectiveType.isEmpty
+                    ? L("Uncategorized")
+                    : doc.isTypeInferred
+                        ? String(format: L("%@ (auto)"), doc.effectiveType) : doc.effectiveType
+            )
+            .font(.system(size: 9, weight: .bold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(
+                Capsule().fill(
+                    doc.effectiveType.isEmpty
+                        ? theme.secondaryText.opacity(0.12) : theme.accentColor.opacity(0.15)
                 )
-                .foregroundColor(doc.docType.isEmpty ? .orange : theme.accentColor)
+            )
+            .foregroundColor(doc.effectiveType.isEmpty ? theme.secondaryText : theme.accentColor)
+            .help(
+                doc.isTypeInferred
+                    ? L("Category inferred from the folder name. Add a `type:` line to the file's frontmatter to override it.")
+                    : ""
+            )
         }
         .padding(10)
     }
@@ -1693,7 +1701,7 @@ private struct KnowledgeCollectionDetailSheet: View {
             }
             let docs: [KnowledgeDocument] =
                 (try? KnowledgeDatabase.shared.listDocuments(collectionIds: [collectionId], limit: 2000)) ?? []
-            let failing = await KnowledgeIndexService.shared.okfNonconformingDocuments(collectionId: collectionId)
+            let failing = await KnowledgeIndexService.shared.uncategorizedDocuments(collectionId: collectionId)
             await MainActor.run {
                 documents = docs
                 nonconformingCount = failing.count
