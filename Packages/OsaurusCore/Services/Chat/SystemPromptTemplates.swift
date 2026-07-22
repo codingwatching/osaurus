@@ -365,6 +365,16 @@ public enum SystemPromptTemplates {
 
     // MARK: - Building New Tools
 
+    /// `dependencies` bullet of the plugin-authoring recipe. System (`apk`)
+    /// dependencies only exist in the Linux VM backend; on Seatbelt the
+    /// guide must steer authors to pip/npm in `setup` instead (declaring
+    /// `dependencies` there fails registration).
+    private static var pluginDependenciesBullet: String {
+        SandboxBackend.current == .seatbelt
+            ? "- `dependencies`: NOT supported in this macOS sandbox (no `apk`) — leave it empty and install Python/Node packages in `setup` (`pip install …` / `npm install …`). `setup` and every `run` command are validated against the network allowlist (PyPI, npm, GitHub, crates.io); reaching any other host fails registration."
+            : "- `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration."
+    }
+
     /// The plugin-authoring recipe injected as the `## Building new tools`
     /// section by `PluginCreatorGate` whenever plugin creation is enabled for
     /// the session. Owns the *how* (the SandboxPlugin schema, the write →
@@ -415,7 +425,7 @@ public enum SystemPromptTemplates {
         }
         ```
 
-        - `dependencies`: Alpine packages (`apk add`). `setup` and every `run` command are validated against the network allowlist (Alpine repos, PyPI, npm, GitHub, crates.io); reaching any other host fails registration.
+        \(pluginDependenciesBullet)
         - `secrets`: names whose values come from Keychain — registration fails up front if a declared secret has no value yet.
         - `permissions.network`: comma-separated API hostnames the scripts reach (`outbound` / `none` / malformed → `none`). `permissions.inference` is forced to `false`.
         4. **Write the scripts.** Parameters arrive as `$PARAM_{NAME}` (uppercased) env vars, secrets as `$NAME` env vars; print JSON to stdout, errors to stderr, exit non-zero on failure.
@@ -1149,7 +1159,16 @@ public enum SystemPromptTemplates {
 
     // MARK: - Sandbox Building Blocks
 
-    static let sandboxSectionHeading = "## Linux sandbox environment"
+    /// True when commands run on the host under Seatbelt (`sandbox-exec`)
+    /// instead of inside the Alpine VM — the environment the prompt
+    /// describes is then macOS, not Linux, and `apk` does not exist.
+    private static var isSeatbeltBackend: Bool {
+        SandboxBackend.current == .seatbelt
+    }
+
+    static var sandboxSectionHeading: String {
+        isSeatbeltBackend ? "## macOS sandbox environment" : "## Linux sandbox environment"
+    }
     static let sandboxReadFileHint =
         "`sandbox_read_file` with `start_line`/`line_count`/`tail_lines`"
 
@@ -1173,6 +1192,23 @@ public enum SystemPromptTemplates {
             : "Your home directory is `\(home)` (also `~` / `$HOME`); commands run there by "
                 + "default — you don't need to pass `cwd` unless you want a different directory. "
                 + "Files persist across messages."
+        if isSeatbeltBackend {
+            return """
+                You have a sandboxed macOS command environment (processes run on \
+                this Mac, confined to your workspace by a sandbox profile). \(homeLine)
+
+                Network access depends on the sandbox configuration — when \
+                enabled, fetch live or external data (weather, web pages, APIs) \
+                directly with `curl`, Python `requests`, or Node `fetch`; you \
+                don't need a dedicated tool for it.
+
+                Available tools are what this Mac provides: standard BSD/POSIX \
+                utilities plus `bash`, `python3`, `git`, `curl`, `sqlite3`; check \
+                anything else with `command -v` before relying on it. This is \
+                macOS, not Linux — no `apk`, and userland flags follow BSD \
+                conventions.
+                """
+        }
         return """
             You have an isolated Alpine Linux ARM64 sandbox. \(homeLine)
 
@@ -1251,9 +1287,20 @@ public enum SystemPromptTemplates {
             home.isEmpty
             ? "Your home (`~`) is your sandbox home"
             : "Home: `\(home)` (`~` / `$HOME`); commands run there by default — no `cwd` needed"
+        if isSeatbeltBackend {
+            return """
+                Sandboxed macOS command environment (host processes confined to your workspace by a sandbox profile). \(homeLine). Files persist across messages. When network is enabled, fetch live data (weather, web pages, APIs) directly with `curl`, Python `requests`, or Node `fetch`. Tools are what this Mac provides (BSD userland, `bash`, `python3`, `git`, `curl`, `sqlite3`); check others with `command -v`. No `apk` — this is macOS, not Linux.
+                """
+        }
         return """
             Isolated Alpine Linux ARM64 sandbox. \(homeLine). Files persist across messages. Internet works — fetch live data (weather, web pages, APIs) directly with `curl`, `wget`, Python `requests`, or Node `fetch`. Installed: bash, python3, node, git, curl, wget, jq, rg, sqlite3, build-base, cmake, vim, tree.
             """
+    }
+
+    /// Package managers `sandbox_install` can use on the active backend —
+    /// `apk` only exists inside the Alpine VM.
+    private static var sandboxInstallManagers: String {
+        isSeatbeltBackend ? "`pip`/`npm`" : "`pip`/`npm`/`apk`"
     }
 
     /// Compact non-combined dispatch + absorbed runtime hints.
@@ -1266,7 +1313,7 @@ public enum SystemPromptTemplates {
             Tool dispatch:
             - Files: `sandbox_read_file` (read/list); `sandbox_write_file` (`path` FIRST, then `content` whole-file, or `old_string`+`new_string` to edit). Search: `sandbox_search_files` (`target="content"|"files"`).
             - Shell: \(shell). Multi-line code: `sandbox_write_file` a script then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
-            - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
+            - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHint). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
 
@@ -1290,7 +1337,7 @@ public enum SystemPromptTemplates {
             Tool dispatch:
             \(filesLine)
             - Shell: \(shell). Multi-line code: \(scriptWriter) then `sandbox_exec` it (e.g. `python3 script.py`) — never `python3 -c` / `node -e`.
-            - Install deps with `sandbox_install` (`pip`/`npm`/`apk`); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
+            - Install deps with `sandbox_install` (\(sandboxInstallManagers)); inspect large logs with \(sandboxReadFileHintCombined). Run independent calls in parallel; chain dependent steps with `&&`. Sandbox is disposable.
             """
     }
 
@@ -1300,9 +1347,10 @@ public enum SystemPromptTemplates {
     /// it can't see in this mode.
     private static func sandboxRuntimeHints(hostReadCombined: Bool) -> String {
         let logReadHint = hostReadCombined ? sandboxReadFileHintCombined : sandboxReadFileHint
+        let managers = isSeatbeltBackend ? "`pip` / `npm`" : "`pip` / `npm` / `apk`"
         return """
             Runtime hints:
-            - Install Python, Node, or system deps with `sandbox_install` (`manager`: `pip` / `npm` / `apk`).
+            - Install Python or Node deps with `sandbox_install` (`manager`: \(managers)).
             - Use \(logReadHint) to inspect large logs.
             - The sandbox is disposable; experiment freely.
             """

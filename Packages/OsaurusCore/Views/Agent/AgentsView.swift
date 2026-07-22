@@ -972,7 +972,7 @@ private enum DetailTab: String, CaseIterable {
         case .network: return L("Bonjour discovery and relay tunnel.")
         case .connections:
             return L("Peers granted access to this agent — usage and revocation.")
-        case .sandbox: return L("Container-based code execution.")
+        case .sandbox: return L("Sandboxed code execution.")
         case .automation: return L("Schedules and file watchers for autonomous behavior.")
         case .memory: return L("Conversation history, pinned facts, and episode summaries.")
         case .database:
@@ -5282,7 +5282,7 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox unavailable",
                         hint:
-                            "Container-based execution requires macOS 26 or later. Native plugins continue to work normally on this device."
+                            "Sandboxed execution is unavailable on this device. Native plugins continue to work normally."
                     )
                 } else if !sandboxRunning {
                     workspaceFolderRow
@@ -5290,7 +5290,7 @@ struct AgentDetailView: View {
                         icon: "shippingbox",
                         title: "Sandbox not running",
                         hint:
-                            "Start the sandbox container from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above."
+                            "Start the sandbox from the Sandbox status bar, then enable autonomous execution and plugin creation in the Execution section above."
                     )
                     secretsSubsection
                 } else {
@@ -5494,7 +5494,21 @@ struct AgentDetailView: View {
             }
 
             if execConfig?.sandboxNetworkEnabled ?? true {
-                sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+                // The filtering egress proxy is a vmnet construct — on the
+                // Seatbelt backend a domain allowlist would fail closed to
+                // NO network, so don't offer the field there.
+                if SandboxBackend.current == .virtualMachine {
+                    sandboxAllowedDomainsField(execConfig: execConfig, interactive: interactive)
+                } else {
+                    Text(
+                        "Per-domain network allowlists require the VM sandbox (macOS 26 or later). On this device sandbox network access is all-or-nothing — use the Sandbox Network toggle above.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.tertiaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 2)
+                }
             }
 
             featureCard(
@@ -5542,10 +5556,10 @@ struct AgentDetailView: View {
 
         sandboxExecToggles(execConfig: execConfig, interactive: sandboxRunning)
         if !sandboxAvailable {
-            sandboxFeatureHint("Container-based execution requires macOS 26 or later.")
+            sandboxFeatureHint("Sandboxed execution is unavailable on this device.")
         } else if !sandboxRunning {
             sandboxFeatureHint(
-                "Start the sandbox container from the Sandbox status bar to enable these."
+                "Start the sandbox from the Sandbox status bar to enable these."
             )
         }
     }
