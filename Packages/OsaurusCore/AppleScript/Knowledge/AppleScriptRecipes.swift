@@ -44,6 +44,8 @@ public enum AppleScriptRecipeCatalog {
                 "Read or change an open document INSIDE `tell application \"TextEdit\"`: "
                     + "`get text of front document` or `set text of front document to \"…\"`. "
                     + "Never write `... of TextEdit` as though TextEdit were a variable.",
+                "The unsaved/edited-state property is `modified of front document` (boolean). "
+                    + "Do not invent `changed of front document`.",
                 "When the whole document is the old text, replace it directly: "
                     + "`tell application \"TextEdit\" to set text of front document to \"new text\"`. "
                     + "Do not add a handler, UI keystrokes, formatting, files, or shell commands.",
@@ -92,6 +94,9 @@ public enum AppleScriptRecipeCatalog {
         AppleScriptRecipe(
             appNames: ["Finder"],
             tips: [
+                "Front window folder (not its selection): inside `tell application \"Finder\"`, "
+                    + "use `name of front window` and `POSIX path of (target of front window as alias)`. "
+                    + "Do not use `selection of front window` to answer the window's path.",
                 "Selected files: `tell application \"Finder\" to get selection` (returns Finder items; coerce with `as alias list`).",
                 "Paths: Finder speaks colon-separated HFS paths; use `POSIX path of (item as alias)` to convert, and `POSIX file \"/slash/path\"` going in.",
                 "New folder: `make new folder at desktop with properties {name:\"…\"}`.",
