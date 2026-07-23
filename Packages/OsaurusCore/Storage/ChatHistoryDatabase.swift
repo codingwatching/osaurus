@@ -466,9 +466,20 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
     /// preserved because the queue is FIFO, so a later read/save still observes
     /// this write. Errors are logged rather than thrown since there is no
     /// caller left to handle them.
-    public func saveSessionAsync(_ session: ChatSessionData) {
+    /// `onDropped` fires (on the database queue) when the write found the
+    /// database closed at dequeue time — the enqueue-time `ensureOpen` check
+    /// races key rotation, and silently losing the write here is how a
+    /// freshly created session could vanish from the sidebar for good.
+    /// Callers use it to requeue the snapshot as a deferred save.
+    public func saveSessionAsync(
+        _ session: ChatSessionData,
+        onDropped: (@Sendable (ChatSessionData) -> Void)? = nil
+    ) {
         queue.async { [weak self] in
-            guard let self, self.db != nil else { return }
+            guard let self, self.db != nil else {
+                onDropped?(session)
+                return
+            }
             let prepared = self.sessionWithSpilledAttachments(session)
             do {
                 try self.executeRaw("BEGIN TRANSACTION")
@@ -488,6 +499,32 @@ public final class ChatHistoryDatabase: @unchecked Sendable {
             } catch {
                 try? self.executeRaw("ROLLBACK")
                 print("[ChatHistoryDatabase] async saveSession failed for \(prepared.id): \(error)")
+            }
+        }
+    }
+
+    /// Update ONLY a session's title, off the caller's thread. Exists for the
+    /// auto-title path, whose in-memory `ChatSessionData` may be a
+    /// metadata-only copy (empty `turns`) from `loadAllMetadata` — routing it
+    /// through `saveSessionAsync` would let `upsertTurnsIncrementally` treat
+    /// the empty array as truth and delete every turn row. A targeted UPDATE
+    /// cannot touch turns, and deliberately leaves `updated_at` alone so the
+    /// rename never reorders the recency list.
+    public func updateSessionTitleAsync(id: UUID, title: String) {
+        queue.async { [weak self] in
+            guard let self, self.db != nil else { return }
+            do {
+                try self.executeRaw("BEGIN TRANSACTION")
+                try self.transactionalStep(
+                    "UPDATE sessions SET title = ?1 WHERE id = ?2"
+                ) { stmt in
+                    Self.bindText(stmt, index: 1, value: title)
+                    Self.bindText(stmt, index: 2, value: id.uuidString)
+                }
+                try self.executeRaw("COMMIT")
+            } catch {
+                try? self.executeRaw("ROLLBACK")
+                print("[ChatHistoryDatabase] async title update failed for \(id): \(error)")
             }
         }
     }

@@ -38,6 +38,10 @@ struct ChatSettingsView: View {
     @State private var tempChatMaxToolAttempts: String = ""
     @State private var tempEnableClipboardMonitoring: Bool = false
     @State private var tempWarmModelsOnLoad: Bool = true
+    /// AI-generated chat titles from the first completed exchange. Default
+    /// off while the feature bakes across releases (see
+    /// `ChatConfiguration.autoGenerateChatTitles`).
+    @State private var tempAutoGenerateChatTitles: Bool = false
     /// Smooth streaming: pace the visible reveal at ~180 tok/s regardless
     /// of how fast / bursty the network delivers tokens. Default on.
     /// Bound to `UserDefaults` key `chatSmoothStreamingEnabled` which
@@ -307,6 +311,8 @@ struct ChatSettingsView: View {
                     isOn: $tempWarmModelsOnLoad
                 )
 
+                autoTitleToggleRow
+
                 SettingsToggle(
                     title: L("Show Notch Overlay on Menu Bar"),
                     description:
@@ -389,6 +395,69 @@ struct ChatSettingsView: View {
                 )
             }
         }
+    }
+
+    /// Hand-built `SettingsToggle` twin: the stock control only takes a plain
+    /// string description, and this one styles "core model" as an underlined
+    /// accent-colored deep link into the General tab's Core Model picker —
+    /// same pattern as the transcription cleanup toggle.
+    private var autoTitleToggleRow: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Automatically Name Chats", bundle: .module)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(theme.primaryText)
+                Text(autoTitleDescription)
+                    .font(.system(size: 11))
+                    .tint(theme.accentColor)
+                    .environment(
+                        \.openURL,
+                        OpenURLAction { _ in
+                            navigateToCoreModelSetting()
+                            return .handled
+                        }
+                    )
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $tempAutoGenerateChatTitles)
+                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .labelsHidden()
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.inputBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(theme.inputBorder, lineWidth: 1)
+                )
+        )
+        .settingsLandingAnchor("settings.chat.autoGenerateTitles")
+    }
+
+    /// Description for the auto-title toggle, with "core model" rendered as
+    /// an underlined link in the theme's accent color.
+    private var autoTitleDescription: AttributedString {
+        var text = AttributedString(
+            L(
+                "Use the core model to generate a short descriptive title after a chat's first response, replacing the first-message preview. Runs in the background and never interrupts your conversation; manual renames always win."
+            )
+        )
+        text.foregroundColor = theme.tertiaryText
+        if let range = text.range(of: L("core model")) {
+            text[range].foregroundColor = theme.accentColor
+            text[range].underlineStyle = .single
+            text[range].link = URL(string: "osaurus-settings://core-model")
+        }
+        return text
+    }
+
+    /// Deep-links to the Core Model picker in the General settings tab.
+    private func navigateToCoreModelSetting() {
+        SettingsHighlightCoordinator.shared.request("settings.general.coreModel")
+        ManagementStateManager.shared.selectedTab = .settings
     }
 
     private var personalityEditorBlock: some View {
@@ -486,6 +555,7 @@ struct ChatSettingsView: View {
         tempChatMaxToolAttempts = chat.maxToolAttempts.map(String.init) ?? ""
         tempEnableClipboardMonitoring = chat.enableClipboardMonitoring
         tempWarmModelsOnLoad = chat.warmModelsOnLoad
+        tempAutoGenerateChatTitles = chat.autoGenerateChatTitles
         // Storage convention: empty string = "use the built-in default."
         // The editor never displays an empty state — we hydrate it with the
         // built-in default so the text is editable in place. `saveConfiguration`
@@ -514,6 +584,7 @@ struct ChatSettingsView: View {
         tempChatMaxToolAttempts = ""
         tempEnableClipboardMonitoring = chatDefaults.enableClipboardMonitoring
         tempWarmModelsOnLoad = chatDefaults.warmModelsOnLoad
+        tempAutoGenerateChatTitles = chatDefaults.autoGenerateChatTitles
         tempGreetingPersona = GenerativeGreetingService.defaultPersonaInstruction
 
         showSuccess("Chat settings restored to defaults")
@@ -531,6 +602,7 @@ struct ChatSettingsView: View {
         var maxToolAttempts: String
         var enableClipboardMonitoring: Bool
         var warmModelsOnLoad: Bool
+        var autoGenerateChatTitles: Bool
         var greetingPersona: String
     }
 
@@ -544,6 +616,7 @@ struct ChatSettingsView: View {
             maxToolAttempts: tempChatMaxToolAttempts,
             enableClipboardMonitoring: tempEnableClipboardMonitoring,
             warmModelsOnLoad: tempWarmModelsOnLoad,
+            autoGenerateChatTitles: tempAutoGenerateChatTitles,
             greetingPersona: tempGreetingPersona
         )
     }
@@ -617,6 +690,7 @@ struct ChatSettingsView: View {
         chatCfg.maxToolAttempts = parsedMaxToolAttempts
         chatCfg.enableClipboardMonitoring = tempEnableClipboardMonitoring
         chatCfg.warmModelsOnLoad = tempWarmModelsOnLoad
+        chatCfg.autoGenerateChatTitles = tempAutoGenerateChatTitles
         chatCfg.greetingPersona = {
             // Collapse an unedited built-in default back to "" so storage stays
             // in "inherit the default" mode.
