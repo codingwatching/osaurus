@@ -43,6 +43,65 @@ enum JSONFormatter {
     }
 }
 
+// MARK: - Expand reveal
+
+/// Staggered-ripple reveal for freshly expanded disclosure content (tool
+/// rows, thinking blocks, activity groups): the container's sections fade
+/// and drift in top-to-bottom, ~120ms apart. Combined with the activity
+/// group's batched expand-all, consecutive steps read as a two-level
+/// cascading ripple. No-op under Reduce Motion.
+enum ExpandFade {
+    /// - Parameters:
+    ///   - interval: delay between consecutive sections. The activity group
+    ///     passes a tighter value — its parts are whole steps, so the default
+    ///     cadence reads sluggish on runs with many of them.
+    ///   - duration: per-section fade/drift length.
+    static func run(
+        _ view: NSView, interval: TimeInterval = 0.12, duration: TimeInterval = 0.3
+    ) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            view.alphaValue = 1
+            return
+        }
+        // Freshly built content hasn't been laid out yet — resolve frames
+        // first or the top-to-bottom sort below runs on zero rects.
+        view.layoutSubtreeIfNeeded()
+        // Non-flipped: higher y = higher on screen, so sort descending to
+        // get visual top-to-bottom order.
+        let parts = view.subviews.sorted { $0.frame.maxY > $1.frame.maxY }
+        for (index, part) in parts.enumerated() {
+            // `alphaValue` is a no-op on non-layer-backed views — these are
+            // plain NSViews, so back them explicitly or the fade silently
+            // doesn't render.
+            part.wantsLayer = true
+            part.alphaValue = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + interval * Double(index)) {
+                [weak part] in
+                guard let part else { return }
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = duration
+                    ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    part.animator().alphaValue = 1
+                }
+                drift(part, from: -12, duration: duration)
+            }
+        }
+    }
+
+    /// Presentational upward drift from `offset` points below rest (AppKit
+    /// non-flipped: positive y is up). Layout and hit-testing see the view
+    /// at rest throughout.
+    private static func drift(_ view: NSView, from offset: CGFloat, duration: TimeInterval) {
+        guard let layer = view.layer else { return }
+        let drift = CABasicAnimation(keyPath: "transform.translation.y")
+        drift.fromValue = offset
+        drift.toValue = 0
+        drift.duration = duration
+        drift.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(drift, forKey: "expandFade.drift")
+    }
+}
+
 // MARK: - Tool Category
 
 /// Tool categories for icon selection
@@ -1129,6 +1188,9 @@ final class NativeToolCallRowView: NSView {
         argPreviewLabel.font = NSFont.systemFont(ofSize: 11)
         argPreviewLabel.textColor = NSColor(theme.tertiaryText)
 
+        // Same-call collapsed → expanded: fade the details in instead of
+        // popping (cell recycling and streaming reconfigures must not fade).
+        let expandTransition = !isNew && isExpanded && !self.isExpanded
         updateChevron(expanded: isExpanded, animated: !isNew && isExpanded != self.isExpanded)
         self.isExpanded = isExpanded
 
@@ -1172,6 +1234,13 @@ final class NativeToolCallRowView: NSView {
             tearDownTerminalView()
             tearDownSubagentFeedView()
         }
+
+        // After the detail views exist — on a first-ever expand the sections
+        // are only built above, and a reveal fired before that would find an
+        // empty container and do nothing. Slightly longer per-section fade
+        // than the default: the ARGUMENTS/RESULT bodies are dense, and the
+        // extra beat makes the reveal register.
+        if expandTransition { ExpandFade.run(contentContainer, duration: 0.38) }
 
         applyHeight()
     }

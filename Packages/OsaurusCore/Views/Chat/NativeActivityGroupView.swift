@@ -26,7 +26,16 @@ final class NativeActivityGroupView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     /// Shown in place of `titleLabel` while any child is still streaming.
     private let shimmerLabel = ShimmerLabel()
+    /// Collapsed-state step preview: overlapping status circles (one per
+    /// step, capped at 3) plus a trailing "steps" word for the overflow case.
+    private let stepChipsStack = NSStackView()
     private let stepCountLabel = NSTextField(labelWithString: "")
+    /// Signature of the currently built chips so per-token reconfigures
+    /// don't tear down and rebuild identical circles.
+    private var stepChipsSignature: String?
+    /// Shown while the group is expanded — expands every step inside the
+    /// group (in batches, see `expandAllTapped`).
+    private let expandAllButton = NSButton()
     private let chevronView = NSImageView()
     private let separatorView = NSView()
     private let contentContainer = NSView()
@@ -47,6 +56,13 @@ final class NativeActivityGroupView: NSView {
     /// streaming appends don't rebuild (and re-animate) existing children.
     private var childViews: [String: NSView] = [:]
     private var childOrder: [String] = []
+    /// Last configured children/expansion — the expand-all action needs the
+    /// per-step toggle ids and which of them are still collapsed.
+    private var lastChildren: [ContentBlock] = []
+    private var lastExpandedIds: Set<String> = []
+    private var onToggleChild: ((String) -> Void)?
+    /// Invalidates in-flight expand-all batches on collapse/teardown.
+    private var expandAllGeneration = 0
 
     // MARK: Callbacks
 
@@ -85,7 +101,10 @@ final class NativeActivityGroupView: NSView {
     ) {
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
+        self.onToggleChild = onToggleChild
         self.currentWidth = width
+        self.lastChildren = children
+        self.lastExpandedIds = expandedIds
 
         let tint = NSColor(theme.primaryText)
         let titleFont = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
@@ -131,12 +150,18 @@ final class NativeActivityGroupView: NSView {
         let expanded = expandedIds.contains(blockId)
 
         let steps = ContentBlock.activityStepCount(of: children)
-        stepCountLabel.isHidden = expanded || steps == 0
-        stepCountLabel.stringValue = steps == 1 ? L("1 step") : "\(steps) \(L("steps"))"
-        stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
-        stepCountLabel.textColor = NSColor(theme.tertiaryText)
+        configureStepChips(
+            children: children,
+            stepCount: steps,
+            hidden: expanded || steps == 0,
+            theme: theme,
+            isStreaming: isStreaming
+        )
 
         let isSameBlock = configuredBlockId == blockId
+        // Same-block collapsed → expanded: fade the children in instead of
+        // popping (cell recycling and streaming reconfigures must not fade).
+        let expandTransition = isSameBlock && expanded && !self.isExpanded
         updateChevron(
             expanded: expanded,
             animated: isSameBlock && expanded != self.isExpanded
@@ -146,6 +171,23 @@ final class NativeActivityGroupView: NSView {
 
         contentContainer.isHidden = !expanded
         separatorView.isHidden = !expanded
+
+        // Expand All / Collapse All while the group is open: expand when any
+        // step is still collapsed, collapse once everything is open.
+        let toggleIds = Self.stepToggleIds(of: children)
+        expandAllButton.isHidden = !expanded || toggleIds.isEmpty
+        let allStepsExpanded =
+            !toggleIds.isEmpty && toggleIds.allSatisfy { expandedIds.contains($0) }
+        expandAllButton.title = allStepsExpanded ? L("Collapse All") : L("Expand All")
+        expandAllButton.image = SymbolImageCache.image(
+            allStepsExpanded
+                ? "arrow.down.right.and.arrow.up.left"
+                : "arrow.up.left.and.arrow.down.right",
+            accessibilityDescription: nil, pointSize: 10, weight: .semibold)
+        expandAllButton.toolTip =
+            allStepsExpanded ? L("Collapse all steps") : L("Expand all steps")
+        expandAllButton.setAccessibilityLabel(expandAllButton.toolTip ?? "")
+        expandAllButton.contentTintColor = NSColor(theme.tertiaryText)
 
         if expanded {
             configureChildren(
@@ -161,6 +203,12 @@ final class NativeActivityGroupView: NSView {
             // its markdown/tool layers alive off-screen.
             tearDownChildren()
         }
+
+        // After the children are (re)built — the ripple walks the child
+        // stack, which is empty until configureChildren above has run.
+        // Tighter cadence than the in-step reveal: each part here is a whole
+        // step, and a long run at the default interval feels sluggish.
+        if expandTransition { ExpandFade.run(childStack, interval: 0.05, duration: 0.2) }
 
         applyHeight()
     }
@@ -258,7 +306,164 @@ final class NativeActivityGroupView: NSView {
         }
     }
 
+    // MARK: - Step chips
+
+    /// One rendered circle in the collapsed step preview.
+    private struct StepChip: Equatable {
+        /// SF Symbol shown in the circle; nil for the "+N" overflow chip.
+        var glyph: String?
+        /// Overflow text ("+4"); nil for icon chips.
+        var text: String?
+        var colorKey: ChipColor
+
+        enum ChipColor: String {
+            case neutral, running, success, error
+        }
+    }
+
+    /// Flattened per-step descriptors in run order — thinking segments count
+    /// as one step each, tool calls one each (mirrors `activityStepCount`).
+    private static func stepChips(
+        for children: [ContentBlock], stepCount: Int, isStreaming: Bool
+    ) -> [StepChip] {
+        var all: [StepChip] = []
+        for child in children {
+            switch child.kind {
+            case .thinking:
+                all.append(StepChip(glyph: "brain", text: nil, colorKey: .neutral))
+            case let .toolCallGroup(calls):
+                for call in calls {
+                    let name = call.call.function.name
+                    let glyph =
+                        SubagentCapabilityRegistry.iconName(forToolName: name)
+                        ?? ToolCategory.from(toolName: name).icon
+                    let colorKey: StepChip.ChipColor
+                    if call.result == nil {
+                        // Unresolved: running while the table streams; a
+                        // loaded chat's never-resolved call reads neutral.
+                        colorKey = isStreaming ? .running : .neutral
+                    } else if ToolEnvelope.isError(call.result ?? "") {
+                        colorKey = .error
+                    } else {
+                        colorKey = .success
+                    }
+                    all.append(StepChip(glyph: glyph, text: nil, colorKey: colorKey))
+                }
+            default:
+                break
+            }
+        }
+        guard all.count > 3 else { return all }
+        return Array(all.prefix(2)) + [
+            StepChip(glyph: nil, text: "+\(stepCount - 2)", colorKey: .neutral)
+        ]
+    }
+
+    private func chipColor(_ key: StepChip.ChipColor, theme: any ThemeProtocol) -> NSColor {
+        switch key {
+        case .neutral: return NSColor(theme.tertiaryText)
+        case .running: return NSColor(theme.accentColor)
+        case .success: return NSColor(theme.successColor)
+        case .error: return NSColor(theme.errorColor)
+        }
+    }
+
+    private func configureStepChips(
+        children: [ContentBlock],
+        stepCount: Int,
+        hidden: Bool,
+        theme: any ThemeProtocol,
+        isStreaming: Bool
+    ) {
+        stepChipsStack.isHidden = hidden
+        stepCountLabel.isHidden = hidden
+        if hidden { return }
+
+        // With an overflow chip the "+N" already carries the number, so the
+        // label is just the word; small groups spell out the full count.
+        stepCountLabel.stringValue =
+            stepCount > 3
+            ? L("steps")
+            : (stepCount == 1 ? L("1 step") : "\(stepCount) \(L("steps"))")
+        stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
+        stepCountLabel.textColor = NSColor(theme.tertiaryText)
+
+        let chips = Self.stepChips(for: children, stepCount: stepCount, isStreaming: isStreaming)
+        let signature =
+            chips.map { "\($0.glyph ?? $0.text ?? "")/\($0.colorKey.rawValue)" }
+            .joined(separator: ",") + "|dark:\(theme.isDark)"
+        guard signature != stepChipsSignature else { return }
+        stepChipsSignature = signature
+
+        for v in stepChipsStack.arrangedSubviews {
+            stepChipsStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        // Opaque backing so overlapped circles don't show through each other.
+        let backing = NSColor(theme.primaryBackground)
+        for chip in chips {
+            let color = chipColor(chip.colorKey, theme: theme)
+            stepChipsStack.addArrangedSubview(makeChipView(chip, color: color, backing: backing))
+        }
+        // Trailing "steps" word (overflow case only — hidden views are
+        // detached from the stack's layout). Positive gap after the
+        // negatively-spaced circles.
+        stepChipsStack.addArrangedSubview(stepCountLabel)
+        if let lastChip = stepChipsStack.arrangedSubviews.dropLast().last {
+            stepChipsStack.setCustomSpacing(6, after: lastChip)
+        }
+    }
+
+    private static let chipSize: CGFloat = 20
+
+    private func makeChipView(_ chip: StepChip, color: NSColor, backing: NSColor) -> NSView {
+        let circle = NSView()
+        circle.translatesAutoresizingMaskIntoConstraints = false
+        circle.wantsLayer = true
+        circle.layer?.cornerRadius = Self.chipSize / 2
+        circle.layer?.borderWidth = 1.5
+        circle.layer?.borderColor = color.withAlphaComponent(0.55).cgColor
+        circle.layer?.backgroundColor =
+            (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
+        circle.heightAnchor.constraint(equalToConstant: Self.chipSize).isActive = true
+
+        if let glyph = chip.glyph {
+            circle.widthAnchor.constraint(equalToConstant: Self.chipSize).isActive = true
+            let icon = NSImageView()
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.image = SymbolImageCache.image(
+                glyph, accessibilityDescription: nil, pointSize: 9, weight: .semibold)
+            icon.contentTintColor = color
+            icon.imageScaling = .scaleProportionallyDown
+            circle.addSubview(icon)
+            NSLayoutConstraint.activate([
+                icon.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
+                icon.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 10),
+                icon.heightAnchor.constraint(equalToConstant: 10),
+            ])
+        } else {
+            // Overflow "+N": capsule that widens with the text but never
+            // shrinks below a circle.
+            let label = NSTextField(labelWithString: chip.text ?? "")
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
+            label.textColor = color
+            circle.addSubview(label)
+            circle.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.chipSize).isActive = true
+            NSLayoutConstraint.activate([
+                label.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
+                label.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
+                label.leadingAnchor.constraint(
+                    greaterThanOrEqualTo: circle.leadingAnchor, constant: 5),
+            ])
+        }
+        return circle
+    }
+
     private func tearDownChildren() {
+        // Collapsing the group cancels any in-flight expand-all batches.
+        expandAllGeneration += 1
         for v in childStack.arrangedSubviews {
             childStack.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -309,10 +514,33 @@ final class NativeActivityGroupView: NSView {
         shimmerLabel.isHidden = true
         addSubview(shimmerLabel)
 
+        stepChipsStack.translatesAutoresizingMaskIntoConstraints = false
+        stepChipsStack.orientation = .horizontal
+        stepChipsStack.alignment = .centerY
+        // Negative spacing overlaps the circles into an avatar-style stack.
+        stepChipsStack.spacing = -6
+        addSubview(stepChipsStack)
+
         stepCountLabel.translatesAutoresizingMaskIntoConstraints = false
         stepCountLabel.isEditable = false; stepCountLabel.isBordered = false
         stepCountLabel.drawsBackground = false
-        addSubview(stepCountLabel)
+
+        expandAllButton.translatesAutoresizingMaskIntoConstraints = false
+        expandAllButton.image = SymbolImageCache.image(
+            "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil,
+            pointSize: 10, weight: .semibold)
+        expandAllButton.title = L("Expand All")
+        expandAllButton.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        expandAllButton.imagePosition = .imageLeading
+        expandAllButton.isBordered = false
+        expandAllButton.focusRingType = .none
+        expandAllButton.contentTintColor = .tertiaryLabelColor
+        expandAllButton.toolTip = L("Expand all steps")
+        expandAllButton.setAccessibilityLabel(L("Expand all steps"))
+        expandAllButton.target = self
+        expandAllButton.action = #selector(expandAllTapped)
+        expandAllButton.isHidden = true
+        addSubview(expandAllButton)
 
         chevronView.translatesAutoresizingMaskIntoConstraints = false
         chevronView.wantsLayer = true
@@ -372,8 +600,13 @@ final class NativeActivityGroupView: NSView {
             chevronView.widthAnchor.constraint(equalToConstant: 12),
             chevronView.heightAnchor.constraint(equalToConstant: 12),
 
-            stepCountLabel.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
-            stepCountLabel.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
+            stepChipsStack.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
+            stepChipsStack.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
+
+            // Occupies the chips' slot — chips show collapsed, this shows expanded.
+            expandAllButton.trailingAnchor.constraint(equalTo: chevronView.leadingAnchor, constant: -8),
+            expandAllButton.centerYAnchor.constraint(equalTo: chevronView.centerYAnchor),
+            expandAllButton.heightAnchor.constraint(equalToConstant: 20),
 
             separatorView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             separatorView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
@@ -398,6 +631,59 @@ final class NativeActivityGroupView: NSView {
         // area. Transparent, and only 44pt tall, so it never paints over or
         // intercepts the expanded children below.
         addSubview(headerButton, positioned: .above, relativeTo: nil)
+        // The expand-all control must sit above the transparent header
+        // overlay or its clicks would toggle the group instead.
+        addSubview(expandAllButton, positioned: .above, relativeTo: headerButton)
+    }
+
+    // MARK: - Expand all
+
+    /// Toggle ids of every step in the group, in display order: a thinking
+    /// child expands by its block id, a tool-call child by each call id.
+    private static func stepToggleIds(of children: [ContentBlock]) -> [String] {
+        children.flatMap { child -> [String] in
+            switch child.kind {
+            case .thinking: return [child.id]
+            case let .toolCallGroup(calls): return calls.map { $0.call.id }
+            default: return []
+            }
+        }
+    }
+
+    /// Expands every still-collapsed step, or — when everything is already
+    /// open — collapses them all. Batched: each toggle triggers a cell
+    /// reconfigure + row re-measure, so a run with dozens of steps would
+    /// stutter if flipped in one burst. A few per tick keeps the table
+    /// responsive and reads as a quick top-to-bottom cascade.
+    @objc private func expandAllTapped() {
+        let allIds = Self.stepToggleIds(of: lastChildren)
+        let collapsed = allIds.filter { !lastExpandedIds.contains($0) }
+        // Any collapsed step → expand those; none → collapse everything.
+        let expanding = !collapsed.isEmpty
+        let pending = expanding ? collapsed : allIds
+        guard !pending.isEmpty, let toggle = onToggleChild else { return }
+
+        expandAllGeneration += 1
+        let generation = expandAllGeneration
+        let batchSize = 3
+        let batchInterval = 0.12
+
+        for (batchIndex, start) in stride(from: 0, to: pending.count, by: batchSize).enumerated() {
+            let batch = Array(pending[start ..< min(start + batchSize, pending.count)])
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + batchInterval * Double(batchIndex)
+            ) { [weak self] in
+                guard let self, self.expandAllGeneration == generation, self.isExpanded
+                else { return }
+                // Re-check against the latest expansion state — a step the
+                // user flipped since the tap must not be toggled back the
+                // other way.
+                for id in batch
+                where self.lastExpandedIds.contains(id) != expanding {
+                    toggle(id)
+                }
+            }
+        }
     }
 
     private func updateChevron(expanded: Bool, animated: Bool) {
