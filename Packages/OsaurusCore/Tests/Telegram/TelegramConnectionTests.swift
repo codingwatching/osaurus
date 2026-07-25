@@ -320,6 +320,23 @@ struct TelegramConnectionTests {
         }
     }
 
+    @Test func discoveryLoadsPendingChatsAndHumanSendersWithoutAdvancingCursor() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let fake = FakeTelegramAPIClient()
+            await fake.setUpdates([
+                .fixture(updateId: 42, messageId: 10, chatId: -100111222333, text: "discover me"),
+            ])
+            let service = TelegramConnectionService(client: fake, credentialStore: credentials)
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+
+            let discovery = try await service.discoverConfigurationOptions()
+
+            #expect(discovery.chats.map(\.stableId) == ["-100111222333"])
+            #expect(discovery.users.map(\.id) == [7])
+            #expect(await fake.lastUpdateOffset() == nil)
+        }
+    }
+
     @Test func transportRuntimeUsesStoredOffsetBoundedPollingAndHealth() async throws {
         try await withIsolatedTelegramStores { credentials in
             let store = AgentChannelMessageStore()
@@ -1352,6 +1369,65 @@ struct TelegramConnectionTests {
                 "bot_message_denied",
             ])
             #expect(try store.messageCount(connectionId: "telegram") == 0)
+        }
+    }
+
+    @Test func processUpdatesRecordsPerEventInboundActivityStages() async throws {
+        try await withIsolatedTelegramStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let activity = AgentChannelInboundActivityCenter()
+            let service = TelegramConnectionService(
+                client: FakeTelegramAPIClient(),
+                credentialStore: credentials,
+                messageStore: store,
+                recordMessageSnapshotsInline: true,
+                activityCenter: activity
+            )
+            try service.saveBotToken("123456:telegram-bot-token-super-secret")
+            try service.saveConfiguration(
+                TelegramConnectionConfiguration(
+                    readableChatIds: ["-100111222333"],
+                    senderAllowlist: ["7"]
+                )
+            )
+
+            _ = try await service.processUpdates(
+                [
+                    .fixture(updateId: 31, messageId: 31, chatId: -100111222333, text: "authorized question"),
+                    .fixture(updateId: 32, messageId: 32, chatId: -100999888777, text: "wrong room"),
+                ],
+                source: "fixture"
+            )
+
+            let events = await activity.recent(connectionId: "telegram", limit: 20)
+
+            // Authorized message travels received → stored, then dispatch is
+            // suppressed because no agent dispatch is configured.
+            let acceptedStages = events
+                .filter { $0.providerEventId == "31" }
+                .map(\.stage)
+                .reversed()
+            #expect(
+                Array(acceptedStages) == [.received, .stored, .dispatchSuppressed]
+            )
+            let suppressed = events.first {
+                $0.providerEventId == "31" && $0.stage == .dispatchSuppressed
+            }
+            #expect(suppressed?.reason == "inbound_dispatch_not_configured")
+
+            // Non-allowlisted room is rejected with the boundary reason.
+            let rejectedStages = events
+                .filter { $0.providerEventId == "32" }
+                .map(\.stage)
+                .reversed()
+            #expect(Array(rejectedStages) == [.received, .rejected])
+            let rejected = events.first {
+                $0.providerEventId == "32" && $0.stage == .rejected
+            }
+            #expect(rejected?.reason == "room_not_allowlisted")
         }
     }
 

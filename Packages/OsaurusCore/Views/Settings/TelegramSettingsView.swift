@@ -9,6 +9,7 @@ import SwiftUI
 
 struct TelegramSettingsView: View {
     @ObservedObject private var themeManager = ThemeManager.shared
+    @ObservedObject private var agentManager = AgentManager.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var botToken: String = ""
@@ -23,6 +24,10 @@ struct TelegramSettingsView: View {
     @State private var longPollingEnabled: Bool = false
     @State private var longPollingLimit: String = "100"
     @State private var longPollingTimeoutSeconds: String = "20"
+    @State private var inboundDispatchEnabled = false
+    @State private var inboundAgentId: UUID?
+    @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
+    @State private var inboundAutoReplyEnabled = false
     @State private var tokenSaved: Bool = false
     @State private var statusMessage: String?
     @State private var statusDetails: [String] = []
@@ -33,6 +38,10 @@ struct TelegramSettingsView: View {
     @State private var isCheckingWebhook = false
     @State private var isRemovingWebhook = false
     @State private var webhookRegistered = false
+    @State private var isDiscovering = false
+    @State private var discovery: TelegramConnectionDiscovery?
+    @State private var isVerifying = false
+    @State private var activityRefreshToken = 0
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
@@ -47,20 +56,26 @@ struct TelegramSettingsView: View {
         ) {
             VStack(alignment: .leading, spacing: 20) {
                 Text(
-                    "Connect a Telegram bot, then enable long polling and allowlist readable chats plus authorized senders before expecting new messages to arrive.",
+                    "Osaurus polls Telegram for new messages — no webhook or public URL is needed. Follow the numbered steps; each shows a checkmark when it is complete.",
                     bundle: .module
                 )
                 .font(.system(size: 12))
                 .foregroundColor(theme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
 
-                credentialsSection
+                stepCreateBotSection
                 SettingsDivider()
-                accessSection
+                stepTokenSection
+                SettingsDivider()
+                stepAccessSection
+                SettingsDivider()
+                stepReceiveSection
+                SettingsDivider()
+                stepDispatchSection
                 SettingsDivider()
                 sendingSection
                 SettingsDivider()
-                receiveSection
+                stepVerifySection
                 SettingsDivider()
                 advancedSection
             }
@@ -95,50 +110,181 @@ struct TelegramSettingsView: View {
                 .disabled(isSaving)
             }
         }
-        .onAppear(perform: loadConfiguration)
+        .onAppear {
+            loadConfiguration()
+            if tokenSaved {
+                refreshDiscovery(showStatus: false)
+            }
+        }
     }
 
-    private var credentialsSection: some View {
-        SettingsSubsection(label: L("Credentials")) {
-            VStack(alignment: .leading, spacing: 12) {
-                AgentChannelSetupLink(
-                    title: L("Create a bot with @BotFather, then paste its token"),
-                    url: URL(string: "https://t.me/botfather")!
-                )
+    // MARK: - Guided setup steps
 
-                AgentChannelSecretField(
-                    label: L("Bot Token"),
-                    requirementHint: L("Required"),
-                    placeholder: L("123456789:ABC..."),
-                    text: $botToken,
-                    saved: tokenSaved,
-                    onRemove: removeToken
-                )
+    private func stepHeader(_ number: Int, _ title: String, done: Bool) -> some View {
+        AgentChannelSetupStepHeader(number: number, title: title, done: done)
+    }
 
-                Text("Saved to the macOS Keychain when you press Save.", bundle: .module)
-                    .font(.system(size: 11))
+    private var stepCreateBotSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            stepHeader(1, L("Create the bot with @BotFather"), done: tokenSaved || hasPendingToken)
+
+            AgentChannelSetupLink(
+                title: L("Open @BotFather in Telegram"),
+                url: URL(string: "https://t.me/botfather")!
+            )
+
+            AgentChannelCopyableCommand(
+                command: "/newbot",
+                caption: L("Creates the bot and prints its token."),
+                onCopied: { showStatus(L("Command copied"), isError: false) }
+            )
+            AgentChannelCopyableCommand(
+                command: "/setprivacy",
+                caption: L("Choose your bot, then Disable — otherwise the bot cannot see group messages."),
+                onCopied: { showStatus(L("Command copied"), isError: false) }
+            )
+        }
+    }
+
+    private var stepTokenSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            stepHeader(2, L("Paste the bot token"), done: tokenSaved)
+
+            AgentChannelSecretField(
+                label: L("Bot Token"),
+                requirementHint: L("Required"),
+                placeholder: L("123456789:ABC..."),
+                text: $botToken,
+                saved: tokenSaved,
+                onRemove: removeToken
+            )
+
+            Text("Saved to the macOS Keychain when you press Save.", bundle: .module)
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private var stepAccessSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(
+                3,
+                L("Choose chats and senders"),
+                done: !parseIds(readableChatIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
+            )
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(discovery == nil ? L("Load recent Telegram choices") : L("Telegram choices loaded"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Text(
+                        "Send the bot a message (or add it to a group and post there), then load pending chats and senders.",
+                        bundle: .module
+                    )
+                    .font(.system(size: 10))
                     .foregroundColor(theme.tertiaryText)
+                }
+                Spacer()
+                AgentChannelSheetActionButton(
+                    title: discovery == nil ? L("Load from Telegram") : L("Refresh"),
+                    busyTitle: L("Loading..."),
+                    isBusy: isDiscovering,
+                    action: { refreshDiscovery(showStatus: true) }
+                )
+                .disabled(isDiscovering || (!tokenSaved && !hasPendingToken))
             }
+            if let discovery {
+                telegramDiscoverySelector(discovery)
+                ForEach(discovery.warnings, id: \.self) { warning in
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(theme.warningColor)
+                }
+            }
+
+            Text(
+                "Mark chats as Read so agents can see them, and mark people as Allow so their messages are handled. Manual ID fields are under Advanced.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
-    private var accessSection: some View {
-        SettingsSubsection(label: L("Access")) {
-            VStack(alignment: .leading, spacing: 12) {
-                AgentChannelMultilineSettingsField(
-                    title: L("Readable Chat IDs"),
-                    text: $readableChatIdsText,
-                    placeholder: L("-1001234567890 or @channelname — one per line"),
-                    help: L("Chats, supergroups, or public channels agents may read.")
-                )
-                AgentChannelMultilineSettingsField(
-                    title: L("Authorized Sender IDs"),
-                    text: $senderAllowlistText,
-                    placeholder: L("123456789 — one per line"),
-                    help: L("Only these Telegram users can trigger inbound handling; required for receive.")
-                )
+    private func telegramDiscoverySelector(_ discovery: TelegramConnectionDiscovery) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Recent Chats", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+            ForEach(discovery.chats, id: \.stableId) { chat in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(chat.displayName)
+                            .font(.system(size: 11, weight: .medium))
+                        Text(chat.stableId)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    telegramSelectionButton(
+                        L("Read"),
+                        selected: parseIds(readableChatIdsText).contains(chat.stableId)
+                    ) {
+                        readableChatIdsText = toggledIdText(readableChatIdsText, id: chat.stableId)
+                    }
+                    telegramSelectionButton(
+                        L("Write"),
+                        selected: parseIds(writableChatIdsText).contains(chat.stableId)
+                    ) {
+                        writableChatIdsText = toggledIdText(writableChatIdsText, id: chat.stableId)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Text("Recent Senders", bundle: .module)
+                .font(.system(size: 11, weight: .semibold))
+            ForEach(discovery.users, id: \.id) { user in
+                let userId = "\(user.id)"
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(user.displayName)
+                            .font(.system(size: 11, weight: .medium))
+                        Text(userId)
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(theme.tertiaryText)
+                    }
+                    Spacer()
+                    telegramSelectionButton(
+                        L("Allow"),
+                        selected: parseIds(senderAllowlistText).contains(userId)
+                    ) {
+                        senderAllowlistText = toggledIdText(senderAllowlistText, id: userId)
+                    }
+                }
+                .padding(.vertical, 4)
             }
         }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+        )
+    }
+
+    private func telegramSelectionButton(
+        _ title: String,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundColor(selected ? theme.accentColor : theme.secondaryText)
+        }
+        .buttonStyle(.plain)
     }
 
     private var sendingSection: some View {
@@ -163,60 +309,126 @@ struct TelegramSettingsView: View {
         }
     }
 
-    private var receiveSection: some View {
-        SettingsSubsection(label: L("Receive")) {
-            VStack(alignment: .leading, spacing: 12) {
-                SettingsToggle(
-                    title: L("Store Incoming Messages"),
-                    description: L("Keep authorized Telegram updates in the local inbox so agents can read and search them."),
-                    isOn: $receiveStorageEnabled
-                )
-                SettingsToggle(
-                    title: L("Enable Long Polling"),
-                    description: L(
-                        "Use Telegram getUpdates as the local desktop receive path. Only enable this when no other consumer is polling the same bot."
-                    ),
-                    isOn: $longPollingEnabled.animation(.easeOut(duration: 0.2))
-                )
+    private var stepReceiveSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(
+                4,
+                L("Turn on receiving"),
+                done: longPollingEnabled && receiveStorageEnabled
+            )
 
-                if longPollingEnabled {
-                    HStack(alignment: .top, spacing: 12) {
-                        StyledSettingsTextField(
-                            label: L("Long Poll Limit"),
-                            text: $longPollingLimit,
-                            placeholder: "100",
-                            help: L("Maximum updates per poll. Clamped to 1-100.")
-                        )
-                        StyledSettingsTextField(
-                            label: L("Long Poll Timeout Seconds"),
-                            text: $longPollingTimeoutSeconds,
-                            placeholder: "20",
-                            help: L("Telegram long-poll timeout. Clamped to 1-50 seconds.")
-                        )
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
+            SettingsToggle(
+                title: L("Receive Messages"),
+                description: L(
+                    "Osaurus continuously asks Telegram for new messages while the app runs (long polling). Turn this off only if another program polls the same bot."
+                ),
+                isOn: $longPollingEnabled.animation(.easeOut(duration: 0.2))
+            )
+            SettingsToggle(
+                title: L("Store Incoming Messages"),
+                description: L("Keep authorized Telegram updates in the local inbox so agents can read and search them."),
+                isOn: $receiveStorageEnabled
+            )
 
+            if !longPollingEnabled {
                 Text(
-                    "Reads serve messages from the local inbox; a token alone does not fetch new activity until long polling, readable chats, and authorized senders are configured.",
+                    "Receiving is off: agents will not see new Telegram messages and nothing can be dispatched.",
                     bundle: .module
                 )
                 .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.warningColor)
                 .fixedSize(horizontal: false, vertical: true)
-
-                AgentChannelTransportHealthView(
-                    connectionId: TelegramConnectionService.nativeConnectionId,
-                    transportId: TelegramLongPollTransportRuntime.transportId,
-                    title: L("Long polling receive"),
-                    notRunningHint: L(
-                        "Long polling is not running. Save a bot token, enable long polling, then add readable chat IDs and authorized sender IDs to start it."
-                    ),
-                    refreshToken: healthRefreshToken
-                )
-
-                webhookTools
             }
+
+            webhookTools
+        }
+    }
+
+    private var stepDispatchSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(
+                5,
+                L("Send incoming messages to an agent"),
+                done: inboundDispatchEnabled && (inboundAgentId != nil || !inboundRoutes.isEmpty)
+            )
+
+            SettingsToggle(
+                title: L("Dispatch Incoming Messages to an Agent"),
+                description: L(
+                    "Run verified, allowlisted Telegram messages in a private channel session. External-surface tool restrictions still apply."
+                ),
+                isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
+            )
+
+            if inboundDispatchEnabled {
+                AgentChannelDispatchRoutingEditor(
+                    roomNoun: L("chat"),
+                    rooms: routableRooms,
+                    defaultAgentId: $inboundAgentId,
+                    routes: $inboundRoutes
+                )
+                SettingsToggle(
+                    title: L("Reply Automatically"),
+                    description: L(
+                        "Reply to the incoming Telegram message with the selected agent's sanitized response. Telegram and global writes plus the write allowlist still apply."
+                    ),
+                    isOn: $inboundAutoReplyEnabled
+                )
+            }
+        }
+    }
+
+    private var stepVerifySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            stepHeader(6, L("Verify an incoming message"), done: false)
+
+            Text(
+                "Receiving starts automatically after Save once steps 2–4 are complete. Send the bot any message from an authorized sender in a readable chat, then watch each stage appear here.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .foregroundColor(theme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+
+            AgentChannelTransportHealthView(
+                connectionId: TelegramConnectionService.nativeConnectionId,
+                transportId: TelegramLongPollTransportRuntime.transportId,
+                title: L("Telegram receive"),
+                notRunningHint: L(
+                    "Receiving is not running. Save a bot token, turn on Receive Messages, then add readable chats and authorized senders to start it."
+                ),
+                refreshToken: healthRefreshToken
+            )
+
+            AgentChannelInboundActivityListView(
+                connectionId: TelegramConnectionService.nativeConnectionId,
+                emptyHint: L(
+                    "No incoming Telegram messages yet this session. Send the bot a message and press “Verify incoming message”."
+                ),
+                refreshToken: activityRefreshToken
+            )
+
+            AgentChannelSheetActionButton(
+                title: L("Verify incoming message"),
+                busyTitle: L("Waiting for a Telegram message..."),
+                isBusy: isVerifying,
+                action: verifyIncomingMessage
+            )
+            .disabled(isVerifying || isSaving || isTesting)
+        }
+    }
+
+    /// Discovered chats mapped into the shared routing editor's room shape.
+    private var routableRooms: [AgentChannelRoutableRoom] {
+        guard let discovery else { return [] }
+        return discovery.chats.map { chat in
+            let name = chat.title
+                ?? chat.username.map { "@\($0)" }
+                ?? [chat.firstName, chat.lastName].compactMap(\.self).joined(separator: " ")
+            return AgentChannelRoutableRoom(
+                id: "\(chat.id)",
+                name: name.isEmpty ? "\(chat.id)" : name
+            )
         }
     }
 
@@ -258,6 +470,39 @@ struct TelegramSettingsView: View {
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
             VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    "Manual IDs are a fallback for chats or senders not returned by discovery.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+
+                AgentChannelMultilineSettingsField(
+                    title: L("Readable Chat IDs"),
+                    text: $readableChatIdsText,
+                    placeholder: L("-1001234567890 or @channelname — one per line"),
+                    help: L("Chats, supergroups, or public channels agents may read.")
+                )
+                AgentChannelMultilineSettingsField(
+                    title: L("Authorized Sender IDs"),
+                    text: $senderAllowlistText,
+                    placeholder: L("123456789 — one per line"),
+                    help: L("Only these Telegram users can trigger inbound handling; required for receive.")
+                )
+                HStack(alignment: .top, spacing: 12) {
+                    StyledSettingsTextField(
+                        label: L("Long Poll Limit"),
+                        text: $longPollingLimit,
+                        placeholder: "100",
+                        help: L("Maximum updates per poll. Clamped to 1-100.")
+                    )
+                    StyledSettingsTextField(
+                        label: L("Long Poll Timeout Seconds"),
+                        text: $longPollingTimeoutSeconds,
+                        placeholder: "20",
+                        help: L("Telegram long-poll timeout. Clamped to 1-50 seconds.")
+                    )
+                }
                 StyledSettingsTextField(
                     label: L("Default Read Limit"),
                     text: $defaultReadLimit,
@@ -291,6 +536,10 @@ struct TelegramSettingsView: View {
         longPollingEnabled = configuration.longPollingEnabled
         longPollingLimit = "\(configuration.longPollingLimit)"
         longPollingTimeoutSeconds = "\(configuration.longPollingTimeoutSeconds)"
+        inboundDispatchEnabled = configuration.inboundDispatch.enabled
+        inboundAgentId = configuration.inboundDispatch.targetAgentId
+        inboundRoutes = configuration.inboundDispatch.routes
+        inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
         tokenSaved = TelegramConnectionService.shared.hasBotToken()
     }
 
@@ -323,6 +572,28 @@ struct TelegramSettingsView: View {
 
     @discardableResult
     private func saveConfiguration() -> Bool {
+        if inboundDispatchEnabled, inboundAgentId == nil, inboundRoutes.isEmpty {
+            showStatus(
+                L("Select a default agent or add a routing rule for incoming Telegram messages."),
+                isError: true
+            )
+            return false
+        }
+        if inboundDispatchEnabled, inboundAutoReplyEnabled {
+            guard writeEnabled else {
+                showStatus(L("Enable Telegram sending before automatic channel replies."), isError: true)
+                return false
+            }
+            let readable = Set(parseIds(readableChatIdsText))
+            let writable = Set(parseIds(writableChatIdsText))
+            guard readable.isSubset(of: writable) else {
+                showStatus(
+                    L("Every readable Telegram chat must also be writable when automatic replies are enabled."),
+                    isError: true
+                )
+                return false
+            }
+        }
         let configuration = TelegramConnectionConfiguration(
             readableChatIds: parseIds(readableChatIdsText),
             writableChatIds: parseIds(writableChatIdsText),
@@ -334,7 +605,15 @@ struct TelegramSettingsView: View {
             receiveStorageEnabled: receiveStorageEnabled,
             longPollingEnabled: longPollingEnabled,
             longPollingLimit: Int(longPollingLimit) ?? 100,
-            longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20
+            longPollingTimeoutSeconds: Int(longPollingTimeoutSeconds) ?? 20,
+            inboundDispatch: AgentChannelInboundDispatchConfiguration(
+                enabled: inboundDispatchEnabled,
+                targetAgentId: inboundAgentId,
+                routes: inboundRoutes,
+                requireMention: false,
+                continueThreads: true,
+                autoReplyEnabled: inboundAutoReplyEnabled
+            )
         )
         do {
             try TelegramConnectionService.shared.saveConfiguration(configuration)
@@ -347,16 +626,37 @@ struct TelegramSettingsView: View {
 
     /// Persist the configuration, hold the Save button busy until diagnostics
     /// prove whether receive is active, then either close or show next steps.
+    /// When the user wants receive (dispatch is on) and receive cannot
+    /// actually run, the sheet stays open with the exact readiness blockers
+    /// rather than dismissing on a superficially successful save.
     private func saveAndDismiss() {
         guard persistPendingSecrets(), saveConfiguration() else { return }
         isSaving = true
         Task {
             await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
             let diagnostics = await TelegramConnectionService.shared.diagnostics()
+            let report = AgentChannelLiveProofReadiness.telegram(diagnostics)
             await MainActor.run {
                 isSaving = false
                 healthRefreshToken += 1
                 webhookRegistered = diagnostics.webhook?.registered ?? webhookRegistered
+
+                if inboundDispatchEnabled {
+                    if report.isReadyForLiveProof {
+                        _ = ToastManager.shared.success(
+                            L("Telegram settings saved — receive is ready")
+                        )
+                        clearStatus()
+                        dismiss()
+                    } else {
+                        showStatus(
+                            L("Saved, but Telegram receive is not ready yet"),
+                            details: report.blockers + report.notes,
+                            isError: true
+                        )
+                    }
+                    return
+                }
 
                 let presentation = AgentChannelStatusPresentation.diagnostics(
                     status: diagnostics.status
@@ -482,6 +782,120 @@ struct TelegramSettingsView: View {
         statusIsError = isError
     }
 
+    /// Discovery issues its own getUpdates call, which conflicts with an
+    /// active long-poll runtime (Telegram allows one consumer). Pause the
+    /// runtime around discovery and resume it afterwards.
+    private func refreshDiscovery(showStatus announce: Bool) {
+        guard persistPendingSecrets() else { return }
+        isDiscovering = true
+        Task {
+            await AgentChannelTransportSupervisor.shared.suspendTelegramRuntime()
+            defer {
+                Task {
+                    await AgentChannelTransportSupervisor.shared.refreshTelegramRuntime()
+                    await MainActor.run { healthRefreshToken += 1 }
+                }
+            }
+            do {
+                let loaded = try await TelegramConnectionService.shared.discoverConfigurationOptions()
+                await MainActor.run {
+                    discovery = loaded
+                    isDiscovering = false
+                    if announce {
+                        showStatus(
+                            L("Loaded recent Telegram chats and senders."),
+                            details: loaded.warnings,
+                            isError: false
+                        )
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isDiscovering = false
+                    if announce {
+                        showStatus(error.localizedDescription, isError: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func verifyIncomingMessage() {
+        isVerifying = true
+        showStatus(
+            L("Waiting for a Telegram message. Send the bot a message now from an authorized sender in a readable chat."),
+            isError: false
+        )
+        let start = Date()
+        let autoReply = inboundAutoReplyEnabled
+        Task {
+            let outcome = await AgentChannelInboundVerifier.waitForTerminalEvent(
+                connectionId: TelegramConnectionService.nativeConnectionId,
+                since: start,
+                autoReplyEnabled: autoReply,
+                onActivity: {
+                    activityRefreshToken += 1
+                    healthRefreshToken += 1
+                }
+            )
+            await MainActor.run {
+                isVerifying = false
+                activityRefreshToken += 1
+                if let event = outcome.event {
+                    presentVerifyOutcome(event, timedOutWaitingForMore: outcome.timedOutWaitingForMore)
+                } else {
+                    showStatus(
+                        L("No Telegram message arrived within 90 seconds."),
+                        details: verifyNoEventGuidance(),
+                        isError: true
+                    )
+                }
+            }
+        }
+    }
+
+    private func presentVerifyOutcome(
+        _ event: AgentChannelInboundActivityEvent,
+        timedOutWaitingForMore: Bool = false
+    ) {
+        let label = AgentChannelInboundActivityPresentation.label(for: event.stage)
+        var details: [String] = []
+        if let guidance = AgentChannelInboundActivityPresentation.guidance(
+            stage: event.stage,
+            reason: event.reason
+        ) {
+            details.append(guidance)
+        }
+        let isError: Bool
+        switch event.stage {
+        case .rejected, .dispatchSuppressed, .failed:
+            isError = true
+        case .received, .stored, .dispatched, .agentReplied, .replySent:
+            isError = timedOutWaitingForMore
+        }
+        if timedOutWaitingForMore {
+            details.append(
+                L("The message stopped at this stage before the wait expired; check the recent events list above.")
+            )
+        }
+        showStatus(label, details: details, isError: isError)
+    }
+
+    private func verifyNoEventGuidance() -> [String] {
+        var guidance = [
+            L("Confirm the message was sent in a chat selected as readable, by a person in Authorized Senders."),
+            L("Confirm Receive Messages is on and the settings were saved."),
+            L("Confirm no webhook is registered for the bot (use Check Webhook in step 4)."),
+            L("Confirm bot privacy is disabled via @BotFather /setprivacy if the message was sent in a group."),
+        ]
+        if let warning = OsaurusRunningInstanceInspector.duplicateInstanceWarning(
+            instanceCount: OsaurusRunningInstanceInspector.runningInstanceCount()
+        ) {
+            guidance.append(warning)
+        }
+        return guidance
+    }
+
     private func showDiagnostics(
         _ diagnostics: TelegramConnectionDiagnostics,
         presentation suppliedPresentation: AgentChannelStatusPresentation? = nil
@@ -505,5 +919,15 @@ struct TelegramSettingsView: View {
         return TelegramConnectionConfiguration.normalizedIds(
             text.components(separatedBy: separators)
         )
+    }
+
+    private func toggledIdText(_ text: String, id: String) -> String {
+        var ids = parseIds(text)
+        if let index = ids.firstIndex(of: id) {
+            ids.remove(at: index)
+        } else {
+            ids.append(id)
+        }
+        return ids.joined(separator: "\n")
     }
 }
