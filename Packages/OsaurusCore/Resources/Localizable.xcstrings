@@ -1902,13 +1902,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 已为 %@ 自动禁用 — 其上下文窗口太小无法承载。"
+            "value" : "%1$@ 已为 %2$@ 自动禁用 — 其上下文窗口太小无法承载。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 已为 %@ 自动停用 — 其上下文窗口太小无法承载。"
+            "value" : "%1$@ 已爲 %2$@ 自動停用 — 其上下文窗口太小無法承載。"
           }
         }
       }
@@ -2499,13 +2499,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ / %@ 剩余"
+            "value" : "%1$@ / %2$@ 剩余"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ / %@ 剩余"
+            "value" : "%1$@ / %2$@ 剩餘"
           }
         }
       }
@@ -3589,7 +3589,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 個活跃"
+            "value" : "%lld 個活躍"
           }
         }
       }
@@ -3665,7 +3665,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许 %1%lld 个 · %2$lld 人"
+            "value" : "允許 %1%lld 個 · %2$lld 人"
           }
         }
       }
@@ -3768,7 +3768,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "必须先修复 %lld 個阻塞发现才能进行設定。"
+            "value" : "必須先修復 %lld 個阻塞發現才能進行設定。"
           }
         }
       }
@@ -3838,7 +3838,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 个頻道"
+            "value" : "%lld 個頻道"
           }
         }
       }
@@ -4426,7 +4426,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "跳过 %lld 個外部候选"
+            "value" : "跳過 %lld 個外部候選"
           }
         }
       }
@@ -4568,7 +4568,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "找到 %lld 个"
+            "value" : "找到 %lld 個"
           }
         }
       }
@@ -4754,7 +4754,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 個项目将被編輯"
+            "value" : "%lld 個項目將被編輯"
           }
         }
       }
@@ -5206,7 +5206,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当前可用 %lld 個模型。"
+            "value" : "當前可用 %lld 個模型。"
           }
         }
       }
@@ -5376,7 +5376,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "还有 %lld 个匹配 — 继续输入以缩小列表。"
+            "value" : "還有 %lld 個匹配 — 繼續輸入以縮小列表。"
           }
         }
       }
@@ -5412,7 +5412,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "还有 %lld 个未显示 — 搜尋以查找。"
+            "value" : "還有 %lld 個未顯示 — 搜尋以查找。"
           }
         }
       }
@@ -5488,13 +5488,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld / %lld 项能力已开启"
+            "value" : "%1$lld / %2$lld 项能力已开启"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld / %lld 项能力已开启"
+            "value" : "%1$lld / %2$lld 項能力已開啓"
           }
         }
       }
@@ -6190,7 +6190,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 個外掛需要系統權限"
+            "value" : "%lld 個插件需要系統權限"
           }
         }
       }
@@ -6266,13 +6266,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 个提供商已连接 • %@ 个内置源作为备份"
+            "value" : "%1$lld 个提供商已连接 • %3$lld 个内置源作为备份"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 個提供者已連線 • %@ 個内置源作为备份"
+            "value" : "%1$lld 個提供者已連線 • %3$lld 個內置源作爲備份"
           }
         }
       }
@@ -6751,7 +6751,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "有 %lld 個設定发现需要关注，工具才能完全就绪。"
+            "value" : "有 %lld 個設定發現需要關注，工具才能完全就緒。"
           }
         }
       }
@@ -7103,7 +7103,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 個儲存无法转换，因为加密金鑰不可用。"
+            "value" : "%lld 個儲存無法轉換，因爲加密金鑰不可用。"
           }
         }
       }
@@ -7137,7 +7137,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%lld 個儲存转换失败。"
+            "value" : "%lld 個儲存轉換失敗。"
           }
         }
       }
@@ -8983,7 +8983,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "複製的报告中还有 1 個发现"
+            "value" : "複製的報告中還有 1 個發現"
           }
         }
       }
@@ -9691,7 +9691,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "必须先修復 1 個阻塞发现才能進行配置。"
+            "value" : "必須先修復 1 個阻塞發現才能進行設定。"
           }
         }
       }
@@ -10345,7 +10345,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "1 個外掛可用"
+            "value" : "1 個插件可用"
           }
         }
       }
@@ -10379,7 +10379,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "1 個外掛需要系統權限"
+            "value" : "1 個插件需要系統權限"
           }
         }
       }
@@ -11702,7 +11702,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此聊天的後台任務仍在運行 — 復原已暫停，直到任務完成。"
+            "value" : "此聊天的後臺任務仍在運行 — 復原已暫停，直到任務完成。"
           }
         }
       }
@@ -12043,7 +12043,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "免費的 Hugging Face 權杖可提高速率限制，讓模型下載更快。"
+            "value" : "免費的 Hugging Face 令牌可提高速率限制，讓模型下載更快。"
           }
         }
       }
@@ -13328,7 +13328,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在 Osaurus 在頻道或討論串中回覆后接受後續訊息。"
+            "value" : "在 Osaurus 在頻道或討論串中回覆後接受後續訊息。"
           }
         }
       }
@@ -13364,7 +13364,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅在 Osaurus 在该 Slack 討論串中回覆后，接受无需再次提及的後續訊息。"
+            "value" : "僅在 Osaurus 在該 Slack 討論串中回覆後，接受無需再次提及的後續訊息。"
           }
         }
       }
@@ -14207,7 +14207,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "操作 \"%@\" 不是标准操作名稱，且永远不会被调用。"
+            "value" : "操作 \"%@\" 不是標準操作名稱，且永遠不會被調用。"
           }
         }
       }
@@ -14311,7 +14311,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "操作對應 JSON 无效：%@"
+            "value" : "操作對應 JSON 無效：%@"
           }
         }
       }
@@ -14801,7 +14801,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新增機器人權杖，然后从 Slack 載入頻道和使用者。"
+            "value" : "新增機器人令牌，然後從 Slack 載入頻道和使用者。"
           }
         }
       }
@@ -15080,7 +15080,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新增另一个 Slack 工作區"
+            "value" : "新增另一個 Slack 工作區"
           }
         }
       }
@@ -15150,7 +15150,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新增至少一个授權的 Discord 傳送者用于傳入分派。"
+            "value" : "新增至少一個授權的 Discord 傳送者用於入站分發。"
           }
         }
       }
@@ -15879,7 +15879,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新增反应"
+            "value" : "新增反應"
           }
         }
       }
@@ -15951,7 +15951,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新增路由规则"
+            "value" : "新增路由規則"
           }
         }
       }
@@ -16089,7 +16089,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "新增權杖"
+            "value" : "新增令牌"
           }
         }
       }
@@ -16331,7 +16331,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "额外工作區應用程式權杖（選用 xapp-...）"
+            "value" : "額外工作區應用程式令牌（選用 xapp-...）"
           }
         }
       }
@@ -16367,7 +16367,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "额外工作區機器人權杖（xoxb-...）"
+            "value" : "額外工作區機器人令牌（xoxb-...）"
           }
         }
       }
@@ -16403,7 +16403,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "额外工作區"
+            "value" : "額外工作區"
           }
         }
       }
@@ -16541,7 +16541,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "進階 — 定义您自己的 HTTP JSON 頻道"
+            "value" : "進階 — 定義您自己的 HTTP JSON 頻道"
           }
         }
       }
@@ -16645,7 +16645,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "進階診断"
+            "value" : "高級診斷"
           }
         }
       }
@@ -16748,7 +16748,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通過 Bonjour 在本地網絡中公布此智能體，以便附近的設備可以自動發現它。"
+            "value" : "通過 Bonjour 在本地網絡中公佈此智能體，以便附近的設備可以自動發現它。"
           }
         }
       }
@@ -17842,7 +17842,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "智能體提議，由您核准"
+            "value" : "智能體提議，由您覈準"
           }
         }
       }
@@ -18368,7 +18368,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "所有分配的工具每轮都会傳送。"
+            "value" : "所有分配的工具每輪都會傳送。"
           }
         }
       }
@@ -18402,7 +18402,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "所有分配的工具每轮都会傳送给模型。"
+            "value" : "所有分配的工具每輪都會傳送給模型。"
           }
         }
       }
@@ -19038,7 +19038,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "所有状态"
+            "value" : "所有狀態"
           }
         }
       }
@@ -19316,7 +19316,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自动允许"
+            "value" : "自動允許"
           }
         }
       }
@@ -19738,7 +19738,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许傳送（選用）"
+            "value" : "允許傳送（選用）"
           }
         }
       }
@@ -20231,7 +20231,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许的房間"
+            "value" : "允許的房間"
           }
         }
       }
@@ -20267,7 +20267,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允许的傳送者"
+            "value" : "允許的傳送者"
           }
         }
       }
@@ -20309,7 +20309,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允許清單限制此連線可以檢查的空间和房間。"
+            "value" : "允許清單限制此連線可以檢查的空間和房間。"
           }
         }
       }
@@ -21452,7 +21452,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "回覆没有路由规则认领的訊息。"
+            "value" : "回覆沒有路由規則認領的訊息。"
           }
         }
       }
@@ -22417,7 +22417,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "應用程式權杖"
+            "value" : "應用程式令牌"
           }
         }
       }
@@ -23298,7 +23298,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已核准提案 #%lld"
+            "value" : "已覈準提案 #%lld"
           }
         }
       }
@@ -23879,7 +23879,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "运行前询问"
+            "value" : "運行前詢問"
           }
         }
       }
@@ -23977,13 +23977,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在聊天中让代理记住或跟踪某些内容 — 它会建立自己的表，此概览会随着它的工作而更新。"
+            "value" : "在聊天中让智能体记住或跟踪某些内容 — 它会建立自己的表，此概览会随着它的工作而更新。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在聊天中让代理记住或跟踪某些内容 — 它会建立自己的表，此概览会随着它的工作而更新。"
+            "value" : "在聊天中讓智能體記住或跟蹤某些內容 — 它會建立自己的表，此概覽會隨着它的工作而更新。"
           }
         }
       }
@@ -24048,13 +24048,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在聊天中让代理记住某些内容 — 它会创建所需的表，你可以在这里浏览。你也可以导入 CSV 或 JSON 文件来自己创建表。"
+            "value" : "在聊天中让智能体记住某些内容 — 它会创建所需的表，你可以在这里浏览。你也可以导入 CSV 或 JSON 文件来自己创建表。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在聊天中让代理记住某些内容 — 它会建立所需的表，你可以在这里瀏覽。你也可以匯入 CSV 或 JSON 檔案来自己建立表。"
+            "value" : "在聊天中讓智能體記住某些內容 — 它會建立所需的表，你可以在這裏瀏覽。你也可以匯入 CSV 或 JSON 檔案來自己建立表。"
           }
         }
       }
@@ -24755,7 +24755,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "精确稽核每個工具如何暴露给模型"
+            "value" : "精確稽覈每個工具如何暴露給模型"
           }
         }
       }
@@ -25035,7 +25035,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "授權传入訊息（選用）"
+            "value" : "授權傳入訊息（選用）"
           }
         }
       }
@@ -25139,7 +25139,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "授權的传入訊息存储在本地收件匣中，智慧體讀取工具会查阅。仅当頻道的分派和自動回覆設定开启时，頻道才会自動回覆。"
+            "value" : "授權的傳入訊息存儲在本地收件匣中，智慧體讀取工具會查閱。僅當頻道的分派和自動回覆設定開啓時，頻道纔會自動回覆。"
           }
         }
       }
@@ -25555,7 +25555,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自动发现相关工具"
+            "value" : "自動發現相關工具"
           }
         }
       }
@@ -26144,7 +26144,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自動回覆需要 Discord 傳送和可写頻道。"
+            "value" : "自動回覆需要 Discord 傳送和可寫頻道。"
           }
         }
       }
@@ -26316,7 +26316,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "加载時自動預熱模型"
+            "value" : "加載時自動預熱模型"
           }
         }
       }
@@ -26350,7 +26350,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自动化"
+            "value" : "自動化"
           }
         }
       }
@@ -27396,7 +27396,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "返回頻道选择"
+            "value" : "返回頻道選擇"
           }
         }
       }
@@ -28124,7 +28124,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "後台輔助程式"
+            "value" : "後臺輔助程式"
           }
         }
       }
@@ -28571,7 +28571,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Base URL 缺少主机名。"
+            "value" : "Base URL 缺少主機名。"
           }
         }
       }
@@ -28679,7 +28679,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Base URL 必须以 https:// 或 http:// 开头。"
+            "value" : "Base URL 必須以 https:// 或 http:// 開頭。"
           }
         }
       }
@@ -29413,7 +29413,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bing（内置）"
+            "value" : "Bing（內置）"
           }
         }
       }
@@ -29482,7 +29482,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Bing 搜尋结果。无需金鑰。"
+            "value" : "Bing 搜尋結果。無需金鑰。"
           }
         }
       }
@@ -30237,7 +30237,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請求体模板（選用）"
+            "value" : "請求體模板（選用）"
           }
         }
       }
@@ -30618,7 +30618,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "機器人存取已允許清單的聊天和群組"
+            "value" : "機器人存取已允許清單的聊天和羣組"
           }
         }
       }
@@ -30722,7 +30722,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "機器人和權杖"
+            "value" : "機器人和令牌"
           }
         }
       }
@@ -30756,7 +30756,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "機器人權杖"
+            "value" : "機器人令牌"
           }
         }
       }
@@ -30790,7 +30790,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "機器人權杖被拒絕或無法使用"
+            "value" : "機器人令牌被拒絕或無法使用"
           }
         }
       }
@@ -31002,7 +31002,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Brave（内置）"
+            "value" : "Brave（內置）"
           }
         }
       }
@@ -31139,7 +31139,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Brave 搜尋结果。无需金鑰。"
+            "value" : "Brave 搜尋結果。無需金鑰。"
           }
         }
       }
@@ -32710,7 +32710,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内置源"
+            "value" : "內置源"
           }
         }
       }
@@ -32746,7 +32746,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内置源"
+            "value" : "內置源"
           }
         }
       }
@@ -32782,7 +32782,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内置源"
+            "value" : "內置源"
           }
         }
       }
@@ -32854,7 +32854,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "内置源开箱即用。連線搜尋提供者以获得更快、更相关的结果 — 設定大约需要 2 分钟。"
+            "value" : "內置源開箱即用。連線搜尋提供者以獲得更快、更相關的結果 — 設定大約需要 2 分鐘。"
           }
         }
       }
@@ -33294,13 +33294,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "包包括代理的配置和加密数据库，由你选择的密码保护。"
+            "value" : "包包括智能体的配置和加密数据库，由你选择的密码保护。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "包包括代理的設定和加密資料庫，由你選擇的密码保护。"
+            "value" : "包包括智能體的設定和加密資料庫，由你選擇的密碼保護。"
           }
         }
       }
@@ -34564,7 +34564,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "功能与访问"
+            "value" : "功能與訪問"
           }
         }
       }
@@ -35688,7 +35688,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更改自動儲存，接收輪詢在連線和访问完成后开始。第一次輪詢仅啟動游標 — 不会播放旧訊息。在可读頻道中傳送一条提及機器人的新訊息，然后在此处观察每个阶段出现。"
+            "value" : "更改自動儲存，接收輪詢在連線和訪問完成後開始。第一次輪詢僅啟動遊標 — 不會播放舊訊息。在可讀頻道中傳送一條提及機器人的新訊息，然後在此處觀察每個階段出現。"
           }
         }
       }
@@ -35722,7 +35722,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更改自動儲存，接收在連線和访问完成后开始。从可读聊天中向機器人傳送任何来自授權傳送者的訊息，然后在此处观察每个阶段出现。"
+            "value" : "更改自動儲存，接收在連線和訪問完成後開始。從可讀聊天中向機器人傳送任何來自授權傳送者的訊息，然後在此處觀察每個階段出現。"
           }
         }
       }
@@ -35758,7 +35758,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更改自動儲存，Socket Mode 接收在連線和访问完成后开始。从授權傳送者在允許清單頻道中傳送下面的測試訊息，然后在此处观察每个阶段出现。"
+            "value" : "更改自動儲存，Socket Mode 接收在連線和訪問完成後開始。從授權傳送者在允許清單頻道中傳送下面的測試訊息，然後在此處觀察每個階段出現。"
           }
         }
       }
@@ -36170,7 +36170,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "啟用 Slack 和全域頻道寫入后，智慧體可以傳送到的頻道。"
+            "value" : "啟用 Slack 和全域頻道寫入後，智慧體可以傳送到的頻道。"
           }
         }
       }
@@ -37267,13 +37267,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以读取的聊天、超级群组或公共频道。"
+            "value" : "智能体可以读取的聊天、超级群组或公共频道。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以讀取的聊天、超級群組或公開頻道。"
+            "value" : "智能體可以讀取的聊天、超級羣組或公開頻道。"
           }
         }
       }
@@ -37413,7 +37413,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "下方的檢查設定驗證此草稿；儲存以运行即時診斷。"
+            "value" : "下方的檢查設定驗證此草稿；儲存以運行即時診斷。"
           }
         }
       }
@@ -37557,7 +37557,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請確認權杖對該伺服器有效（方案/權限範圍），並且貼上時沒有 Bearer 前綴或多餘的空格。"
+            "value" : "請確認令牌對該伺服器有效（方案/權限範圍），並且貼上時沒有 Bearer 前綴或多餘的空格。"
           }
         }
       }
@@ -38581,7 +38581,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择頻道和人員"
+            "value" : "選擇頻道和人員"
           }
         }
       }
@@ -38617,7 +38617,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择頻道和傳送者"
+            "value" : "選擇頻道和傳送者"
           }
         }
       }
@@ -38653,7 +38653,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择聊天和傳送者"
+            "value" : "選擇聊天和傳送者"
           }
         }
       }
@@ -38689,7 +38689,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "精确选择智慧體可以讀取、寫入和接收訊息的位置。"
+            "value" : "精確選擇智慧體可以讀取、寫入和接收訊息的位置。"
           }
         }
       }
@@ -39041,13 +39041,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从左侧列表中选择此代理的一个表。"
+            "value" : "从左侧列表中选择此智能体的一个表。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从左侧清單中選擇此代理的一個表。"
+            "value" : "從左側清單中選擇此智能體的一個表。"
           }
         }
       }
@@ -39153,7 +39153,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择智慧體可以做什么"
+            "value" : "選擇智慧體可以做什麼"
           }
         }
       }
@@ -39187,7 +39187,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇此工具是自动运行、先询问还是被阻止"
+            "value" : "選擇此工具是自動運行、先詢問還是被阻止"
           }
         }
       }
@@ -39291,7 +39291,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "选择您的機器人，然后停用 — 否则機器人无法看到群組訊息。"
+            "value" : "選擇您的機器人，然後停用 — 否則機器人無法看到羣組訊息。"
           }
         }
       }
@@ -42196,7 +42196,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "命令將在這台 Mac 上執行，由系統沙盒設定檔限制在沙盒工作區內。無需下載或額外資源。"
+            "value" : "命令將在這臺 Mac 上執行，由系統沙盒設定檔限制在沙盒工作區內。無需下載或額外資源。"
           }
         }
       }
@@ -42785,7 +42785,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "构成"
+            "value" : "構成"
           }
         }
       }
@@ -44223,7 +44223,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "如果訊息是在群組中傳送的，请确认通过 @BotFather /setprivacy 停用了機器人隐私。"
+            "value" : "如果訊息是在羣組中傳送的，請確認通過 @BotFather /setprivacy 停用了機器人隱私。"
           }
         }
       }
@@ -44294,7 +44294,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认没有为機器人注册 webhook（在連線部分使用檢查 Webhook）。"
+            "value" : "確認沒有爲機器人註冊 webhook（在連線部分使用檢查 Webhook）。"
           }
         }
       }
@@ -44364,7 +44364,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认接收訊息已开启且設定已儲存。"
+            "value" : "確認接收訊息已開啓且設定已儲存。"
           }
         }
       }
@@ -44400,7 +44400,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认機器人已被邀請到頻道（/invite @your-bot）。"
+            "value" : "確認機器人已被邀請到頻道（/invite @your-bot）。"
           }
         }
       }
@@ -44436,7 +44436,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认機器人是伺服器成员且可以看到頻道。"
+            "value" : "確認機器人是伺服器成員且可以看到頻道。"
           }
         }
       }
@@ -44506,7 +44506,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认訊息是由授權傳送者在选定为已读的頻道中傳送的。"
+            "value" : "確認訊息是由授權傳送者在選定爲已讀的頻道中傳送的。"
           }
         }
       }
@@ -44542,7 +44542,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认訊息是由授權傳送者在选定为可读的頻道中傳送的。"
+            "value" : "確認訊息是由授權傳送者在選定爲可讀的頻道中傳送的。"
           }
         }
       }
@@ -44578,7 +44578,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认訊息是由授權傳送者在选定为可读的聊天中傳送的。"
+            "value" : "確認訊息是由授權傳送者在選定爲可讀的聊天中傳送的。"
           }
         }
       }
@@ -44614,7 +44614,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "确认 Slack 應用程式已开启 Socket Mode 并訂閱了 app_mention/message 事件（推荐的設定檔已包含它们）。"
+            "value" : "確認 Slack 應用程式已開啓 Socket Mode 並訂閱了 app_mention/message 事件（推薦的設定檔已包含它們）。"
           }
         }
       }
@@ -44986,13 +44986,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "连接服务以给你的代理更多工具。"
+            "value" : "连接服务以给你的智能体更多工具。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連線服务以给你的代理更多工具。"
+            "value" : "連線服務以給你的智能體更多工具。"
           }
         }
       }
@@ -45097,7 +45097,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連接 Telegram 机器人，然後開啟長輪詢，並把可讀聊天和授權發送者加入允許清單，這樣才能接收新消息。"
+            "value" : "連接 Telegram 機器人，然後開啟長輪詢，並把可讀聊天和授權發送者加入允許清單，這樣才能接收新消息。"
           }
         }
       }
@@ -45199,7 +45199,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連接 GitHub 以更新外掛程式"
+            "value" : "連接 GitHub 以更新插件程式"
           }
         }
       }
@@ -45303,13 +45303,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "连接为代理提供更多工具的服务，使用 MCP（模型上下文协议）"
+            "value" : "连接为智能体提供更多工具的服务，使用 MCP（模型上下文协议）"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連線为代理提供更多工具的服务，使用 MCP（模型上下文协议）"
+            "value" : "連線爲智能體提供更多工具的服務，使用 MCP（模型上下文協議）"
           }
         }
       }
@@ -45553,7 +45553,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連線以載入工作區选项"
+            "value" : "連線以載入工作區選項"
           }
         }
       }
@@ -45658,7 +45658,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連線您的第一个頻道"
+            "value" : "連線您的第一個頻道"
           }
         }
       }
@@ -46727,7 +46727,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "連線维护和診断"
+            "value" : "連線維護和診斷"
           }
         }
       }
@@ -47362,7 +47362,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "上下文预算：%@ tokens"
+            "value" : "上下文預算：%@ tokens"
           }
         }
       }
@@ -47723,7 +47723,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "继续参与的討論串"
+            "value" : "繼續參與的討論串"
           }
         }
       }
@@ -47828,7 +47828,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通过 AppleScript 自动化控制和查询 Mac 应用"
+            "value" : "通過 AppleScript 自動化控制和查詢 Mac 應用"
           }
         }
       }
@@ -48606,7 +48606,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "複製診断"
+            "value" : "複製診斷"
           }
         }
       }
@@ -49196,7 +49196,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從儀表板複製以 tvly- 開頭的 API 金鑰。"
+            "value" : "從儀錶板複製以 tvly- 開頭的 API 金鑰。"
           }
         }
       }
@@ -49266,7 +49266,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "複製推荐的應用程式設定檔"
+            "value" : "複製推薦的應用程式設定檔"
           }
         }
       }
@@ -49506,7 +49506,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從儀表板複製你的 API 金鑰。"
+            "value" : "從儀錶板複製你的 API 金鑰。"
           }
         }
       }
@@ -50765,7 +50765,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "無法在 Hugging Face 上存取此模型。該存儲庫可能是私人的、受限的、已移除或暫時無法存取。在「目錄」標籤頁中新增 Hugging Face 權杖有助於存取受限存儲庫並緩解速率限制。"
+            "value" : "無法在 Hugging Face 上存取此模型。該存儲庫可能是私人的、受限的、已移除或暫時無法存取。在「目錄」標籤頁中新增 Hugging Face 令牌有助於存取受限存儲庫並緩解速率限制。"
           }
         }
       }
@@ -51225,7 +51225,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用 @BotFather 建立機器人，然後貼上其權杖"
+            "value" : "使用 @BotFather 建立機器人，然後貼上其令牌"
           }
         }
       }
@@ -51396,7 +51396,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用[此連結](https://huggingface.co/settings/tokens/new?tokenType=read)建立一個 Read 權杖"
+            "value" : "使用[此連結](https://huggingface.co/settings/tokens/new?tokenType=read)建立一個 Read 令牌"
           }
         }
       }
@@ -51499,7 +51499,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用[此連結](https://github.com/settings/tokens/new?description=Osaurus)建立權杖（不需要任何權限範圍）"
+            "value" : "使用[此連結](https://github.com/settings/tokens/new?description=Osaurus)建立令牌（不需要任何權限範圍）"
           }
         }
       }
@@ -51533,7 +51533,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "建立工具或匯入 JSON 配方。自訂工具在代理首次使用时会自动設定。"
+            "value" : "建立工具或匯入 JSON 配方。自訂工具在代理首次使用時會自動設定。"
           }
         }
       }
@@ -52117,7 +52117,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "建立电子表格和演示文稿，以可下载檔案的形式交付"
+            "value" : "建立電子表格和演示文稿，以可下載檔案的形式交付"
           }
         }
       }
@@ -52824,7 +52824,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "建立機器人并打印其權杖。"
+            "value" : "建立機器人並打印其令牌。"
           }
         }
       }
@@ -53033,7 +53033,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "积分"
+            "value" : "積分"
           }
         }
       }
@@ -53631,7 +53631,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "自訂頻道仅限出站，直到您授權传入傳送者。从此处未列出的傳送者發佈到传入收件匣 API 的任何内容都会被拒绝。"
+            "value" : "自訂頻道僅限出站，直到您授權傳入傳送者。從此處未列出的傳送者發佈到傳入收件匣 API 的任何內容都會被拒絕。"
           }
         }
       }
@@ -54824,7 +54824,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "儀表板"
+            "value" : "儀錶板"
           }
         }
       }
@@ -54997,7 +54997,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "数据管理员"
+            "value" : "數據管理員"
           }
         }
       }
@@ -55478,7 +55478,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已解密 %lld 個儲存；现在為明文儲存。"
+            "value" : "已解密 %lld 個儲存；現在為明文儲存。"
           }
         }
       }
@@ -55512,7 +55512,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已解密 1 個儲存；现在為明文儲存。"
+            "value" : "已解密 1 個儲存；現在為明文儲存。"
           }
         }
       }
@@ -56138,7 +56138,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "預設讀取限制必须是 1 到 100 之间的数字。"
+            "value" : "預設讀取限制必須是 1 到 100 之間的數字。"
           }
         }
       }
@@ -56380,7 +56380,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "AI 生成问候语和快速操作的默认语音。在代理的外观选项卡中按代理开启问候语，每個代理也可以覆盖此语音。"
+            "value" : "AI 生成問候語和快速操作的默認語音。在代理的外觀選項卡中按代理開啓問候語，每個代理也可以覆蓋此語音。"
           }
         }
       }
@@ -56608,7 +56608,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在操作對應中定义至少一个操作。"
+            "value" : "在操作對應中定義至少一個操作。"
           }
         }
       }
@@ -56712,7 +56712,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "定义 HTTP 請求"
+            "value" : "定義 HTTP 請求"
           }
         }
       }
@@ -57171,7 +57171,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除所有数据…"
+            "value" : "刪除所有數據…"
           }
         }
       }
@@ -60145,7 +60145,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Discord 機器人權杖已移除"
+            "value" : "Discord 機器人令牌已移除"
           }
         }
       }
@@ -60181,7 +60181,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Discord 选项已載入"
+            "value" : "Discord 選項已載入"
           }
         }
       }
@@ -60322,7 +60322,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Discord 設定已儲存 — 接收已就绪"
+            "value" : "Discord 設定已儲存 — 接收已就緒"
           }
         }
       }
@@ -60945,7 +60945,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将 Discord 訊息分派给智慧體"
+            "value" : "將 Discord 訊息分派給智慧體"
           }
         }
       }
@@ -60981,7 +60981,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将传入訊息分派给智慧體"
+            "value" : "將傳入訊息分派給智慧體"
           }
         }
       }
@@ -61017,7 +61017,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "分派到智慧體已關閉。在頻道設定中啟用并选择一个智慧體。"
+            "value" : "分派到智慧體已關閉。在頻道設定中啟用並選擇一個智慧體。"
           }
         }
       }
@@ -61534,7 +61534,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "文档构建器"
+            "value" : "文檔構建器"
           }
         }
       }
@@ -61918,7 +61918,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "双击一行（或按 ↗）開啟 · 勾选行可一次刪除多個 · 已刪除的行会变暗。"
+            "value" : "雙擊一行（或按 ↗）開啟 · 勾選行可一次刪除多個 · 已刪除的行會變暗。"
           }
         }
       }
@@ -62892,7 +62892,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沒有權杖的下載會受到 Hugging Face 的速率限制，可能很慢或在高負載時失敗。"
+            "value" : "沒有令牌的下載會受到 Hugging Face 的速率限制，可能很慢或在高負載時失敗。"
           }
         }
       }
@@ -62962,7 +62962,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "草稿檢查发现 %lld 个问题"
+            "value" : "草稿檢查發現 %lld 個問題"
           }
         }
       }
@@ -62998,7 +62998,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "草稿檢查通过"
+            "value" : "草稿檢查通過"
           }
         }
       }
@@ -63034,7 +63034,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "草稿設定看起来有效。儲存以对端点运行即時診斷。"
+            "value" : "草稿設定看起來有效。儲存以對端點運行即時診斷。"
           }
         }
       }
@@ -63322,7 +63322,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "刪除此儲存的视图。底层表不受影响。"
+            "value" : "刪除此儲存的視圖。底層表不受影響。"
           }
         }
       }
@@ -64688,7 +64688,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "核准前編輯"
+            "value" : "覈準前編輯"
           }
         }
       }
@@ -66654,7 +66654,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "啟用至少一个标准操作。"
+            "value" : "啟用至少一個標準操作。"
           }
         }
       }
@@ -67641,7 +67641,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已啟用（只读）"
+            "value" : "已啟用（只讀）"
           }
         }
       }
@@ -69886,7 +69886,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预估"
+            "value" : "預估"
           }
         }
       }
@@ -70045,7 +70045,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预估启动上下文"
+            "value" : "預估啓動上下文"
           }
         }
       }
@@ -70081,7 +70081,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预估启动上下文：%@"
+            "value" : "預估啓動上下文：%@"
           }
         }
       }
@@ -70180,13 +70180,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理携带的每项能力都会为每个新聊天添加指令或工具模式。"
+            "value" : "此智能体携带的每项能力都会为每个新聊天添加指令或工具模式。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理携带的每项能力都会为每個新聊天新增指令或工具模式。"
+            "value" : "此智能體攜帶的每項能力都會爲每個新聊天新增指令或工具模式。"
           }
         }
       }
@@ -70396,7 +70396,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "啟用自動回覆时，每个可读的 Slack 頻道也必须可写。"
+            "value" : "啟用自動回覆時，每個可讀的 Slack 頻道也必須可寫。"
           }
         }
       }
@@ -70432,7 +70432,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "啟用自動回覆时，每个可读的 Telegram 聊天也必须可写。"
+            "value" : "啟用自動回覆時，每個可讀的 Telegram 聊天也必須可寫。"
           }
         }
       }
@@ -70468,7 +70468,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每次运行和每次变更，都有完整的稽核誌錄。"
+            "value" : "每次運行和每次變更，都有完整的稽覈誌錄。"
           }
         }
       }
@@ -70502,7 +70502,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理可以使用的所有内容，按每個工具的来源分组"
+            "value" : "代理可以使用的所有內容，按每個工具的來源分組"
           }
         }
       }
@@ -70538,7 +70538,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "其他所有内容"
+            "value" : "其他所有內容"
           }
         }
       }
@@ -70574,7 +70574,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "表中的所有内容，包括已刪除的行。"
+            "value" : "表中的所有內容，包括已刪除的行。"
           }
         }
       }
@@ -70673,13 +70673,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理能做的一切 — 翻转一项能力，观察启动上下文的响应。"
+            "value" : "此智能体能做的一切 — 翻转一项能力，观察启动上下文的响应。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理能做的一切 — 翻转一项能力，观察启动上下文的响应。"
+            "value" : "此智能體能做的一切 — 翻轉一項能力，觀察啓動上下文的響應。"
           }
         }
       }
@@ -70709,13 +70709,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理存储的所有内容 — 浏览表、保存的视图和历史记录。"
+            "value" : "此智能体存储的所有内容 — 浏览表、保存的视图和历史记录。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理儲存的所有内容 — 瀏覽表、儲存的视图和歷史誌錄。"
+            "value" : "此智能體儲存的所有內容 — 瀏覽表、儲存的視圖和歷史誌錄。"
           }
         }
       }
@@ -70924,7 +70924,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "执行"
+            "value" : "執行"
           }
         }
       }
@@ -71943,7 +71943,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将所有匹配的行匯出为 CSV 檔案 — 不仅仅是此处載入的行。"
+            "value" : "將所有匹配的行匯出爲 CSV 檔案 — 不僅僅是此處載入的行。"
           }
         }
       }
@@ -72975,7 +72975,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暴露来源筛选"
+            "value" : "暴露來源篩選"
           }
         }
       }
@@ -73009,7 +73009,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暴露状态筛选"
+            "value" : "暴露狀態篩選"
           }
         }
       }
@@ -73373,7 +73373,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提取积分"
+            "value" : "提取積分"
           }
         }
       }
@@ -73511,7 +73511,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "事實核查和平衡分析"
+            "value" : "事實覈查和平衡分析"
           }
         }
       }
@@ -74470,7 +74470,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用 Hugging Face 權杖加快下載速度"
+            "value" : "使用 Hugging Face 令牌加快下載速度"
           }
         }
       }
@@ -75412,7 +75412,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "僅爲不公布 OAuth 元數據的服務器填寫這些內容。必須同時設置授權 URL 和令牌 URL 才能跳過發現過程。"
+            "value" : "僅爲不公佈 OAuth 元數據的服務器填寫這些內容。必須同時設置授權 URL 和令牌 URL 才能跳過發現過程。"
           }
         }
       }
@@ -75480,7 +75480,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按来源筛选"
+            "value" : "按來源篩選"
           }
         }
       }
@@ -75514,7 +75514,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按状态筛选"
+            "value" : "按狀態篩選"
           }
         }
       }
@@ -77412,7 +77412,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "来自外掛"
+            "value" : "來自插件"
           }
         }
       }
@@ -78694,7 +78694,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "產生應用程式级權杖（接收）"
+            "value" : "產生應用程式級令牌（接收）"
           }
         }
       }
@@ -79502,7 +79502,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GitHub 會限制此應用程式瀏覽和更新外掛程式的頻率，超出後就會出現錯誤。連接一個免費的 GitHub 帳戶可以提高該限制，讓更新持續可用。"
+            "value" : "GitHub 會限制此應用程式瀏覽和更新插件程式的頻率，超出後就會出現錯誤。連接一個免費的 GitHub 帳戶可以提高該限制，讓更新持續可用。"
           }
         }
       }
@@ -79536,7 +79536,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "GitHub 會限制此應用程式檢查更新的頻率。連接一個免費的 GitHub 帳戶，即可更新外掛程式而不觸及該限制。"
+            "value" : "GitHub 會限制此應用程式檢查更新的頻率。連接一個免費的 GitHub 帳戶，即可更新插件程式而不觸及該限制。"
           }
         }
       }
@@ -79849,13 +79849,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为此代理提供自己的数据库"
+            "value" : "为此智能体提供自己的数据库"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "为此代理提供自己的資料庫"
+            "value" : "爲此智能體提供自己的資料庫"
           }
         }
       }
@@ -81092,7 +81092,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在系统設定中授予權限 — 筛选“需要关注”以查看哪些工具正在等待"
+            "value" : "在系統設定中授予權限 — 篩選“需要關注”以查看哪些工具正在等待"
           }
         }
       }
@@ -81128,7 +81128,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "授予一個 macOS 檔案夹的访问權限，包括通过认证的远程代理运行。写入保留在檔案夹内；shell 和 git 保持停用。"
+            "value" : "授予一個 macOS 檔案夾的訪問權限，包括通過認證的遠程代理運行。寫入保留在檔案夾內；shell 和 git 保持停用。"
           }
         }
       }
@@ -81783,7 +81783,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "引导設定 — 機器人访问允許清單中的聊天和群組"
+            "value" : "引導設定 — 機器人訪問允許清單中的聊天和羣組"
           }
         }
       }
@@ -81819,7 +81819,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "引导設定 — 機器人访问允許清單中的伺服器和頻道"
+            "value" : "引導設定 — 機器人訪問允許清單中的伺服器和頻道"
           }
         }
       }
@@ -81855,7 +81855,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "引导設定 — 機器人访问允許清單中的工作區頻道"
+            "value" : "引導設定 — 機器人訪問允許清單中的工作區頻道"
           }
         }
       }
@@ -83267,7 +83267,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "歷史、事实和片段"
+            "value" : "歷史、事實和片段"
           }
         }
       }
@@ -83759,7 +83759,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "衰减、去重、強制運行之間的小時間隔"
+            "value" : "衰減、去重、強制運行之間的小時間隔"
           }
         }
       }
@@ -84450,7 +84450,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "HTTP 端点"
+            "value" : "HTTP 端點"
           }
         }
       }
@@ -84661,7 +84661,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此頻道的 HTTPS 来源智慧體工具调用。"
+            "value" : "此頻道的 HTTPS 來源智慧體工具調用。"
           }
         }
       }
@@ -84771,7 +84771,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Hugging Face 回應了 %@。對於受限或私人存儲庫，請在「目錄」標籤頁中新增 Hugging Face 存取權杖；否則請稍後再試。"
+            "value" : "Hugging Face 回應了 %@。對於受限或私人存儲庫，請在「目錄」標籤頁中新增 Hugging Face 存取令牌；否則請稍後再試。"
           }
         }
       }
@@ -84840,7 +84840,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已連接 Hugging Face 權杖"
+            "value" : "已連接 Hugging Face 令牌"
           }
         }
       }
@@ -86513,7 +86513,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将 CSV、TSV、JSON 或 JSONL 檔案匯入此表。你也可以将檔案拖到此屏幕。"
+            "value" : "將 CSV、TSV、JSON 或 JSONL 檔案匯入此表。你也可以將檔案拖到此屏幕。"
           }
         }
       }
@@ -86549,7 +86549,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 JSON 檔案匯入自訂工具"
+            "value" : "從 JSON 檔案匯入自訂工具"
           }
         }
       }
@@ -87686,7 +87686,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在應用程式中，開啟機器人页面并啟用“特权网关意图”下的两个特权意图：訊息内容意图（讀取訊息所需）和伺服器成员意图（用于列出傳送者）。"
+            "value" : "在應用程式中，開啟機器人頁面並啟用“特權網關意圖”下的兩個特權意圖：訊息內容意圖（讀取訊息所需）和伺服器成員意圖（用於列出傳送者）。"
           }
         }
       }
@@ -87722,7 +87722,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在您的 Slack 應用程式中，開啟“安装應用程式”，将其安装到工作區，然后複製機器人使用者 OAuth 權杖。"
+            "value" : "在您的 Slack 應用程式中，開啟“安裝應用程式”，將其安裝到工作區，然後複製機器人使用者 OAuth 令牌。"
           }
         }
       }
@@ -87757,7 +87757,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "進行深入研究，並提供事實核查與平衡分析"
+            "value" : "進行深入研究，並提供事實覈查與平衡分析"
           }
         }
       }
@@ -87793,7 +87793,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工具關閉时处于非活跃状态"
+            "value" : "工具關閉時處於非活躍狀態"
           }
         }
       }
@@ -87829,7 +87829,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "傳入处理目前受到速率限制。请稍候再试。"
+            "value" : "傳入處理目前受到速率限制。請稍候再試。"
           }
         }
       }
@@ -87977,7 +87977,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "跨頻道的传入訊息和接收决策"
+            "value" : "跨頻道的傳入訊息和接收決策"
           }
         }
       }
@@ -89667,7 +89667,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "安裝外掛、新增連線或建立自訂工具以开始使用"
+            "value" : "安裝插件、新增連線或建立自訂工具以開始使用"
           }
         }
       }
@@ -89905,7 +89905,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "安裝外掛或連線 MCP 服务器以新增工具。"
+            "value" : "安裝插件或連線 MCP 服務器以新增工具。"
           }
         }
       }
@@ -90012,7 +90012,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "安装應用程式并粘贴機器人權杖"
+            "value" : "安裝應用程式並粘貼機器人令牌"
           }
         }
       }
@@ -91507,7 +91507,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "邀請链接已複製"
+            "value" : "邀請鏈接已複製"
           }
         }
       }
@@ -92065,13 +92065,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理运行时保持 Mac 唤醒"
+            "value" : "智能体运行时保持 Mac 唤醒"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理运行时保持 Mac 唤醒"
+            "value" : "智能體運行時保持 Mac 喚醒"
           }
         }
       }
@@ -92203,13 +92203,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在代理的私有数据库中跨聊天保存结构化记录"
+            "value" : "在智能体的私有数据库中跨聊天保存结构化记录"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在代理的私有資料庫中跨聊天儲存结构化誌錄"
+            "value" : "在智能體的私有資料庫中跨聊天儲存結構化誌錄"
           }
         }
       }
@@ -92417,13 +92417,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理工作时保持 Mac 唤醒"
+            "value" : "智能体工作时保持 Mac 唤醒"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理工作时保持 Mac 唤醒"
+            "value" : "智能體工作時保持 Mac 喚醒"
           }
         }
       }
@@ -93737,7 +93737,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "了解如何將 Osaurus 集成到你的應用中。"
+            "value" : "瞭解如何將 Osaurus 集成到你的應用中。"
           }
         }
       }
@@ -93771,7 +93771,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "了解更多"
+            "value" : "瞭解更多"
           }
         }
       }
@@ -93805,7 +93805,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在我們的[隱私政策](%1$@)中了解更多。"
+            "value" : "在我們的[隱私政策](%1$@)中瞭解更多。"
           }
         }
       }
@@ -94533,7 +94533,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智慧體在您团队已经交谈的地方阅读和回覆。"
+            "value" : "讓智慧體在您團隊已經交談的地方閱讀和回覆。"
           }
         }
       }
@@ -94569,7 +94569,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让智慧體在您团队已经交谈的地方阅读和回覆。每个引导設定都以传入訊息的即時驗證结束。"
+            "value" : "讓智慧體在您團隊已經交談的地方閱讀和回覆。每個引導設定都以傳入訊息的即時驗證結束。"
           }
         }
       }
@@ -95065,13 +95065,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让代理安排自己的后续运行并发送通知。运行频率和限制在通用 → 配置 → 调度中设置。"
+            "value" : "让智能体安排自己的后续运行并发送通知。运行频率和限制在通用 → 配置 → 调度中设置。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让代理安排自己的后续运行并傳送通知。运行频率和限制在通用 → 設定 → 排程中設定。"
+            "value" : "讓智能體安排自己的後續運行並傳送通知。運行頻率和限制在通用 → 設定 → 排程中設定。"
           }
         }
       }
@@ -95204,13 +95204,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让代理通过你的搜索提供商搜索网页。内置源开箱即用；在设置 > 搜索中配置提供商。"
+            "value" : "让智能体通过你的搜索提供商搜索网页。内置源开箱即用；在设置 > 搜索中配置提供商。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "让代理通过你的搜尋提供者搜尋网页。内置源开箱即用；在設定 > 搜尋中設定提供者。"
+            "value" : "讓智能體通過你的搜尋提供商搜尋網頁。內置源開箱即用；在設定 > 搜尋中設定提供商。"
           }
         }
       }
@@ -95666,7 +95666,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允許本機程序透過 HTTP API 無需存取金鑰即可透過 Osaurus Router（消耗積分）路由請求。除非你信任這台 Mac 上的所有程序，否則請保持關閉。"
+            "value" : "允許本機程序透過 HTTP API 無需存取金鑰即可透過 Osaurus Router（消耗積分）路由請求。除非你信任這臺 Mac 上的所有程序，否則請保持關閉。"
           }
         }
       }
@@ -95840,7 +95840,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "生命周期"
+            "value" : "生命週期"
           }
         }
       }
@@ -96878,7 +96878,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "实时网络研究，支持来源检索、交叉驗證和引用报告"
+            "value" : "實時網絡研究，支持來源檢索、交叉驗證和引用報告"
           }
         }
       }
@@ -97058,7 +97058,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 Discord 載入"
+            "value" : "從 Discord 載入"
           }
         }
       }
@@ -97094,7 +97094,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 Slack 載入"
+            "value" : "從 Slack 載入"
           }
         }
       }
@@ -97130,7 +97130,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 Telegram 載入"
+            "value" : "從 Telegram 載入"
           }
         }
       }
@@ -97236,7 +97236,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "載入最近的 Telegram 选项"
+            "value" : "載入最近的 Telegram 選項"
           }
         }
       }
@@ -97376,7 +97376,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已載入 %@。在下方选择其頻道和授權傳送者，然后按完成。"
+            "value" : "已載入 %@。在下方選擇其頻道和授權傳送者，然後按完成。"
           }
         }
       }
@@ -97592,7 +97592,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从你分配的集合中按需載入。"
+            "value" : "從你分配的集合中按需載入。"
           }
         }
       }
@@ -99369,7 +99369,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "長輪詢未在執行。儲存機器人權杖、啟用長輪詢並新增已授權的傳送者 ID 以啟動它。"
+            "value" : "長輪詢未在執行。儲存機器人令牌、啟用長輪詢並新增已授權的傳送者 ID 以啟動它。"
           }
         }
       }
@@ -99404,7 +99404,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "長輪詢未在執行。請儲存機器人權杖、啟用長輪詢，然後新增可讀的聊天 ID 與授權傳送者 ID 以啟動它。"
+            "value" : "長輪詢未在執行。請儲存機器人令牌、啟用長輪詢，然後新增可讀的聊天 ID 與授權傳送者 ID 以啟動它。"
           }
         }
       }
@@ -99747,7 +99747,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Mac 自动化器"
+            "value" : "Mac 自動化器"
           }
         }
       }
@@ -100243,7 +100243,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理日曆事件、提醒事项、郵件和訊息"
+            "value" : "管理日曆事件、提醒事項、郵件和訊息"
           }
         }
       }
@@ -100418,7 +100418,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "管理搜尋积分和账单。"
+            "value" : "管理搜尋積分和賬單。"
           }
         }
       }
@@ -100766,7 +100766,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "由其外掛管理 — 在外掛中卸载以移除"
+            "value" : "由其插件管理 — 在插件中卸載以移除"
           }
         }
       }
@@ -101041,7 +101041,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未被发现返回的伺服器的手动回退。"
+            "value" : "未被發現返回的伺服器的手動回退。"
           }
         }
       }
@@ -101077,7 +101077,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "手动 ID 字段位于進階选项下，用于发现无法看到的條目。"
+            "value" : "手動 ID 字段位於進階選項下，用於發現無法看到的條目。"
           }
         }
       }
@@ -101113,7 +101113,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "手动 ID 是未被发现返回的聊天或傳送者的回退。"
+            "value" : "手動 ID 是未被發現返回的聊天或傳送者的回退。"
           }
         }
       }
@@ -101149,7 +101149,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "手动 ID 是受限 Slack 範圍或未被发现返回的條目的回退。"
+            "value" : "手動 ID 是受限 Slack 範圍或未被發現返回的條目的回退。"
           }
         }
       }
@@ -101357,7 +101357,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将每个标准操作對應到其执行的 HTTP 請求。使用 ${content}、{room_id} 和 ${secret:name} 佔位符。"
+            "value" : "將每個標準操作對應到其執行的 HTTP 請求。使用 ${content}、{room_id} 和 ${secret:name} 佔位符。"
           }
         }
       }
@@ -101427,7 +101427,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将頻道標記为已读，人員標記为允许 — 无需複製数字 ID。"
+            "value" : "將頻道標記爲已讀，人員標記爲允許 — 無需複製數字 ID。"
           }
         }
       }
@@ -101463,7 +101463,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将聊天標記为已读以便智慧體可以看到，将人員標記为允许以便其訊息被处理。手动 ID 字段位于進階选项下。"
+            "value" : "將聊天標記爲已讀以便智慧體可以看到，將人員標記爲允許以便其訊息被處理。手動 ID 字段位於進階選項下。"
           }
         }
       }
@@ -102830,7 +102830,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MCP 服务器"
+            "value" : "MCP 服務器"
           }
         }
       }
@@ -103695,7 +103695,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "记忆状态"
+            "value" : "記憶狀態"
           }
         }
       }
@@ -104086,7 +104086,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提及 Discord 機器人使用者，而不是 Osaurus 智慧體名稱。从 Discord 載入以填写機器人名稱。"
+            "value" : "提及 Discord 機器人使用者，而不是 Osaurus 智慧體名稱。從 Discord 載入以填寫機器人名稱。"
           }
         }
       }
@@ -104158,7 +104158,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提及 Slack 機器人使用者，而不是 Osaurus 智慧體名稱。从 Slack 載入以填写機器人名稱。"
+            "value" : "提及 Slack 機器人使用者，而不是 Osaurus 智慧體名稱。從 Slack 載入以填寫機器人名稱。"
           }
         }
       }
@@ -104194,7 +104194,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要提及才能开始對話。在訊息中提及機器人使用者（而不是 Osaurus 智慧體名稱）。"
+            "value" : "需要提及才能開始對話。在訊息中提及機器人使用者（而不是 Osaurus 智慧體名稱）。"
           }
         }
       }
@@ -104398,7 +104398,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "来自機器人账户的訊息会被忽略（参见進階設定）。"
+            "value" : "來自機器人賬戶的訊息會被忽略（參見進階設定）。"
           }
         }
       }
@@ -107354,7 +107354,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "滚动时自动載入更多行 — 现在获取下一批。"
+            "value" : "滾動時自動載入更多行 — 現在獲取下一批。"
           }
         }
       }
@@ -107882,7 +107882,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "名稱和端点"
+            "value" : "名稱和端點"
           }
         }
       }
@@ -108650,7 +108650,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "需要你的输入"
+            "value" : "需要你的輸入"
           }
         }
       }
@@ -108754,7 +108754,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "網絡积分"
+            "value" : "網絡積分"
           }
         }
       }
@@ -110082,7 +110082,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未定义操作"
+            "value" : "未定義操作"
           }
         }
       }
@@ -110118,7 +110118,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尚未定义操作。在下方新增一个 — 智慧體只能调用此处定义的操作。"
+            "value" : "尚未定義操作。在下方新增一個 — 智慧體只能調用此處定義的操作。"
           }
         }
       }
@@ -110882,7 +110882,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尚未標記任何頻道为寫入。在访问部分標記它们或在其進階选项下新增 ID。"
+            "value" : "尚未標記任何頻道爲寫入。在訪問部分標記它們或在其進階選項下新增 ID。"
           }
         }
       }
@@ -111370,7 +111370,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫无自訂工具"
+            "value" : "暫無自訂工具"
           }
         }
       }
@@ -111406,7 +111406,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此次运行未誌錄任何資料庫更改。"
+            "value" : "此次運行未誌錄任何資料庫更改。"
           }
         }
       }
@@ -111544,7 +111544,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "90 秒内没有收到 Discord 訊息。"
+            "value" : "90 秒內沒有收到 Discord 訊息。"
           }
         }
       }
@@ -112170,7 +112170,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本次会话尚未收到 Discord 訊息。傳送測試訊息并按“驗證传入訊息”。"
+            "value" : "本次會話尚未收到 Discord 訊息。傳送測試訊息並按“驗證傳入訊息”。"
           }
         }
       }
@@ -112206,7 +112206,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本次会话尚未收到 Slack 事件。傳送測試訊息并按“驗證传入訊息”。"
+            "value" : "本次會話尚未收到 Slack 事件。傳送測試訊息並按“驗證傳入訊息”。"
           }
         }
       }
@@ -112242,7 +112242,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "本次会话尚未收到 Telegram 訊息。向機器人傳送訊息并按“驗證传入訊息”。"
+            "value" : "本次會話尚未收到 Telegram 訊息。向機器人傳送訊息並按“驗證傳入訊息”。"
           }
         }
       }
@@ -113140,7 +113140,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有匹配的頻道"
+            "value" : "沒有匹配的頻道"
           }
         }
       }
@@ -113280,7 +113280,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有匹配的人員"
+            "value" : "沒有匹配的人員"
           }
         }
       }
@@ -113319,7 +113319,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有匹配的 Slack 頻道"
+            "value" : "沒有匹配的 Slack 頻道"
           }
         }
       }
@@ -113355,7 +113355,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有匹配的 Slack 使用者"
+            "value" : "沒有匹配的 Slack 使用者"
           }
         }
       }
@@ -114218,7 +114218,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫无固定视图。从儲存的视图部分固定一個视图，即可在此一览。"
+            "value" : "暫無固定視圖。從儲存的視圖部分固定一個視圖，即可在此一覽。"
           }
         }
       }
@@ -114254,7 +114254,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未安裝外掛技能 — 外掛在安裝时可以捆绑技能"
+            "value" : "未安裝插件技能 — 插件在安裝時可以捆綁技能"
           }
         }
       }
@@ -115021,7 +115021,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有路由规则认领此訊息，且未設定預設智慧體。为此房間新增路由规则或在頻道設定中选择預設智慧體。"
+            "value" : "沒有路由規則認領此訊息，且未設定預設智慧體。爲此房間新增路由規則或在頻道設定中選擇預設智慧體。"
           }
         }
       }
@@ -115091,7 +115091,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "`%@` 中暫无行。"
+            "value" : "`%@` 中暫無行。"
           }
         }
       }
@@ -115231,7 +115231,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫无运行誌錄。当代理按计划或自动运行时，每次运行都会显示在此处。"
+            "value" : "暫無運行誌錄。當代理按計劃或自動運行時，每次運行都會顯示在此處。"
           }
         }
       }
@@ -115296,13 +115296,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暂无保存的视图。在聊天中让代理创建一个 — 它使用 `db_define_view` 工具。"
+            "value" : "暂无保存的视图。在聊天中让智能体创建一个 — 它使用 `db_define_view` 工具。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫无儲存的视图。在聊天中让代理建立一個 — 它使用 `db_define_view` 工具。"
+            "value" : "暫無儲存的視圖。在聊天中讓智能體建立一個 — 它使用 `db_define_view` 工具。"
           }
         }
       }
@@ -115714,7 +115714,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "暫无自訂技能 — 建立或匯入一個"
+            "value" : "暫無自訂技能 — 建立或匯入一個"
           }
         }
       }
@@ -115784,7 +115784,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "90 秒内没有收到 Slack 事件。"
+            "value" : "90 秒內沒有收到 Slack 事件。"
           }
         }
       }
@@ -116105,7 +116105,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "90 秒内没有收到 Telegram 訊息。"
+            "value" : "90 秒內沒有收到 Telegram 訊息。"
           }
         }
       }
@@ -116496,7 +116496,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有工具匹配“%@”"
+            "value" : "沒有工具匹配“%@”"
           }
         }
       }
@@ -116530,7 +116530,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "没有工具符合目前的篩選條件"
+            "value" : "沒有工具符合目前的篩選條件"
           }
         }
       }
@@ -116669,7 +116669,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无使用活動"
+            "value" : "無使用活動"
           }
         }
       }
@@ -116876,7 +116876,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "无（仅路由房間回應）"
+            "value" : "無（僅路由房間回應）"
           }
         }
       }
@@ -116980,7 +116980,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不是标准操作"
+            "value" : "不是標準操作"
           }
         }
       }
@@ -117362,7 +117362,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "未在本地運行時啓用；需要顯式的分布式運行時設計和工件完整性檢查。"
+            "value" : "未在本地運行時啓用；需要顯式的分佈式運行時設計和工件完整性檢查。"
           }
         }
       }
@@ -118272,7 +118272,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "不用于 Socket Mode 接收"
+            "value" : "不用於 Socket Mode 接收"
           }
         }
       }
@@ -118408,13 +118408,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "注意：此代理使用远程模型，因此其模式（表名和列类型）会随每次请求发送。行数据不会发送。"
+            "value" : "注意：此智能体使用远程模型，因此其模式（表名和列类型）会随每次请求发送。行数据不会发送。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "注意：此代理使用远程模型，因此其模式（表名和列类型）会随每次请求傳送。行数据不会傳送。"
+            "value" : "注意：此智能體使用遠程模型，因此其模式（表名和列類型）會隨每次請求傳送。行數據不會傳送。"
           }
         }
       }
@@ -119179,13 +119179,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "占模型约 %@ token 窗口的 %@"
+            "value" : "占模型约 %1$@ token 窗口的 %2$@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "占模型约 %@ token 窗口的 %@"
+            "value" : "佔模型約 %1$@@ token 窗口的 %2$@"
           }
         }
       }
@@ -119253,7 +119253,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "關閉 — 搜尋使用下方的提供者和内置源。"
+            "value" : "關閉 — 搜尋使用下方的提供者和內置源。"
           }
         }
       }
@@ -119289,7 +119289,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "關閉 — 你自己的提供者处理所有搜尋。"
+            "value" : "關閉 — 你自己的提供商處理所有搜尋。"
           }
         }
       }
@@ -119601,7 +119601,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "關閉意味着進階搜尋在剩余积分用完后停止；其他所有搜尋使用内置源。"
+            "value" : "關閉意味着進階搜尋在剩餘積分用完後停止；其他所有搜尋使用內置源。"
           }
         }
       }
@@ -120056,7 +120056,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在同一个機器人页面上，按“重置權杖”并複製其显示的權杖。"
+            "value" : "在同一個機器人頁面上，按“重置令牌”並複製其顯示的令牌。"
           }
         }
       }
@@ -120539,7 +120539,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每行一个：Header-Name: value。使用 ${secret:name} 作为權杖。"
+            "value" : "每行一個：Header-Name: value。使用 ${secret:name} 作爲令牌。"
           }
         }
       }
@@ -120573,7 +120573,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每行一個：name=keychain-id。原始權杖不儲存在此 JSON 檔案中。"
+            "value" : "每行一個：name=keychain-id。原始令牌不儲存在此 JSON 檔案中。"
           }
         }
       }
@@ -120645,7 +120645,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "只有选中的标准操作才会提供给此頻道的智慧體。"
+            "value" : "只有選中的標準操作纔會提供給此頻道的智慧體。"
           }
         }
       }
@@ -120855,7 +120855,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "只有选定的人員才能觸發傳入处理。空的傳送者列表会保持 Slack 接收停用。"
+            "value" : "只有選定的人員才能觸發傳入處理。空的傳送者列表會保持 Slack 接收停用。"
           }
         }
       }
@@ -121307,7 +121307,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "開啟 api.slack.com/apps 并选择“建立新應用程式” → “从設定檔”"
+            "value" : "開啟 api.slack.com/apps 並選擇“建立新應用程式” → “從設定檔”"
           }
         }
       }
@@ -122253,7 +122253,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "開啟儲存的视图"
+            "value" : "開啟儲存的視圖"
           }
         }
       }
@@ -122532,7 +122532,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "開啟系统設定"
+            "value" : "開啟系統設定"
           }
         }
       }
@@ -122566,7 +122566,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "開啟系统設定以授予權限"
+            "value" : "開啟系統設定以授予權限"
           }
         }
       }
@@ -122671,7 +122671,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "開啟 Discord 开发者入口網站并选择“新應用程式”"
+            "value" : "開啟 Discord 開發者入口網站並選擇“新應用程式”"
           }
         }
       }
@@ -122855,7 +122855,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在浏览器中開啟此 URL 并选择您的伺服器。"
+            "value" : "在瀏覽器中開啟此 URL 並選擇您的伺服器。"
           }
         }
       }
@@ -123593,7 +123593,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選用名稱，逗号分隔（例如 sales、support）"
+            "value" : "選用名稱，逗號分隔（例如 sales、support）"
           }
         }
       }
@@ -123707,7 +123707,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選用：新增路由规则以用不同的智慧體回答不同的 %@，或让名稱前缀在共享 %@ 内选择智慧體。"
+            "value" : "選用：新增路由規則以用不同的智慧體回答不同的 %@，或讓名稱前綴在共享 %@ 內選擇智慧體。"
           }
         }
       }
@@ -123776,7 +123776,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "可選。留空則僅允許機器人權杖自身的工作區。"
+            "value" : "可選。留空則僅允許機器人令牌自身的工作區。"
           }
         }
       }
@@ -124225,7 +124225,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 可以發送匿名使用數據，幫助我們了解應用的使用方式並加以改進。"
+            "value" : "Osaurus 可以發送匿名使用數據，幫助我們瞭解應用的使用方式並加以改進。"
           }
         }
       }
@@ -124330,7 +124330,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 通过 Socket Mode 連線到 Slack — 不需要 webhook、公共 URL 或請求 URL。"
+            "value" : "Osaurus 通過 Socket Mode 連線到 Slack — 不需要 webhook、公共 URL 或請求 URL。"
           }
         }
       }
@@ -124366,7 +124366,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 在應用程式运行时持续向 Telegram 請求新訊息（长輪詢）。仅在另一个程序輪詢同一機器人时才關閉此功能。"
+            "value" : "Osaurus 在應用程式運行時持續向 Telegram 請求新訊息（長輪詢）。僅在另一個程序輪詢同一機器人時才關閉此功能。"
           }
         }
       }
@@ -124400,7 +124400,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 暫時無法連線至模型。請重試連線、在這台 Mac 上執行私人模型，或使用你自己的服務供應商。"
+            "value" : "Osaurus 暫時無法連線至模型。請重試連線、在這臺 Mac 上執行私人模型，或使用你自己的服務供應商。"
           }
         }
       }
@@ -124472,7 +124472,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 尚未确认機器人身份。请运行一次測試連線。"
+            "value" : "Osaurus 尚未確認機器人身份。請運行一次測試連線。"
           }
         }
       }
@@ -124899,7 +124899,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 輪詢 Discord 以获取新訊息 — 不需要 webhook 或公共 URL。"
+            "value" : "Osaurus 輪詢 Discord 以獲取新訊息 — 不需要 webhook 或公共 URL。"
           }
         }
       }
@@ -124935,7 +124935,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 輪詢 Telegram 以获取新訊息 — 不需要 webhook 或公共 URL。"
+            "value" : "Osaurus 輪詢 Telegram 以獲取新訊息 — 不需要 webhook 或公共 URL。"
           }
         }
       }
@@ -127577,7 +127577,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "粘贴機器人權杖"
+            "value" : "粘貼機器人令牌"
           }
         }
       }
@@ -127613,7 +127613,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在上方粘贴機器人權杖并按访问部分的“从 Discord 載入”，然后邀請链接会出现在此处。（您也可以在开发者入口網站中使用 OAuth2 → URL 產生器，选择 bot 範圍。）"
+            "value" : "在上方粘貼機器人令牌並按訪問部分的“從 Discord 載入”，然後邀請鏈接會出現在此處。（您也可以在開發者入口網站中使用 OAuth2 → URL 產生器，選擇 bot 範圍。）"
           }
         }
       }
@@ -127961,7 +127961,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "貼上您的機器人權杖"
+            "value" : "貼上您的機器人令牌"
           }
         }
       }
@@ -129664,13 +129664,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 的权限行为：%@"
+            "value" : "%1$@ 的权限行为：%2$@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "%@ 的權限行为：%@"
+            "value" : "%1$@ 的權限行爲：%2$@"
           }
         }
       }
@@ -130150,7 +130150,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "個人组织者"
+            "value" : "個人組織者"
           }
         }
       }
@@ -130719,7 +130719,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇一個表查看内容。"
+            "value" : "選擇一個表查看內容。"
           }
         }
       }
@@ -131035,7 +131035,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇每种搜尋的首选提供者。其余按你的主清單顺序排列，内置源作为备份。"
+            "value" : "選擇每種搜尋的首選提供者。其餘按你的主清單順序排列，內置源作爲備份。"
           }
         }
       }
@@ -131477,7 +131477,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "固定到概览"
+            "value" : "固定到概覽"
           }
         }
       }
@@ -131839,7 +131839,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "固定视图以卡片形式显示在資料庫概览上。"
+            "value" : "固定視圖以卡片形式顯示在資料庫概覽上。"
           }
         }
       }
@@ -132579,7 +132579,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "外掛 %@，%lld 個工具"
+            "value" : "插件 %@，%lld 個工具"
           }
         }
       }
@@ -132967,7 +132967,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "現在可以穩定地瀏覽和更新外掛程式，不會觸及 GitHub 的限制。"
+            "value" : "現在可以穩定地瀏覽和更新插件程式，不會觸及 GitHub 的限制。"
           }
         }
       }
@@ -133214,7 +133214,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "輪詢未运行。新增機器人權杖、可读頻道和授權傳送者 ID 以启动它。"
+            "value" : "輪詢未運行。新增機器人令牌、可讀頻道和授權傳送者 ID 以啓動它。"
           }
         }
       }
@@ -133287,7 +133287,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "当寫入门允许时，将清理后的智慧體回應發佈回 Discord。"
+            "value" : "當寫入門允許時，將清理後的智慧體回應發佈回 Discord。"
           }
         }
       }
@@ -133846,7 +133846,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "進階搜尋已暫停 — 新增积分以邊原。"
+            "value" : "進階搜尋已暫停 — 新增積分以邊原。"
           }
         }
       }
@@ -133880,7 +133880,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "進階搜尋积分已用完，正在静默使用内置源。新增积分以邊原 — 无需其他重設。"
+            "value" : "進階搜尋積分已用完，正在靜默使用內置源。新增積分以邊原 — 無需其他重設。"
           }
         }
       }
@@ -133914,7 +133914,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "進階搜尋通过 Osaurus 运行 `web_search` 工具 — 零設定即可获得更好的结果。搜尋积分优先覆盖请求；之后，请求从此钱包计费。积分用完后，搜尋自动切换到内置源。"
+            "value" : "進階搜尋通過 Osaurus 運行 `web_search` 工具 — 零設定即可獲得更好的結果。搜尋積分優先覆蓋請求；之後，請求從此錢包計費。積分用完後，搜尋自動切換到內置源。"
           }
         }
       }
@@ -134136,13 +134136,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在代理会话运行或排队时防止系统空闲休眠，以便长任务可以完成。显示器仍可能休眠，合上 MacBook 盖子或选择休眠始终优先。"
+            "value" : "在智能体会话运行或排队时防止系统空闲休眠，以便长任务可以完成。显示器仍可能休眠，合上 MacBook 盖子或选择休眠始终优先。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在代理會話运行或排队时防止系统空闲休眠，以便长任务可以完成。显示器仍可能休眠，合上 MacBook 盖子或選擇休眠始终优先。"
+            "value" : "在智能體會話運行或排隊時防止系統空閒休眠，以便長任務可以完成。顯示器仍可能休眠，合上 MacBook 蓋子或選擇休眠始終優先。"
           }
         }
       }
@@ -134608,7 +134608,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预览显示前 %lld 行。"
+            "value" : "預覽顯示前 %lld 行。"
           }
         }
       }
@@ -134642,7 +134642,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预览显示第一行。"
+            "value" : "預覽顯示第一行。"
           }
         }
       }
@@ -139063,7 +139063,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "探测完成 initialize/listTools，发现 %lld 個工具。"
+            "value" : "探測完成 initialize/listTools，發現 %lld 個工具。"
           }
         }
       }
@@ -139097,7 +139097,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "探测完成 initialize/listTools，发现 1 個工具。"
+            "value" : "探測完成 initialize/listTools，發現 1 個工具。"
           }
         }
       }
@@ -140413,7 +140413,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将相关记忆拉入提示词并在聊天时儲存新记忆。每轮注入，因此会将上下文估算扩展为一個范围。"
+            "value" : "將相關記憶拉入提示詞並在聊天時儲存新記憶。每輪注入，因此會將上下文估算擴展爲一個範圍。"
           }
         }
       }
@@ -141145,7 +141145,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "快速回复"
+            "value" : "快速回復"
           }
         }
       }
@@ -141631,7 +141631,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "以标准操作名稱为键的原始 JSON 对象。值定义方法、路径、選用查询、請求標頭、bodyTemplate 和回應处理。此处和上方的編輯保持同步。"
+            "value" : "以標準操作名稱爲鍵的原始 JSON 對象。值定義方法、路徑、選用查詢、請求標頭、bodyTemplate 和回應處理。此處和上方的編輯保持同步。"
           }
         }
       }
@@ -141981,7 +141981,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "响应"
+            "value" : "響應"
           }
         }
       }
@@ -142430,7 +142430,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "讀取並更新 Linear 的問題、項目和周期"
+            "value" : "讀取並更新 Linear 的問題、項目和週期"
           }
         }
       }
@@ -142500,7 +142500,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "讀取和寫入是独立的允許清單。未加入的頻道在機器人被邀請之前保持不可用。"
+            "value" : "讀取和寫入是獨立的允許清單。未加入的頻道在機器人被邀請之前保持不可用。"
           }
         }
       }
@@ -143471,13 +143471,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "就绪 — 在下次代理运行时自动激活"
+            "value" : "就绪 — 在下次智能体运行时自动激活"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "就绪 — 在下次代理运行时自动激活"
+            "value" : "就緒 — 在下次智能體運行時自動激活"
           }
         }
       }
@@ -144041,7 +144041,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "接收未运行。新增機器人權杖，開啟接收訊息，然后新增可读聊天和授權傳送者以启动它。"
+            "value" : "接收未運行。新增機器人令牌，開啟接收訊息，然後新增可讀聊天和授權傳送者以啓動它。"
           }
         }
       }
@@ -144077,7 +144077,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "接收已關閉：智慧體将看不到新的 Telegram 訊息，且无法分派任何内容。"
+            "value" : "接收已關閉：智慧體將看不到新的 Telegram 訊息，且無法分派任何內容。"
           }
         }
       }
@@ -144323,7 +144323,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最近的蒸餾試驗都失敗了。檢查最近活動來了解錯誤詳情。"
+            "value" : "最近的蒸餾試驗都失敗了。檢查最近活動來瞭解錯誤詳情。"
           }
         }
       }
@@ -144396,7 +144396,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "最近的传入事件"
+            "value" : "最近的傳入事件"
           }
         }
       }
@@ -144684,7 +144684,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "服務器空閒時回收 GPU 和磁盤資源。今日已持久化；主機生命周期橋接器將在後續版本中推出。"
+            "value" : "服務器空閒時回收 GPU 和磁盤資源。今日已持久化；主機生命週期橋接器將在後續版本中推出。"
           }
         }
       }
@@ -144789,7 +144789,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "推荐的 Slack 設定檔已複製"
+            "value" : "推薦的 Slack 設定檔已複製"
           }
         }
       }
@@ -146490,7 +146490,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "存储前已拒绝"
+            "value" : "存儲前已拒絕"
           }
         }
       }
@@ -146954,7 +146954,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "请记住，設定后的第一次輪詢仅啟動游標；儲存后傳送新訊息。"
+            "value" : "請記住，設定後的第一次輪詢僅啟動遊標；儲存後傳送新訊息。"
           }
         }
       }
@@ -147438,13 +147438,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从你的自定义工具中移除\"%@\"？代理将无法再使用其工具。"
+            "value" : "从你的自定义工具中移除\"%@\"？智能体将无法再使用其工具。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从你的自訂工具中移除\"%@\"？代理将无法再使用其工具。"
+            "value" : "從你的自訂工具中移除\"%@\"？智能體將無法再使用其工具。"
           }
         }
       }
@@ -148180,7 +148180,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "移除反应"
+            "value" : "移除反應"
           }
         }
       }
@@ -148318,7 +148318,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "移除此规则"
+            "value" : "移除此規則"
           }
         }
       }
@@ -149589,7 +149589,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用所選智慧體的清理回应回覆傳入的 Telegram 訊息。Telegram 和全域寫入以及寫入允許清單仍然適用。"
+            "value" : "使用所選智慧體的清理回應回覆傳入的 Telegram 訊息。Telegram 和全域寫入以及寫入允許清單仍然適用。"
           }
         }
       }
@@ -149898,7 +149898,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此操作傳送的請求体。${content} 被替换为訊息文本。"
+            "value" : "此操作傳送的請求體。${content} 被替換爲訊息文本。"
           }
         }
       }
@@ -150216,7 +150216,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "請求仅运行在功能中定义的操作，并且在傳送前始终确认。"
+            "value" : "請求僅運行在功能中定義的操作，並且在傳送前始終確認。"
           }
         }
       }
@@ -150639,7 +150639,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "接收訊息所需。在您的 Slack 應用程式中，開啟“基本信息” → “應用程式级權杖”，產生具有 connections:write 範圍的權杖，然后粘贴到此处。这为 Socket Mode 提供动力 — 不涉及 webhook。"
+            "value" : "接收訊息所需。在您的 Slack 應用程式中，開啟“基本信息” → “應用程式級令牌”，產生具有 connections:write 範圍的令牌，然後粘貼到此處。這爲 Socket Mode 提供動力 — 不涉及 webhook。"
           }
         }
       }
@@ -151899,7 +151899,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "重置將清除沙盒外掛狀態。主機上的代理工作區檔案將保留。"
+            "value" : "重置將清除沙盒插件狀態。主機上的代理工作區檔案將保留。"
           }
         }
       }
@@ -152625,13 +152625,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "恢复从此 Mac 或其他 Mac 导出的代理包。"
+            "value" : "恢复从此 Mac 或其他 Mac 导出的智能体包。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "邊原从此 Mac 或其他 Mac 匯出的代理套件。"
+            "value" : "邊原從此 Mac 或其他 Mac 匯出的智能體套件。"
           }
         }
       }
@@ -153737,13 +153737,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理已保存的可复用查询。"
+            "value" : "智能体已保存的可复用查询。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理已儲存的可复用查询。"
+            "value" : "智能體已儲存的可複用查詢。"
           }
         }
       }
@@ -153773,13 +153773,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "可复用工作流，自动对每个自定义代理可用"
+            "value" : "可复用工作流，自动对每个自定义智能体可用"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "可复用工作流程，自动对每個自訂代理可用"
+            "value" : "可複用工作流程，自動對每個自訂智能體可用"
           }
         }
       }
@@ -154024,7 +154024,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "审查与測試"
+            "value" : "審查與測試"
           }
         }
       }
@@ -155135,7 +155135,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由到 %@（房間规则）"
+            "value" : "路由到 %@（房間規則）"
           }
         }
       }
@@ -155311,7 +155311,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "托管模型請求計費後，路由器使用情況就會顯示在這裡。"
+            "value" : "託管模型請求計費後，路由器使用情況就會顯示在這裡。"
           }
         }
       }
@@ -155382,13 +155382,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由到 %lld 个智能体：%@"
+            "value" : "路由到 %1$lld 个智能体：%2$@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由到 %lld 个智慧體：%@"
+            "value" : "路由到 %1$lld 個智慧體：%2$@"
           }
         }
       }
@@ -155424,7 +155424,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "路由规则首先运行：前导名稱（“sales: …”）选择其智慧體，然后是 %@ 规则，最后是預設智慧體。"
+            "value" : "路由規則首先運行：前導名稱（“sales: …”）選擇其智慧體，然後是 %@ 規則，最後是預設智慧體。"
           }
         }
       }
@@ -155562,13 +155562,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理（或你）删除的行会显示在此处，准备恢复。"
+            "value" : "智能体（或你）删除的行会显示在此处，准备恢复。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理（或你）刪除的行会显示在此处，准备邊原。"
+            "value" : "智能體（或你）刪除的行會顯示在此處，準備邊原。"
           }
         }
       }
@@ -155880,7 +155880,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在這台 Mac 上執行受限於沙盒工作區的代理命令。（macOS 26 或更新版本提供完整的 VM 隔離。）"
+            "value" : "在這臺 Mac 上執行受限於沙盒工作區的代理命令。（macOS 26 或更新版本提供完整的 VM 隔離。）"
           }
         }
       }
@@ -156124,7 +156124,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "运行診斷以測試儲存的連線与其端点。"
+            "value" : "運行診斷以測試儲存的連線與其端點。"
           }
         }
       }
@@ -156781,7 +156781,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "通过选定的智慧體运行来自允许頻道和傳送者的已驗證訊息。"
+            "value" : "通過選定的智慧體運行來自允許頻道和傳送者的已驗證訊息。"
           }
         }
       }
@@ -156817,7 +156817,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在私有頻道会话中运行已驗證的、允許清單中的 Slack 訊息。外部表面工具限制仍然适用。"
+            "value" : "在私有頻道會話中運行已驗證的、允許清單中的 Slack 訊息。外部表面工具限制仍然適用。"
           }
         }
       }
@@ -156853,7 +156853,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在私有頻道会话中运行已驗證的、允許清單中的 Telegram 訊息。外部表面工具限制仍然适用。"
+            "value" : "在私有頻道會話中運行已驗證的、允許清單中的 Telegram 訊息。外部表面工具限制仍然適用。"
           }
         }
       }
@@ -157163,7 +157163,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "正在使用内置源运行 — 連線提供者以获得更好的结果"
+            "value" : "正在使用內置源運行 — 連線提供商以獲得更好的結果"
           }
         }
       }
@@ -157721,7 +157721,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "运行时診断"
+            "value" : "運行時診斷"
           }
         }
       }
@@ -158443,7 +158443,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此系統上沙盒不可用"
+            "value" : "此係統上沙盒不可用"
           }
         }
       }
@@ -159247,7 +159247,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此裝置不支援沙盒執行。原生外掛仍可正常運作。"
+            "value" : "此裝置不支援沙盒執行。原生插件仍可正常運作。"
           }
         }
       }
@@ -159281,7 +159281,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "沙盒 MCP 伺服器需要 macOS 26 或更新版本，在這台 Mac 上將無法啟動。選擇「主機」來執行此提供者 — 注意它將在沒有沙盒保護的情況下執行。"
+            "value" : "沙盒 MCP 伺服器需要 macOS 26 或更新版本，在這臺 Mac 上將無法啟動。選擇「主機」來執行此提供者 — 注意它將在沒有沙盒保護的情況下執行。"
           }
         }
       }
@@ -159417,7 +159417,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存 API 權杖或登錄，然後再次測試。"
+            "value" : "保存 API 令牌或登錄，然後再次測試。"
           }
         }
       }
@@ -159834,13 +159834,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将此代理及其数据库保存为加密的 .osaurus-agent 包，可以备份或移动到其他 Mac。"
+            "value" : "将此智能体及其数据库保存为加密的 .osaurus-agent 包，可以备份或移动到其他 Mac。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将此代理及其資料庫儲存为加密的 .osaurus-agent 包，可以备份或移动到其他 Mac。"
+            "value" : "將此智能體及其資料庫儲存爲加密的 .osaurus-agent 包，可以備份或移動到其他 Mac。"
           }
         }
       }
@@ -159874,7 +159874,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "保存權杖"
+            "value" : "保存令牌"
           }
         }
       }
@@ -160084,7 +160084,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 Telegram 載入、測試連線或按完成时儲存到 macOS 鑰匙圈。"
+            "value" : "從 Telegram 載入、測試連線或按完成時儲存到 macOS 鑰匙圈。"
           }
         }
       }
@@ -160120,7 +160120,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "按“从 Discord 載入”、測試連線或完成时儲存到 macOS 鑰匙圈。"
+            "value" : "按“從 Discord 載入”、測試連線或完成時儲存到 macOS 鑰匙圈。"
           }
         }
       }
@@ -160260,7 +160260,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已儲存，但 Discord 接收尚未就绪"
+            "value" : "已儲存，但 Discord 接收尚未就緒"
           }
         }
       }
@@ -160296,7 +160296,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已儲存，但 Slack 接收尚未就绪"
+            "value" : "已儲存，但 Slack 接收尚未就緒"
           }
         }
       }
@@ -160332,7 +160332,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已儲存，但 Telegram 接收尚未就绪"
+            "value" : "已儲存，但 Telegram 接收尚未就緒"
           }
         }
       }
@@ -160847,7 +160847,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "將此智能體安排爲按周期重複運行——非常適合每日簡報或自動籤到。"
+            "value" : "將此智能體安排爲按週期重複運行——非常適合每日簡報或自動籤到。"
           }
         }
       }
@@ -162312,7 +162312,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜尋积分"
+            "value" : "搜尋積分"
           }
         }
       }
@@ -163309,7 +163309,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜尋按成本从你的余额中计费。"
+            "value" : "搜尋按成本從你的餘額中計費。"
           }
         }
       }
@@ -163345,7 +163345,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜尋首先通过 Osaurus — 搜尋积分，然后你的钱包 — 并回退到下方的源。"
+            "value" : "搜尋首先通過 Osaurus — 搜尋積分，然後你的錢包 — 並回退到下方的源。"
           }
         }
       }
@@ -164477,7 +164477,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇預設智慧體或为传入的 Discord 訊息新增路由规则。"
+            "value" : "選擇預設智慧體或爲傳入的 Discord 訊息新增路由規則。"
           }
         }
       }
@@ -164513,7 +164513,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇預設智慧體或为传入的 Slack 訊息新增路由规则。"
+            "value" : "選擇預設智慧體或爲傳入的 Slack 訊息新增路由規則。"
           }
         }
       }
@@ -164549,7 +164549,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "選擇預設智慧體或为传入的 Telegram 訊息新增路由规则。"
+            "value" : "選擇預設智慧體或爲傳入的 Telegram 訊息新增路由規則。"
           }
         }
       }
@@ -165552,7 +165552,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "傳送与接收"
+            "value" : "傳送與接收"
           }
         }
       }
@@ -165799,7 +165799,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "将传入訊息傳送给智慧體"
+            "value" : "將傳入訊息傳送給智慧體"
           }
         }
       }
@@ -165944,7 +165944,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "傳送回复"
+            "value" : "傳送回復"
           }
         }
       }
@@ -166014,7 +166014,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "向機器人傳送訊息（或将其新增到群組并在那里發佈），然后載入待处理的聊天和傳送者。"
+            "value" : "向機器人傳送訊息（或將其新增到羣組並在那裏發佈），然後載入待處理的聊天和傳送者。"
           }
         }
       }
@@ -166086,7 +166086,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "儲存其传入訊息的傳送者 ID。空值拒绝所有人。"
+            "value" : "儲存其傳入訊息的傳送者 ID。空值拒絕所有人。"
           }
         }
       }
@@ -166122,7 +166122,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "sender-id — 每行一个"
+            "value" : "sender-id — 每行一個"
           }
         }
       }
@@ -166226,7 +166226,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "傳送已啟用但寫入房間允許清單为空，因此傳送将被拒绝。"
+            "value" : "傳送已啟用但寫入房間允許清單爲空，因此傳送將被拒絕。"
           }
         }
       }
@@ -166262,7 +166262,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "傳送已暫停 — 每个頻道都是只读"
+            "value" : "傳送已暫停 — 每個頻道都是隻讀"
           }
         }
       }
@@ -167539,7 +167539,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定带通知的定期或延迟自运行任务"
+            "value" : "設定帶通知的定期或延遲自運行任務"
           }
         }
       }
@@ -168408,7 +168408,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已用上下文占比"
+            "value" : "已用上下文佔比"
           }
         }
       }
@@ -169256,7 +169256,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示所有工具"
+            "value" : "顯示所有工具"
           }
         }
       }
@@ -169788,7 +169788,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示 %lld %@"
+            "value" : "顯示 %lld %@"
           }
         }
       }
@@ -169824,13 +169824,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示 %lld / %lld %@"
+            "value" : "显示 %1$lld / %2$lld %3$@"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示 %lld / %lld %@"
+            "value" : "顯示 %1$lld / %2$lld %3$@"
           }
         }
       }
@@ -169968,7 +169968,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "显示精确的工具暴露状态、token 估算和匯出"
+            "value" : "顯示精確的工具暴露狀態、token 估算和匯出"
           }
         }
       }
@@ -171195,7 +171195,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "签名"
+            "value" : "簽名"
           }
         }
       }
@@ -172370,13 +172370,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "技能自动对每个自定义代理可用，仅在相关时加载。在聊天中输入 /skill-name 以显式使用。"
+            "value" : "技能自动对每个自定义智能体可用，仅在相关时加载。在聊天中输入 /skill-name 以显式使用。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "技能自动对每個自訂代理可用，仅在相关时載入。在聊天中输入 /skill-name 以显式使用。"
+            "value" : "技能自動對每個自訂智能體可用，僅在相關時載入。在聊天中輸入 /skill-name 以顯式使用。"
           }
         }
       }
@@ -172406,13 +172406,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "技能是每个自定义代理都可以自动使用的可复用工作流。"
+            "value" : "技能是每个自定义智能体都可以自动使用的可复用工作流。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "技能是每個自訂代理都可以自动使用的可复用工作流程。"
+            "value" : "技能是每個自訂智能體都可以自動使用的可複用工作流程。"
           }
         }
       }
@@ -172732,7 +172732,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slack 機器人權杖"
+            "value" : "Slack 機器人令牌"
           }
         }
       }
@@ -172766,7 +172766,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slack 機器人權杖已移除"
+            "value" : "Slack 機器人令牌已移除"
           }
         }
       }
@@ -172802,7 +172802,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slack 选项尚未載入。您可以刷新或使用進階手动 ID。"
+            "value" : "Slack 選項尚未載入。您可以刷新或使用進階手動 ID。"
           }
         }
       }
@@ -172909,7 +172909,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slack 設定已儲存 — 接收已就绪"
+            "value" : "Slack 設定已儲存 — 接收已就緒"
           }
         }
       }
@@ -173012,7 +173012,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Slack Socket Mode 應用程式權杖已移除"
+            "value" : "Slack Socket Mode 應用程式令牌已移除"
           }
         }
       }
@@ -173504,7 +173504,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Socket Mode 應用程式權杖"
+            "value" : "Socket Mode 應用程式令牌"
           }
         }
       }
@@ -173540,7 +173540,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Socket Mode 未运行。新增機器人權杖、應用程式级權杖、可读頻道和授權傳送者 ID 以启动它。"
+            "value" : "Socket Mode 未運行。新增機器人令牌、應用程式級令牌、可讀頻道和授權傳送者 ID 以啓動它。"
           }
         }
       }
@@ -173577,7 +173577,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Socket Mode 未在執行。儲存機器人權杖、Socket Mode 應用程式權杖、可讀取頻道和已授權的傳送者 ID 以啟動它。"
+            "value" : "Socket Mode 未在執行。儲存機器人令牌、Socket Mode 應用程式令牌、可讀取頻道和已授權的傳送者 ID 以啟動它。"
           }
         }
       }
@@ -173646,7 +173646,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "一旦設定了機器人權杖、應用程式權杖、可讀取頻道和已授權的傳送者，Socket Mode 接收將自動啟動。"
+            "value" : "一旦設定了機器人令牌、應用程式令牌、可讀取頻道和已授權的傳送者，Socket Mode 接收將自動啟動。"
           }
         }
       }
@@ -173930,7 +173930,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "部分緩衝輪次已達重試上限而被轉入死信佇列。請查看近期活動了解失敗原因，然後在修復模型/配置問題後回填或重新填充。"
+            "value" : "部分緩衝輪次已達重試上限而被轉入死信佇列。請查看近期活動瞭解失敗原因，然後在修復模型/配置問題後回填或重新填充。"
           }
         }
       }
@@ -174561,7 +174561,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "来源"
+            "value" : "來源"
           }
         }
       }
@@ -175862,7 +175862,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅在提及機器人时开始新對話。"
+            "value" : "僅在提及機器人時開始新對話。"
           }
         }
       }
@@ -175898,7 +175898,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "仅在提及機器人时开始新的 Slack 對話。"
+            "value" : "僅在提及機器人時開始新的 Slack 對話。"
           }
         }
       }
@@ -176069,7 +176069,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从沙箱状态栏启动沙箱容器以啟用此功能。"
+            "value" : "從沙箱狀態欄啓動沙箱容器以啟用此功能。"
           }
         }
       }
@@ -176106,7 +176106,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从沙箱状态栏启动沙箱容器，然后在上方的执行部分啟用自主执行和外掛建立。"
+            "value" : "從沙箱狀態欄啓動沙箱容器，然後在上方的執行部分啟用自主執行和插件建立。"
           }
         }
       }
@@ -176211,7 +176211,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "從沙盒狀態列啟動沙盒，然後在上方「執行」部分啟用自主執行和外掛建立。"
+            "value" : "從沙盒狀態列啟動沙盒，然後在上方「執行」部分啟用自主執行和插件建立。"
           }
         }
       }
@@ -176731,7 +176731,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "状态：%@。%@"
+            "value" : "狀態：%@。%@"
           }
         }
       }
@@ -177324,7 +177324,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "解決外掛程式更新錯誤"
+            "value" : "解決插件程式更新錯誤"
           }
         }
       }
@@ -177871,7 +177871,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "儲存標記为由機器人傳送的传入訊息。"
+            "value" : "儲存標記爲由機器人傳送的傳入訊息。"
           }
         }
       }
@@ -177907,7 +177907,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "儲存此連線自身傳送的訊息（回显事件）。"
+            "value" : "儲存此連線自身傳送的訊息（回顯事件）。"
           }
         }
       }
@@ -178813,7 +178813,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提交所选选项"
+            "value" : "提交所選選項"
           }
         }
       }
@@ -179085,7 +179085,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "成功：已授权（找到 1 個日曆）"
+            "value" : "成功：已授權（找到 1 個日曆）"
           }
         }
       }
@@ -179119,7 +179119,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "成功：已授权（找到 1 個列表）"
+            "value" : "成功：已授權（找到 1 個列表）"
           }
         }
       }
@@ -179678,7 +179678,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "在表的行和列布局之间切换。"
+            "value" : "在表的行和列佈局之間切換。"
           }
         }
       }
@@ -179780,7 +179780,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "切换到全部并开启此代理应使用的工具。"
+            "value" : "切換到全部並開啓此代理應使用的工具。"
           }
         }
       }
@@ -180054,7 +180054,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "系统（由 Osaurus 管理）"
+            "value" : "系統（由 Osaurus 管理）"
           }
         }
       }
@@ -181044,7 +181044,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 機器人權杖"
+            "value" : "Telegram 機器人令牌"
           }
         }
       }
@@ -181078,7 +181078,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 機器人權杖已移除"
+            "value" : "Telegram 機器人令牌已移除"
           }
         }
       }
@@ -181114,7 +181114,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 选项已載入"
+            "value" : "Telegram 選項已載入"
           }
         }
       }
@@ -181150,7 +181150,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 未包含此訊息的傳送者，因此无法授權。"
+            "value" : "Telegram 未包含此訊息的傳送者，因此無法授權。"
           }
         }
       }
@@ -181180,13 +181180,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 分发不支持提及门控。关闭 Telegram 的需要 @提及。"
+            "value" : "Telegram 分发不支持提及限制。关闭 Telegram 的需要 @提及。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 分派不支持提及门控。關閉 Telegram 的需要 @提及。"
+            "value" : "Telegram 分發不支援提及限制。關閉 Telegram 的需要 @提及。"
           }
         }
       }
@@ -181326,7 +181326,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Telegram 設定已儲存 — 接收已就绪"
+            "value" : "Telegram 設定已儲存 — 接收已就緒"
           }
         }
       }
@@ -181942,7 +181942,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "测试連線"
+            "value" : "測試連線"
           }
         }
       }
@@ -182841,7 +182841,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "操作對應 JSON 无法解析，因此无法作为字段編輯。在下方的進階 JSON 編輯器中修复它。"
+            "value" : "操作對應 JSON 無法解析，因此無法作爲字段編輯。在下方的進階 JSON 編輯器中修復它。"
           }
         }
       }
@@ -182906,13 +182906,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理在有需要记住的内容时会添加行。你也可以直接在聊天中询问，或导入文件。"
+            "value" : "智能体在有需要记住的内容时会添加行。你也可以直接在聊天中询问，或导入文件。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理在有需要记住的内容时会新增行。你也可以直接在聊天中询问，或匯入檔案。"
+            "value" : "智能體在有需要記住的內容時會新增行。你也可以直接在聊天中詢問，或匯入檔案。"
           }
         }
       }
@@ -183012,13 +183012,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理使用 `db_create_table` 工具自行设计此布局。如果需要新列，请在聊天中询问。"
+            "value" : "智能体使用 `db_create_table` 工具自行设计此布局。如果需要新列，请在聊天中询问。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理使用 `db_create_table` 工具自行设计此布局。如果需要新列，请在聊天中询问。"
+            "value" : "智能體使用 `db_create_table` 工具自行設計此佈局。如果需要新列，請在聊天中詢問。"
           }
         }
       }
@@ -183082,13 +183082,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理正在写入其数据库。"
+            "value" : "智能体正在写入其数据库。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理正在写入其資料庫。"
+            "value" : "智能體正在寫入其資料庫。"
           }
         }
       }
@@ -183396,7 +183396,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此包聲明了工具調用解析器 (%@)，但 Osaurus 仍需要實時工具調用驗證才能將其標記爲已驗證。"
+            "value" : "此包聲明瞭工具調用解析器 (%@)，但 Osaurus 仍需要實時工具調用驗證才能將其標記爲已驗證。"
           }
         }
       }
@@ -183534,7 +183534,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "该頻道不在可读允許清單中。在頻道設定中为其啟用讀取。"
+            "value" : "該頻道不在可讀允許清單中。在頻道設定中爲其啟用讀取。"
           }
         }
       }
@@ -183964,7 +183964,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "事件在等待超时前在此阶段停止；请檢查上方的最近事件列表。"
+            "value" : "事件在等待超時前在此階段停止；請檢查上方的最近事件列表。"
           }
         }
       }
@@ -184000,7 +184000,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "该事件不是普通頻道訊息（編輯、加入和系统事件被忽略）。"
+            "value" : "該事件不是普通頻道訊息（編輯、加入和系統事件被忽略）。"
           }
         }
       }
@@ -184383,7 +184383,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "設定檔已啟用 Socket Mode 和訊息事件訂閱。您无需输入請求 URL — Osaurus 通过出站連線接收事件。"
+            "value" : "設定檔已啟用 Socket Mode 和訊息事件訂閱。您無需輸入請求 URL — Osaurus 通過出站連線接收事件。"
           }
         }
       }
@@ -184523,7 +184523,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "訊息超過最大传入长度，已被忽略。"
+            "value" : "訊息超過最大傳入長度，已被忽略。"
           }
         }
       }
@@ -184559,7 +184559,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "訊息没有可读文本（贴纸和仅媒体訊息被忽略）。"
+            "value" : "訊息沒有可讀文本（貼紙和僅媒體訊息被忽略）。"
           }
         }
       }
@@ -184595,7 +184595,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "訊息没有可用内容可分派。"
+            "value" : "訊息沒有可用內容可分派。"
           }
         }
       }
@@ -184631,7 +184631,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "訊息在等待超时前在此阶段停止；请檢查上方的最近事件列表。"
+            "value" : "訊息在等待超時前在此階段停止；請檢查上方的最近事件列表。"
           }
         }
       }
@@ -184842,7 +184842,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "模型从少量工具开始，按需載入更多你分配的工具。"
+            "value" : "模型從少量工具開始，按需載入更多你分配的工具。"
           }
         }
       }
@@ -185052,7 +185052,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "插件的 `osr_host_api` 鏡像結構體與主機的 v6 布局不匹配——最常見的是跳過了 v5 的 `log_structured` 槽位，導致之後的每個槽位都偏移了 8 個字節。隨後插件會將 `host->free_string` 分派到錯誤的主機跳板，`libc free()` 在一個非 malloc 指針上中止，從而導致主機崩潰。有關固定偏移量以及記錄在案的 v1..v6 演進，請參閱 `docs/plugins/HOST_API.md → Mirror Struct Audit` 和 `docs/plugins/ABI_VERSIONS.md`。"
+            "value" : "插件的 `osr_host_api` 鏡像結構體與主機的 v6 佈局不匹配——最常見的是跳過了 v5 的 `log_structured` 槽位，導致之後的每個槽位都偏移了 8 個字節。隨後插件會將 `host->free_string` 分派到錯誤的主機跳板，`libc free()` 在一個非 malloc 指針上中止，從而導致主機崩潰。有關固定偏移量以及記錄在案的 v1..v6 演進，請參閱 `docs/plugins/HOST_API.md → Mirror Struct Audit` 和 `docs/plugins/ABI_VERSIONS.md`。"
           }
         }
       }
@@ -185296,7 +185296,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "提供商傳送了 Osaurus 无法解码的信封。"
+            "value" : "提供商傳送了 Osaurus 無法解碼的信封。"
           }
         }
       }
@@ -185647,7 +185647,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "所选智慧體不再存在。在頻道設定中選擇其他智慧體。"
+            "value" : "所選智慧體不再存在。在頻道設定中選擇其他智慧體。"
           }
         }
       }
@@ -185683,7 +185683,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "傳送者不在授權傳送者列表中。在頻道設定中新增他们。"
+            "value" : "傳送者不在授權傳送者列表中。在頻道設定中新增他們。"
           }
         }
       }
@@ -185787,7 +185787,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "签名密钥仅驗證 Slack HTTP（Events API）請求。原生 Slack 接收使用 Socket Mode，永远不需要它；仅为将来的 webhook 兼容性保留。"
+            "value" : "簽名密鑰僅驗證 Slack HTTP（Events API）請求。原生 Slack 接收使用 Socket Mode，永遠不需要它；僅爲將來的 webhook 兼容性保留。"
           }
         }
       }
@@ -186034,7 +186034,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "權杖儲存在鑰匙圈中，永遠不會寫入 Telegram 設定檔。"
+            "value" : "令牌儲存在鑰匙圈中，永遠不會寫入 Telegram 設定檔。"
           }
         }
       }
@@ -186210,7 +186210,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "该工作區不在允許清單中。在頻道設定中選擇并儲存。"
+            "value" : "該工作區不在允許清單中。在頻道設定中選擇並儲存。"
           }
         }
       }
@@ -187263,13 +187263,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理尚未存储任何内容。"
+            "value" : "此智能体尚未存储任何内容。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理尚未儲存任何内容。"
+            "value" : "此智能體尚未儲存任何內容。"
           }
         }
       }
@@ -187299,13 +187299,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理仍有活跃会话。关闭标签页将取消所有会话。"
+            "value" : "此智能体仍有活跃会话。关闭标签页将取消所有会话。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此代理仍有活跃會話。關閉標籤頁将取消所有會話。"
+            "value" : "此智能體仍有活躍會話。關閉標籤頁將取消所有會話。"
           }
         }
       }
@@ -187418,7 +187418,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此包聲明了 DFlash/推測解碼元數據，但本地生成尚無目標/草稿接受契約或基準證明。請在原生運行時支持落地後再使用。"
+            "value" : "此包聲明瞭 DFlash/推測解碼元數據，但本地生成尚無目標/草稿接受契約或基準證明。請在原生運行時支持落地後再使用。"
           }
         }
       }
@@ -187629,7 +187629,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此設定结构上看起来有效。"
+            "value" : "此設定結構上看起來有效。"
           }
         }
       }
@@ -187699,7 +187699,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此對話已有智慧體回覆正在进行；訊息需要在完成后重新傳送。"
+            "value" : "此對話已有智慧體回覆正在進行；訊息需要在完成後重新傳送。"
           }
         }
       }
@@ -187840,7 +187840,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此事件已被处理；提供商重新交付了它。"
+            "value" : "此事件已被處理；提供商重新交付了它。"
           }
         }
       }
@@ -188615,7 +188615,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此外掛声明了一個可設定的选项（1 個字段）。"
+            "value" : "此插件聲明瞭一個可設定的選項（1 個字段）。"
           }
         }
       }
@@ -188651,7 +188651,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此插件聲明了配置選項。非敏感值存儲在本地；敏感值保存在系統鑰匙串中。"
+            "value" : "此插件聲明瞭設定選項。非敏感值存儲在本地；敏感值保存在系統鑰匙串中。"
           }
         }
       }
@@ -188688,7 +188688,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此插件聲明了你可以配置的選項（%lld 個字段）。"
+            "value" : "此插件聲明瞭你可以設定的選項（%lld 個字段）。"
           }
         }
       }
@@ -188722,7 +188722,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此外掛声明了可設定的选项（%lld 個字段）。"
+            "value" : "此插件聲明瞭可設定的選項（%lld 個字段）。"
           }
         }
       }
@@ -188794,7 +188794,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此插件尚未收錄在內置目錄中。安裝即可導入其技能、智能體、命令和 MCP 服務器，或打開主頁以了解更多。"
+            "value" : "此插件尚未收錄在內置目錄中。安裝即可導入其技能、智能體、命令和 MCP 服務器，或打開主頁以瞭解更多。"
           }
         }
       }
@@ -189389,7 +189389,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此 URL 的回應方式像 MCP 伺服器，而不是聊天補全 API。Osaurus 可以將它新增為 MCP 連接——你輸入的 URL 和權杖將被保留。"
+            "value" : "此 URL 的回應方式像 MCP 伺服器，而不是聊天補全 API。Osaurus 可以將它新增為 MCP 連接——你輸入的 URL 和令牌將被保留。"
           }
         }
       }
@@ -189813,7 +189813,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "這將重置沙盒並從頭重新配置。沙盒外掛狀態將遺失。"
+            "value" : "這將重置沙盒並從頭重新配置。沙盒插件狀態將遺失。"
           }
         }
       }
@@ -191122,7 +191122,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "从 Slack 載入、測試連線或按完成时，權杖儲存到 macOS 鑰匙圈。"
+            "value" : "從 Slack 載入、測試連線或按完成時，令牌儲存到 macOS 鑰匙圈。"
           }
         }
       }
@@ -192029,7 +192029,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工具和记忆状态"
+            "value" : "工具和記憶狀態"
           }
         }
       }
@@ -192065,7 +192065,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工具状态"
+            "value" : "工具狀態"
           }
         }
       }
@@ -192203,7 +192203,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你建立或作为 JSON 配方匯入的工具。它们在 Osaurus 的沙箱中运行，与 Mac 的其余部分隔离。"
+            "value" : "你建立或作為 JSON 配方匯入的工具。它們在 Osaurus 的沙箱中運行，與 Mac 的其餘部分隔離。"
           }
         }
       }
@@ -192239,7 +192239,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "工具、生成覆盖和主题在建立后可在設定选项卡中編輯。"
+            "value" : "工具、生成覆蓋和主題在建立後可在設定選項卡中編輯。"
           }
         }
       }
@@ -193433,7 +193433,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "約 5 分鐘後觸發。最適合較長的寫作會話或周期性同步。"
+            "value" : "約 5 分鐘後觸發。最適合較長的寫作會話或週期性同步。"
           }
         }
       }
@@ -193693,7 +193693,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "尝试不同的名称或描述。"
+            "value" : "嘗試不同的名稱或描述。"
           }
         }
       }
@@ -194457,7 +194457,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "开启接收"
+            "value" : "開啓接收"
           }
         }
       }
@@ -194486,13 +194486,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "开启“维护者”能力后，智能体可以标记过期文档并起草更新，但在您于“知识”标签页中审阅差异并批准之前，任何内容都不会被写入。"
+            "value" : "启用 Curator 能力后，智能体可以标记过时的文档并起草更新，但所有改动都需要你在“知识”标签页中审阅差异并批准，才会最终生效。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "開啟「維護者」能力後，智能體可以標記過期文件並草擬更新，但在您於「知識」分頁中審閱差異並核准之前，任何內容都不會被寫入。"
+            "value" : "啟用 Curator 功能後，智能體可以標記過時的檔案並草擬更新，但所有變更都必須在你的“知識”標籤頁中審閱差異並核准後，才會正式寫入。"
           }
         }
       }
@@ -194561,7 +194561,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "开启或關閉此工具"
+            "value" : "開啓或關閉此工具"
           }
         }
       }
@@ -195229,7 +195229,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "後台任務執行時無法復原。"
+            "value" : "後臺任務執行時無法復原。"
           }
         }
       }
@@ -196729,13 +196729,13 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已更新“%@”"
+            "value" : "已更新 \"%@\""
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已更新「%@」"
+            "value" : "已更新 \"%@\""
           }
         }
       }
@@ -196775,7 +196775,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已更新 %1$lld/%2$lld 個外掛"
+            "value" : "已更新 %1$lld/%2$lld 個插件"
           }
         }
       }
@@ -196809,7 +196809,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "已更新 %lld 個外掛"
+            "value" : "已更新 %lld 個插件"
           }
         }
       }
@@ -198178,7 +198178,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用模拟数据（%lld 個模型）"
+            "value" : "使用模擬數據（%lld 個模型）"
           }
         }
       }
@@ -198213,7 +198213,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用模拟数据（1 個模型）"
+            "value" : "使用模擬數據（1 個模型）"
           }
         }
       }
@@ -198247,7 +198247,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "搜尋积分用完时使用 Osaurus 余额"
+            "value" : "搜尋積分用完時使用 Osaurus 餘額"
           }
         }
       }
@@ -199341,7 +199341,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "使用内置源"
+            "value" : "使用內置源"
           }
         }
       }
@@ -199843,7 +199843,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "驗證传入訊息"
+            "value" : "驗證傳入訊息"
           }
         }
       }
@@ -199879,7 +199879,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "驗證传入訊息"
+            "value" : "驗證傳入訊息"
           }
         }
       }
@@ -201343,7 +201343,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "语音输出在通用 → 設定 → 语音中；问候文本和個性在通用 → 外观 → 空状态中。"
+            "value" : "語音輸出在通用 → 設定 → 語音中；問候文字和個性在通用 → 外觀 → 空狀態中。"
           }
         }
       }
@@ -201729,7 +201729,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "等待 Discord 訊息。现在从可读頻道中的授權傳送者傳送測試訊息。"
+            "value" : "等待 Discord 訊息。現在從可讀頻道中的授權傳送者傳送測試訊息。"
           }
         }
       }
@@ -201801,7 +201801,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "等待 Slack 訊息。现在从可读頻道中的授權傳送者傳送測試訊息。"
+            "value" : "等待 Slack 訊息。現在從可讀頻道中的授權傳送者傳送測試訊息。"
           }
         }
       }
@@ -201873,7 +201873,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "等待 Telegram 訊息。现在从可读聊天中的授權傳送者向機器人傳送訊息。"
+            "value" : "等待 Telegram 訊息。現在從可讀聊天中的授權傳送者向機器人傳送訊息。"
           }
         }
       }
@@ -202429,7 +202429,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预热中 — 预填充上下文 %lld%%（%lld/1 token）"
+            "value" : "預熱中 — 預填充上下文 %lld%%（%lld/1 token）"
           }
         }
       }
@@ -202471,7 +202471,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "預熱 — 填充上下文 %1$lld%% (%2$lld/%3$lld 詞元)"
+            "value" : "預熱 — 上下文預填充 %1$lld%% (%2$lld/%3$lld 詞元)"
           }
         }
       }
@@ -202505,7 +202505,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "预热中 — 预填充上下文 %lld%%（%lld/1 token）"
+            "value" : "預熱中 — 預填充上下文 %lld%%（%lld/1 token）"
           }
         }
       }
@@ -202847,7 +202847,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "我們收集匿名的聚合使用數據，以了解哪些功能被使用，從而改進 Osaurus。這些數據完全匿名，絕不會包含你的聊天、提示詞、文件或密鑰。你可以隨時在「設置」中關閉此功能。"
+            "value" : "我們收集匿名的聚合使用數據，以瞭解哪些功能被使用，從而改進 Osaurus。這些數據完全匿名，絕不會包含你的聊天、提示詞、檔案或密鑰。你可以隨時在“設置”中關閉此功能。"
           }
         }
       }
@@ -203235,7 +203235,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "网页搜尋"
+            "value" : "網頁搜尋"
           }
         }
       }
@@ -203586,7 +203586,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "网页、新闻和图片搜尋。无需金鑰；仅在其他源失败时使用。"
+            "value" : "網頁、新聞和圖片搜尋。無需金鑰；僅在其他源失敗時使用。"
           }
         }
       }
@@ -203654,7 +203654,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "每周"
+            "value" : "每週"
           }
         }
       }
@@ -203902,7 +203902,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理儲存内容一览。"
+            "value" : "代理儲存內容一覽。"
           }
         }
       }
@@ -203938,7 +203938,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "代理在沙箱内可以做什么。"
+            "value" : "代理在沙箱內可以做什麼。"
           }
         }
       }
@@ -204849,7 +204849,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "此工具的来源"
+            "value" : "此工具的來源"
           }
         }
       }
@@ -205096,7 +205096,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "為什麽加密是可選的"
+            "value" : "為什麼加密是可選的"
           }
         }
       }
@@ -205381,7 +205381,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "有了資料庫，代理可以在對話之间儲存筆記、清單和誌錄 — 以加密形式儲存在此 Mac 上。你可以瀏覽和編輯它儲存的所有内容。"
+            "value" : "有了資料庫，代理可以在對話之間儲存筆記、清單和誌錄 — 以加密形式儲存在此 Mac 上。你可以瀏覽和編輯它儲存的所有內容。"
           }
         }
       }
@@ -205558,7 +205558,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "处理挂载檔案夹中的檔案：读取、編輯、搜尋、运行命令、提交"
+            "value" : "處理掛載檔案夾中的檔案：讀取、編輯、搜尋、運行命令、提交"
           }
         }
       }
@@ -207399,7 +207399,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你已設定自己的搜尋提供者 — 在進階搜尋關閉时它们继续处理搜尋。"
+            "value" : "你已設定自己的搜尋提供商 — 在高級搜尋關閉時它們繼續處理搜尋。"
           }
         }
       }
@@ -207622,7 +207622,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您將添加%@"
+            "value" : "您將新增%@"
           }
         }
       }
@@ -207727,7 +207727,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的智慧體現在可以為您瀏覽網頁 — 導航頁面、閱讀內容和填寫表單，每一步都即時展示在資訊流中。每個智慧體擁有獨立的持久化瀏覽器工作階段，因此 Cookie 和登入狀態可在對話間延續，但絕不會與其他智慧體或您常用的瀏覽器共用。如果您之前使用過瀏覽器外掛，您的工作階段已自動遷移。"
+            "value" : "您的智慧體現在可以為您瀏覽網頁 — 導航頁面、閱讀內容和填寫表單，每一步都即時展示在資訊流中。每個智慧體擁有獨立的持久化瀏覽器工作階段，因此 Cookie 和登入狀態可在對話間延續，但絕不會與其他智慧體或您常用的瀏覽器共用。如果您之前使用過瀏覽器插件，您的工作階段已自動遷移。"
           }
         }
       }
@@ -207763,7 +207763,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "您的智慧體開箱即可搜尋網頁 — 無需外掛，無需 API 金鑰。免費來源預設啟用，如果您之前使用過搜尋外掛，您的 API 金鑰會自動轉移。"
+            "value" : "您的智慧體開箱即可搜尋網頁 — 無需插件，無需 API 金鑰。免費來源預設啟用，如果您之前使用過搜尋插件，您的 API 金鑰會自動轉移。"
           }
         }
       }
@@ -208041,7 +208041,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "聊天保持私密，並可離線使用。我們已為這台 Mac 選好最合適的模型，你只需下載即可。"
+            "value" : "聊天保持私密，並可離線使用。我們已為這臺 Mac 選好最合適的模型，你只需下載即可。"
           }
         }
       }
@@ -208075,7 +208075,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的聊天、提示詞、文件和密鑰絕不會離開你的 Mac。"
+            "value" : "你的聊天、提示詞、檔案和密鑰絕不會離開你的 Mac。"
           }
         }
       }
@@ -208145,7 +208145,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你當前的主密鑰不再與你的智能體和訪問密鑰所派生的地址相匹配。這通常意味着在現有主密鑰之上又創建了一個主密鑰——例如，由於重新執行了初始設置。"
+            "value" : "你當前的主密鑰不再與你的智能體和訪問密鑰所派生的地址相匹配。這通常意味著在現有主密鑰之上又創建了一個主密鑰——例如，由於重新執行了初始設置。"
           }
         }
       }
@@ -208384,7 +208384,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的身份已激活"
+            "value" : "你的身份已啟動"
           }
         }
       }
@@ -208674,7 +208674,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "你的提供者"
+            "value" : "您的供應商"
           }
         }
       }
