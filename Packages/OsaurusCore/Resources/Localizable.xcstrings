@@ -3689,7 +3689,7 @@
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "允許 %1%lld 個 · %2$lld 人"
+            "value" : "允許 %1$lld 個 · %2$lld 人"
           }
         }
       }
