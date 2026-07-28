@@ -365,6 +365,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         }
 
         Task { @MainActor in
+            // Await the identity-existence seed before the first
+            // `RemoteProviderManager.shared` touch below: its cold init
+            // runs the managed-router gate, and racing the fire-and-forget
+            // warm above means that gate can still pay a synchronous
+            // keychain probe on the main thread (a reported launch hang).
+            // Its own guard (rather than folding into the block below) keeps
+            // the exact provider-connect gate the keychain-disabled source
+            // policy asserts on.
+            if !keychainDisabledTestMode {
+                await MasterKey.seedExistsCacheOffMainActor()
+            }
             if !keychainDisabledTestMode {
                 await MCPProviderManager.shared.connectEnabledProviders()
                 await RemoteProviderManager.shared.connectEnabledProviders()
@@ -378,6 +389,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 BrowserPluginMigration.migrateIfNeeded()
             }
             await ModelPickerItemCache.shared.prewarmModelCache()
+        }
+
+        // Pre-warm the open-panel machinery. The first NSOpenPanel init in a
+        // process loads the remote file-picker (ViewBridge) service, which can
+        // take seconds cold — reported as a hang when it happens on the user's
+        // click (folder selection, file attach). Creating one throwaway panel
+        // now moves that one-time cost to launch idle time, a few seconds in,
+        // when the user isn't mid-interaction. Must run on the main thread —
+        // NSOpenPanel is main-thread-only, so the cost can't be moved off it,
+        // only moved earlier.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            _ = NSOpenPanel()
         }
 
         // VecturaKit inits run sequentially. Memory DB opens first because
