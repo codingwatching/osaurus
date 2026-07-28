@@ -3,6 +3,41 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.12</title>
+            <pubDate>Tue, 28 Jul 2026 16:08:55 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.12</sparkle:version>
+            <sparkle:shortVersionString>0.22.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.12/Osaurus-0.22.12.dmg" length="68353377" type="application/octet-stream" sparkle:edSignature="kIL1LJSzWPU71DeCm/7czBMV1cdBIdRFouXmjHZuGo3T0dmBNBs5aVmU/s6LU+bv6KoPUHLeRXyBwRrf0HINBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Match assistant and user chat text sizing (#2201) by @hkay-dev
+- fix(i18n): two render sites that bypass localization (#2199) by @YspritanHyzygy
+- Pin Nanbeige vMLX runtime (#2198) by @jjang-ai
+- Wire remaining OsaurusCore network call sites into global proxy (#2169) by @peterlodri-sec
+- i18n(zh-Hans): unify Computer Use naming, fix a label collision and four mistranslations (#2195) by @YspritanHyzygy
+- Fix stale settings warmup and add SSD cache regression eval (#2194) by @jjang-ai
+- i18n(zh): fix malformed format specifier in channel member count (#2176) by @YspritanHyzygy
+- i18n: add 43 Settings-search strings that never entered the catalog (#2193) by @YspritanHyzygy
+
+## 🐛 Bug Fixes
+
+- fall back to lenient decode for nonstandard streaming chunks during tool calls (#2205) by @RaajeevChandran
+- fixed app hangs (#2203) by @RaajeevChandran
+- added guardrails for factory reset auto quit (#2200) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Native channel presence, formatting, and reactions (#2202) by @tpae
+- Clarify channel messaging UX with Replies/New Messages model and localize the channel surface (#2196) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.11...0.22.12
+]]></description>
+        </item>
+        <item>
             <title>0.22.11</title>
             <pubDate>Mon, 27 Jul 2026 20:47:16 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
