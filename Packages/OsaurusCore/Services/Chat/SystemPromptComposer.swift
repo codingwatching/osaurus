@@ -1432,11 +1432,11 @@ public struct SystemPromptComposer: Sendable {
     }
 
     /// True when any Agent Channel surface is configured: an enabled custom
-    /// JSON connection, a native provider (Discord/Slack/Telegram) with
-    /// configured rooms, or any outbound destination binding. The old check
-    /// only saw enabled CUSTOM connections, so agents using only the native
-    /// providers never got the `agent_channel_*` family into their enabled
-    /// manifest.
+    /// JSON connection, a native provider (Discord/Slack/Telegram/iMessage)
+    /// with configured rooms, or any outbound destination binding. The old
+    /// check only saw enabled CUSTOM connections, so agents using only the
+    /// native providers never got the `agent_channel_*` family into their
+    /// enabled manifest.
     @MainActor
     static func hasAnyConfiguredAgentChannel(
         configuration: AgentChannelConfiguration
@@ -1455,6 +1455,10 @@ public struct SystemPromptComposer: Sendable {
         }
         let telegram = TelegramConnectionService.shared.configuration()
         if !telegram.readableChatIds.isEmpty || !telegram.writableChatIds.isEmpty {
+            return true
+        }
+        let imessage = IMessageConnectionService.shared.configuration()
+        if !imessage.readableChatIds.isEmpty || !imessage.writableChatIds.isEmpty {
             return true
         }
         return false
