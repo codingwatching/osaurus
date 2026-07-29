@@ -351,6 +351,20 @@ struct RuntimePolicySourceTests {
         #expect(serverView.contains("reloadAccessKeys(readKeychain: true)"))
     }
 
+    @Test("automatic relay identity assignment keeps Keychain work off the main actor")
+    func automaticRelayIdentityAssignmentKeepsKeychainWorkOffMainActor() throws {
+        let agentManager = try Self.source("Managers/AgentManager.swift")
+        let serverView = try Self.source("Views/Settings/ServerView.swift")
+        let relayManager = try Self.source("Networking/RelayTunnelManager.swift")
+
+        #expect(agentManager.contains("func assignAddressInBackground(to agent: Agent)"))
+        #expect(agentManager.contains("Task.detached(priority: .userInitiated)"))
+        #expect(serverView.contains("agentManager.assignAddressInBackground(to: agent)"))
+        #expect(!serverView.contains("try? agentManager.assignAddress(to: agent)"))
+        #expect(relayManager.contains("AgentManager.shared.assignAddressInBackground(to: agent)"))
+        #expect(!relayManager.contains("try? AgentManager.shared.assignAddress(to: agent)"))
+    }
+
     @Test("plugin host inference carries agent memory like HTTP chat")
     func pluginHostInferenceInjectsAgentMemoryPrefix() throws {
         let source = try Self.source("Services/Plugin/PluginHostAPI.swift")
@@ -766,7 +780,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "7300afaa764f50743b11d8f7f8ececf0100731a2"
+        let expectedRuntimeHardenedRevision = "84612e143d2e51da865316dbc49167530a1717ad"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -776,7 +790,7 @@ struct RuntimePolicySourceTests {
         #expect(manifestRevision == appRevision)
         #expect(
             manifestRevision == expectedRuntimeHardenedRevision,
-            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, and Nanbeige 4.2 looped-transformer runtime support together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
+            "Osaurus must consume the proven vmlx-swift revision with schema-bound Qwen XML string-array recovery, Gemma reasoning routing, scalar text-only Gemma system prompts, static system-prefix SSD cache boundaries, Nanbeige 4.2 looped-transformer runtime support, and actor-consistent atomic BatchEngine capacity snapshots together with the existing runtime checkpoints. An internally-consistent older pin is still not wired"
         )
         #expect(manifest.contains("https://github.com/osaurus-ai/vmlx-swift"))
         #expect(!manifest.contains("https://github.com/osaurus-ai/vmlx-swift-lm"))
@@ -796,7 +810,7 @@ struct RuntimePolicySourceTests {
         let source = try Self.source("Services/ModelRuntime.swift")
         let taskStart = try #require(source.range(of: "let task = Task<SessionHolder, Error>"))
         let taskStore = try #require(
-            source.range(of: "loadingTasks[name] = LoadingTaskRecord(id: loadID, task: task)")
+            source.range(of: "loadingTasks[name] = LoadingTaskRecord(")
         )
         let success = try #require(
             source.range(of: "return try await finishLoadedContainer", range: taskStore.upperBound ..< source.endIndex)
@@ -1248,15 +1262,12 @@ struct RuntimePolicySourceTests {
 
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
         #expect(concurrency.contains("runtime consumers for these fields are not yet implemented"))
-        #expect(concurrency.contains("pins the BatchEngine to one active slot"))
+        #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
-        #expect(
-            concurrency.contains(
-                "draft.concurrency.maxConcurrentSequences != nil || clamped != 1"
-            )
-        )
+        #expect(concurrency.contains("if trimmed.isEmpty"))
+        #expect(concurrency.contains("draft.concurrency.maxConcurrentSequences = nil"))
     }
 
     @Test("Tools settings panel separates wired parser overrides from planned host bridges")
@@ -2553,12 +2564,15 @@ struct RuntimePolicySourceTests {
 
         let diagnosticsSnapshot = try Self.source("Services/ModelRuntime/BatchDiagnosticsSnapshot.swift")
         #expect(diagnosticsSnapshot.contains("nativeMTPDepthSummary"))
+        #expect(diagnosticsSnapshot.contains("configuredEngineCapacity"))
+        #expect(diagnosticsSnapshot.contains("engineCapacitySummary"))
         #expect(diagnosticsSnapshot.contains("prefixHits"))
         #expect(diagnosticsSnapshot.contains("pagedEvictions"))
         #expect(diagnosticsSnapshot.contains("ssmCompanionReDerives"))
 
         let diagnosticsView = try Self.source("Views/Settings/ServerSettings/BatchDiagnosticsView.swift")
         #expect(diagnosticsView.contains("\"Native MTP\""))
+        #expect(diagnosticsView.contains("\"Configured engine capacity\""))
         #expect(diagnosticsView.contains("\"Prefix hits / misses\""))
         #expect(diagnosticsView.contains("\"Paged evictions\""))
         #expect(diagnosticsView.contains("\"SSM hits / misses / re-derives\""))
@@ -2754,7 +2768,9 @@ struct RuntimePolicySourceTests {
         #expect(manager.contains("guard await leaseCount(modelName) == 0"))
         #expect(manager.contains("guard await isResident(modelName)"))
 
-        let unloadBody = try Self.functionBody("func unload(", in: runtime)
+        // Exact/owned teardown lives in the claimed helper so handoff ABA
+        // guards and idle-decision commit ordering share one destructive path.
+        let unloadBody = try Self.functionBody("private func unloadClaimed(", in: runtime)
         let idleBranch = try #require(unloadBody.range(of: "if reason == .idlePolicy, let idleDecisionID"))
         let finalDecisionGate = try #require(
             unloadBody.range(
@@ -2949,6 +2965,20 @@ struct RuntimePolicySourceTests {
         )
         #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
         #expect(reuseWindow.contains("replacement.sizingOptions = []"))
+    }
+
+    @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")
+    func settingsSidebarUsesEagerRowsForAccessibility() throws {
+        let sidebar = try Self.source("Views/Management/SidebarNavigation.swift")
+        let start = try #require(sidebar.range(of: "var itemList: some View"))
+        let end = try #require(
+            sidebar.range(of: "func sectionHeader(", range: start.upperBound ..< sidebar.endIndex)
+        )
+        let itemList = String(sidebar[start.lowerBound ..< end.lowerBound])
+
+        #expect(itemList.contains("VStack("))
+        #expect(!itemList.contains("LazyVStack("))
+        #expect(itemList.contains("proxy.scrollTo(newValue, anchor: .center)"))
     }
 
     @Test("Local bundle config readers preserve discovered bundle paths")
@@ -3377,13 +3407,16 @@ struct RuntimePolicySourceTests {
         let featuresDoc = try Self.source("../../docs/FEATURES.md")
         let adapter = try Self.source("Services/ModelRuntime/MLXBatchAdapter.swift")
 
-        #expect(flags.contains("Defaults to **1**"))
-        #expect(flags.contains("return raw > 0 ? min(raw, 32) : 1"))
-        #expect(runtimeDoc.contains("Defaults to `1`, clamped to `[1, 32]`"))
+        #expect(flags.contains("server-runtime.json"))
+        #expect(flags.contains("resolvedBatchEngineMaxBatchSize"))
+        #expect(runtimeDoc.contains("Performance/Balanced resolve to `2`"))
+        #expect(runtimeDoc.contains("Safe Auto/Strict to `1`"))
+        #expect(runtimeDoc.contains("clamped to `[1, 32]`"))
         #expect(runtimeDoc.contains("mutable at runtime"))
         #expect(runtimeDoc.contains("updateMaxBatchSize"))
-        #expect(featuresDoc.contains("default `1`, clamped to `[1, 32]`"))
-        #expect(featuresDoc.contains("hot-resized via `BatchEngine.updateMaxBatchSize(_:)`"))
+        #expect(featuresDoc.contains("Performance/Balanced automatically resolve to `2`"))
+        #expect(featuresDoc.contains("Safe Auto/Strict to `1`"))
+        #expect(featuresDoc.contains("hot-resizes the cached engine"))
         #expect(!runtimeDoc.contains("Defaults to `4`"))
         #expect(!featuresDoc.contains("default `4`"))
         #expect(adapter.contains("hot-resized BatchEngine"))

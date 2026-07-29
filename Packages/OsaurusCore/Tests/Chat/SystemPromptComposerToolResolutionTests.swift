@@ -87,7 +87,7 @@ struct SystemPromptComposerToolResolutionTests {
         browserUseEnabled: Bool = false,
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
-        spawnableAgentNames: [String] = [],
+        spawnableAgentIDs: [UUID] = [],
         spawnableModelNames: [String] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
@@ -104,8 +104,25 @@ struct SystemPromptComposerToolResolutionTests {
             browserUseEnabled: browserUseEnabled,
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
-            spawnableAgentNames: spawnableAgentNames,
+            spawnableAgentIDs: spawnableAgentIDs,
             spawnableModelNames: spawnableModelNames
+        )
+    }
+
+    /// Minimal Default/main-chat snapshot. Its delegation pools and budgets
+    /// intentionally come from `SubagentConfigurationStore`, matching the
+    /// production Default-agent contract.
+    private func makeSnapshotForDefaultAgent() -> AgentConfigSnapshot {
+        AgentConfigSnapshot(
+            agentId: Agent.defaultId,
+            toolsDisabled: false,
+            memoryDisabled: true,
+            autonomousConfig: nil,
+            toolMode: .auto,
+            model: nil,
+            manualToolNames: nil,
+            systemPrompt: "",
+            dbEnabled: false
         )
     }
 
@@ -161,6 +178,35 @@ struct SystemPromptComposerToolResolutionTests {
             if case .string(let value) = $0 { return value }
             return nil
         }
+    }
+
+    /// Exact union of agent names and model ids published in
+    /// `spawn_batch.jobs.items.properties.target.enum`.
+    private func spawnBatchTargetEnum(_ tools: [Tool]) -> [String] {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
+            case .object(let root)? = spawn.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let jobs)? = properties["jobs"],
+            case .object(let items)? = jobs["items"],
+            case .object(let jobProperties)? = items["properties"],
+            case .object(let target)? = jobProperties["target"],
+            case .array(let values)? = target["enum"]
+        else { return [] }
+        return values.compactMap {
+            if case .string(let value) = $0 { return value }
+            return nil
+        }
+    }
+
+    /// Request-local batch cap published in `spawn_batch.jobs.maxItems`.
+    private func spawnBatchMaxItems(_ tools: [Tool]) -> Int? {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
+            case .object(let root)? = spawn.function.parameters,
+            case .object(let properties)? = root["properties"],
+            case .object(let jobs)? = properties["jobs"],
+            case .number(let value)? = jobs["maxItems"]
+        else { return nil }
+        return Int(value)
     }
 
     // MARK: - Auto mode
@@ -1033,12 +1079,13 @@ struct SystemPromptComposerToolResolutionTests {
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
         await withSubagentSandbox {
+            let helperID = UUID(uuidString: "40000000-0000-4000-8000-000000000001")!
             // Agent pool only → spawn_agent, not spawn_model.
             let withAgents = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
-                        spawnableAgentNames: ["Helper"]
+                        spawnableAgentIDs: [helperID]
                     ),
                     executionMode: .none
                 ).map { $0.function.name }
@@ -1071,7 +1118,7 @@ struct SystemPromptComposerToolResolutionTests {
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
                         spawnDelegationEnabled: true,
-                        spawnableAgentNames: []
+                        spawnableAgentIDs: []
                     ),
                     executionMode: .none
                 ).map { $0.function.name }
@@ -1079,6 +1126,143 @@ struct SystemPromptComposerToolResolutionTests {
             #expect(!noTargets.contains("spawn_agent"))
             #expect(!noTargets.contains("spawn_model"))
             #expect(!noTargets.contains("spawn_batch"))
+        }
+    }
+
+    @Test("UUID-backed remote spawn targets stay distinct in single and batch schemas")
+    func canonicalRemoteTargetsStayDistinctInSchemas() async {
+        await withSubagentSandbox {
+            let first = SpawnRemoteModelIdentity.make(
+                providerId: UUID(uuidString: "C9412118-D6C8-4BC0-90D9-5C686C5A54C8")!,
+                modelId: "vendor/shared-model"
+            )!
+            let second = SpawnRemoteModelIdentity.make(
+                providerId: UUID(uuidString: "E25C477F-E30D-4D8F-9D91-3400F16401D8")!,
+                modelId: "vendor/shared-model"
+            )
+            #expect(second != nil)
+            guard let second else { return }
+            let tools = SystemPromptComposer.resolveTools(
+                snapshot: makeSnapshot(
+                    spawnDelegationEnabled: true,
+                    spawnableModelNames: [first, second]
+                ),
+                executionMode: .none
+            )
+
+            #expect(spawnModelEnum(tools) == [first, second])
+            #expect(spawnBatchTargetEnum(tools) == [first, second])
+        }
+    }
+
+    @Test("frozen delegation schema stays byte-stable while launcher settings are unchanged")
+    func frozenDelegationSchemaIsStableForUnchangedSettings() async {
+        await withSubagentSandbox {
+            let researcherID = Agent.builtInAgents.first!.id
+            let config = SubagentConfiguration(
+                spawnableAgentIDs: [researcherID],
+                budgets: SubagentBudgets(maxParallelSpawns: 4),
+                spawnableModelNames: [
+                    "anthropic/claude-opus-4-8",
+                    "local/ornith-9b",
+                ]
+            )
+            SubagentConfigurationStore.save(config)
+
+            let snapshot = makeSnapshotForDefaultAgent()
+            let first = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none
+            )
+            let frozenFollowup = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first
+            )
+
+            #expect(spawnModelEnum(first) == spawnModelEnum(frozenFollowup))
+            #expect(spawnBatchTargetEnum(first) == spawnBatchTargetEnum(frozenFollowup))
+            #expect(spawnBatchMaxItems(first) == 4)
+            #expect(spawnBatchMaxItems(frozenFollowup) == 4)
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+                    == PromptPrefixHasher.hash(
+                        systemContent: "prefix",
+                        tools: frozenFollowup
+                    )
+            )
+        }
+    }
+
+    @Test("current delegation constraints override stale frozen spawn schemas")
+    func currentDelegationConstraintsOverrideFrozenSpecs() async {
+        await withSubagentSandbox {
+            let manager = AgentManager.shared
+            let oldAgent = Agent(
+                name: "Stale delegation target",
+                defaultModel: "local/old-agent-model"
+            )
+            let newAgent = Agent(
+                name: "Fresh delegation target",
+                defaultModel: "local/new-agent-model"
+            )
+            manager.add(oldAgent)
+            manager.add(newAgent)
+            let original = SubagentConfiguration(
+                spawnableAgentIDs: [oldAgent.id],
+                budgets: SubagentBudgets(maxParallelSpawns: 2),
+                spawnableModelNames: ["local/old-model"]
+            )
+            SubagentConfigurationStore.save(original)
+
+            let snapshot = makeSnapshotForDefaultAgent()
+            let frozen = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none
+            )
+            #expect(spawnModelEnum(frozen) == ["local/old-model"])
+            #expect(spawnBatchTargetEnum(frozen) == [oldAgent.id.uuidString, "local/old-model"])
+            #expect(spawnBatchMaxItems(frozen) == 2)
+
+            let updated = SubagentConfiguration(
+                spawnableAgentIDs: [newAgent.id],
+                budgets: SubagentBudgets(maxParallelSpawns: 6),
+                spawnableModelNames: [
+                    "anthropic/claude-opus-4-8",
+                    "local/new-model",
+                ]
+            )
+            SubagentConfigurationStore.save(updated)
+
+            let refreshed = SystemPromptComposer.resolveTools(
+                snapshot: snapshot,
+                executionMode: .none,
+                frozenAlwaysLoadedNames: Set(frozen.map(\.function.name)),
+                frozenToolSpecs: frozen
+            )
+
+            #expect(
+                spawnModelEnum(refreshed)
+                    == ["anthropic/claude-opus-4-8", "local/new-model"]
+            )
+            #expect(
+                spawnBatchTargetEnum(refreshed)
+                    == [
+                        newAgent.id.uuidString,
+                        "anthropic/claude-opus-4-8",
+                        "local/new-model",
+                    ]
+            )
+            #expect(spawnBatchMaxItems(refreshed) == 6)
+            #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
+            #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
+                    != PromptPrefixHasher.hash(systemContent: "prefix", tools: frozen)
+            )
+            _ = await manager.delete(id: oldAgent.id)
+            _ = await manager.delete(id: newAgent.id)
         }
     }
 
@@ -1091,14 +1275,14 @@ struct SystemPromptComposerToolResolutionTests {
         let lease = await acquireSubagentStoreSandbox("composer-no-optin")
         defer { lease.release() }
         SubagentConfigurationStore.save(
-            SubagentConfiguration(spawnableAgentNames: ["Helper"], imageDelegationEnabled: true)
+            SubagentConfiguration(spawnableAgentIDs: [UUID()], imageDelegationEnabled: true)
         )
         let names = Set(
             SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
                     spawnDelegationEnabled: false,
                     imageEnabled: false,
-                    spawnableAgentNames: []
+                    spawnableAgentIDs: []
                 ),
                 executionMode: .none
             ).map { $0.function.name }
