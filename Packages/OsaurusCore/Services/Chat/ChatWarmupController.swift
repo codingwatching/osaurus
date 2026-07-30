@@ -99,6 +99,18 @@ final class ChatWarmupController: ObservableObject {
 
     @Published private(set) var state: WarmState = .cold
 
+    /// Whether the session's selected model is currently resident in the
+    /// runtime, tracked from the same monotonic residency snapshots that
+    /// drive warm-claim reconciliation. The model-selector dot reads this so
+    /// it never claims readiness for a model that is not actually loaded —
+    /// in particular when warm-on-load is disabled (no warm-up pass exists
+    /// in that mode, so readiness IS residency) and after an idle unload.
+    @Published private(set) var selectedModelResident: Bool = false
+    /// Resident-name set from the newest accepted residency snapshot, kept so
+    /// a selection change can re-evaluate residency immediately without
+    /// waiting for the next runtime notification.
+    private var lastKnownResidentNames: [String] = []
+
     /// True when the UI should render the green "warm" dot.
     var isWarmForDisplay: Bool { state == .warm }
 
@@ -340,6 +352,10 @@ final class ChatWarmupController: ObservableObject {
         let epoch = switchEpoch
 
         invalidateWarmState()
+        // Re-evaluate the residency-backed dot against the new selection
+        // immediately (from the last known resident set); the switch's own
+        // eviction/load publishes fresh snapshots that keep it current.
+        updateSelectedModelResidency(selectedModel: newModel)
 
         // A scheduled warm-up targets the old selection — drop it. A warm-up
         // generation already in flight is cancelled AND detached: clearing
@@ -436,6 +452,12 @@ final class ChatWarmupController: ObservableObject {
     ) {
         guard shouldAttemptWarmup(session: session) else {
             if !ChatConfigurationStore.load().warmModelsOnLoad {
+                state = .cold
+            } else if session.isImageGenerationModel(session.selectedModel) {
+                // Image models never take a KV warm-up. Clear the provisional
+                // `.warming` the selection switch set, or the dot stays stuck
+                // yellow for as long as the model is selected. (Transient
+                // refusals — streaming, switch settling — keep state as-is.)
                 state = .cold
             }
             return
@@ -566,6 +588,10 @@ final class ChatWarmupController: ObservableObject {
     ) {
         let selectedModel = session.selectedModel
         let wasWarm = state == .warm
+        // Captured before the snapshot is applied: distinguishes "this event
+        // removed MY model" (recovery rules below apply) from "this event
+        // freed a slot another surface was holding" (freed-slot rewarm).
+        let wasSelectedModelResident = selectedModelResident
         guard acceptResidencySnapshot(snapshot, selectedModel: selectedModel) else { return }
 
         guard let selectedModel,
@@ -604,8 +630,33 @@ final class ChatWarmupController: ObservableObject {
             state = .cold
         }
 
-        guard mayRecover,
-            snapshot.idleDecisionID != nil
+        if mayRecover, snapshot.idleDecisionID != nil {
+            scheduleWarmup(
+                session: session,
+                debounce: debounce,
+                revalidateResidencyAfterDebounce: true
+            )
+            return
+        }
+
+        // Freed-slot rewarm: an idle-policy removal of ANOTHER surface's
+        // model (a finished background task's accelerated release, or its
+        // natural idle expiry) emptied the runtime while this chat's
+        // speculative warm-ups were being refused ("a different model is
+        // resident and this warm-up lacks user intent"). Nothing else
+        // re-triggers a warm-up until the user refocuses the window, so
+        // without this the visible chat stays cold indefinitely.
+        //
+        // `wasSelectedModelResident == false` keeps every removal of the
+        // chat's OWN model on the strict recovery rules above — this path
+        // can never recreate the idle unload/rewarm ping-pong they close.
+        // The reason gate keeps shutdown / settings-clear / explicit-unload
+        // removals from resurrecting a load the user just tore down, and
+        // the warm-up itself still runs with background load intent.
+        guard !wasSelectedModelResident,
+            isSessionActive,
+            snapshot.reason == .idlePolicy,
+            snapshot.names.isEmpty
         else { return }
 
         scheduleWarmup(
@@ -736,6 +787,14 @@ final class ChatWarmupController: ObservableObject {
         selectedModel: String?,
         allowDuplicateRevision: Bool = false
     ) -> Bool {
+        // The residency-backed dot state follows the newest snapshot even
+        // when the warm-claim machinery below rejects it as a duplicate:
+        // an equal-revision snapshot carries the same names, and the
+        // selected model may have changed since they were last evaluated.
+        if snapshot.revision >= (lastResidencyRevision ?? 0) {
+            lastKnownResidentNames = snapshot.names
+        }
+        updateSelectedModelResidency(selectedModel: selectedModel)
         if let lastResidencyRevision {
             if snapshot.revision < lastResidencyRevision { return false }
             if snapshot.revision == lastResidencyRevision, !allowDuplicateRevision { return false }
@@ -746,6 +805,30 @@ final class ChatWarmupController: ObservableObject {
             residentModelNames: snapshot.names
         )
         return true
+    }
+
+    private func updateSelectedModelResidency(selectedModel: String?) {
+        let resident =
+            selectedModel.map { Self.isSelectedModelResident($0, in: lastKnownResidentNames) }
+            ?? false
+        if selectedModelResident != resident { selectedModelResident = resident }
+    }
+
+    /// Seed the residency-backed dot state at session start, before any
+    /// runtime notification arrives. Without this, a freshly opened chat has
+    /// no basis for the dot until the first residency change.
+    func seedRuntimeResidency(session: ChatWarmupSessionContext) {
+        guard !isShutDown else { return }
+        Task { @MainActor [weak self, weak session] in
+            guard let self else { return }
+            let snapshot = await self.runtimeResidencySnapshot()
+            guard !self.isShutDown else { return }
+            self.acceptResidencySnapshot(
+                snapshot,
+                selectedModel: session?.selectedModel,
+                allowDuplicateRevision: true
+            )
+        }
     }
 
     private func performWarmup(session: ChatWarmupSessionContext) async {
