@@ -89,6 +89,7 @@ struct ServerControllerConfigLoadingTests {
         }.value
 
         for _ in 0 ..< 50 {
+            await Self.drainMainQueue()
             if controller.runtimeSettings.concurrency
                 .maxConcurrentSequences == nil
             {
@@ -100,6 +101,151 @@ struct ServerControllerConfigLoadingTests {
             controller.runtimeSettings.concurrency
                 .maxConcurrentSequences == nil
         )
+    }
+
+    @Test @MainActor
+    func mainChatAndServerConcurrencyStayBidirectionallySynchronized() async throws {
+        let base = URL(
+            fileURLWithPath: NSTemporaryDirectory(),
+            isDirectory: true
+        )
+        let dir = base.appendingPathComponent(
+            "osaurus-spawn-concurrency-sync-tests-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: dir,
+            withIntermediateDirectories: true
+        )
+
+        let previousRuntimeDirectory =
+            ServerRuntimeSettingsStore.overrideDirectory
+        let previousConfigurationDirectory =
+            ServerConfigurationStore.overrideDirectory
+        ServerRuntimeSettingsStore.overrideDirectory = dir
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        ServerConfigurationStore.overrideDirectory = dir
+        SubagentConfigurationStore.setOverrideDirectory(dir)
+        defer {
+            SubagentConfigurationStore.flushPendingWrites()
+            SubagentConfigurationStore.setOverrideDirectory(nil)
+            ServerRuntimeSettingsStore.overrideDirectory =
+                previousRuntimeDirectory
+            ServerRuntimeSettingsStore.invalidateSnapshot()
+            ServerConfigurationStore.overrideDirectory =
+                previousConfigurationDirectory
+            try? FileManager.default.removeItem(at: dir)
+        }
+
+        var serverSettings = VMLXServerRuntimeSettings()
+        serverSettings.concurrency.maxConcurrentSequences = 2
+        ServerRuntimeSettingsStore.save(serverSettings)
+
+        var mainChat = SubagentConfiguration.default
+        mainChat.budgets.maxParallelSpawns = 7
+        SubagentConfigurationStore.save(mainChat)
+        SubagentConfigurationStore.flushPendingWrites()
+        // Drain pre-controller store notifications so other global listeners
+        // cannot leak work into the assertions below.
+        await Self.drainMainQueue()
+
+        let controller = ServerController()
+        #expect(
+            SubagentConfigurationStore.snapshot().budgets
+                .maxParallelSpawns == 2
+        )
+
+        let mainChatEdit = SubagentConfigurationStore.mutate { configuration in
+            configuration.budgets.maxParallelSpawns = 5
+        }
+        await controller.applyMainChatBatchLimit(from: mainChatEdit)
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == 5
+        )
+        #expect(
+            ServerRuntimeSettingsStore.snapshot().concurrency
+                .maxConcurrentSequences == 5
+        )
+
+        await controller.applySpawnBatchLimit(4)
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == 4
+        )
+        #expect(
+            SubagentConfigurationStore.snapshot().budgets
+                .maxParallelSpawns == 4
+        )
+
+        var serverEdit = controller.runtimeSettings
+        serverEdit.concurrency.maxConcurrentSequences = 3
+        ServerRuntimeSettingsStore.save(serverEdit)
+        for _ in 0 ..< 100 {
+            await Self.drainMainQueue()
+            if controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == 3,
+                SubagentConfigurationStore.snapshot().budgets
+                    .maxParallelSpawns == 3
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == 3
+        )
+        #expect(
+            SubagentConfigurationStore.snapshot().budgets
+                .maxParallelSpawns == 3
+        )
+
+        // Clearing Server back to Automatic mirrors the resolved safe value
+        // into Spawn without creating an explicit override. A later explicit
+        // Spawn edit to that SAME visible value must still materialize it.
+        var automatic = controller.runtimeSettings
+        automatic.concurrency.maxConcurrentSequences = nil
+        let automaticResolved =
+            SpawnBatchConcurrencyContract.configuredLimit(for: automatic)
+        ServerRuntimeSettingsStore.save(automatic)
+        for _ in 0 ..< 100 {
+            await Self.drainMainQueue()
+            if controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == nil,
+                SubagentConfigurationStore.snapshot().budgets
+                    .maxParallelSpawns == automaticResolved
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == nil
+        )
+        #expect(
+            SubagentConfigurationStore.snapshot().budgets
+                .maxParallelSpawns == automaticResolved
+        )
+
+        await controller.applySpawnBatchLimit(automaticResolved)
+        #expect(
+            controller.runtimeSettings.concurrency
+                .maxConcurrentSequences == automaticResolved
+        )
+        #expect(
+            ServerRuntimeSettingsStore.snapshot().concurrency
+                .maxConcurrentSequences == automaticResolved
+        )
+    }
+
+    private static func drainMainQueue() async {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async {
+                continuation.resume()
+            }
+        }
     }
 
     @Test func loadedModelRefreshInputs_coverCacheMemorySafetyMultimodalAndMTP() {

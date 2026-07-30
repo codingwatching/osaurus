@@ -237,7 +237,10 @@ public struct SubagentBudgets: Codable, Equatable, Sendable {
     public static let turnBounds: ClosedRange<Int> = 1 ... 8
     public static let toolCallBounds: ClosedRange<Int> = 0 ... 32
     public static let elapsedBounds: ClosedRange<Int> = 15 ... 1_800
-    public static let parallelSpawnBounds: ClosedRange<Int> = 1 ... 8
+    /// Matches the Server Concurrent Sessions contract. RAM admission,
+    /// current engine occupancy, Continuous Batching, and model residency can
+    /// still split a configured batch into smaller execution waves.
+    public static let parallelSpawnBounds: ClosedRange<Int> = 1 ... 32
 
     public init(
         maxDelegateTokens: Int = 2048,
@@ -973,6 +976,7 @@ struct SpawnSharedConfigurationAuthority: Equatable, Sendable {
     let localTextDelegationEnabled: Bool
     let ramSafetyPreflightEnabled: Bool
     let subagentCoexistenceEnabled: Bool
+    let maxParallelSpawns: Int
 }
 
 /// Spawn authority owned only by the Default / main-chat launcher.
@@ -1014,7 +1018,8 @@ struct SpawnCustomLauncherAgentAuthority: Equatable, Sendable {
         let trimmedOverride = rawOverride?.trimmingCharacters(
             in: .whitespacesAndNewlines
         )
-        modelOverride = (trimmedOverride?.isEmpty ?? true)
+        modelOverride =
+            (trimmedOverride?.isEmpty ?? true)
             ? nil : trimmedOverride
         toolAccess = settings.spawnToolAccess
     }
@@ -1039,7 +1044,8 @@ extension SubagentConfiguration {
         SpawnSharedConfigurationAuthority(
             localTextDelegationEnabled: localTextDelegationEnabled,
             ramSafetyPreflightEnabled: ramSafetyPreflightEnabled,
-            subagentCoexistenceEnabled: subagentCoexistenceEnabled
+            subagentCoexistenceEnabled: subagentCoexistenceEnabled,
+            maxParallelSpawns: budgets.normalized.maxParallelSpawns
         )
     }
 
@@ -1090,7 +1096,8 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
         id: UUID,
         isDefault: Bool,
         configuration: SubagentConfiguration,
-        agent: Agent?
+        agent: Agent?,
+        sharedParallelLimit: Int
     ) {
         let settings = agent?.settings
         self.id = id
@@ -1121,7 +1128,8 @@ struct SpawnLauncherAuthority: Equatable, Sendable {
         self.budgets = SubagentToolVisibility.effectiveBudgets(
             isDefault: isDefault,
             config: configuration,
-            settings: settings
+            settings: settings,
+            sharedParallelLimit: sharedParallelLimit
         )
         self.modelOverride =
             SubagentToolVisibility.effectiveSubagentModel(

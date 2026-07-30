@@ -38,7 +38,7 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("modelPickerCache.items.chatModelCandidates"))
     }
 
-    @Test("open custom-agent editor refreshes shared handoff state")
+    @Test("open custom-agent editor refreshes shared handoff and concurrency state")
     func customAgentEditorObservesGlobalSubagentChanges() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
 
@@ -53,6 +53,13 @@ struct SpawnConfigurationUISourceTests {
                 "if latest != globalSubagentConfig { globalSubagentConfig = latest }"
             )
         )
+        #expect(agents.contains("budgets: sharedSpawnBudgetsBinding"))
+        #expect(
+            agents.contains(
+                "SpawnBatchConcurrencyContract.applyingSharedLimit("
+            )
+        )
+        #expect(agents.contains("ServerController.applyAgentSpawnBatchLimit(requested)"))
     }
 
     @Test("shared global editors use revision-safe three-way store saves")
@@ -71,6 +78,60 @@ struct SpawnConfigurationUISourceTests {
             #expect(source.contains("SubagentConfiguration.mergingEditorSnapshot("))
             #expect(!source.contains("SubagentConfigurationStore.save(newValue)"))
         }
+    }
+
+    @Test("Main Chat batch edits use an origin-aware Server update path")
+    func mainChatBatchEditsUpdateServerWithoutNotificationEchoes() throws {
+        let settings = try Self.source("Views/Settings/ConfigurationView.swift")
+        let controller = try Self.source("Networking/ServerController.swift")
+        let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
+
+        #expect(settings.contains("server.applyMainChatBatchLimit(from: saved)"))
+        #expect(settings.contains("let batchLimitWasExplicitlyEdited ="))
+        #expect(settings.contains("if batchLimitWasExplicitlyEdited"))
+        #expect(controller.contains("func applyMainChatBatchLimit("))
+        #expect(controller.contains("synchronizeSpawnBatchLimit(from: latest)"))
+        #expect(controller.contains("static func applyAgentSpawnBatchLimit("))
+        #expect(controller.contains("func applySpawnBatchLimit("))
+        #expect(
+            controller.contains(
+                "runtimeSettings.concurrency.maxConcurrentSequences != requested"
+            )
+        )
+        #expect(
+            composer.components(
+                separatedBy: "for: ServerRuntimeSettingsStore.snapshot()"
+            ).count - 1 == 2
+        )
+        #expect(!controller.contains("subagentConfigurationCancellable"))
+    }
+
+    @Test("runtime spawn boundaries inject the canonical Server concurrency")
+    func runtimeSpawnBoundariesUseCanonicalServerLimit() throws {
+        let snapshot = try Self.source("Services/Chat/AgentConfigSnapshot.swift")
+        let textSpawn = try Self.source("Subagent/Kinds/TextSubagentKind.swift")
+        let batchSpawn = try Self.source("Tools/SpawnBatchTool.swift")
+        let visibility = try Self.source(
+            "Subagent/SubagentCapabilityRegistry.swift"
+        )
+
+        #expect(snapshot.contains("for: ServerRuntimeSettingsStore.snapshot()"))
+        #expect(snapshot.contains("sharedParallelLimit: sharedParallelLimit"))
+        #expect(textSpawn.contains("for: ServerRuntimeSettingsStore.snapshot()"))
+        #expect(textSpawn.contains("sharedParallelLimit: sharedParallelLimit"))
+        #expect(batchSpawn.contains("maxParallelSpawns: maxParallelSpawns"))
+        #expect(batchSpawn.contains("sharedParallelLimit: maxParallelSpawns"))
+        #expect(
+            batchSpawn.contains(
+                "approved.maxParallelSpawns == current.maxParallelSpawns"
+            )
+        )
+
+        // Keep the budget merger pure: every production boundary must name the
+        // canonical source explicitly, while hand-built frozen-schema tests can
+        // inject the persisted mirror without reading developer-machine state.
+        #expect(!visibility.contains("ServerRuntimeSettingsStore.snapshot()"))
+        #expect(visibility.contains("sharedParallelLimit: Int"))
     }
 
     @Test("model picker refresh, target status, and capacity contract stay in the shared editor")
@@ -102,8 +163,12 @@ struct SpawnConfigurationUISourceTests {
         #expect(editor.contains("SubagentBatchAdmissionPlanner.plan("))
         #expect(editor.contains(#""Configured same-model local ceiling""#))
         #expect(editor.contains("Different local models run in serial model waves"))
+        #expect(editor.contains("persist one configured limit"))
+        #expect(editor.contains("This agent and Server Concurrent Sessions persist"))
 
-        #expect(concurrency.contains("same-model local subagent waves"))
+        #expect(concurrency.contains("same-model local waves"))
+        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("jobs targeting different local models remain serialized"))
         #expect(subagentSettings.contains("architecture-aware KV, SSM, and activation headroom"))
         #expect(subagentSettings.contains("split into smaller waves"))

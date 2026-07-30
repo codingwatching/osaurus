@@ -780,7 +780,7 @@ struct RuntimePolicySourceTests {
         // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
         // xcworkspace Package.resolved files. Miss one and the app resolves a
         // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "84612e143d2e51da865316dbc49167530a1717ad"
+        let expectedRuntimeHardenedRevision = "439f53694f3d630663e97612c264ae73e499121a"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1243,10 +1243,13 @@ struct RuntimePolicySourceTests {
         #expect(http.contains(#""resolved_kv_retention_tokens""#))
     }
 
-    @Test("Server settings concurrency UI does not advertise false restart or runtime wiring")
-    func serverSettingsConcurrencyUIDoesNotAdvertiseFalseRestartOrRuntimeWiring() throws {
+    @Test("Server settings concurrency UI exposes only runtime-wired controls")
+    func serverSettingsConcurrencyUIExposesOnlyRuntimeWiredControls() throws {
         let tab = try Self.source("Views/Settings/ServerSettingsTabContent.swift")
         let concurrency = try Self.source("Views/Settings/ServerSettings/ConcurrencySection.swift")
+        let store = try Self.source(
+            "Models/Configuration/ServerRuntimeSettingsStore.swift"
+        )
 
         guard let restartStart = tab.range(of: "private var pendingRestart: Bool"),
             let restartEnd = tab.range(
@@ -1261,11 +1264,20 @@ struct RuntimePolicySourceTests {
         #expect(!pendingRestart.contains("concurrency.maxConcurrentSequences"))
 
         #expect(concurrency.contains("`maxConcurrentSequences` hot-resizes"))
-        #expect(concurrency.contains("runtime consumers for these fields are not yet implemented"))
         #expect(concurrency.contains("pins each local model to one active job"))
         #expect(concurrency.contains("Concurrent Sessions"))
+        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("Continuous Batching"))
         #expect(concurrency.contains("Prompt Prefill Chunk Size"))
+        #expect(!concurrency.contains("Planned Batching Controls"))
+        #expect(!concurrency.contains("Prefill Batch Size"))
+        #expect(!concurrency.contains("Completion Batch Size"))
+        #expect(!concurrency.contains("SMELT Mode"))
+        #expect(!concurrency.contains("$draft.concurrency.prefillBatchSize"))
+        #expect(!concurrency.contains("$draft.concurrency.completionBatchSize"))
+        #expect(!concurrency.contains("$draft.concurrency.smeltMode"))
+        #expect(store.contains("canonical.concurrency.smeltMode = .disabled"))
         #expect(concurrency.contains("if trimmed.isEmpty"))
         #expect(concurrency.contains("draft.concurrency.maxConcurrentSequences = nil"))
     }
@@ -2234,12 +2246,14 @@ struct RuntimePolicySourceTests {
         )
         let remoteConnect = try #require(
             appDelegate.range(
-                of: "async let remoteConnects: Void =\n                    RemoteProviderManager.shared.connectEnabledProviders()"
+                of:
+                    "async let remoteConnects: Void =\n                    RemoteProviderManager.shared.connectEnabledProviders()"
             )
         )
         let connectGate = try #require(
             appDelegate.range(
-                of: "if !keychainDisabledTestMode {\n                // MCP and remote-provider startup connects run concurrently:"
+                of:
+                    "if !keychainDisabledTestMode {\n                // MCP and remote-provider startup connects run concurrently:"
             )
         )
         #expect(connectGate.lowerBound < mcpConnect.lowerBound)
@@ -3117,6 +3131,20 @@ struct RuntimePolicySourceTests {
         #expect(
             !evaluator.contains("temperature: 0.0"),
             "The eval harness must not silently force greedy decoding for bundles tuned for sampling."
+        )
+        #expect(
+            evaluator.contains("ChatExecutionContext.$currentModelName.withValue(resolvedModel)"),
+            "Agent-loop tools must see the exact invoking parent model so residency handoff stays production-equivalent."
+        )
+        #expect(
+            evaluator.contains("let sessionSource: SessionSource = .chat")
+                && evaluator.contains("ChatEngine(source: sessionSource.inferenceSource)")
+                && evaluator.contains("ChatExecutionContext.$currentSessionSource.withValue("),
+            "Agent-loop eval inference and tool dispatch must share Chat provenance so parent residency ownership matches the live UI."
+        )
+        #expect(
+            evaluator.contains("ChatExecutionContext.$currentEnableThinking.withValue(enableThinking)"),
+            "Agent-loop spawned work must inherit the explicit Thinking setting exercised by the eval row."
         )
     }
 

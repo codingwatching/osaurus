@@ -4,8 +4,8 @@
 //
 //  Concurrency & batching controls. `continuousBatching` gates the
 //  multi-slot scheduler, `maxConcurrentSequences` hot-resizes the resident
-//  BatchEngine, and `prefillStepSize` is passed per request. The remaining
-//  contract fields persist for a follow-up runtime bridge.
+//  BatchEngine, and `prefillStepSize` is passed per request. Other serialized
+//  contract fields remain hidden until they have real runtime consumers.
 //
 //  Live BatchEngine diagnostics live in `LiveActivitySection` (its own
 //  sidebar anchor) so users can monitor activity without scrolling
@@ -37,9 +37,9 @@ struct ConcurrencySection: View {
             SettingsStepperField(
                 label: "Concurrent Sessions",
                 help:
-                    "BatchEngine max batch size and the engine ceiling for same-model local subagent waves. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
+                    "Shared with Main Chat Spawn and every agent's Max subagents per batch. This is the BatchEngine ceiling for same-model local waves; RAM safety and current occupancy may run a smaller wave. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
                 text: $maxConcurrentText,
-                range: 1 ... 32,
+                range: SpawnBatchConcurrencyContract.bounds,
                 step: 1,
                 defaultValue: effectiveBatchEngineLimit
             )
@@ -63,43 +63,6 @@ struct ConcurrencySection: View {
                 value: $draft.concurrency.prefillStepSize
             )
 
-            SettingsDivider()
-
-            SettingsSubsection(label: "Planned Batching Controls") {
-                VStack(alignment: .leading, spacing: 12) {
-                    ServerSettingsPlannedBanner(
-                        blurb: "Persisted today; runtime consumers for these fields are not yet implemented."
-                    )
-
-                    OptionalIntField(
-                        label: "Prefill Batch Size",
-                        placeholder: "Empty = engine default",
-                        help: "Number of prefill chunks decoded together.",
-                        value: $draft.concurrency.prefillBatchSize
-                    )
-
-                    OptionalIntField(
-                        label: "Completion Batch Size",
-                        placeholder: "Empty = engine default",
-                        help: "Number of decode steps run together.",
-                        value: $draft.concurrency.completionBatchSize
-                    )
-
-                    SettingsField(
-                        label: "SMELT Mode",
-                        hint: "Selects the SMELT execution mode when supported by the model."
-                    ) {
-                        Picker("", selection: $draft.concurrency.smeltMode) {
-                            ForEach(VMLXServerSmeltMode.allCases, id: \.self) { mode in
-                                Text(mode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                                    .tag(mode)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                }
-            }
         }
         .onAppear {
             guard !initialized else { return }
@@ -129,7 +92,7 @@ struct ConcurrencySection: View {
             return
         }
         guard let parsed = Int(trimmed), parsed > 0 else { return }
-        let clamped = min(parsed, 32)
+        let clamped = SpawnBatchConcurrencyContract.normalized(parsed)
 
         if draft.concurrency.maxConcurrentSequences != clamped {
             draft.concurrency.maxConcurrentSequences = clamped
