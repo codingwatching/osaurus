@@ -113,9 +113,17 @@ let package = Package(
         // The atomic BatchEngine-capacity revision exposes one actor-consistent
         // configured/active/pending snapshot so Osaurus can report and plan
         // subagent waves against the engine that actually owns admission.
+        // vmlx-swift#195 keeps Qwen 3.5 / Ornith GatedDelta recurrent state
+        // in float32 across cold and restored prefix partitions, and admits
+        // linked KV + recurrent disk boundaries under one quota transaction.
+        // vmlx-swift#196 marks caller-proven reusable-prefix warmup prompts
+        // explicitly so solo, batched, and native-MTP cache writers retain
+        // exact boundaries for fully restorable topologies and recurrent-safe
+        // processor seeds for hybrid state, without persisting the warmup's
+        // throwaway decoded token.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "439f53694f3d630663e97612c264ae73e499121a"
+            revision: "958eb6bed2e2fd4fde30574141e17a1dce773895"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

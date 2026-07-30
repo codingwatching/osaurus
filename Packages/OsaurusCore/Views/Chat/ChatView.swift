@@ -6166,67 +6166,85 @@ final class ChatSession: ObservableObject {
                             rebuildVisibleBlocks()
                         } else {
                             do {
-                            var finalReq = ChatCompletionRequest(
-                                model: selectedModel ?? "default",
-                                // Same watermark-trimmed view of history the
-                                // loop iterations used — the raw array can
-                                // exceed the window precisely when the cap
-                                // hits after heavy tool traffic.
-                                messages: AgentLoopBudget.trimPreservingSystemPrefix(
-                                    buildMessages(),
-                                    with: loopBudgetManager,
-                                    watermark: compactionWatermark
-                                ),
-                                temperature: effectiveTemp,
-                                max_tokens: effectiveMaxTokensForAgent,
-                                stream: true,
-                                top_p: chatCfg.topPOverride,
-                                frequency_penalty: nil,
-                                presence_penalty: nil,
-                                stop: nil,
-                                n: nil,
-                                tools: nil,
-                                tool_choice: nil,
-                                session_id: sessionId?.uuidString
-                            )
-                            finalReq.samplingParametersAreImplicit = true
-                            finalReq.runAsRemoteAgent = isRemoteAgentTarget
-                            finalReq.cacheStableSystemPrefix =
-                                isRemoteAgentTarget ? nil : context.staticPrefix
-                            // Carry the agent provider id on this path too so
-                            // the route-by-provider invariant holds for *every*
-                            // Mode 2 request — a `runAsRemoteAgent` send with no
-                            // provider id would fall back to model-string
-                            // routing (the exact mis-route this fix removes).
-                            finalReq.remoteAgentProviderId =
-                                isRemoteAgentTarget
-                                ? windowState?.selectedDiscoveredAgentProviderId : nil
-                            finalReq.remoteAgentLogModel =
-                                isRemoteAgentTarget
-                                ? windowState?.pinnedRemoteAgentEffectiveModel : nil
-                            finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
-                            turnGenerationControls.apply(to: &finalReq)
-                            finalReq.backgroundModelLoad = (loadIntent == .background)
-                            finalReq.turnId = assistantTurn.id
-                            // Distinct logical step (the post-cap summarizing
-                            // call) so it bills once and dedupes on its own
-                            // connect-phase retry without colliding with the
-                            // loop's per-iteration keys.
-                            finalReq.idempotencyKey = "\(runId.uuidString):final"
+                                let trimmedFinalMessages =
+                                    AgentLoopBudget.trimPreservingSystemPrefix(
+                                        buildMessages(),
+                                        with: loopBudgetManager,
+                                        watermark: compactionWatermark
+                                    )
+                                // The final request intentionally has no tool
+                                // schema. Make that boundary visible to the
+                                // model as transient tool-role feedback (when
+                                // the transcript ends in a tool result), so it
+                                // reports unfinished work instead of imitating
+                                // a tool/result envelope. Appending after trim
+                                // preserves the same stable-prefix contract as
+                                // ordinary loop notices.
+                                let finalMessages =
+                                    AgentLoopBudget.appendingTransientNotices(
+                                        [AgentToolLoop.iterationCapWrapUpNotice],
+                                        to: trimmedFinalMessages
+                                    )
+                                var finalReq = ChatCompletionRequest(
+                                    model: selectedModel ?? "default",
+                                    // Same watermark-trimmed view of history the
+                                    // loop iterations used — the raw array can
+                                    // exceed the window precisely when the cap
+                                    // hits after heavy tool traffic.
+                                    messages: finalMessages,
+                                    temperature: effectiveTemp,
+                                    max_tokens: effectiveMaxTokensForAgent,
+                                    stream: true,
+                                    top_p: chatCfg.topPOverride,
+                                    frequency_penalty: nil,
+                                    presence_penalty: nil,
+                                    stop: nil,
+                                    n: nil,
+                                    tools: nil,
+                                    tool_choice: nil,
+                                    session_id: sessionId?.uuidString
+                                )
+                                finalReq.samplingParametersAreImplicit = true
+                                finalReq.runAsRemoteAgent = isRemoteAgentTarget
+                                finalReq.cacheStableSystemPrefix =
+                                    isRemoteAgentTarget ? nil : context.staticPrefix
+                                // Carry the agent provider id on this path too so
+                                // the route-by-provider invariant holds for *every*
+                                // Mode 2 request — a `runAsRemoteAgent` send with no
+                                // provider id would fall back to model-string
+                                // routing (the exact mis-route this fix removes).
+                                finalReq.remoteAgentProviderId =
+                                    isRemoteAgentTarget
+                                    ? windowState?.selectedDiscoveredAgentProviderId : nil
+                                finalReq.remoteAgentLogModel =
+                                    isRemoteAgentTarget
+                                    ? windowState?.pinnedRemoteAgentEffectiveModel : nil
+                                finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
+                                turnGenerationControls.apply(to: &finalReq)
+                                finalReq.backgroundModelLoad = (loadIntent == .background)
+                                finalReq.turnId = assistantTurn.id
+                                // Distinct logical step (the post-cap summarizing
+                                // call) so it bills once and dedupes on its own
+                                // connect-phase retry without colliding with the
+                                // loop's per-iteration keys.
+                                finalReq.idempotencyKey = "\(runId.uuidString):final"
 
-                            let processor = StreamingDeltaProcessor(
-                                turn: assistantTurn
-                            ) { [weak self] in
-                                self?.rebuildVisibleBlocks()
-                            }
-
-                            let stream = try await engine.streamChat(request: finalReq)
-                            for try await delta in stream {
-                                noteRunProgress()
-                                if !isRunActive(runId) { break }
-                                if !delta.isEmpty { processor.receiveDelta(delta) }
-                            }
-                            await processor.finalize()
+                                // Route the capped-run wrap-up through the exact
+                                // same typed sentinel decoder as every ordinary
+                                // chat step. Feeding this stream directly into a
+                                // StreamingDeltaProcessor leaked U+FFFE prefill and
+                                // stats envelopes into ChatTurn.content (and then
+                                // transcript exports) whenever the agent reached
+                                // its iteration cap.
+                                let (_, finalTurn) = try await processStreamDeltas(
+                                    stream: try await engine.streamChat(request: finalReq),
+                                    assistantTurn: assistantTurn,
+                                    runId: runId,
+                                    streamStartTime: Date(),
+                                    ttftTrace: ttftTrace,
+                                    selectedModel: self.selectedModel
+                                )
+                                assistantTurn = finalTurn
                             } catch {
                                 let message =
                                     "The agent reached the configured step limit, and its final wrap-up failed: "

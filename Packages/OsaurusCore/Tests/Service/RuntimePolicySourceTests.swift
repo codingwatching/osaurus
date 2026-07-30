@@ -776,11 +776,12 @@ struct RuntimePolicySourceTests {
         // This assertion is a repin tripwire, and it earned its keep: PR #1986
         // shipped titled "(+ vmlx repin)" carrying no repin at all, and the live
         // gate run against that build proved only the osaurus-side change while
-        // appearing to bless the engine work too. Note the pin lives in FOUR
-        // files -- Package.swift, Packages/OsaurusCore/Package.resolved, and both
-        // xcworkspace Package.resolved files. Miss one and the app resolves a
-        // revision nobody proved.
-        let expectedRuntimeHardenedRevision = "439f53694f3d630663e97612c264ae73e499121a"
+        // appearing to bless the engine work too. Note the checked-in pin
+        // lives in FOUR files -- Package.swift, OsaurusCore Package.resolved,
+        // and both xcworkspace Package.resolved files. Miss one and a release
+        // surface resolves a revision nobody proved. OsaurusEvals resolves
+        // this manifest transitively and its local Package.resolved is ignored.
+        let expectedRuntimeHardenedRevision = "958eb6bed2e2fd4fde30574141e17a1dce773895"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1463,6 +1464,28 @@ struct RuntimePolicySourceTests {
             ),
             "ChatEngine stream logging wrapper must pass StreamingStatsHint through before honoring cancellation"
         )
+    }
+
+    @Test("iteration-cap wrap-up uses the typed chat stream decoder")
+    func iterationCapWrapUpCannotLeakStreamingSentinels() throws {
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let start = try #require(
+            chat.range(of: "if runResult.exit == .iterationCapReached && isRunActive(runId)")
+        )
+        let end = try #require(
+            chat.range(
+                of: "} catch is CancellationError {",
+                range: start.upperBound ..< chat.endIndex
+            )
+        )
+        let block = String(chat[start.lowerBound ..< end.lowerBound])
+
+        #expect(block.contains("try await processStreamDeltas("))
+        #expect(block.contains("assistantTurn = finalTurn"))
+        #expect(block.contains("AgentLoopBudget.appendingTransientNotices("))
+        #expect(block.contains("AgentToolLoop.iterationCapWrapUpNotice"))
+        #expect(!block.contains("let processor = StreamingDeltaProcessor("))
+        #expect(!block.contains("processor.receiveDelta(delta)"))
     }
 
     @Test("ChatEngine honors tool choice none by bypassing local tool dispatch")

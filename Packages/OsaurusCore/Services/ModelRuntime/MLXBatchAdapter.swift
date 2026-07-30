@@ -1659,6 +1659,7 @@ struct MLXBatchAdapter {
             cacheScopeSalt: scopeSalt,
             cachePrefixTokenCounts: cacheBoundaries.all,
             cacheStablePrefixTokenCounts: cacheBoundaries.stable,
+            cachePromptIntent: .reusablePrefixWarmup,
             toolSchemas: toolsSpec
         )
     }
@@ -1781,6 +1782,7 @@ struct MLXBatchAdapter {
             tokenIds: prefix,
             cacheScopeSalt: input.cacheScopeSalt,
             cachePrefixTokenCounts: [],
+            cachePromptIntent: .reusablePrefixWarmup,
             toolSchemas: input.toolSchemas
         )
     }
@@ -1989,6 +1991,10 @@ struct MLXBatchAdapter {
                 }
                 box.processorDoneAt = CFAbsoluteTimeGetCurrent()
                 trace?.mark("batch_tokenization_done")
+            }
+
+            if toolChoiceRequiresLocalCall(toolChoice) {
+                lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)
             }
 
             let tokens =
