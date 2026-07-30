@@ -3,6 +3,55 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.13</title>
+            <pubDate>Thu, 30 Jul 2026 04:14:08 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.13</sparkle:version>
+            <sparkle:shortVersionString>0.22.13</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.13/Osaurus-0.22.13.dmg" length="69218201" type="application/octet-stream" sparkle:edSignature="j1vaVE2qSUr5ngNHCGdlUi+2VrZV7/FtGRo8vvBQEVyIi/9IXmnnrfpsUM13y2PYoDjwHLJXkXEzow0pkaNzDA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- fix(i18n): lint-zh-style.py refuses to run again — the catalog gained a final newline (#2229) by @YspritanHyzygy
+- i18n: add 16 UI strings localized inside helper functions but never in the catalog (#2224) by @YspritanHyzygy
+- i18n(zh-Hans): one word per concept, where the rest of the catalog already agrees (#2225) by @YspritanHyzygy
+- fix(i18n): make lint-zh-style.py runnable, and stop it breaking shell commands (#2223) by @YspritanHyzygy
+- Add safe heterogeneous subagent batching and delegation controls (#2221) by @jjang-ai
+- i18n(zh-Hans): use one Chinese word for a UI tab (#2215) by @YspritanHyzygy
+- i18n(zh-Hans): one second-person pronoun, and translate "Insights" (#2218) by @YspritanHyzygy
+- Fix selected-chat idle warmup recovery (#2216) by @jjang-ai
+- i18n(zh-Hans): use one Chinese word for "transcription" (#2207) by @YspritanHyzygy
+- i18n(zh-Hans): add the missing space between Chinese and Latin runs (#2209) by @YspritanHyzygy
+- i18n: add 22 UI strings that are localized indirectly but never entered the catalog (#2213) by @YspritanHyzygy
+
+## 🚀 Features
+
+- Add native iMessage agent channel with download-only imsg helper (#2227) by @tpae
+- added chat import guide (#2222) by @RaajeevChandran
+- import conversations from chatgpt, claude, grok and gemini (#2217) by @RaajeevChandran
+- fix fireworks providers only showing 6 models (#2214) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Make headless dispatches follow the agent's current default model (#2232) by @tpae
+- Make web\_search schema immutable so tool payloads never invalidate the KV-cache prefix (#2226) by @tpae
+- fix app freeze when saving channel tokens in 
+  keychain (#2208) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Make the model-selector dot reflect true model residency (#2231) by @tpae
+- Fix plugin layout at compact widths (#2220) by @tpae
+- Fix OsaurusAI model catalog cutoff (#2219) by @tpae
+- Harden keychain reliability on relaunch; add identity restore from recovery phrase (#2212) by @tpae
+- Redesign channels UX: name-first destinations, DM identity, intent-based setup (#2210) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.12...0.22.13
+]]></description>
+        </item>
+        <item>
             <title>0.22.12</title>
             <pubDate>Tue, 28 Jul 2026 16:08:55 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
