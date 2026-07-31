@@ -224,6 +224,13 @@ public final class AgentTaskState {
         let payload: [String: Any]
     }
 
+    /// One-shot protection against a whole-file overwrite that exactly
+    /// restores the snapshot from before the most recent targeted edit.
+    private struct SuccessfulEditSnapshot {
+        let beforeSHA256: String
+        let afterSHA256: String
+    }
+
     /// The class of the most recently recorded result.
     public private(set) var lastResultClass: ToolResultClass?
     /// The most recent directory listing (survives across messages in
@@ -267,6 +274,9 @@ public final class AgentTaskState {
     /// `web_search` executions since the last concrete retrieval/processing
     /// action, regardless of argument changes or intervening meta tools.
     private var webDiscoveryRunCount = 0
+    /// Armed only until the next same-path mutation attempt. This catches the
+    /// observed stale rewrite without becoming a persistent rollback policy.
+    private var successfulEditSnapshots: [String: SuccessfulEditSnapshot] = [:]
 
     public init(biasEnabled: Bool = true) {
         self.biasEnabled = biasEnabled
@@ -293,6 +303,7 @@ public final class AgentTaskState {
         planningRunName = nil
         planningRunCount = 0
         webDiscoveryRunCount = 0
+        successfulEditSnapshots.removeAll(keepingCapacity: true)
     }
 
     // MARK: Dedupe
@@ -364,7 +375,37 @@ public final class AgentTaskState {
     /// envelope because this is an agent-loop routing decision, not a provider
     /// failure; the model can continue immediately with retrieval or report a
     /// truthful blocker when retrieval is unavailable.
-    public func guardedResult(name: String) -> String? {
+    public func guardedResult(name: String, argsJSON: String = "{}") -> String? {
+        if name == "file_write" || name == "sandbox_write_file",
+            !Self.isAppendWrite(name: name, argsJSON: argsJSON),
+            let target = pathArgument(argsJSON),
+            let content = Self.stringArgument("content", argsJSON: argsJSON)
+        {
+            let canonical = Self.canonicalPath(target)
+            // The guard is deliberately one-shot. A rejected stale attempt
+            // gets an actionable error; any other overwrite proceeds and
+            // supersedes the edit snapshot.
+            if let edit = successfulEditSnapshots.removeValue(forKey: canonical),
+                WorkspaceWriteSafety.contentSHA256(content) == edit.beforeSHA256
+            {
+                return ToolEnvelope.failure(
+                    kind: .rejected,
+                    message:
+                        "Refused stale whole-file rewrite of '\(target)': its content exactly matches the snapshot from before the successful targeted edit and would silently undo that edit. Read the current file and make a targeted correction, or call file_undo for an intentional rollback.",
+                    field: "content",
+                    expected:
+                        "content based on the current post-edit file; use file_undo to intentionally restore the prior snapshot",
+                    tool: name,
+                    retryable: false,
+                    metadata: [
+                        "reason": "stale_pre_edit_rewrite",
+                        "path": target,
+                        "current_content_sha256": edit.afterSHA256,
+                    ]
+                )
+            }
+        }
+
         guard name == "web_search", webDiscoveryRunCount >= Self.webDiscoveryRunThreshold else {
             return nil
         }
@@ -392,6 +433,9 @@ public final class AgentTaskState {
     public func record(name: String, argsJSON: String, result: String) {
         let sig = signature(name: name, argsJSON: argsJSON)
         let resultClass = Self.classify(result)
+        let successPayload =
+            ToolEnvelope.isSuccess(result)
+            ? ToolEnvelope.successPayload(result) as? [String: Any] : nil
 
         let previousToolName = lastToolName
         lastResultEnvelope = result
@@ -409,6 +453,7 @@ public final class AgentTaskState {
             heldAppends.removeAll(keepingCapacity: true)
             heldErrorReplays.removeAll(keepingCapacity: true)
             transientFailureExecutions.removeAll(keepingCapacity: true)
+            successfulEditSnapshots.removeAll(keepingCapacity: true)
         }
 
         // A write/edit invalidates any fresh read of the same path so the
@@ -435,13 +480,40 @@ public final class AgentTaskState {
             }
             if Self.isAppendWrite(name: name, argsJSON: argsJSON),
                 ToolEnvelope.isSuccess(result),
-                let payload = ToolEnvelope.successPayload(result) as? [String: Any]
+                let payload = successPayload
             {
                 heldAppends[sig] = HeldAppend(
                     canonicalPath: targetCanonical,
                     payload: payload
                 )
             }
+            if ToolEnvelope.isSuccess(result),
+                let payload = successPayload,
+                payload["dry_run"] as? Bool != true,
+                payload["applied"] as? Bool != false
+            {
+                let isTargetedEdit =
+                    name == "file_edit"
+                    || (name == "sandbox_write_file"
+                        && Self.stringArgument("old_string", argsJSON: argsJSON) != nil)
+                if isTargetedEdit,
+                    let before = payload["before_content_sha256"] as? String,
+                    let after = payload["content_sha256"] as? String
+                {
+                    successfulEditSnapshots[targetCanonical] = SuccessfulEditSnapshot(
+                        beforeSHA256: before,
+                        afterSHA256: after
+                    )
+                } else {
+                    // Any successful whole-file or append mutation supersedes
+                    // the targeted-edit snapshot for this path.
+                    successfulEditSnapshots[targetCanonical] = nil
+                }
+            }
+        }
+
+        if name == "file_undo", let payload = successPayload {
+            clearEditSnapshotsUndone(by: payload)
         }
 
         // Capture (or clear) a held deterministic error for this signature.
@@ -876,6 +948,25 @@ public final class AgentTaskState {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
         return (dict["mode"] as? String)?.lowercased() == "append"
+    }
+
+    private static func stringArgument(_ key: String, argsJSON: String) -> String? {
+        guard let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return dict[key] as? String
+    }
+
+    private func clearEditSnapshotsUndone(by payload: [String: Any]) {
+        guard let undone = payload["undone"] as? [[String: Any]] else { return }
+        for entry in undone {
+            if let path = entry["path"] as? String {
+                successfulEditSnapshots[Self.canonicalPath(path)] = nil
+            }
+            if let destination = entry["destination_path"] as? String {
+                successfulEditSnapshots[Self.canonicalPath(destination)] = nil
+            }
+        }
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {

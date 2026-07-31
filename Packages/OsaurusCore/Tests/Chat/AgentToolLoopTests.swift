@@ -920,6 +920,41 @@ struct AgentToolLoopTests {
         #expect(surface.batchOutcomes[0].allSatisfy { !$0.wasDeduped && !$0.wasError })
     }
 
+    @Test func stalePreEditRewriteIsRejectedBeforeToolExecution() async throws {
+        let before = "const cells = board;"
+        let after = "const cells = board.children;"
+        let state = AgentTaskState()
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"index.html"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_edit",
+                result: [
+                    "before_content_sha256": WorkspaceWriteSafety.contentSHA256(before),
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256(after),
+                ]
+            )
+        )
+        let surface = ScriptedLoopSurface(steps: [
+            .toolCalls([
+                inv("file_write", #"{"path":"index.html","content":"const cells = board;"}"#)
+            ]),
+            .finalResponse,
+        ])
+
+        let result = try await AgentToolLoop.run(
+            policy: chatPolicy(),
+            state: state,
+            hooks: surface.makeHooks()
+        )
+
+        #expect(result == AgentToolLoop.RunResult(exit: .toolRejected, iterations: 1))
+        #expect(surface.executedCalls.isEmpty)
+        let guarded = try #require(surface.batchOutcomes.first?.first)
+        #expect(guarded.wasError)
+        #expect(guarded.result.contains("stale_pre_edit_rewrite"))
+    }
+
     @Test func permissionLeaseIsSharedWithinRunAndClearedAtTerminal() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("shell_run", #"{"command":"true"}"#)]),

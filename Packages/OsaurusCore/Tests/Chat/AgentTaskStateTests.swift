@@ -57,6 +57,16 @@ struct AgentTaskStateTests {
         )
     }
 
+    private func targetedEditEnvelope(before: String, after: String) -> String {
+        ToolEnvelope.success(
+            tool: "file_edit",
+            result: [
+                "before_content_sha256": WorkspaceWriteSafety.contentSHA256(before),
+                "content_sha256": WorkspaceWriteSafety.contentSHA256(after),
+            ]
+        )
+    }
+
     // MARK: - Classification
 
     @Test func classify_populatedListing() {
@@ -1200,6 +1210,161 @@ struct AgentTaskStateTests {
         }
         // The dedupe path still declines to short-circuit non-read tools.
         #expect(state.heldResult(name: "sandbox_exec", argsJSON: args) == nil)
+    }
+
+    // MARK: - One-shot stale rewrite protection
+
+    @Test func stalePreEditWholeRewriteIsRejectedOnlyOnce() {
+        let state = AgentTaskState()
+        let before = "const cells = board;"
+        let after = "const cells = board.children;"
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"index.html"}"#,
+            result: targetedEditEnvelope(before: before, after: after)
+        )
+
+        let first = state.guardedResult(
+            name: "file_write",
+            argsJSON: #"{"path":"index.html","content":"const cells = board;"}"#
+        )
+        #expect(first.map(ToolEnvelope.isError) == true)
+        #expect(first?.contains("stale_pre_edit_rewrite") == true)
+
+        #expect(
+            state.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"index.html","content":"const cells = board;"}"#
+            ) == nil
+        )
+    }
+
+    @Test func sandboxTargetedEditArmsSameOneShotGuard() {
+        let state = AgentTaskState()
+        state.record(
+            name: "sandbox_write_file",
+            argsJSON:
+                #"{"path":"/workspace/app.js","old_string":"old","new_string":"new"}"#,
+            result: ToolEnvelope.success(
+                tool: "sandbox_write_file",
+                result: [
+                    "before_content_sha256": WorkspaceWriteSafety.contentSHA256("old"),
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256("new"),
+                ]
+            )
+        )
+
+        #expect(
+            state.guardedResult(
+                name: "sandbox_write_file",
+                argsJSON: #"{"path":"/workspace/app.js","content":"old"}"#
+            ).map(ToolEnvelope.isError) == true
+        )
+    }
+
+    @Test func laterSamePathMutationDisarmsStaleRewriteGuard() {
+        let state = AgentTaskState()
+        let before = "old"
+        let after = "edited"
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"app.js"}"#,
+            result: targetedEditEnvelope(before: before, after: after)
+        )
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"app.js","content":"appended","mode":"append"}"#,
+            result: ToolEnvelope.success(tool: "file_write", text: "appended")
+        )
+
+        #expect(
+            state.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"app.js","content":"old"}"#
+            ) == nil
+        )
+    }
+
+    @Test func dryRunDoesNotArmOrDisarmStaleRewriteGuard() {
+        let previewOnly = AgentTaskState()
+        previewOnly.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"preview.js","dry_run":true}"#,
+            result: ToolEnvelope.success(
+                tool: "file_edit",
+                result: [
+                    "before_content_sha256": WorkspaceWriteSafety.contentSHA256("old"),
+                    "content_sha256": WorkspaceWriteSafety.contentSHA256("new"),
+                    "dry_run": true,
+                ] as [String: Any]
+            )
+        )
+        #expect(
+            previewOnly.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"preview.js","content":"old"}"#
+            ) == nil
+        )
+
+        let armed = AgentTaskState()
+        armed.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"app.js"}"#,
+            result: targetedEditEnvelope(before: "old", after: "new")
+        )
+        armed.record(
+            name: "file_write",
+            argsJSON: #"{"path":"app.js","content":"preview","dry_run":true}"#,
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: ["dry_run": true] as [String: Any]
+            )
+        )
+        #expect(
+            armed.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"app.js","content":"old"}"#
+            ).map(ToolEnvelope.isError) == true
+        )
+    }
+
+    @Test func fileUndoClearsOnlyAffectedEditSnapshot() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"a.js"}"#,
+            result: targetedEditEnvelope(before: "a-old", after: "a-new")
+        )
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"b.js"}"#,
+            result: targetedEditEnvelope(before: "b-old", after: "b-new")
+        )
+        state.record(
+            name: "file_undo",
+            argsJSON: #"{"path":"a.js"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_undo",
+                result: [
+                    "kind": "file_undo",
+                    "undone_count": 1,
+                    "undone": [["path": "a.js"]],
+                ] as [String: Any]
+            )
+        )
+
+        #expect(
+            state.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"a.js","content":"a-old"}"#
+            ) == nil
+        )
+        #expect(
+            state.guardedResult(
+                name: "file_write",
+                argsJSON: #"{"path":"b.js","content":"b-old"}"#
+            ).map(ToolEnvelope.isError) == true
+        )
     }
 
     // MARK: - Native image generation → follow-up edit bias (#88)

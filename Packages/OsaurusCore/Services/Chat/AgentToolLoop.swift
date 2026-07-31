@@ -1991,13 +1991,16 @@ enum AgentToolLoop {
                         if invocationHasParseableTodo {
                             batchHasPrecedingParseableTodo = true
                         }
-                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                        if let guarded = state.guardedResult(
+                            name: invocation.toolName,
+                            argsJSON: invocation.jsonArguments
+                        ) {
                             slotted[slot] = AgentLoopToolOutcome(
                                 invocation: invocation,
                                 callId: callId,
                                 result: guarded,
                                 wasDeduped: false,
-                                wasError: false
+                                wasError: ToolEnvelope.isError(guarded)
                             )
                             continue
                         }
@@ -2300,7 +2303,10 @@ enum AgentToolLoop {
                         // transition result instead of paying for another
                         // rephrased provider call. The outcome still lands in
                         // surface history through `onBatchComplete` below.
-                        if let guarded = state.guardedResult(name: invocation.toolName) {
+                        if let guarded = state.guardedResult(
+                            name: invocation.toolName,
+                            argsJSON: invocation.jsonArguments
+                        ) {
                             state.record(
                                 name: invocation.toolName,
                                 argsJSON: invocation.jsonArguments,
@@ -2309,15 +2315,20 @@ enum AgentToolLoop {
                             if let bias = state.nextStepBias() {
                                 pendingStateNotice = "[System Notice] " + bias
                             }
-                            outcomes.append(
-                                AgentLoopToolOutcome(
-                                    invocation: invocation,
-                                    callId: callId,
-                                    result: guarded,
-                                    wasDeduped: false,
-                                    wasError: false
-                                )
+                            let guardedOutcome = AgentLoopToolOutcome(
+                                invocation: invocation,
+                                callId: callId,
+                                result: guarded,
+                                wasDeduped: false,
+                                wasError: ToolEnvelope.isError(guarded)
                             )
+                            outcomes.append(guardedOutcome)
+                            if policy.stopOnToolRejection,
+                                Self.shouldStopAfterToolOutcome(guardedOutcome)
+                            {
+                                await hooks.onBatchComplete(outcomes)
+                                return RunResult(exit: .toolRejected, iterations: iteration)
+                            }
                             continue
                         }
 
