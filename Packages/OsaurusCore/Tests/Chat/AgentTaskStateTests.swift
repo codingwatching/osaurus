@@ -204,7 +204,7 @@ struct AgentTaskStateTests {
         #expect(state.heldResult(name: "file_read", argsJSON: #"{"path":"b.txt"}"#) == nil)
     }
 
-    @Test func dedupe_writesAreNeverHeld() {
+    @Test func dedupe_overwriteWritesAreNeverHeld() {
         let state = AgentTaskState()
         state.record(
             name: "file_write",
@@ -213,6 +213,47 @@ struct AgentTaskStateTests {
         )
         // A repeated write must always run.
         #expect(state.heldResult(name: "file_write", argsJSON: #"{"path":"a.txt","content":"x"}"#) == nil)
+    }
+
+    @Test func dedupe_exactSuccessfulAppendBecomesTypedNoop() throws {
+        let state = AgentTaskState()
+        let args = #"{"path":"a.txt","content":"SECOND\n","mode":"append"}"#
+        let result = ToolEnvelope.success(
+            tool: "file_write",
+            result: [
+                "action": "update",
+                "applied": true,
+                "path": "a.txt",
+                "mode": "append",
+            ] as [String: Any]
+        )
+        state.record(name: "file_write", argsJSON: args, result: result)
+
+        let replay = try #require(state.heldResult(name: "file_write", argsJSON: args))
+        let payload = try #require(ToolEnvelope.successPayload(replay) as? [String: Any])
+        #expect(payload["action"] as? String == "noop")
+        #expect(payload["applied"] as? Bool == false)
+        #expect(payload["reason"] as? String == "exact_append_already_applied")
+    }
+
+    @Test func dedupe_appendReexecutesAfterInterveningMutationOrMessage() {
+        let state = AgentTaskState()
+        let append = #"{"path":"a.txt","content":"x","mode":"append"}"#
+        let success = ToolEnvelope.success(
+            tool: "file_write",
+            result: ["applied": true, "path": "a.txt"] as [String: Any]
+        )
+        state.record(name: "file_write", argsJSON: append, result: success)
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"a.txt","content":"reset","mode":"overwrite"}"#,
+            result: success
+        )
+        #expect(state.heldResult(name: "file_write", argsJSON: append) == nil)
+
+        state.record(name: "file_write", argsJSON: append, result: success)
+        state.beginMessage()
+        #expect(state.heldResult(name: "file_write", argsJSON: append) == nil)
     }
 
     /// The read -> edit -> read-to-verify pattern: the write to the path
@@ -346,6 +387,76 @@ struct AgentTaskStateTests {
             name: "file_read",
             argsJSON: #"{"path":"a.txt"}"#,
             result: fileContentEnvelope(path: "a.txt")
+        )
+        #expect(state.nextStepBias() == nil)
+    }
+
+    @Test func bias_oversizedFileWriteRequiresChunkedAppendRecovery() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"index.html","content":"oversized"}"#,
+            result: ToolEnvelope.failure(
+                kind: .invalidArgs,
+                message: "Property 'content' must contain at most 30000 characters (got 32000).",
+                field: "content",
+                expected: "at most 30000 characters",
+                tool: "file_write",
+                retryable: true
+            )
+        )
+
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("did not execute"))
+        #expect(bias.contains("Do not regenerate another complete oversized payload"))
+        #expect(bias.contains("\(WorkspaceToolContract.recommendedWriteChunkCharacters)"))
+        #expect(bias.contains(#"mode: "append""#))
+    }
+
+    @Test func bias_runnableWriteRequiresVerificationAndExplainsTruncatedDiff() {
+        let state = AgentTaskState()
+        let result = ToolEnvelope.success(
+            tool: "file_edit",
+            result: [
+                "kind": "workspace_write_result",
+                "path": "minesweeper.html",
+                "applied": true,
+                "dry_run": false,
+                "diff_truncated": true,
+                "content_write_complete": true,
+                "verification": [
+                    "status": "not_run",
+                    "reason": "Persistence is not runtime correctness.",
+                ],
+            ] as [String: Any]
+        )
+        state.record(
+            name: "file_edit",
+            argsJSON: #"{"path":"minesweeper.html","old_string":"x","new_string":"y"}"#,
+            result: result
+        )
+
+        let bias = state.nextStepBias() ?? ""
+        #expect(bias.contains("succeeded"))
+        #expect(bias.contains("only the review preview was shortened"))
+        #expect(bias.contains("Do not rewrite the whole file"))
+        #expect(bias.contains("proves persistence, not that runnable code works"))
+        #expect(bias.contains("shell_run"))
+    }
+
+    @Test func bias_plainTextWriteWithoutVerificationMetadataHasNoNudge() {
+        let state = AgentTaskState()
+        state.record(
+            name: "file_write",
+            argsJSON: #"{"path":"notes.txt","content":"done"}"#,
+            result: ToolEnvelope.success(
+                tool: "file_write",
+                result: [
+                    "kind": "workspace_write_result",
+                    "path": "notes.txt",
+                    "applied": true,
+                ]
+            )
         )
         #expect(state.nextStepBias() == nil)
     }

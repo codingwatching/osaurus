@@ -1529,6 +1529,30 @@ public enum SystemPromptTemplates {
         return section
     }
 
+    /// Minimum trusted-workspace contract. Tool schemas carry operation detail;
+    /// this section only establishes cwd, confinement, and user-authored
+    /// project instructions.
+    public static func leanFolderContext(from folder: FolderContext) -> String {
+        var section = """
+            ## Working directory
+            **Path:** \(folder.rootPath.path)
+            Native execution is trusted for this workspace. Writes are confined to this folder and temporary directories. Use relative paths.
+            Use the workspace tools to complete requested work now; do not only describe or promise it.
+            After creating or changing runnable code, run an available syntax/build/test/behavior check before saying it works; a successful file mutation proves only that bytes were saved.
+            To append while preserving a file, call file_write with mode append and put only the new bytes in content.
+            Keep each file_write content under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters; for larger files use repeated calls with mode append.
+            """
+        if let contextFiles = folder.contextFiles, !contextFiles.isEmpty {
+            section += """
+
+
+                ## Project instructions
+                \(contextFiles)
+                """
+        }
+        return section
+    }
+
     // MARK: - Folder Building Blocks
 
     /// One-line restatement of the path-arg rule. Each `file_*` tool's

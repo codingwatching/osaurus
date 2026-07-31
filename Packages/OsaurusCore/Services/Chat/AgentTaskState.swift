@@ -215,6 +215,15 @@ public final class AgentTaskState {
         let envelope: String
     }
 
+    /// A successful exact append held only for the current user message.
+    /// Replaying it is a typed no-op, preventing an accidental second
+    /// non-idempotent append while preserving ordinary writes and any append
+    /// after an intervening mutation.
+    private struct HeldAppend {
+        let canonicalPath: String
+        let payload: [String: Any]
+    }
+
     /// The class of the most recently recorded result.
     public private(set) var lastResultClass: ToolResultClass?
     /// The most recent directory listing (survives across messages in
@@ -231,6 +240,7 @@ public final class AgentTaskState {
     private var freshReads: [CallSignature: FreshRead] = [:]
     /// Deterministic folder-tool errors held for replay, keyed by signature.
     private var heldErrors: [CallSignature: HeldError] = [:]
+    private var heldAppends: [CallSignature: HeldAppend] = [:]
     /// How many times each held error has been replayed (drives escalation).
     private var heldErrorReplays: [CallSignature: Int] = [:]
     /// Number of retryable failures executed for a selected read-like tool.
@@ -273,6 +283,7 @@ public final class AgentTaskState {
         lastToolName = nil
         freshReads.removeAll(keepingCapacity: true)
         heldErrors.removeAll(keepingCapacity: true)
+        heldAppends.removeAll(keepingCapacity: true)
         heldErrorReplays.removeAll(keepingCapacity: true)
         transientFailureExecutions.removeAll(keepingCapacity: true)
         lastReplayNotice = nil
@@ -286,12 +297,14 @@ public final class AgentTaskState {
 
     // MARK: Dedupe
 
-    /// True when `name` participates in dedupe replay (read-like tools).
+    /// True when `name` can participate in dedupe replay. `file_write` is
+    /// included so exact append siblings in one parallel batch are deferred
+    /// until the first result is known; non-append writes still re-execute.
     /// The loop driver uses this to recognise duplicate read siblings
     /// inside a single parallel batch — non-read duplicates always
     /// re-execute by design (they may legitimately differ).
     public static func isReplayEligible(name: String) -> Bool {
-        readLikeTools.contains(name)
+        readLikeTools.contains(name) || name == "file_write" || name == "sandbox_write_file"
     }
 
     /// If this call re-issues something the loop already holds the exact
@@ -312,6 +325,22 @@ public final class AgentTaskState {
         let sig = signature(name: name, argsJSON: argsJSON)
         if Self.readLikeTools.contains(name), let fresh = freshReads[sig] {
             return fresh.envelope
+        }
+        if let held = heldAppends[sig] {
+            var payload = held.payload
+            payload["action"] = "noop"
+            payload["applied"] = false
+            payload["deduped"] = true
+            payload["reason"] = "exact_append_already_applied"
+            payload.removeValue(forKey: "operation_id")
+            payload.removeValue(forKey: "diff")
+            return ToolEnvelope.success(
+                tool: name,
+                result: payload,
+                warnings: [
+                    "An identical append already succeeded in this task with no intervening mutation; the duplicate side effect was suppressed."
+                ]
+            )
         }
         if Self.deterministicErrorTools.contains(name)
             || Self.deterministicAsIsFailureTools.contains(name),
@@ -377,6 +406,7 @@ public final class AgentTaskState {
         if Self.execLikeTools.contains(name) {
             freshReads.removeAll(keepingCapacity: true)
             heldErrors.removeAll(keepingCapacity: true)
+            heldAppends.removeAll(keepingCapacity: true)
             heldErrorReplays.removeAll(keepingCapacity: true)
             transientFailureExecutions.removeAll(keepingCapacity: true)
         }
@@ -399,6 +429,18 @@ public final class AgentTaskState {
             heldErrors = heldErrors.filter { entry in
                 if Self.searchLikeTools.contains(entry.key.name) { return false }
                 return entry.value.canonicalPath != targetCanonical
+            }
+            heldAppends = heldAppends.filter {
+                $0.value.canonicalPath != targetCanonical
+            }
+            if Self.isAppendWrite(name: name, argsJSON: argsJSON),
+                ToolEnvelope.isSuccess(result),
+                let payload = ToolEnvelope.successPayload(result) as? [String: Any]
+            {
+                heldAppends[sig] = HeldAppend(
+                    canonicalPath: targetCanonical,
+                    payload: payload
+                )
             }
         }
 
@@ -539,6 +581,20 @@ public final class AgentTaskState {
     /// entirely when `biasEnabled` is false.
     public func nextStepBias() -> String? {
         guard biasEnabled, let last = lastResultClass else { return nil }
+
+        if lastToolName == "file_write",
+            let envelope = lastResultEnvelope,
+            Self.isFileWriteContentTooLarge(envelope) {
+            return
+                "The previous `file_write` did not execute because `content` exceeded the per-call limit. Do not regenerate another complete oversized payload. Split the content now: send a first chunk under \(WorkspaceToolContract.recommendedWriteChunkCharacters) characters with overwrite mode, then send only each remaining chunk with `mode: \"append\"`."
+        }
+
+        if let tool = lastToolName,
+            let envelope = lastResultEnvelope,
+            let notice = Self.runnableMutationNotice(tool: tool, envelope: envelope)
+        {
+            return notice
+        }
 
         // Repeated identical write/exec call: the strongest stuck signal we
         // have, so it outranks the result-class nudges. Reactive (3rd
@@ -709,6 +765,39 @@ public final class AgentTaskState {
         return dict["retryable"] as? Bool
     }
 
+    private static func isFileWriteContentTooLarge(_ envelope: String) -> Bool {
+        guard ToolEnvelope.isError(envelope),
+            let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            dict["kind"] as? String == ToolEnvelope.Kind.invalidArgs.rawValue,
+            dict["field"] as? String == "content",
+            let message = dict["message"] as? String
+        else { return false }
+        return message.contains("must contain at most")
+    }
+
+    private static func runnableMutationNotice(tool: String, envelope: String) -> String? {
+        guard writeLikeTools.contains(tool),
+            ToolEnvelope.isSuccess(envelope),
+            let payload = ToolEnvelope.successPayload(envelope) as? [String: Any],
+            payload["dry_run"] as? Bool != true,
+            payload["applied"] as? Bool != false,
+            let verification = payload["verification"] as? [String: Any],
+            verification["status"] as? String == "not_run"
+        else { return nil }
+
+        let path = payload["path"] as? String ?? "the runnable artifact"
+        let diffNotice: String
+        if payload["diff_truncated"] as? Bool == true {
+            diffNotice =
+                " `diff_truncated:true` means only the review preview was shortened; the full file mutation completed. Do not rewrite the whole file because the diff preview was truncated."
+        } else {
+            diffNotice = ""
+        }
+        return
+            "The previous `\(tool)` succeeded for `\(path)`.\(diffNotice) Saving bytes proves persistence, not that runnable code works. Before claiming completion, use `shell_run` or another available syntax/build/test/behavior check; if no checker exists, inspect the critical initialization path. Fix only an evidenced defect rather than regenerating the whole file."
+    }
+
     /// Convert a second identical transient extraction failure into the
     /// stable result replayed on subsequent requests. Preserve every original
     /// diagnostic field while making the exhausted retry contract explicit.
@@ -779,6 +868,14 @@ public final class AgentTaskState {
         if let p = dict["path"] as? String, !p.isEmpty { return p }
         if let p = dict["file_path"] as? String, !p.isEmpty { return p }
         return nil
+    }
+
+    private static func isAppendWrite(name: String, argsJSON: String) -> Bool {
+        guard name == "file_write" || name == "sandbox_write_file",
+            let data = argsJSON.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return (dict["mode"] as? String)?.lowercased() == "append"
     }
 
     private func parseListing(_ envelope: String) -> ListingSnapshot? {
