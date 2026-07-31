@@ -781,7 +781,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "958eb6bed2e2fd4fde30574141e17a1dce773895"
+        let expectedRuntimeHardenedRevision = "0d838879a7ea102eb6e034f1d33ac0dbb51c02c3"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1956,6 +1956,72 @@ struct RuntimePolicySourceTests {
             runtime.contains("await cancelActiveGeneration(for: name)"),
             "ModelRuntime.unload(name:) must scope defensive cancellation to the model being unloaded"
         )
+    }
+
+    @Test("explicit model unload drains its generation wrapper before waiting for the lease")
+    func explicitModelUnloadDrainsGenerationBeforeLease() throws {
+        let runtime = try Self.source("Services/ModelRuntime.swift")
+        let start = try #require(runtime.range(of: "private func unloadClaimed("))
+        let end = try #require(
+            runtime.range(
+                of: "private func finishResidencyUnloadClaim(",
+                range: start.upperBound ..< runtime.endIndex
+            )
+        )
+        let unloadBody = String(runtime[start.lowerBound ..< end.lowerBound])
+
+        let shutdown = try #require(
+            unloadBody.range(of: "await MLXBatchAdapter.Registry.shared.shutdownEngine(for: name)")
+        )
+        let cancel = try #require(
+            unloadBody.range(
+                of: "await cancelActiveGeneration(for: name)",
+                range: shutdown.upperBound ..< unloadBody.endIndex
+            )
+        )
+        let leaseWait = try #require(
+            unloadBody.range(
+                of: "await ModelLease.shared.waitForZero(",
+                range: cancel.upperBound ..< unloadBody.endIndex
+            )
+        )
+
+        #expect(shutdown.lowerBound < cancel.lowerBound)
+        #expect(cancel.lowerBound < leaseWait.lowerBound)
+        #expect(
+            unloadBody.components(separatedBy: "await cancelActiveGeneration(for: name)").count == 2,
+            "Explicit unload must cancel the selected model exactly once"
+        )
+    }
+
+    @Test("model cache unload UI exposes progress and fail-closed result")
+    func modelCacheUnloadUIExposesProgressAndFailure() throws {
+        let service = try Self.source("Services/Inference/MLXService.swift")
+        let windows = try Self.source("Managers/Chat/ChatWindowManager.swift")
+        let chat = try Self.source("Views/Chat/ChatView.swift")
+        let warmup = try Self.source("Services/Chat/ChatWarmupController.swift")
+        let view = try Self.source("Views/Model/ModelCacheInspectorView.swift")
+
+        #expect(service.contains("leaseDrainTimeoutSeconds: Double = 5"))
+        #expect(service.contains(") async -> Bool"))
+        #expect(service.contains("leaseDrainTimeoutSeconds: leaseDrainTimeoutSeconds"))
+        #expect(
+            service.contains(
+                "ChatWindowManager.shared.prepareSessionsForExplicitModelUnload(named: name)"
+            )
+        )
+        #expect(windows.contains("func prepareSessionsForExplicitModelUnload(named name: String)"))
+        #expect(windows.contains("session.prepareForExplicitModelUnload()"))
+        #expect(chat.contains("func prepareForExplicitModelUnload()"))
+        #expect(chat.contains("if isSendActiveForComposer"))
+        #expect(chat.contains("stop()"))
+        #expect(warmup.contains("func cancelPendingWorkForExplicitModelUnload()"))
+        #expect(view.contains("isUnloading: unloadingNames.contains(item.name)"))
+        #expect(view.contains("Text(isUnloading ? \"Unloading…\" : \"Unload\", bundle: .module)"))
+        #expect(view.contains(".disabled(isUnloading)"))
+        #expect(view.contains("guard didUnload else"))
+        #expect(view.contains("model-cache-unload-failure"))
+        #expect(view.contains(".modelRuntimeResidencyChanged"))
     }
 
     /// Lock the cold-load drain discipline. Swift task cancellation is
