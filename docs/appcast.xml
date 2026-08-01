@@ -3,6 +3,45 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.14</title>
+            <pubDate>Sat, 01 Aug 2026 10:17:19 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.14</sparkle:version>
+            <sparkle:shortVersionString>0.22.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.14/Osaurus-0.22.14.dmg" length="69422433" type="application/octet-stream" sparkle:edSignature="bibA71zRb/hUmjmUQ4k8aUbx32bi223xtU6jSMccMiDW4X8HaR1uHlzgbOSJvH0xTSfGE4/AmKcKRH0lO2flCw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Fix explicit model unload and cache telemetry continuity (#2248) by @jjang-ai
+- i18n(zh-Hans): call Osaurus's own server 服务端, not 服务器 (#2246) by @YspritanHyzygy
+- i18n: split the "Server" key, which three unrelated UI elements share (#2243) by @YspritanHyzygy
+- i18n(zh-Hans): keys that differ only in casing should not say different things (#2230) by @YspritanHyzygy
+- Fix four reported runtime and model metadata issues (#2235) by @jjang-ai
+- Unify subagent and server batching concurrency (#2234) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Harden AgentDB imports and saved views (#2255) by @tpae
+- Exclude warm-up calls from Insights (#2254) by @tpae
+- Stabilize execution modes, prompts, and cache warmup (#2253) by @tpae
+- Prevent stale whole-file rewrites after targeted edits (#2252) by @tpae
+- fixed text selection in agent responses (#2247) by @RaajeevChandran
+- fix tool permission panel sizing and card appearance issues (#2244) by @RaajeevChandran
+- fix tool approval dialog overflow and add auto-allow all tools setting (#2241) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Make the Mac harness leaner and more reliable (#2250) by @tpae
+- Keep notch overlay pinned to the screen edge (#2240) by @tpae
+- Eliminate app hangs: unblock MainActor, bounded cancellation, killable plugin host (#2239) by @tpae
+- Add localized Channels What's New announcement (#2238) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.13...0.22.14
+]]></description>
+        </item>
+        <item>
             <title>0.22.13</title>
             <pubDate>Thu, 30 Jul 2026 04:14:08 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
