@@ -17,7 +17,7 @@ struct CreditsRedeemCodeCard: View {
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(theme.primaryText)
                     Text(
-                        "Enter it below and we’ll take it from there.",
+                        "Enter it below and we’ll take it from here.",
                         bundle: .module
                     )
                     .font(.system(size: 11))
@@ -114,6 +114,10 @@ struct CreditsRedeemCodeCard: View {
                 }
                 .font(.system(size: 12))
                 .foregroundColor(theme.errorColor)
+            }
+
+            if isEnabled, let retryDeadline = redemption.retryNotBefore {
+                RedeemRetryCountdownHint(deadline: retryDeadline)
             }
         }
     }
