@@ -3897,6 +3897,69 @@ final class ChatSession: ObservableObject {
         if sessionId == sid { title = newTitle }
     }
 
+    /// Generate an AI title on demand from the `/title` slash command. Unlike
+    /// the automatic path this ignores the auto-title setting and any earlier
+    /// manual rename — the user explicitly asked for a new name — and it
+    /// surfaces failures as a toast instead of staying silent, because the
+    /// user is waiting on the result.
+    func generateTitleFromSlashCommand() {
+        let turnData = turns.map { ChatTurnData(from: $0) }
+        guard
+            let sid = sessionId,
+            let userTurn = turnData.first(where: {
+                $0.role == .user
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })
+        else {
+            ToastManager.shared.infoLocalized(
+                "Chat Title",
+                message: "Send a message first, then use /title to name the chat."
+            )
+            return
+        }
+        let assistantText =
+            turnData.first(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })?.content ?? ""
+        // Latch so a later clean run completion doesn't auto-title over the
+        // name the user just asked for.
+        autoTitleGenerationStarted = true
+        let fallbackModel = selectedModel
+        // Loading toast while the model thinks (up to the service's 8s
+        // timeout), updated in place to the success/error outcome.
+        let toastId = ToastManager.shared.loadingLocalized("Generating Title…")
+        Task { [weak self] in
+            guard
+                let generated = await ChatTitleService.shared.generateTitle(
+                    userMessage: userTurn.content,
+                    assistantResponse: assistantText,
+                    fallbackModel: fallbackModel
+                )
+            else {
+                ToastManager.shared.update(
+                    id: toastId,
+                    type: .error,
+                    title: L("Chat Title"),
+                    message: L("Couldn't generate a title. Check that a model is available and try again.")
+                )
+                return
+            }
+            guard let self else {
+                ToastManager.shared.dismiss(id: toastId)
+                return
+            }
+            ChatSessionsManager.shared.renameQuietly(id: sid, title: generated)
+            if self.sessionId == sid { self.title = generated }
+            ToastManager.shared.update(
+                id: toastId,
+                type: .success,
+                title: L("Chat Renamed"),
+                message: generated
+            )
+        }
+    }
+
     /// A stopped (or errored) run can leave an assistant tool call that never
     /// received a result. Record a synthetic error result so the UI renders it
     /// as failed — red node, shimmer stopped — via the normal error path, rather
@@ -7634,6 +7697,7 @@ struct ChatView: View {
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
                                 onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
+                                onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
                                 onSkillSelected: { skillId in
                                     observedSession.pendingOneOffSkillId = skillId
                                 },
