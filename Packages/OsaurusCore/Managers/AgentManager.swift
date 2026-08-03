@@ -951,6 +951,7 @@ extension AgentManager {
             browserUseEnabled: agent.settings.browserUseEnabled,
             spawnDelegationEnabled: agent.settings.spawnDelegationEnabled,
             imageEnabled: agent.settings.imageEnabled,
+            videoEnabled: agent.settings.videoEnabled,
             appleScriptEnabled: agent.settings.appleScriptEnabled,
             spawnableAgentIDs: agent.settings.spawnableAgentIDs,
             spawnableAgentNames: agent.settings.legacySpawnableAgentNames,
