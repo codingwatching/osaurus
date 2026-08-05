@@ -25,6 +25,14 @@ public struct ChatWindowInfo: Identifiable, Sendable {
     }
 }
 
+/// Behavior of the ⌘N shortcut in the File menu. Off (default) keeps ⌘N on
+/// "New Window". On, ⌘N starts a new chat in the frontmost chat window (the
+/// sidebar "New Chat" action) and "New Window" moves to ⇧⌘N. Toggled in
+/// Chat settings, read by the app's File menu commands.
+public enum NewChatShortcutSetting {
+    public static let defaultsKey = "chatCmdNStartsNewChatInCurrentWindow"
+}
+
 /// Manages multiple chat windows in the application
 @MainActor
 public final class ChatWindowManager: NSObject, ObservableObject {
@@ -264,6 +272,25 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             // No windows exist, create new one
             createWindow()
         }
+    }
+
+    /// Start a new chat in the frontmost chat window, mirroring the sidebar
+    /// "New Chat" button. Targets the last-focused window as long as it still
+    /// exists, even when hidden, and brings it to the front first. Returns
+    /// false when no chat window exists so the caller can fall back to
+    /// creating a new window.
+    @discardableResult
+    public func startNewChatInLastFocusedWindow() -> Bool {
+        let targetId: UUID? =
+            if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+                lastId
+            } else {
+                windowStates.keys.first
+            }
+        guard let targetId, let state = windowStates[targetId] else { return false }
+        showWindow(id: targetId)
+        state.startNewChat()
+        return true
     }
 
     /// Open (or focus) a chat window and select the paired remote agent that
