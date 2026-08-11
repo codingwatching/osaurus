@@ -3,6 +3,26 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.22.20</title>
+            <pubDate>Tue, 11 Aug 2026 01:42:01 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.22.20</sparkle:version>
+            <sparkle:shortVersionString>0.22.20</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.22.20/Osaurus-0.22.20.dmg" length="70752490" type="application/octet-stream" sparkle:edSignature="plWpbvbcVu+H4jU75y3661+PkJv6BxVq9crjJatf5urUti+8+CD1oHZhmv8fGv1kgBIoVlDqiD8dz+MZTyd2Dw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx to the Muse Glimmer vision fix (#2341) by @jjang-ai
+- Fix the Muse Glimmer vision path: placeholders never rendered or matched (#2340) by @jjang-ai
+- Prove all four Muse Glimmer reasoning strengths reach the template (#2339) by @jjang-ai
+- Bound capability group-load schemas + repin vmlx (Muse Glimmer runtime) (#2336) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.19...0.22.20
+]]></description>
+        </item>
+        <item>
             <title>0.22.19</title>
             <pubDate>Mon, 10 Aug 2026 13:24:29 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
