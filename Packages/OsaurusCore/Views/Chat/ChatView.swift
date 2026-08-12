@@ -6587,7 +6587,12 @@ final class ChatSession: ObservableObject {
                                                     hasStructuredToolWorkThisRun,
                                                 isRemoteAgentTarget:
                                                     self.isRemoteAgentTarget
-                                            )
+                                            ),
+                                        // On the first turn no tool has run yet,
+                                        // so `requiresVisibleFinalResponse` is
+                                        // false and a reasoning-only stop would
+                                        // otherwise count as a finished answer.
+                                        toolsWereOffered: !iterationToolSpecs.isEmpty
                                     )
                                 }
                                 hasStructuredToolWorkThisRun = true
