@@ -205,9 +205,18 @@ let package = Package(
         // token-identical. A 3 B-active model is not purely bandwidth-bound,
         // so the two-token verify batch costs +46 % instead of ~0 %. D1 is the
         // shipped path; turning MTP on is an explicit per-machine decision.
+        // vmlx-swift#250 makes LFM2.5-VL usable: the `<image>` id was resolved
+        // with `convertTokenToId`, which returns the UNK id rather than nil for
+        // a bundle that spells the token differently, so every image expanded
+        // against the wrong placeholder; the expansion also ran once per turn
+        // instead of once per placeholder, which trapped in
+        // `mergeInputIdsWithImageFeatures` as soon as a turn carried two
+        // images. Tool schemas now reach `LMInput` on both the text and image
+        // paths, and the pythonic parser accepts the `function`/`parameters`
+        // spelling this bundle emits, so an offered tool is no longer dropped.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "11a43493fd9bb552ed45faac0be6d4b9f2ab46f0"
+            revision: "9b15d4562e6591a63283e915f2e81de7376b1957"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
