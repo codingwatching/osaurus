@@ -38,6 +38,8 @@ struct CellRenderingContext {
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
     var onSpeak: ((UUID) -> Void)? = nil
+    /// A tapped follow-up suggestion string → sent as the next user turn.
+    var onFollowUpTap: ((String) -> Void)? = nil
     /// Deletes an assistant response. The confirmation dialog offers an option
     /// to also delete the prompting user message. Distinct from `onDelete`,
     /// which truncates a user turn and everything after it.
@@ -81,6 +83,12 @@ struct CellRenderingContext {
     /// Coordinator-scoped callback: record that the chart with this block
     /// id has been drawn so subsequent re-mounts skip the entry animation.
     var markChartDrawn: ((String) -> Void)? = nil
+    /// Coordinator-scoped predicate/marker pair, same role as the chart pair
+    /// above: has this follow-up row already played its entrance animation in
+    /// the current chat? Lets `configureAsFollowUpSuggestions` suppress the
+    /// reveal when a recycled cell re-mounts it after scrolling.
+    var hasFollowUpsShown: ((String) -> Bool)? = nil
+    var markFollowUpsShown: ((String) -> Void)? = nil
     /// Coordinator-scoped chart view cache lookup. Returning a non-nil
     /// view lets `configureAsChart` reparent an existing (already-rendered)
     /// `NativeChartView` instead of allocating a fresh `AAChartView`/
@@ -1673,6 +1681,11 @@ final class NativeMessageCellView: NSTableCellView {
     private var nativeStatsView: NativeStatsView?
     private var nativeAssistantActionsView: NativeAssistantActionsView?
     private var nativeEmptyNoticeView: NativeEmptyResponseNoticeView?
+    /// Follow-up suggestions are low-frequency (one per completed turn), so
+    /// unlike the streaming-hot cells above this one hosts the SwiftUI
+    /// `FollowUpSuggestionsBar` directly — its intrinsic size drives the row
+    /// height via `fittingSize`.
+    private var nativeFollowUpsView: NSHostingView<AnyView>?
 
     private var userBubbleCornerRadius: CGFloat = 0
     private var userBubbleWidthConstraint: NSLayoutConstraint?
@@ -1900,6 +1913,14 @@ final class NativeMessageCellView: NSTableCellView {
                 turnId: turnId,
                 outputTokens: outputTokens,
                 costMicro: costMicro,
+                context: context,
+                sameKind: sameKind
+            )
+
+        case let .followUpSuggestions(_, suggestions):
+            configureAsFollowUpSuggestions(
+                block: block,
+                suggestions: suggestions,
                 context: context,
                 sameKind: sameKind
             )
@@ -2827,6 +2848,53 @@ final class NativeMessageCellView: NSTableCellView {
         )
     }
 
+    // MARK: - FollowUpSuggestions
+
+    private func configureAsFollowUpSuggestions(
+        block: ContentBlock,
+        suggestions: [String],
+        context: CellRenderingContext,
+        sameKind: Bool
+    ) {
+        let onTap = context.onFollowUpTap
+        // Animate only the first time this row is shown; recycled re-mounts
+        // after scrolling render in their final state (mirrors the chart cell).
+        let animate = !(context.hasFollowUpsShown?(block.id) ?? false)
+        context.markFollowUpsShown?(block.id)
+        let rootView = AnyView(
+            FollowUpSuggestionsBar(
+                suggestions: suggestions,
+                animate: animate,
+                onSelect: { onTap?($0) }
+            )
+            .environment(\.theme, context.theme)
+        )
+        if !sameKind || nativeFollowUpsView == nil {
+            removeAllContentViews()
+            let hv = NSHostingView(rootView: rootView)
+            hv.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(hv)
+            NSLayoutConstraint.activate([
+                hv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
+                hv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+                hv.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+                // Pin the bottom so the cell's `fittingSize` reflects the
+                // hosted content and the row sizes to it.
+                hv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            ])
+            nativeFollowUpsView = hv
+        } else {
+            nativeFollowUpsView?.rootView = rootView
+        }
+        // Correct the row height once SwiftUI has laid out, mirroring the
+        // artifact/user cells' measured-height report.
+        let id = block.id
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            context.onHeightMeasured?(self.measureFittedRowHeight(), id)
+        }
+    }
+
     // MARK: - SharedArtifact
 
     private func configureAsArtifact(
@@ -3048,6 +3116,7 @@ final class NativeMessageCellView: NSTableCellView {
         nativeStatsView?.removeFromSuperview(); nativeStatsView = nil
         nativeAssistantActionsView?.removeFromSuperview(); nativeAssistantActionsView = nil
         nativeEmptyNoticeView?.removeFromSuperview(); nativeEmptyNoticeView = nil
+        nativeFollowUpsView?.removeFromSuperview(); nativeFollowUpsView = nil
         // User messages carry outbound redactions (PII the user typed), so
         // the user text view has the same hover controller to tear down.
         userTextView?.tearDownForReuse()
@@ -3290,7 +3359,7 @@ private func cgColorsEqual(_ lhs: CGColor?, _ rhs: CGColor?) -> Bool {
 enum ContentBlockKindTag: Equatable {
     case header, paragraph, toolCallGroup, thinking, activityGroup, userMessage, pendingToolCall
     case generationStats, typingIndicator, groupSpacer, sharedArtifact, chart
-    case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, other
+    case assistantActions, emptyResponseNotice, fileDiff, compactionMarker, followUpSuggestions, other
 }
 
 extension ContentBlockKind {
@@ -3312,6 +3381,7 @@ extension ContentBlockKind {
         case .assistantActions: return .assistantActions
         case .emptyResponseNotice: return .emptyResponseNotice
         case .compactionMarker: return .compactionMarker
+        case .followUpSuggestions: return .followUpSuggestions
         }
     }
 }
@@ -3512,6 +3582,24 @@ enum NativeCellHeightEstimator {
             }
             let fontLineHeight: CGFloat = max(10, CGFloat(theme.codeSize) - 1) * 1.35
             return header + 6 + CGFloat(lineRows) * fontLineHeight + 6 + 12
+
+        case let .followUpSuggestions(_, suggestions):
+            // Mirrors `FollowUpSuggestionsBar`: outer vertical padding (8+8),
+            // a "Follow up" header (~23), and per-suggestion rows of
+            // 10+10 padding around wrapped 13pt text (~18pt/line), with hairline
+            // dividers between. Plus the cell's own 4pt top / 8pt bottom
+            // insets. Text width is the cell width minus the 16pt-each-side
+            // insets, the ~21pt label indent, and the trailing arrow column.
+            // Corrected by the measured-height report either way.
+            let innerW = max(width - 80, 100)
+            let chars = max(Int(innerW / 7), 20)
+            var rows: CGFloat = 0
+            for s in suggestions {
+                let lines = max(1, (s.count + chars - 1) / chars)
+                rows += CGFloat(lines) * 18 + 20
+            }
+            let dividers = CGFloat(max(0, suggestions.count - 1))
+            return 23 + rows + dividers + 16 + 12
         }
     }
 }

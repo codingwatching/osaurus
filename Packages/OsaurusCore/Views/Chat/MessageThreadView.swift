@@ -34,6 +34,7 @@ struct MessageThreadView: View {
     var onEdit: ((UUID) -> Void)? = nil
     var onDelete: ((UUID) -> Void)? = nil
     var onSpeak: ((UUID) -> Void)? = nil
+    var onFollowUpTap: ((String) -> Void)? = nil
     var onDeleteMessage: ((UUID) -> Void)? = nil
 
     // Inline editing state (optional)
@@ -114,6 +115,7 @@ struct MessageThreadView: View {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onFollowUpTap: onFollowUpTap,
             onDeleteMessage: onDeleteMessage,
             editingTurnId: editingTurnId,
             editText: editText,

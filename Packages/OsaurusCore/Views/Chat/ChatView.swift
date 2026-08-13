@@ -557,6 +557,20 @@ final class ChatSession: ObservableObject {
     /// `ChatView` observes this to drive auto-speak. Not set on stop/error.
     @Published var lastCompletedAssistantTurnId: UUID?
 
+    /// AI-suggested follow-up questions for the most recent completed turn,
+    /// rendered as clickable rows beneath the assistant response when the
+    /// `generateFollowUpSuggestions` setting is on. Transient (not persisted):
+    /// they're a live nicety for the current turn, cleared as soon as the user
+    /// sends again or the run is cancelled/errors. `followUpTurnId` pins them
+    /// to the turn they belong to so a stale set never renders under a newer
+    /// message.
+    @Published var followUpSuggestions: [String] = []
+    @Published var followUpTurnId: UUID?
+    /// Latches per completed turn so a re-entrant cleanup can't fire a second
+    /// generation for the same turn. A failed attempt clears it (see
+    /// `maybeGenerateFollowUps`) so the next clean completion may retry.
+    private var followUpGenerationStarted = false
+
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     weak var windowState: ChatWindowState?
 
@@ -1628,11 +1642,13 @@ final class ChatSession: ObservableObject {
         // Display-time only, like coalescing/rollup: the LLM compaction
         // divider never enters the memoizer cache, so per-turn incremental
         // regeneration keeps its stable ids.
-        let newBlocks = insertCompactionMarkerIfNeeded(
-            into: blockMemoizer.blocks(
-                from: effectiveTurns,
-                streamingTurnId: streamingTurnId,
-                agentName: displayName
+        let newBlocks = insertFollowUpSuggestionsIfNeeded(
+            into: insertCompactionMarkerIfNeeded(
+                into: blockMemoizer.blocks(
+                    from: effectiveTurns,
+                    streamingTurnId: streamingTurnId,
+                    agentName: displayName
+                )
             )
         )
         let newHeaderMap = blockMemoizer.groupHeaderMap
@@ -1665,6 +1681,22 @@ final class ChatSession: ObservableObject {
         var result = blocks
         result.insert(
             .compactionMarker(summary: summary, afterTurnId: lastCoveredId),
+            at: lastIndex + 1
+        )
+        return result
+    }
+
+    /// Inject the follow-up suggestions row right after the last block of the
+    /// turn the suggestions belong to (its `assistantActions` footer), so they
+    /// read as the tail of that assistant message and scroll with it. Display-
+    /// time only, like the compaction marker — never enters the block cache.
+    private func insertFollowUpSuggestionsIfNeeded(into blocks: [ContentBlock]) -> [ContentBlock] {
+        guard !followUpSuggestions.isEmpty, let turnId = followUpTurnId,
+            let lastIndex = blocks.lastIndex(where: { $0.turnId == turnId })
+        else { return blocks }
+        var result = blocks
+        result.insert(
+            .followUpSuggestions(turnId: turnId, suggestions: followUpSuggestions),
             at: lastIndex + 1
         )
         return result
@@ -2467,6 +2499,7 @@ final class ChatSession: ObservableObject {
         sessionId = nil
         title = "New Chat"
         autoTitleGenerationStarted = false
+        clearFollowUpSuggestions()
         createdAt = Date()
         updatedAt = Date()
         source = .chat
@@ -2866,6 +2899,9 @@ final class ChatSession: ObservableObject {
         // A session that already completed an exchange has a settled title
         // (generated or preview); only a still-empty session stays eligible.
         autoTitleGenerationStarted = data.turns.contains { $0.role == .assistant }
+        // Follow-ups are transient and per-turn; a loaded session starts with
+        // none (they'd re-generate only on the next clean completion).
+        clearFollowUpSuggestions()
         createdAt = data.createdAt
         updatedAt = data.updatedAt
         agentId = data.agentId
@@ -3654,6 +3690,7 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
         save()
         maybeGenerateAutoTitle()
+        maybeGenerateFollowUps()
         if !suppressQueuedSendFlushForCurrentRun {
             flushQueuedSendIfEligible()
         }
@@ -3773,6 +3810,102 @@ final class ChatSession: ObservableObject {
         ChatSessionsManager.shared.renameQuietly(id: sid, title: newTitle)
         // Update the open chat's header only if it still shows this session.
         if sessionId == sid { title = newTitle }
+    }
+
+    // MARK: - Follow-Up Suggestions
+
+    /// Clear any rendered follow-up suggestions and reset the per-turn latch.
+    /// Called when a new send supersedes the previous turn and whenever the
+    /// current turn is cancelled/errors before we'd want to suggest anything.
+    private func clearFollowUpSuggestions() {
+        followUpGenerationStarted = false
+        followUpTurnId = nil
+        let hadSuggestions = !followUpSuggestions.isEmpty
+        if hadSuggestions { followUpSuggestions = [] }
+        // Drop the injected row from the thread. Guarded by
+        // `rebuildVisibleBlocks`'s own suppression during session switches.
+        if hadSuggestions { rebuildVisibleBlocks() }
+    }
+
+    /// Kick off a background follow-up suggestion generation after a clean run
+    /// completion, when the setting is on. Fire-and-forget: the awaits suspend
+    /// rather than block the main actor, and any failure leaves no suggestions
+    /// rendered. Latches per turn; a failed attempt re-arms so a later clean
+    /// completion of the *same* turn (e.g. after a regeneration) may retry.
+    /// Mirrors `maybeGenerateAutoTitle`'s eligibility and re-arm contract.
+    private func maybeGenerateFollowUps() {
+        // Follow-ups are enabled by the GLOBAL switch; each agent then shapes
+        // them via its own `AgentFollowUpConfig` (prompt / rules / model).
+        guard
+            !followUpGenerationStarted,
+            AppConfiguration.shared.chatConfig.generateFollowUpSuggestions,
+            source == .chat,
+            // A cancelled or errored run isn't a representative exchange.
+            !stopRequested,
+            lastStreamError == nil,
+            let sid = sessionId
+        else { return }
+
+        // Suggest from the last user message and the assistant reply it
+        // produced — the same "last exchange" the reference design keys on.
+        let turnData = turns.map { ChatTurnData(from: $0) }
+        guard
+            let assistantTurn = turnData.last(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }),
+            let userTurn = turnData.last(where: { $0.role == .user }),
+            let liveAssistantId = turns.last(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })?.id
+        else { return }
+
+        followUpGenerationStarted = true
+        let userText = userTurn.content
+        let assistantText = assistantTurn.content
+        let fallbackModel = selectedModel
+        // Per-agent model override (the only follow-up config). The Default
+        // agent carries none, so it falls back to `.empty` → shared core model.
+        let followUpModelOverride =
+            agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings.followUp.modelIdentifier }
+        Task { [weak self] in
+            let suggestions = await FollowUpSuggestionService.shared.generateSuggestions(
+                userMessage: userText,
+                assistantResponse: assistantText,
+                fallbackModel: fallbackModel,
+                modelOverride: followUpModelOverride
+            )
+            guard let self, self.sessionId == sid else { return }
+            guard !suggestions.isEmpty else {
+                // Transient miss (no resident model, timeout, open breaker):
+                // re-arm for the next clean completion of this session.
+                self.followUpGenerationStarted = false
+                return
+            }
+            // Drop the result if the conversation moved on while the model
+            // was thinking — the user sent again, or the turn we keyed on is
+            // no longer the last assistant message.
+            let stillCurrent = self.turns.last(where: {
+                $0.role == .assistant
+                    && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            })?.id == liveAssistantId
+            guard stillCurrent else { return }
+            self.followUpTurnId = liveAssistantId
+            self.followUpSuggestions = suggestions
+            // Inject the row into the thread (display-time), so it scrolls with
+            // the assistant message rather than floating above the composer.
+            self.rebuildVisibleBlocks()
+        }
+    }
+
+    /// Submit a tapped follow-up suggestion as the next user turn. Clears the
+    /// suggestion rows first (via `send`) so they don't linger under the older
+    /// message while the new response streams.
+    func sendFollowUp(_ suggestion: String) {
+        let trimmed = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isStreaming, activeRunId == nil else { return }
+        send(trimmed)
     }
 
     /// Generate an AI title on demand from the `/title` slash command. Unlike
@@ -5063,6 +5196,11 @@ final class ChatSession: ObservableObject {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
+
+        // A new send supersedes the previous turn's follow-up suggestions:
+        // clear them so stale rows never linger beneath an older message while
+        // the next response streams in.
+        clearFollowUpSuggestions()
 
         // The LLM compaction summary must line up with the transcript this
         // send will build from; regenerations/edits that rewrote covered
@@ -7252,6 +7390,7 @@ final class ChatSession: ObservableObject {
             sessionId = nil
             title = "New Chat"
             autoTitleGenerationStarted = false
+            clearFollowUpSuggestions()
             createdAt = Date()
             updatedAt = createdAt
             isDirty = false
@@ -7975,6 +8114,10 @@ struct ChatView: View {
                                     theme.springAnimation(),
                                     value: observedSession.runProgressState
                                 )
+
+                            // Follow-up suggestions render as a thread row
+                            // beneath the assistant message (see
+                            // `insertFollowUpSuggestionsIfNeeded`), not here.
 
                             // Floating input card. Dimmed and
                             // hit-test-disabled while a prompt overlay
@@ -8709,6 +8852,7 @@ struct ChatView: View {
                 onEdit: beginEditingTurn,
                 onDelete: deleteTurn,
                 onSpeak: speakTurnContent,
+                onFollowUpTap: { session.sendFollowUp($0) },
                 onDeleteMessage: confirmDeleteAssistantMessage,
                 editingTurnId: editingTurnId,
                 editText: $editText,
@@ -8935,6 +9079,7 @@ private struct IsolatedThreadView: View {
     let onEdit: ((UUID) -> Void)?
     let onDelete: ((UUID) -> Void)?
     let onSpeak: ((UUID) -> Void)?
+    let onFollowUpTap: ((String) -> Void)?
     let onDeleteMessage: ((UUID) -> Void)?
     let editingTurnId: UUID?
     let editText: Binding<String>?
@@ -8982,6 +9127,7 @@ private struct IsolatedThreadView: View {
             onEdit: onEdit,
             onDelete: onDelete,
             onSpeak: onSpeak,
+            onFollowUpTap: onFollowUpTap,
             onDeleteMessage: onDeleteMessage,
             editingTurnId: editingTurnId,
             editText: editText,
