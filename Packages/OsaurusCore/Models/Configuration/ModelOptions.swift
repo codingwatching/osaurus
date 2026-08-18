@@ -201,6 +201,7 @@ enum ModelProfileRegistry {
         OpenAIGPT52PlusReasoningProfile.self,
         OpenAIReasoningProfile.self,
         MistralReasoningProfile.self,
+        ZaiGlmReasoningProfile.self,
         QwenThinkingProfile.self,
         NemotronThinkingProfile.self,
         LagunaThinkingProfile.self,
@@ -635,6 +636,49 @@ struct MistralReasoningProfile: ModelProfile {
             kind: .segmented([
                 ModelOptionSegment(id: "none", label: L("None")),
                 ModelOptionSegment(id: "high", label: L("High")),
+            ])
+        )
+    ]
+
+    static let defaults: [String: ModelOptionValue] = [
+        "reasoningEffort": .string("high")
+    ]
+}
+
+// MARK: - Z.ai GLM Reasoning Profile
+
+/// Z.ai GLM models hosted by Mistral (e.g. `zai-glm-5-2`). Mistral serves these
+/// third-party open models unmodified behind its own chat-completions API, so
+/// they inherit Mistral's platform-level adjustable-reasoning contract rather
+/// than any GLM-native thinking switch. `reasoning_effort` on these models
+/// accepts `none`, `high`, and `max`. Mistral's reasoning docs only document
+/// `none`/`high` (with `high` recommended for agentic/code use); `max` is not
+/// in the docs but is accepted in practice (verified empirically, 2026-08:
+/// the model's effort ladder collapses low/medium into `high` and keeps `max`
+/// as a distinct top tier). `low`/`medium` are therefore not offered as their
+/// own levels, and sending an unaccepted value returns HTTP 400. The match is
+/// on the bare `zai-glm` prefix
+/// so future GLM revisions hosted the same way are covered without a registry
+/// edit.
+struct ZaiGlmReasoningProfile: ModelProfile {
+    static let displayName = "Reasoning Effort"
+
+    static func matches(modelId: String) -> Bool {
+        let bare =
+            modelId.lowercased().split(separator: "/").last.map(String.init)
+            ?? modelId.lowercased()
+        return bare.hasPrefix("zai-glm")
+    }
+
+    static let options: [ModelOptionDefinition] = [
+        ModelOptionDefinition(
+            id: "reasoningEffort",
+            label: L("Reasoning Effort"),
+            icon: "brain",
+            kind: .segmented([
+                ModelOptionSegment(id: "none", label: L("None")),
+                ModelOptionSegment(id: "high", label: L("High")),
+                ModelOptionSegment(id: "max", label: L("Max")),
             ])
         )
     ]
