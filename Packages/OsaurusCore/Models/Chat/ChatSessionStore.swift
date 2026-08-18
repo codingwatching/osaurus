@@ -161,6 +161,31 @@ enum ChatSessionStore {
         ChatHistoryDatabase.shared.updateSessionPinnedAsync(id: id, pinned: pinned)
     }
 
+    /// Project-membership-only async update. Targeted (never `saveSession`)
+    /// for the same metadata-only-copy reason as `renameTitleAsync`.
+    static func setProjectAsync(id: UUID, projectId: UUID?) {
+        guard !pendingDeletes.contains(id) else { return }
+        ensureOpen()
+        guard didOpen else {
+            pendingSaves[id]?.projectId = projectId
+            return
+        }
+        ChatHistoryDatabase.shared.updateSessionProjectAsync(id: id, projectId: projectId)
+    }
+
+    /// Detach every session from a deleted project. Deferred-DB best-effort,
+    /// matching `setProjectAsync`; pending snapshots are patched in place.
+    static func clearProjectAsync(projectId: UUID) {
+        ensureOpen()
+        guard didOpen else {
+            for (id, session) in pendingSaves where session.projectId == projectId {
+                pendingSaves[id]?.projectId = nil
+            }
+            return
+        }
+        ChatHistoryDatabase.shared.clearProjectAsync(projectId: projectId)
+    }
+
     /// Sessions whose writes were deferred because the chat-history DB wasn't
     /// open yet. Keyed by id so repeated saves of the same session collapse to
     /// the latest snapshot. Drained by `flushPendingSaves()`.

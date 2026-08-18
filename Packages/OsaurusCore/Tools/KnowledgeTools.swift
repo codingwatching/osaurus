@@ -47,8 +47,23 @@ enum KnowledgeToolScope {
             )
         }
 
+        // Agent grants, unioned with the active session's project
+        // collections. Project knowledge is deliberately independent of the
+        // agent's own knowledge opt-in: it belongs to the conversation's
+        // project, whichever agent runs it. The grant/union computed here
+        // remains the access boundary either way.
+        let projectId = ChatExecutionContext.currentProjectId
         let granted = await MainActor.run {
-            AgentManager.shared.effectiveKnowledgeCollections(for: agentId)
+            var collections = AgentManager.shared.effectiveKnowledgeCollections(for: agentId)
+            if let projectId,
+                let project = ProjectManager.shared.project(for: projectId)
+            {
+                let known = Set(collections.map(\.id))
+                collections += KnowledgeManager.shared
+                    .enabledCollections(withIds: project.knowledgeCollectionIds)
+                    .filter { !known.contains($0.id) }
+            }
+            return collections
         }
         guard !granted.isEmpty else {
             return .failure(

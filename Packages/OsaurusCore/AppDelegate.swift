@@ -539,6 +539,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 // loop escalated past the distillation threshold.
                 if !LaunchGuard.shouldSkip(.distillation) {
                     await MemoryConsolidator.shared.start()
+                    // Large local core models fail the launch drain's
+                    // residency gate; re-drain whenever the model
+                    // actually gets loaded (see MemoryService).
+                    await MemoryService.shared.armResidencyDrainOnModelLoad()
                 }
             }
         }

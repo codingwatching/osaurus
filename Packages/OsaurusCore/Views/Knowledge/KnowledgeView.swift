@@ -19,6 +19,13 @@ struct KnowledgeView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var isCreating = false
+    /// Name prefilled into the create sheet by a deep link (e.g. the project
+    /// page's Add Collection shortcut). Cleared when the sheet closes.
+    @State private var creationPrefillName = ""
+    /// Project the created collection should be granted to, from the same
+    /// deep link. Captured into the save closure, so clearing on dismiss
+    /// can't race the async create.
+    @State private var creationGrantProjectId: UUID?
     @State private var editingCollection: KnowledgeCollection?
     @State private var hasAppeared = false
     @State private var successMessage: String?
@@ -141,10 +148,19 @@ struct KnowledgeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .sheet(isPresented: $isCreating) {
+        .sheet(
+            isPresented: $isCreating,
+            onDismiss: {
+                creationPrefillName = ""
+                creationGrantProjectId = nil
+            }
+        ) {
             KnowledgeCollectionEditorSheet(
                 collection: nil,
-                onSave: { name, summary, folderPath, remoteURL, includeGlobs, excludeGlobs in
+                initialName: creationPrefillName,
+                onSave: {
+                    [grantProjectId = creationGrantProjectId]
+                    name, summary, folderPath, remoteURL, includeGlobs, excludeGlobs in
                     isCreating = false
                     if let remoteURL, !remoteURL.isEmpty {
                         showSuccess("Cloning \"\(name)\"…")
@@ -155,6 +171,7 @@ struct KnowledgeView: View {
                                     summary: summary,
                                     remoteURL: remoteURL
                                 )
+                                grantToRequestingProject(created, projectId: grantProjectId)
                                 showSuccess("Cloned \"\(created.name)\", indexing in the background")
                                 grantingCollection = created
                             } catch {
@@ -170,6 +187,7 @@ struct KnowledgeView: View {
                                 includeGlobs: includeGlobs,
                                 excludeGlobs: excludeGlobs
                             )
+                            grantToRequestingProject(created, projectId: grantProjectId)
                             showSuccess("Added \"\(created.name)\", indexing in the background")
                             grantingCollection = created
                         }
@@ -288,6 +306,23 @@ struct KnowledgeView: View {
                 hasAppeared = true
             }
             reloadCuration()
+            applyPendingCreateRequest()
+            applyPendingDetailRequest()
+        }
+        // Deep link from the project page's Add Collection shortcut: pop the
+        // create sheet directly instead of landing the user on the tab to
+        // click the same button again. One-shot; also handled in `.onAppear`
+        // for the case where the request is set before this view mounts.
+        .onReceive(ManagementStateManager.shared.$pendingKnowledgeCreate) { pending in
+            if pending != nil { applyPendingCreateRequest() }
+        }
+        .onReceive(ManagementStateManager.shared.$pendingKnowledgeDetailId) { pending in
+            if pending != nil { applyPendingDetailRequest() }
+        }
+        // The deep link can land before the lazily loaded registry has the
+        // collection; retry when collections settle.
+        .onReceive(knowledgeManager.$collections) { _ in
+            applyPendingDetailRequest()
         }
         // Self-healing refresh. The curation list is otherwise driven by
         // notifications + appear/window-key hooks, all of which are unreliable
@@ -303,6 +338,34 @@ struct KnowledgeView: View {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
             }
         }
+    }
+
+    private func applyPendingDetailRequest() {
+        guard let id = ManagementStateManager.shared.pendingKnowledgeDetailId,
+            let collection = knowledgeManager.collections.first(where: { $0.id == id })
+        else { return }
+        ManagementStateManager.shared.pendingKnowledgeDetailId = nil
+        detailCollection = collection
+    }
+
+    private func applyPendingCreateRequest() {
+        guard let request = ManagementStateManager.shared.pendingKnowledgeCreate else { return }
+        ManagementStateManager.shared.pendingKnowledgeCreate = nil
+        creationPrefillName = request.prefillName
+        creationGrantProjectId = request.grantProjectId
+        isCreating = true
+    }
+
+    /// Grant a freshly created collection to the deep link's project, so the
+    /// user returns to the project page with the new collection already
+    /// checked instead of having to toggle it on themselves.
+    private func grantToRequestingProject(_ collection: KnowledgeCollection, projectId: UUID?) {
+        guard let projectId, var project = ProjectManager.shared.project(for: projectId) else {
+            return
+        }
+        guard !project.knowledgeCollectionIds.contains(collection.id) else { return }
+        project.knowledgeCollectionIds.append(collection.id)
+        ProjectManager.shared.update(project)
     }
 
     // MARK: - Curation
@@ -486,6 +549,7 @@ struct KnowledgeView: View {
 private struct KnowledgeCollectionCard: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var projectManager = ProjectManager.shared
 
     let collection: KnowledgeCollection
     let animationDelay: Double
@@ -593,6 +657,35 @@ private struct KnowledgeCollectionCard: View {
         )
     }
 
+    /// Projects granting this collection to their chats. Purely informational
+    /// — grants are edited on each project's page; the card just surfaces the
+    /// blast radius of disabling or deleting the collection.
+    private var grantingProjects: [Project] {
+        projectManager.projects.filter { $0.knowledgeCollectionIds.contains(collection.id) }
+    }
+
+    @ViewBuilder
+    private var grantingProjectsRow: some View {
+        let projects = grantingProjects
+        if !projects.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "folder")
+                    .font(.system(size: 10))
+                    .foregroundColor(theme.secondaryText)
+                Text(
+                    projects.count == 1
+                        ? String(format: L("Used by project %@"), projects[0].name)
+                        : String(format: L("Used by %lld projects"), projects.count)
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.secondaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            }
+            .help(L("Projects using this collection: \(projects.map(\.name).joined(separator: ", "))"))
+        }
+    }
+
     private var okfHelp: String {
         switch okfStatus {
         case .conformant:
@@ -666,6 +759,7 @@ private struct KnowledgeCollectionCard: View {
             // Folder path and git remote intentionally omitted — they
             // crowd the card and live in the detail sheet (tap the card).
             grantedAgentsRow
+            grantingProjectsRow
             Button(action: {
                 Task {
                     await refreshOKFStatus()
@@ -813,6 +907,7 @@ private struct KnowledgeCollectionEditorSheet: View {
 
     init(
         collection: KnowledgeCollection?,
+        initialName: String = "",
         onSave: @escaping (
             _ name: String, _ summary: String, _ folderPath: String, _ remoteURL: String?,
             _ includeGlobs: [String], _ excludeGlobs: [String]
@@ -822,7 +917,7 @@ private struct KnowledgeCollectionEditorSheet: View {
         self.collection = collection
         self.onSave = onSave
         self.onCancel = onCancel
-        _name = State(initialValue: collection?.name ?? "")
+        _name = State(initialValue: collection?.name ?? initialName)
         _summary = State(initialValue: collection?.summary ?? "")
         _folderPath = State(initialValue: collection?.folderPath ?? "")
         _includeGlobs = State(initialValue: (collection?.includeGlobs ?? []).joined(separator: ", "))
@@ -863,7 +958,7 @@ private struct KnowledgeCollectionEditorSheet: View {
             )
 
             StyledSettingsTextField(
-                label: "Summary",
+                label: "Summary (optional)",
                 text: $summary,
                 placeholder: "What this corpus contains, shown to agents",
                 help: ""

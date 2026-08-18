@@ -231,6 +231,9 @@ struct SidebarSearchField: View {
     /// Shows a small trailing spinner while an asynchronous search pass
     /// (e.g. the chat sidebar's full-text conversation lookup) is in flight.
     var isSearching: Bool = false
+    /// Draw a subtle border while unfocused too (the project page uses this
+    /// to match its dropdown chrome); the sidebar keeps the borderless look.
+    var showsRestingBorder: Bool = false
 
     @Environment(\.theme) private var theme
 
@@ -300,7 +303,11 @@ struct SidebarSearchField: View {
 
     private var focusBorder: some View {
         RoundedRectangle(cornerRadius: SidebarStyle.searchFieldCornerRadius, style: .continuous)
-            .stroke(isFocused.wrappedValue ? theme.accentColor.opacity(0.3) : .clear, lineWidth: 1)
+            .stroke(
+                isFocused.wrappedValue
+                    ? theme.accentColor.opacity(0.3)
+                    : (showsRestingBorder ? theme.secondaryText.opacity(0.15) : .clear),
+                lineWidth: 1)
     }
 }
 

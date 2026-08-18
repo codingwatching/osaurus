@@ -57,6 +57,18 @@ final class ChatWindowState: ObservableObject {
 
     @Published var showSidebar: Bool = false
 
+    /// True while the content area shows a project detail page instead of
+    /// the chat surface. Set by `ChatView`; read by the toolbar item views
+    /// so chat-specific chrome (agent pill, window pin) hides with it.
+    @Published var isProjectPageVisible: Bool = false
+
+    /// True when the current chat was entered FROM its project's detail page
+    /// (as opposed to the sidebar's Chats tab). The toolbar's back-to-project
+    /// button uses this only to pick its icon: a back chevron when returning
+    /// retraces the user's path, a folder when the project page would be new
+    /// navigation. Set alongside `loadSession`/`startNewChat` by `ChatView`.
+    @Published var enteredChatFromProjectPage: Bool = false
+
     /// Drives the "a local model is already running in another window" alert
     /// raised when the user tries to start a second local generation. Only one
     /// local generation can run at a time across windows; the alert is
@@ -278,12 +290,20 @@ final class ChatWindowState: ObservableObject {
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
         if !session.turns.isEmpty { session.save() }
+        // Switching agents starts a fresh chat, and `reset`/`installFreshSession`
+        // both clear `projectId`. Preserve project membership across the switch:
+        // cross-agent work *inside* a project is the point, so switching agents
+        // from a project chat must keep the new chat in that project rather than
+        // silently dropping it (the project pill would vanish and the chat would
+        // stop sharing the project's instructions, knowledge, and memory).
+        let inheritedProjectId = session.projectId
         adoptAgent(newAgentId)
         if detachRunningSessionIfNeeded() {
             installFreshSession(agentId: newAgentId)
         } else {
             session.reset(for: newAgentId)
         }
+        session.projectId = inheritedProjectId
         refreshSessions()
         refreshSandboxChanges()
     }

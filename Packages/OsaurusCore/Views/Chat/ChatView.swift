@@ -357,6 +357,10 @@ final class ChatSession: ObservableObject {
     /// Mirrors `ChatSessionData.pinned`, for the same round-trip reason as
     /// `archived`.
     var pinned: Bool = false
+    /// Mirrors `ChatSessionData.projectId`, for the same round-trip reason
+    /// as `archived`. Published because the toolbar's back-to-project
+    /// button shows/hides with it across chat switches.
+    @Published var projectId: UUID?
 
     /// Tracks if session has unsaved content changes
     private var isDirty: Bool = false
@@ -2540,6 +2544,9 @@ final class ChatSession: ObservableObject {
         dispatchTaskId = nil
         archived = false
         pinned = false
+        // Cleared like the other per-session flags; the sidebar's New Chat
+        // path re-stamps the active project right after startNewChat().
+        projectId = nil
         isDirty = false
         // A new chat starts folder-less; the outgoing session's folder stays
         // persisted on its own row and does not leak into the fresh one.
@@ -2880,7 +2887,8 @@ final class ChatSession: ObservableObject {
             capabilities: SessionCapability.derive(from: turnData),
             folderBookmark: folderState.persistedBookmark,
             folderPath: folderState.persistedPath,
-            conversationSummary: conversationSummary
+            conversationSummary: conversationSummary,
+            projectId: projectId
         )
     }
 
@@ -2943,6 +2951,7 @@ final class ChatSession: ObservableObject {
         dispatchTaskId = data.dispatchTaskId
         archived = data.archived
         pinned = data.pinned
+        projectId = data.projectId
 
         // Restore THIS session's persisted folder (fire-and-forget: the
         // bookmark resolve + context build happen off the main actor and
@@ -3486,6 +3495,10 @@ final class ChatSession: ObservableObject {
         let userContent: String
         let memoryAgentId: String
         let memoryConversationId: String
+        /// Project membership captured at send time, so memory records the
+        /// project the turn actually happened in — a later session reset or
+        /// agent switch can't retroactively change it.
+        let memoryProjectId: UUID?
     }
 
     private func isRunActive(_ runId: UUID) -> Bool {
@@ -4118,6 +4131,14 @@ final class ChatSession: ObservableObject {
 
         let agentUUID = UUID(uuidString: context.memoryAgentId) ?? Agent.defaultId
         let memoryOff = AgentManager.shared.effectiveMemoryDisabled(for: agentUUID)
+        // Every chat in a project participates in the project's shared
+        // memory, even when the agent's own memory is off — memory is the
+        // whole point of projects, so it's never optional (there's no
+        // per-project switch, just the global memory switch, which
+        // `bufferTurn` enforces). The distill path routes these turns to the
+        // project namespace ONLY; transcripts below stay agent-gated, and a
+        // memory-off agent never builds its own personal memory.
+        let bufferForMemory = !memoryOff || context.memoryProjectId != nil
 
         if !memoryOff, context.hasContent, let sid = sessionId {
             let convId = sid.uuidString
@@ -4190,7 +4211,47 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if !memoryOff, context.hasContent {
+        // Immediate project memory (write half): index this turn's raw
+        // transcript into the project namespace right away so a fact stated
+        // here is recallable across the project without waiting on the
+        // background distillation. Runs for any project chat, even when the
+        // agent's own memory is off — projects always share. The MemoryService
+        // method stays under the global memory switch.
+        if let projectId = context.memoryProjectId, context.hasContent, let sid = sessionId {
+            let convId = sid.uuidString
+            let chunkIdx = turns.count
+            let userChunkIndex = chunkIdx - 1
+            let conversationTitle = title
+            let userContent = context.userContent
+            let userTokenCount = TokenEstimator.estimate(userContent)
+            Task.detached {
+                await MemoryService.shared.mirrorTranscriptToProject(
+                    projectId: projectId,
+                    conversationId: convId,
+                    chunkIndex: userChunkIndex,
+                    role: "user",
+                    content: userContent,
+                    tokenCount: userTokenCount,
+                    title: conversationTitle
+                )
+            }
+            if let assistantContent, !assistantContent.isEmpty {
+                let assistantTokenCount = TokenEstimator.estimate(assistantContent)
+                Task.detached {
+                    await MemoryService.shared.mirrorTranscriptToProject(
+                        projectId: projectId,
+                        conversationId: convId,
+                        chunkIndex: chunkIdx,
+                        role: "assistant",
+                        content: assistantContent,
+                        tokenCount: assistantTokenCount,
+                        title: conversationTitle
+                    )
+                }
+            }
+        }
+
+        if bufferForMemory, context.hasContent {
             let formatter = Self.sessionDateFormatter
             formatter.timeZone = .current
             let today = formatter.string(from: Date())
@@ -4200,7 +4261,8 @@ final class ChatSession: ObservableObject {
                     assistantMessage: assistantContent,
                     agentId: context.memoryAgentId,
                     conversationId: context.memoryConversationId,
-                    sessionDate: today
+                    sessionDate: today,
+                    projectId: context.memoryProjectId
                 )
             }
         }
@@ -5492,7 +5554,8 @@ final class ChatSession: ObservableObject {
                 hasContent: hasContent,
                 userContent: trimmed,
                 memoryAgentId: memoryAgentId,
-                memoryConversationId: memoryConversationId
+                memoryConversationId: memoryConversationId,
+                memoryProjectId: projectId
             )
         )
 
@@ -5544,6 +5607,7 @@ final class ChatSession: ObservableObject {
             // this instead of inferring provenance from surface flags.
             await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
             await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
+            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] in
             await ChatExecutionContext.$currentUserRequest.withValue(
                 trimmed.isEmpty ? nil : trimmed
             ) { [self] in
@@ -5766,7 +5830,8 @@ final class ChatSession: ObservableObject {
                         frozenToolSpecs: cachedSession?.initialToolSpecs,
                         frozenManifest: cachedSession?.frozenManifest,
                         frozenSoul: cachedSession?.frozenSoul,
-                        trace: ttftTrace
+                        trace: ttftTrace,
+                        projectId: projectId
                     )
                     guard isRunActive(runId) else { return }
 
@@ -5795,6 +5860,20 @@ final class ChatSession: ObservableObject {
                         )
                     {
                         sys = sys.isEmpty ? pluginInstructions : sys + "\n\n" + pluginInstructions
+                    }
+
+                    // Shared project context: a chat that belongs to a
+                    // project carries the project's instructions on every
+                    // turn. Constant per session (like plugin instructions),
+                    // so the KV prefix stays stable across turns.
+                    if !isRemoteAgentTarget, let pid = projectId,
+                        let project = ProjectManager.shared.project(for: pid)
+                    {
+                        let instructions = project.instructions
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !instructions.isEmpty {
+                            sys += "\n\n## Project: \(project.name)\n\n\(instructions)"
+                        }
                     }
 
                     // Inject the one-off skill the user selected via slash
@@ -7378,6 +7457,7 @@ final class ChatSession: ObservableObject {
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
+            }  // ChatExecutionContext.$currentProjectId.withValue
             }  // ChatExecutionContext.$currentAgentId.withValue
             }  // ChatExecutionContext.$currentSessionSource.withValue
             }  // ChatExecutionContext.$currentFolderRoot.withValue
@@ -7529,6 +7609,11 @@ struct ChatView: View {
 
     @State private var focusTrigger: Int = 0
     @State private var isPinnedToBottom: Bool = true
+    /// Project whose detail page is shown in the content area (opened from
+    /// the sidebar's Projects tab). nil shows the normal chat surface.
+    @State private var openProjectId: UUID?
+    /// Observed so project renames/edits re-render the open detail page.
+    @ObservedObject private var projectManager = ProjectManager.shared
     @State private var scrollToBottomTrigger: Int = 0
     @State private var keyMonitor: Any?
     // Inline editing state
@@ -8070,11 +8155,23 @@ struct ChatView: View {
                             agentId: windowState.agentId,
                             currentSessionId: session.sessionId,
                             onSelect: { data in
+                                openProjectId = nil
+                                windowState.enteredChatFromProjectPage = false
                                 windowState.loadSession(data)
                                 isPinnedToBottom = true
                             },
-                            onNewChat: {
-                                windowState.startNewChat()
+                            onNewChat: { projectId in
+                                openProjectId = nil
+                                windowState.enteredChatFromProjectPage = projectId != nil
+                                startProjectChat(
+                                    defaultAgentId: projectManager.project(for: projectId)?
+                                        .defaultAgentId)
+                                // A chat started from a project's page joins
+                                // that project; persisted with the first
+                                // turn's save via toSessionData().
+                                if let projectId {
+                                    session.projectId = projectId
+                                }
                             },
                             onDelete: { id in
                                 // Deleting a chat is an explicit destructive
@@ -8116,6 +8213,30 @@ struct ChatView: View {
                                     session.pinned = pinned
                                 }
                                 windowState.refreshSessions()
+                            },
+                            onSetProject: { id, projectId in
+                                ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
+                                // Keep the open view-model in sync so the
+                                // next auto-save doesn't clobber the move.
+                                if session.sessionId == id {
+                                    session.projectId = projectId
+                                }
+                                windowState.refreshSessions()
+                            },
+                            onDeleteProject: { id in
+                                ChatSessionsManager.shared.deleteProject(id: id)
+                                // The open chat may have been a member; its
+                                // next auto-save must not resurrect the id.
+                                if session.projectId == id {
+                                    session.projectId = nil
+                                }
+                                if openProjectId == id {
+                                    openProjectId = nil
+                                }
+                                windowState.refreshSessions()
+                            },
+                            onOpenProject: { project in
+                                openProjectId = project.id
                             },
                             onExport: { metadata, format in
                                 ChatSessionExportCoordinator.run(
@@ -8337,7 +8458,41 @@ struct ChatView: View {
                         }
                     }
                     .animation(theme.springAnimation(responseMultiplier: 0.9), value: session.hasVisibleThreadMessages)
+
+                    // Project detail page, shown over the chat surface while
+                    // a project is open from the sidebar's Projects tab.
+                    // Opaque and full-size so the chat beneath neither shows
+                    // nor receives events.
+                    if let project = projectManager.project(for: openProjectId) {
+                        ProjectDetailView(
+                            project: project,
+                            currentAgentId: windowState.agentId,
+                            onOpenSession: { data in
+                                openProjectId = nil
+                                windowState.enteredChatFromProjectPage = true
+                                windowState.loadSession(data)
+                                isPinnedToBottom = true
+                            },
+                            onNewChat: {
+                                openProjectId = nil
+                                windowState.enteredChatFromProjectPage = true
+                                startProjectChat(defaultAgentId: project.defaultAgentId)
+                                session.projectId = project.id
+                            },
+                            onDelete: {
+                                ChatSessionsManager.shared.deleteProject(id: project.id)
+                                if session.projectId == project.id {
+                                    session.projectId = nil
+                                }
+                                openProjectId = nil
+                                windowState.refreshSessions()
+                            }
+                        )
+                        .transition(.opacity)
+                        .zIndex(2)
+                    }
                 }
+                .animation(theme.animationQuick(), value: openProjectId)
             }
         }
         // Allow the window to narrow down to 550pt so it tiles comfortably
@@ -8362,6 +8517,30 @@ struct ChatView: View {
             )
         )
         .ignoresSafeArea()
+        // Mirror the project page's visibility onto the window state so the
+        // toolbar (agent pill, window pin) can hide chat-only chrome.
+        .onChange(of: openProjectId) { _, newValue in
+            windowState.isProjectPageVisible = newValue != nil
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarBackToProject)) { notification in
+            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
+                targetWindowId == windowState.windowId
+            else { return }
+            openProjectId = session.projectId
+        }
+        // Keep the live session's membership in sync with sidebar/other-window
+        // moves: compose reads `session.projectId` every turn, so a stale copy
+        // keeps injecting the old project's instructions and knowledge.
+        .onReceive(NotificationCenter.default.publisher(for: .chatSessionProjectDidChange)) { notification in
+            if let clearedProjectId = notification.userInfo?["clearedProjectId"] as? UUID {
+                if session.projectId == clearedProjectId { session.projectId = nil }
+                return
+            }
+            guard let sessionId = notification.userInfo?["sessionId"] as? UUID,
+                sessionId == session.sessionId
+            else { return }
+            session.projectId = notification.userInfo?["projectId"] as? UUID
+        }
         .onReceive(NotificationCenter.default.publisher(for: .chatOverlayActivated)) { _ in
             // Lightweight state updates only - refreshAll() removed to prevent excessive re-renders
             focusTrigger &+= 1
@@ -8502,6 +8681,14 @@ struct ChatView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: .browser)
                     case .openChannelsSettings:
                         AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
+                    case .openProjects:
+                        // Projects live in this window's sidebar; open the
+                        // sidebar (it may be collapsed) and flip its lens to
+                        // Projects rather than opening the management window.
+                        withAnimation(windowState.theme.animationQuick()) {
+                            windowState.showSidebar = true
+                        }
+                        ProjectManager.shared.pendingRevealProjectsTab = true
                     case .openSubagentSettings:
                         // Land on the first custom (non-built-in) agent's
                         // Subagents tab (per-agent spawn / image config). With
@@ -9590,6 +9777,21 @@ extension ChatView {
     // `.onExitCommand` machinery, so every state that should win over
     // "close window" must either be handled here or explicitly passed
     // through to the responder chain.
+    /// Start a fresh chat for a project, honoring its default agent when one
+    /// is set and still exists. `switchAgent` already installs a fresh
+    /// session for the target agent, so the two branches are equivalent
+    /// apart from the agent change.
+    private func startProjectChat(defaultAgentId: UUID?) {
+        if let defaultAgentId,
+            defaultAgentId != windowState.agentId,
+            windowState.agents.contains(where: { $0.id == defaultAgentId })
+        {
+            windowState.switchAgent(to: defaultAgentId)
+        } else {
+            windowState.startNewChat()
+        }
+    }
+
     private func setupKeyMonitor() {
         if keyMonitor != nil { return }
 

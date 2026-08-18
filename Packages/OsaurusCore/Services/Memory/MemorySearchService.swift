@@ -121,6 +121,18 @@ public actor MemorySearchService {
         transcriptKeyMap.removeAll(keepingCapacity: false)
     }
 
+    /// Evict a namespace's in-memory vector state AND remove its on-disk
+    /// index directory. For namespaces that are wholly owned by a deletable
+    /// container (a project's `project-<uuid>`), unlike `evictAgent` there
+    /// is no other owner of the disk index, so it goes too.
+    public func purgeNamespaceStorage(agentId: String) async {
+        await evictAgent(agentId: agentId)
+        let dir = Self.storageDir(for: agentId)
+        // Guard against ever unlinking the shared bucket's directory.
+        guard Self.bucketKey(for: agentId) != Self.sharedAgentBucket else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
+
     /// Remove an agent's vector index entirely: the in-memory VecturaKit
     /// instance (via `evictAgent`) plus the on-disk store. Used when the
     /// user wipes an agent's memory from the detail view, where leaving
@@ -273,6 +285,30 @@ public actor MemorySearchService {
             MemoryLogger.search.error("indexTranscriptTurn failed: \(error)")
             recordIndexFailure("indexTranscriptTurn")
         }
+    }
+
+    /// Evict specific transcript vector docs (by conversation + chunk
+    /// index) from one namespace's index. The doc id is the same
+    /// deterministic UUID `indexTranscriptTurn` uses, but deletion is
+    /// scoped to this namespace's bucket only — an identical id living in
+    /// another namespace's index (the same turn mirrored elsewhere) is
+    /// untouched. Used when a project episode supersedes older mirrored
+    /// transcript turns. `transcriptKeyMap` is left alone: it's a
+    /// cross-bucket cache other buckets may still need, and it rebuilds
+    /// lazily.
+    public func removeTranscriptDocs(
+        conversationId: String,
+        chunkIndexes: [Int],
+        agentId: String
+    ) async {
+        guard !chunkIndexes.isEmpty else { return }
+        guard await vectorWorkAllowed("removeTranscriptDocs"),
+            let db = await ensureVectorDB(for: agentId)
+        else { return }
+        let ids = chunkIndexes.map {
+            TextSimilarity.deterministicUUID(from: "transcript:\(conversationId):\($0)")
+        }
+        try? await db.deleteDocuments(ids: ids)
     }
 
     /// Remove a document by id. Without an agent hint we have to try

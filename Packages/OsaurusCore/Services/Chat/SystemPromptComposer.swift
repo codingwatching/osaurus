@@ -103,7 +103,8 @@ public struct SystemPromptComposer: Sendable {
         frozenToolSpecs: [Tool]? = nil,
         frozenManifest: String? = nil,
         frozenSoul: String? = nil,
-        trace: TTFTTrace? = nil
+        trace: TTFTTrace? = nil,
+        projectId: UUID? = nil
     ) async -> ComposedContext {
         await composeChatContext(
             ComposeRequest(
@@ -119,7 +120,8 @@ public struct SystemPromptComposer: Sendable {
                 frozenToolSpecs: frozenToolSpecs,
                 frozenManifest: frozenManifest,
                 frozenSoul: frozenSoul,
-                trace: trace
+                trace: trace,
+                projectId: projectId
             )
         )
     }
@@ -144,7 +146,8 @@ public struct SystemPromptComposer: Sendable {
             agentId: request.agentId,
             requestToolsDisabled: request.toolsDisabled,
             modelOverride: request.model,
-            modelTypeOverride: request.modelType
+            modelTypeOverride: request.modelType,
+            projectId: request.projectId
         )
         let composer = forChat(
             snapshot: snapshot,
@@ -329,12 +332,126 @@ public struct SystemPromptComposer: Sendable {
         trace: TTFTTrace?
     ) async -> String? {
         let window = ContextSizeResolver.resolve(modelId: snapshot.model)
-        let memoryOff = snapshot.memoryDisabled || window.sizeClass.disablesMemory
-        guard !memoryOff else { return nil }
+        // Tiny-context models can't spare room for memory at all — hard skip
+        // for both lanes, regardless of project sharing.
+        guard !window.sizeClass.disablesMemory else { return nil }
         trace?.mark("memory_start")
-        let section = await assembleMemorySection(agentId: agentId.uuidString, query: query)
+        // The agent's own memory lane still honors the agent's toggle. The
+        // project lane (below) is assembled even when the agent has memory
+        // off: every chat in a project recalls the project's shared memory.
+        // `appendProjectMemory` enforces the global memory switch.
+        let section =
+            snapshot.memoryDisabled
+            ? nil
+            : await assembleMemorySection(agentId: agentId.uuidString, query: query)
+        let merged = await appendProjectMemory(
+            to: section, projectId: snapshot.projectId, query: query)
         trace?.mark("memory_done")
-        return section
+        return merged
+    }
+
+    /// Second recall lane for project chats: assemble the `project:<id>`
+    /// namespace and append it under its own header. Non-project chats
+    /// (`projectId == nil`) return `agentSection` untouched — the agent
+    /// memory pipeline is byte-identical with or without this feature.
+    ///
+    /// Budgeting is agent-first: the project lane gets whatever the agent
+    /// lane left of the per-message budget, floored at a quarter of it so
+    /// a memory-heavy agent can't starve project recall entirely. Combined
+    /// output therefore never exceeds ~1.25x the configured budget.
+    private static func appendProjectMemory(
+        to agentSection: String?,
+        projectId: UUID?,
+        query: String
+    ) async -> String? {
+        guard let projectId else { return agentSection }
+        let config = MemoryConfigurationStore.load()
+        guard config.enabled else { return agentSection }
+
+        let namespaceKey = MemoryNamespace.project(projectId).key
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let budget = config.memoryBudgetTokens
+        let agentTokens = (agentSection?.count ?? 0) / MemoryConfiguration.charsPerToken
+        let projectBudget = max(budget / 4, budget - agentTokens)
+
+        // Curated lane: distilled episodes / pinned facts (may be empty
+        // until the background distillation has run).
+        let curated = await MemoryContextAssembler.assembleContext(
+            agentId: namespaceKey,
+            config: config,
+            query: trimmedQuery,
+            budgetTokensOverride: projectBudget,
+            includeGlobalBlocks: false
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Immediate lane: raw transcript turns mirrored on write, so a fact
+        // stated seconds ago is recallable before any distillation. Only
+        // meaningful with a query to retrieve against. Deduped against the
+        // curated lane so a fact that's already been distilled isn't echoed.
+        let curatedTokens = curated.split(separator: "\n").map {
+            TextSimilarity.tokenize(String($0).trimmingCharacters(in: .whitespaces))
+        }
+        var transcriptLines: [String] = []
+        if !trimmedQuery.isEmpty {
+            let hits = await MemorySearchService.shared.searchTranscript(
+                query: trimmedQuery, agentId: namespaceKey, topK: 4
+            )
+            for hit in hits {
+                let text = hit.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard text.count > 3 else { continue }
+                let clipped = text.count > 220 ? String(text.prefix(220)) + "…" : text
+                let tokens = TextSimilarity.tokenize(clipped)
+                let alreadyCurated = curatedTokens.contains {
+                    TextSimilarity.jaccardTokenized($0, tokens) > 0.85
+                }
+                if !alreadyCurated { transcriptLines.append("- \(clipped)") }
+            }
+        }
+
+        var parts: [String] = []
+        if !curated.isEmpty { parts.append(curated) }
+        if !transcriptLines.isEmpty {
+            parts.append("## Recent project notes\n" + transcriptLines.joined(separator: "\n"))
+        }
+        let trimmed = parts.joined(separator: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return agentSection }
+
+        // Dedupe against the agent lane. Exact match catches the same
+        // agent's dual-written distillates (literal copies); the Jaccard
+        // pass additionally drops near-identical phrasings of the same
+        // fact distilled from different sessions. The 0.85 threshold is
+        // deliberately much stricter than the 0.6 the pinned-fact store
+        // uses: a fact from ANOTHER agent that merely resembles one of
+        // this agent's lines is real information and must survive —
+        // only virtually-verbatim repeats are suppressed.
+        let agentLineTexts = (agentSection ?? "").split(separator: "\n").map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }.filter { !$0.isEmpty }
+        let agentLines = Set(agentLineTexts)
+        let agentLineTokens = agentLineTexts.map { TextSimilarity.tokenize($0) }
+        let freshLines = trimmed.split(separator: "\n").filter { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.isEmpty || t.hasPrefix("#") { return true }
+            if agentLines.contains(t) { return false }
+            let tokens = TextSimilarity.tokenize(t)
+            return !agentLineTokens.contains {
+                TextSimilarity.jaccardTokenized($0, tokens) > 0.85
+            }
+        }
+        // Headers survive the filter unconditionally, so require at least
+        // one real content line before paying for the block at all.
+        let hasContent = freshLines.contains { line in
+            let t = line.trimmingCharacters(in: .whitespaces)
+            return !t.isEmpty && !t.hasPrefix("#")
+        }
+        guard hasContent else { return agentSection }
+        let fresh = freshLines.joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fresh.isEmpty else { return agentSection }
+
+        let projectBlock = "## Shared project memory\n\n\(fresh)"
+        guard let agentSection, !agentSection.isEmpty else { return projectBlock }
+        return agentSection + "\n\n" + projectBlock
     }
 
     // MARK: - SOUL Assembly
