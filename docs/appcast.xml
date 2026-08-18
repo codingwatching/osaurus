@@ -3,6 +3,40 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.23.0</title>
+            <pubDate>Tue, 18 Aug 2026 22:35:45 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.23.0</sparkle:version>
+            <sparkle:shortVersionString>0.23.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.23.0/Osaurus-0.23.0.dmg" length="71338467" type="application/octet-stream" sparkle:edSignature="wR7T334OtVpVBxb2MRiLr5DMCViAXmsSQVFGUt+5/RAEuhoym0MaVFWLnrqkFyZdZtth/MJbEp0CG1I/CxypCQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Attribute silent restarts: exit markers + a launch-time verdict file (#2401) by @jjang-ai
+- Reserve answer room on API requests so thinking cannot eat the whole max\_tokens (#2399) by @jjang-ai
+
+## 🚀 Features
+
+- added reasoning effort control for zai-glm models on mistral (#2412) by @RaajeevChandran
+- added projects support to group chats with shared instructions, knowledge and memory (#2337) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- fix custom agents failing to spawn subagents by name (#2411) by @RaajeevChandran
+- Treat a bare channel name as blank thinking so empty Harmony blocks stop rendering (#2407) by @jjang-ai
+- added close button to router account sheet (#2406) by @RaajeevChandran
+- fall back to the chat model when follow up generation hits a residency refusal (#2405) by @RaajeevChandran
+- Derive evals-deterministic from floors.json so the CI lane cannot drift (#2404) by @jjang-ai
+- Persist before stop in window cleanup so a close during load cannot destroy the send (#2402) by @jjang-ai
+- Re-sync capability\_search caseFloors with the suite and guard the pairing (#2400) by @jjang-ai
+- Persist the cancelled marker when Stop beats the first delta (#2392) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.22.22...0.22.23
+]]></description>
+        </item>
+        <item>
             <title>0.22.22</title>
             <pubDate>Fri, 14 Aug 2026 19:28:58 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
