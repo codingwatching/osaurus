@@ -7609,6 +7609,19 @@ struct ChatView: View {
 
     @State private var focusTrigger: Int = 0
     @State private var isPinnedToBottom: Bool = true
+    /// User-adjustable width of the History sidebar, persisted across launches
+    /// so a chosen width sticks. Clamped to `sidebarWidthRange` on read so a
+    /// stale out-of-bounds value can never wedge the layout.
+    @AppStorage("chatSidebarWidth") private var storedSidebarWidth: Double = 240
+    /// Transient width while an edge drag is in flight. Kept in view state so
+    /// the resize tracks the cursor at 60fps without hitting UserDefaults on
+    /// every frame; the final value is committed to `storedSidebarWidth` on
+    /// drag end. `nil` means no drag is active.
+    @State private var liveSidebarWidth: Double?
+    /// Width captured at the start of a drag. `translation` is cumulative from
+    /// the gesture start, so the live width is always `anchor + translation`
+    /// (adding to the running live value would double-count the delta).
+    @State private var sidebarDragAnchor: Double?
     /// Project whose detail page is shown in the content area (opened from
     /// the sidebar's Projects tab). nil shows the normal chat surface.
     @State private var openProjectId: UUID?
@@ -8138,11 +8151,67 @@ struct ChatView: View {
         .animation(theme.springAnimation(), value: current?.id)
     }
 
+    /// Allowed range for the resizable sidebar. The floor keeps the header
+    /// controls usable; the ceiling stops the sidebar from crowding out the
+    /// chat on narrow windows.
+    private static let sidebarWidthRange: ClosedRange<Double> = 260...460
+
+    /// Clamp a raw width to the allowed range.
+    private func clampSidebarWidth(_ raw: Double) -> Double {
+        min(max(raw, Self.sidebarWidthRange.lowerBound), Self.sidebarWidthRange.upperBound)
+    }
+
+    /// Effective sidebar width: the live drag value while resizing, otherwise
+    /// the persisted width. Always clamped.
+    private var clampedSidebarWidth: CGFloat {
+        CGFloat(clampSidebarWidth(liveSidebarWidth ?? storedSidebarWidth))
+    }
+
+    /// Draggable divider on the sidebar's trailing edge. A thin visible seam
+    /// with a wider invisible hit area; dragging resizes the sidebar and the
+    /// two-headed resize cursor telegraphs that it's grabbable.
+    private var sidebarResizeHandle: some View {
+        // An 11pt-wide interactive strip straddling the trailing edge (offset
+        // pushes half of it past the border) so the seam is grabbable right at
+        // the boundary. The visible seam is a 1pt line at the strip's center;
+        // the AppKit cursor area fills the strip.
+        Color.clear
+            .frame(width: 11)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                Rectangle()
+                    .fill(theme.secondaryText.opacity(liveSidebarWidth != nil ? 0.55 : 0.12))
+                    .frame(width: 1)
+            }
+            .contentShape(Rectangle())
+            .pointerStyle(.columnResize)
+            .offset(x: 5)
+            .gesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        // Anchor to the width at gesture start so the rail
+                        // tracks the cursor 1:1 without accumulating drift.
+                        let anchor = sidebarDragAnchor ?? Double(clampedSidebarWidth)
+                        if sidebarDragAnchor == nil {
+                            sidebarDragAnchor = anchor
+                        }
+                        liveSidebarWidth = clampSidebarWidth(anchor + Double(value.translation.width))
+                    }
+                    .onEnded { _ in
+                        if let final = liveSidebarWidth {
+                            storedSidebarWidth = clampSidebarWidth(final)
+                        }
+                        liveSidebarWidth = nil
+                        sidebarDragAnchor = nil
+                    }
+            )
+    }
+
     /// Chat mode content - the original ChatView implementation
     @ViewBuilder
     private var chatModeContent: some View {
         GeometryReader { proxy in
-            let sidebarWidth: CGFloat = windowState.showSidebar ? 240 : 0
+            let sidebarWidth: CGFloat = windowState.showSidebar ? clampedSidebarWidth : 0
             let chatWidth = proxy.size.width - sidebarWidth
             let effectiveContentWidth = min(chatWidth, 1100)
 
@@ -8154,6 +8223,7 @@ struct ChatView: View {
                             sessions: windowState.filteredSessions,
                             agentId: windowState.agentId,
                             currentSessionId: session.sessionId,
+                            width: sidebarWidth,
                             onSelect: { data in
                                 openProjectId = nil
                                 windowState.enteredChatFromProjectPage = false
@@ -8271,6 +8341,11 @@ struct ChatView: View {
                 .frame(width: sidebarWidth, alignment: .top)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .clipped()
+                .overlay(alignment: .trailing) {
+                    if windowState.showSidebar {
+                        sidebarResizeHandle
+                    }
+                }
                 .zIndex(1)
 
                 // Main chat area
