@@ -265,7 +265,7 @@ final class AgentChannelInboundRelay {
                     connectionId: request.connectionId,
                     providerEventId: request.providerEventId,
                     stage: .agentReplied,
-                    reason: "auto_reply_disabled"
+                    reason: Self.autoReplyDisabledReason
                 )
                 return
             }
@@ -356,6 +356,13 @@ final class AgentChannelInboundRelay {
     /// Upper bound on artifacts forwarded per reply so a runaway agent can't
     /// flood a chat with media sends.
     private static let maxReplyArtifacts = 5
+
+    /// Machine reason recorded when a completed run's reply stays local
+    /// because auto-reply is off. Must keep a guidance mapping in
+    /// `AgentChannelInboundActivityPresentation`: with channel-triggered runs
+    /// barred from proactive publishing, this is a silently dropped reply
+    /// unless the activity UI explains it.
+    nonisolated static let autoReplyDisabledReason = "auto_reply_disabled"
 
     private func waitForReply(taskId: UUID, runStartedAt: Date) async -> TerminalReply {
         let deadline = Date().addingTimeInterval(Self.maxReplyWait)

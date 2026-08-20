@@ -1065,6 +1065,9 @@ struct WhatsAppSettingsView: View {
                     ),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
                 SettingsToggle(
                     title: L("Require Mention in Groups"),
                     description: L(

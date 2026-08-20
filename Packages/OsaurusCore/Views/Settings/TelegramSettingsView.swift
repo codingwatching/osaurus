@@ -586,6 +586,9 @@ struct TelegramSettingsView: View {
                     ),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
             }
         }
     }

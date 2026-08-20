@@ -545,6 +545,9 @@ struct SlackSettingsView: View {
                     ),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
             }
         }
     }

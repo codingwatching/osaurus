@@ -444,6 +444,9 @@ struct DiscordSettingsView: View {
                     description: L("Post sanitized agent responses back to Discord when write gates allow it."),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
             }
         }
     }

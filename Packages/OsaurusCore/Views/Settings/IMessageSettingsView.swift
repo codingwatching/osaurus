@@ -862,6 +862,9 @@ struct IMessageSettingsView: View {
                     ),
                     isOn: $inboundAutoReplyEnabled
                 )
+                if !inboundAutoReplyEnabled {
+                    AgentChannelAutoReplyOffNotice()
+                }
             }
 
             SettingsToggle(

@@ -670,6 +670,32 @@ struct AgentChannelSectionHeading: View {
     }
 }
 
+// MARK: - Auto-Reply Off Notice
+
+/// Inline warning shown under the "Reply Automatically" toggle when inbound
+/// dispatch is enabled but auto-reply is off: incoming messages still run the
+/// agent, but the reply stays local. Since channel-triggered runs cannot
+/// publish through channel tools, this is the only reply path, so surfacing
+/// the misconfiguration here prevents silently dropped replies.
+struct AgentChannelAutoReplyOffNotice: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    var body: some View {
+        Label {
+            Text(
+                "Replies will stay in Osaurus. Incoming messages still run the agent, but its responses are not posted back until Reply Automatically is on.",
+                bundle: .module
+            )
+            .font(.system(size: 11))
+            .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 10))
+        }
+        .foregroundColor(themeManager.currentTheme.warningColor)
+    }
+}
+
 // MARK: - Copyable Command
 
 /// Monospaced command / message row with a copy button, for setup steps that
