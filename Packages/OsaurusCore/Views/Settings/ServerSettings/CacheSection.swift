@@ -18,6 +18,8 @@ struct CacheSection: View {
     let savedMetadataFallbackTokens: Int?
 
     @State private var loadedModels: [ModelRuntime.ModelCacheSummary] = []
+    @State private var isClearingDiskCache = false
+    @State private var clearedCacheSummary: String?
 
     var body: some View {
         ServerSettingsCard(
@@ -206,11 +208,50 @@ struct CacheSection: View {
             )
             OptionalDoubleField(
                 label: "Disk Cache Size (GB)",
-                placeholder: "Blank = engine default (10 GB)",
-                help: "Soft cap before older entries are evicted.",
+                placeholder: "Blank = Auto (10% of disk)",
+                help:
+                    "Soft cap before older entries are evicted, shared across all models. "
+                    + "Auto scales with your disk because KV size scales with the model: a "
+                    + "27B stores ~256 KiB per token, so a fixed cap that suits one machine "
+                    + "starves another and long chats re-prefill instead of resuming.",
                 value: $draft.cache.blockDisk.maxSizeGB,
                 format: "%.1f"
             )
+            HStack(spacing: 10) {
+                Button {
+                    Task {
+                        isClearingDiskCache = true
+                        let result = await ModelRuntime.shared.clearDiskCaches()
+                        clearedCacheSummary =
+                            result.reclaimedBytes > 0
+                            ? String(
+                                format: L("Cleared %@"),
+                                DiskCacheUsage.format(bytes: result.reclaimedBytes))
+                            : L("Cache was already empty")
+                        isClearingDiskCache = false
+                    }
+                } label: {
+                    if isClearingDiskCache {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Clear SSD Cache", bundle: .module)
+                    }
+                }
+                .disabled(isClearingDiskCache)
+                if let clearedCacheSummary {
+                    Text(verbatim: clearedCacheSummary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(
+                "Deletes all saved conversation data from disk, including leftover files from an interrupted write. Your chats are not affected — the next reply just takes a little longer to start.",
+                bundle: .module
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
             OptionalStringField(
                 label: "Disk Cache Directory",
                 placeholder: "Blank = Osaurus default cache directory",
