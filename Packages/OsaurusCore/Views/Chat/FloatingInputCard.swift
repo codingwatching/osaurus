@@ -11,6 +11,8 @@ import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
+@preconcurrency import MLXLMCommon
+
 struct FloatingInputCard: View {
     @Binding var text: String
     @Binding var selectedModel: String?
@@ -6284,6 +6286,10 @@ private struct ContextBreakdownPopover: View {
             return L("Provider model maximum")
         case .metadataFallback:
             return L("Metadata fallback")
+        case .userCap:
+            // Named so a window smaller than the bundle advertises reads as a
+            // setting the user chose, not as the model being mis-detected.
+            return L("Your context limit")
         case nil:
             return L("Model maximum")
         }
@@ -7764,14 +7770,6 @@ private struct FloatingContextChip: View {
         guard let settings = ServerRuntimeSettingsStore.load(),
             settings.cache.blockDisk.enabled
         else { return nil }
-        // Only an EXPLICIT cap is reported here. When the size is unset the cap
-        // is resolved by the runtime, and this process cannot know that number
-        // without a resident coordinator — printing a guess would show a limit
-        // nothing is enforcing. maxBytes 0 renders as "used · Auto" with no
-        // percentage, which is the honest reading.
-        let capBytes = settings.cache.blockDisk.maxSizeGB.map {
-            Int($0 * 1_073_741_824)
-        }
         // Measure the directory the RUNTIME caps, not the default one.
         // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
         // with a custom Disk Cache Directory configured it would report the size
@@ -7781,10 +7779,45 @@ private struct FloatingContextChip: View {
         let dir =
             ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
             ?? OsaurusPaths.diskKVCache()
+        // Resolve the cap the same way the coordinator does.
+        //
+        // This used to report ONLY an explicit `maxSizeGB`, on the reasoning
+        // that an unset size could not be known without a resident model. That
+        // is no longer true, and after the percent migration `maxSizeGB` is nil
+        // on every install — so the bar would have rendered "used · Auto" with
+        // no cap and no percentage while a real cap was being enforced, which
+        // is a worse lie than the guess it was avoiding. A share of a volume we
+        // can measure IS the number, computed by the same function that builds
+        // CacheCoordinatorConfig.
+        var resolvedGB = VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
+            percent: settings.cache.blockDisk.maxSizePercent,
+            legacyGB: settings.cache.blockDisk.maxSizeGB,
+            directory: dir)
+        // The share is not the last word: `applyHostAwareDiskCacheCeiling`
+        // additionally bounds the cap to a quarter of the free bytes. Measured
+        // live, 10% of a 3.7 TB volume resolved to 372 GB while the coordinator
+        // enforced 242 GB, because only 969 GB was free. Reporting the
+        // unbounded number would make the bar's denominator disagree with the
+        // cap that is actually evicting.
+        var tierDisabled = false
+        if let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: dir.path), freeBytes > 0 {
+            let decision = ModelRuntime.hostAwareDiskCacheDecision(
+                configuredCapGB: resolvedGB, freeBytes: freeBytes)
+            tierDisabled = !decision.enabled
+            resolvedGB = decision.enabled ? decision.capGB : 0
+        }
+        // Still honest when the volume cannot be measured: the resolver falls
+        // back to the floor, which is a real enforced cap, not a guess.
+        //
+        // `isDisabled` is carried separately so a switched-off tier renders as
+        // "Off" rather than "Auto" — a zero cap and an unknown cap are both
+        // maxBytes 0, and calling the former "Auto" tells the user their cache
+        // is being sized for them when it is not running at all.
         return DiskCacheUsage(
             usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
-            maxBytes: capBytes ?? 0,
-            evictions: 0)
+            maxBytes: Int(resolvedGB * 1_073_741_824),
+            evictions: 0,
+            isDisabled: tierDisabled)
     }
 
     let displayTokens: Int
