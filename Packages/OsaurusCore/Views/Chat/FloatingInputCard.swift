@@ -518,7 +518,19 @@ struct FloatingInputCard: View {
         // chip explain, instead of letting the model error mid-stream.
         // History-driven growth is deliberately NOT gated — compaction
         // handles that.
-        guard !isContextHardOverflow else { return false }
+        //
+        // But ONLY when the model is the ceiling. `contextLengthCap` is a
+        // preference — a smaller window for faster prefill — and the weights
+        // can still take more, so letting it kill the send turns a preference
+        // into a wall. Worse, it is a SILENT wall: the button simply stops
+        // working, with nothing naming the setting responsible. Measured
+        // live at cap 2048 against a 2.5k prefix — the send did nothing, and
+        // clearing the cap sent the identical text immediately.
+        //
+        // The chip still goes red, which is the advisory. A ceiling the user
+        // chose must never refuse; if the request really cannot run, the
+        // engine fails loudly and that is strictly better than a dead button.
+        guard !isContextHardOverflow || contextWindowIsUserCapped else { return false }
 
         // Configuration gate: the Default agent needs the configure tool
         // schema to do its job, but a too-small context window (e.g.
@@ -626,6 +638,15 @@ struct FloatingInputCard: View {
     /// is blocked with a clear signal instead of a guaranteed model failure.
     private var isContextHardOverflow: Bool {
         budgetAssessment.hardOverflow
+    }
+
+    /// Whether the window in force came from the user's `contextLengthCap`
+    /// rather than from the model. The resolver already records this as
+    /// `.userCap` precisely so surfaces can say WHY the window is smaller
+    /// than the bundle advertises; the send gate reads it to keep a
+    /// preference from behaving like a hardware limit.
+    private var contextWindowIsUserCapped: Bool {
+        contextWindowResolution?.source == .userCap
     }
 
     private var isVoiceConfigured: Bool {
@@ -5998,7 +6019,13 @@ private struct ContextBreakdownPopover: View {
                 messagesSection
             }
 
-            if let diskCache, diskCache.usedBytes > 0 || diskCache.maxBytes > 0 {
+            // `isDisabled` has to pass this gate on its own: a switched-off
+            // tier reports maxBytes 0, and an empty cache directory reports
+            // usedBytes 0, so the size test alone would hide the "Off" row it
+            // exists to show.
+            if let diskCache,
+                diskCache.isDisabled || diskCache.usedBytes > 0 || diskCache.maxBytes > 0
+            {
                 divider
                 diskCacheSection(diskCache)
             }
@@ -7767,9 +7794,7 @@ private struct FloatingContextChip: View {
         // the cache readout VANISH on an idle chat — which reads as the
         // feature being missing rather than merely unmeasured. The cache is
         // still on disk and still capped, so report it from disk and settings.
-        guard let settings = ServerRuntimeSettingsStore.load(),
-            settings.cache.blockDisk.enabled
-        else { return nil }
+        guard let settings = ServerRuntimeSettingsStore.load() else { return nil }
         // Measure the directory the RUNTIME caps, not the default one.
         // `OsaurusPaths.diskKVCacheUsageBytes()` hardcodes the default path, so
         // with a custom Disk Cache Directory configured it would report the size
@@ -7779,6 +7804,19 @@ private struct FloatingContextChip: View {
         let dir =
             ModelRuntime.cacheDiskDirectoryOverride(for: settings.cache)
             ?? OsaurusPaths.diskKVCache()
+        // A tier the USER switched off still gets a row, reading "· Off".
+        // Returning nil here instead made the readout vanish the moment
+        // someone unticked Disk Cache — the exact failure the comment above
+        // describes for an idle chat ("reads as the feature being missing"),
+        // and it left `isDisabled` reachable only from the host-aware
+        // free-disk decision. The state was built and then never rendered.
+        guard settings.cache.blockDisk.enabled else {
+            return DiskCacheUsage(
+                usedBytes: OsaurusPaths.directorySizeIfExists(at: dir),
+                maxBytes: 0,
+                evictions: 0,
+                isDisabled: true)
+        }
         // Resolve the cap the same way the coordinator does.
         //
         // This used to report ONLY an explicit `maxSizeGB`, on the reasoning
