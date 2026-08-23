@@ -58,7 +58,7 @@ construction.
 | T8 | **Restart survival — kill app, replay identical prompt** | does L2 actually persist | ✅ Ornith-1.5-9B — **17.11s → 0.41s (~42×)** across a real process restart on the same root; cache 3.5 → 4.4 GB |
 | T9 | SSD budget stress past the % cap | LRU eviction breaking live chains | ⚠ eviction proven at a share (1638 MB → 408 MB under a 762 MB cap) but not against a live chain |
 | T10 | Multiple images in different turns | the bunching bug | ⚠ unit-tested only |
-| T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ never run |
+| T11 | Cold-vs-warm answer exactness at `%256 ≠ 0` | silent divergence | ❌ still unrun — attempting it proved reuse is **per-conversation**, so the probe needs the history sidebar. See §9 |
 | T12a | **Audio on `gemma4_unified` 12B** (raw-waveform path, not mel+conformer) | the second audio family | ⚠ **audio reaches and informs the model** — "what animal is mentioned?" → **"Elephant"**, correct. Asked to transcribe verbatim it answered *"The quick brown fox jumps over the lazy dog."* — a **confabulated pangram**. See §5 |
 | T12b | Audio on Nemotron-Omni (`sound_encoder` + Parakeet) | the third audio family | ✅ Nemotron-3-Nano-Omni-30B-A3B-JANG_4M — 4/4 content answers correct (`elephant` / `purple` / `7` / `violet`), TTFT 1.61s → 0.41/0.43/0.42s, 118–130 tok/s, kv_v2 604 MB, RSS 19.9 GB. **Reuse not discriminated at this size** — see §6 |
 | T13 | Muse Glimmer / Zaya / LFM2.5-VL / Step-3.7 media reuse | per-family media paths | ⚠ **3 of 4 run and passing** — see §8. Step-3.7-Flash deferred: needs ~82 GB and the box had none free |
@@ -266,3 +266,52 @@ purple field. Zaya and Muse answered **purple** (the field); LFM2.5-VL answered
 **white** (the glyph). Both readings are correct, and each model stayed
 consistent with itself at 20k, which is the property being tested — but the
 question cannot score colour. Ask about the field explicitly next time.
+
+---
+
+## 9. T11 attempt: prefix reuse is scoped to ONE conversation
+
+T11 wants a cold answer and a cache-restored answer compared at a prefix length
+that is not a round number. Building it turned up something that has to be
+recorded first, because it changes what T11 can even be built out of.
+
+**A byte-identical prompt in a different chat reuses nothing.** Not across a
+restart, and not even inside one process:
+
+| shape | model | cold | second run | verdict |
+| --- | --- | ---: | ---: | --- |
+| new chat after app restart, same root | LFM2.5-VL 3B, ~21k | 7.12s | 6.57s | no reuse |
+| new chat after app restart, same root | LFM2.5-VL 3B, ~28k | 14.18s | 8.94s | no reuse |
+| new chat after app restart, same root | Ornith-1.5-9B, ~5.7k | 6.63s | 5.94s | no reuse |
+| **new chat in the SAME process** | LFM2.5-VL 3B, ~21k | **7.13s** | **7.16s** | **no reuse** |
+
+The last row is the decisive one: same process, same loaded weights, the same
+21k prompt sent twice into two chats, and the second is 0.03s slower. The disk
+cache had the block too — `kv_v2` grew 441 → 882 → 1764 MB across these runs,
+so every leg WROTE a block and none of them read one.
+
+So reuse is per-conversation. T8's 42x restart win (17.11s → 0.41s) was a
+conversation being continued, not a prefix being recognised.
+
+**This is worth a product decision, not a unilateral change.** Pasting the same
+document, system prompt, or codebase into a fresh chat is an ordinary thing to
+do, and today it pays full prefill every time. Whether cross-chat sharing is
+wanted — and under what scoping — is Eric's call; the salt itself is only
+`reasoning=on/off` plus a media fingerprint, so nothing in the key forces the
+current behaviour.
+
+**T11 itself stays ❌.** Its question — does a restored cache produce the same
+answer at `cached_tokens % 256 != 0` — can only be asked inside one
+conversation, which means driving the history sidebar to reopen a chat after a
+restart. The sidebar rows are `AXStaticText` inside an `AXOpaqueProviderGroup`
+with no pressable row element, and a pid-targeted click on the row did not
+select it. That is the next thing to solve for this row.
+
+### Two model-accuracy notes from the same runs, so they are not mistaken for cache bugs later
+
+- LFM2.5-VL answered `103` and `123` for a seal code that was stated as `1259`
+  in the prompt — wrong, but **identically wrong** cold and warm. Retrieval
+  accuracy at 21–28k, not cache divergence.
+- Ornith-1.5-9B at 44k spent its whole output budget thinking and returned the
+  max-tokens notice instead of an answer. A reasoning model needs its budget
+  raised (or thinking off) before it can be used as a cache probe at all.
