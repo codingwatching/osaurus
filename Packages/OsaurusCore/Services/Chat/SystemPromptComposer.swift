@@ -1530,6 +1530,17 @@ public struct SystemPromptComposer: Sendable {
                     content: SystemPromptTemplates.folderContext(from: folder)
                 )
             )
+            // Bulk-edit steering: constant text, `.static` so it joins the
+            // cached KV prefix (one-time cold prefill on update, byte-stable
+            // per turn thereafter). Ordering: after folderContext so it
+            // reads as a refinement of the folder tool surface.
+            composer.append(
+                .static(
+                    id: "bulkEditGuidance",
+                    label: L("Bulk Edits"),
+                    content: SystemPromptTemplates.bulkEditGuidance()
+                )
+            )
         }
 
         // Capability-discovery nudge: explain how to recover when the
@@ -3081,6 +3092,18 @@ public struct SystemPromptComposer: Sendable {
                     replacingExisting: true
                 )
                 allowed.formUnion(ToolRegistry.coreWorkspaceToolNames)
+            }
+            // Redaction tools join the schema only when a HOST folder is
+            // active: they resolve the chat's folder root directly and have
+            // no sandbox bridge, so VM-only mode must not offer them.
+            if executionMode.usesHostFolderTools {
+                add(
+                    ToolRegistry.shared.specs(
+                        forTools: Array(ToolRegistry.redactionToolNames)
+                    ),
+                    replacingExisting: true
+                )
+                allowed.formUnion(ToolRegistry.redactionToolNames)
             }
             if snapshot.dbEnabled { allowed.formUnion(agentDBToolNames) }
             if snapshot.renderChartEnabled { allowed.insert("render_chart") }
