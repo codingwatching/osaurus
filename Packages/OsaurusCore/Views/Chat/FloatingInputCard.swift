@@ -4101,28 +4101,38 @@ extension FloatingInputCard {
     ) -> some View {
         let critical = swap.severity == .critical
         let tint: Color = critical ? .red : .orange
-        let peakGB = Self.formatGigabytes(max(0, swap.peakGrowthBytes))
         let modelLabel =
             swap.modelName ?? selectedPickerItem?.displayName ?? String(localized: "this model")
-        let phaseVerb =
-            swap.phase == .loading
-            ? String(localized: "Loading", bundle: .module)
-            : String(localized: "Running", bundle: .module)
 
-        var message: Text
-        if critical {
+        // Full sentences per phase rather than an interpolated verb: the
+        // verb-plus-name word order doesn't survive translation (German
+        // splits the verb around the model name).
+        let loading = swap.phase == .loading
+        let message: Text
+        switch (critical, loading) {
+        case (true, true):
             message = Text(
-                "\(phaseVerb) \(modelLabel) coincided with heavy system swap growth (\(peakGB) GB) — generation will slow while macOS pages memory. Closing other apps usually recovers it.",
-                bundle: .module
-            )
-        } else {
+                "Your Mac is running low on memory while loading \(modelLabel), so responses will be slower.",
+                bundle: .module)
+        case (true, false):
             message = Text(
-                "\(phaseVerb) \(modelLabel) coincided with system swap growth (\(peakGB) GB). Generation may slow — closing other apps helps.",
-                bundle: .module
-            )
+                "Your Mac is running low on memory while running \(modelLabel), so responses will be slower.",
+                bundle: .module)
+        case (false, true):
+            message = Text(
+                "Your Mac is getting low on memory while loading \(modelLabel), so responses may slow down.",
+                bundle: .module)
+        case (false, false):
+            message = Text(
+                "Your Mac is getting low on memory while running \(modelLabel), so responses may slow down.",
+                bundle: .module)
         }
+        var tip: Text =
+            critical
+            ? Text("Closing other apps usually speeds things back up.", bundle: .module)
+            : Text("Closing other apps helps.", bundle: .module)
         if swap.emulated {
-            message = message + Text(verbatim: "  ") + Text("(simulated)", bundle: .module)
+            tip = tip + Text(verbatim: "  ") + Text("(simulated)", bundle: .module)
         }
 
         let clampedX = min(
@@ -4131,7 +4141,7 @@ extension FloatingInputCard {
         )
         let shape = RAMBannerShape(pointerCenterX: clampedX)
 
-        return VStack(alignment: .leading, spacing: 7) {
+        return VStack(alignment: .leading, spacing: 10) {
             (Text(Image(systemName: critical
                 ? "externaldrive.fill.badge.exclamationmark" : "externaldrive.badge.timemachine"))
                 .foregroundColor(tint)
@@ -4139,28 +4149,28 @@ extension FloatingInputCard {
                 + message.foregroundColor(theme.primaryText))
                 .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                swapActionButton(String(localized: "Activity Monitor", bundle: .module)) {
-                    NSWorkspace.shared.open(
-                        URL(fileURLWithPath:
-                            "/System/Applications/Utilities/Activity Monitor.app"))
-                }
-                swapActionButton(String(localized: "Unload Model", bundle: .module)) {
+            tip.foregroundColor(theme.secondaryText)
+                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 10) {
+                swapPrimaryButton(String(localized: "Unload Model", bundle: .module), tint: tint) {
                     let target = swap.modelName ?? selectedModel
                     guard let target else { return }
                     Task { await ModelRuntime.shared.unload(name: target) }
                 }
-                swapActionButton(String(localized: "Keep Running", bundle: .module)) {
+                swapTextButton(String(localized: "Keep Running", bundle: .module)) {
                     withAnimation(.easeOut(duration: 0.2)) {
                         swapBannerDismissedAtSeverity = swap.severity
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 2)
         }
         .padding(.leading, 14)
         .padding(.trailing, 14)
-        .padding(.top, 9)
-        .padding(.bottom, 9 + RAMBannerShape.pointerHeight)
+        .padding(.top, 12)
+        .padding(.bottom, 12 + RAMBannerShape.pointerHeight)
         .background(
             ZStack {
                 shape.fill(.regularMaterial)
@@ -4172,27 +4182,42 @@ extension FloatingInputCard {
         .accessibilityLabel(
             critical
                 ? Text(
-                    "Heavy system swap growth while \(modelLabel) is loaded: generation will slow",
+                    "Your Mac is running low on memory while \(modelLabel) is loaded: responses will be slower",
                     bundle: .module)
                 : Text(
-                    "System swap growth while \(modelLabel) is loaded: generation may slow",
+                    "Your Mac is getting low on memory while \(modelLabel) is loaded: responses may slow down",
                     bundle: .module)
         )
     }
 
-    /// Small inline action for the swap banner, matching the caption
-    /// typography of the popover.
-    private func swapActionButton(_ title: String, action: @escaping () -> Void) -> some View {
+    /// Filled CTA for the swap banner's primary action, tinted to match the
+    /// banner severity.
+    private func swapPrimaryButton(
+        _ title: String, tint: Color, action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Text(verbatim: title)
                 .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule().stroke(theme.tertiaryText.opacity(0.4), lineWidth: 1)
-                )
+                .lineLimit(1)
+                .foregroundColor(.white)
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Capsule().fill(tint.opacity(0.85)))
                 .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Borderless secondary action for the swap banner, plain text only.
+    private func swapTextButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(verbatim: title)
+                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
+                .foregroundColor(theme.secondaryText)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
