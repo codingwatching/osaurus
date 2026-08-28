@@ -1776,6 +1776,7 @@ public actor ModelRuntime {
             childOwnershipToken: loadingRecord.childOwnershipToken
         )
         loadingTasks.removeValue(forKey: name)
+        SwapPressureMonitor.shared.markLoadCompleted(model: name)
         currentModelName = name
         Memory.cacheLimit = mlxCacheLimit()
 
@@ -2019,6 +2020,8 @@ public actor ModelRuntime {
         residentMetadata.removeValue(forKey: name)
         lastUseSource.removeValue(forKey: name)
         if currentModelName == name { currentModelName = nil }
+        // End of the residency episode once nothing is resident.
+        SwapPressureMonitor.shared.endEpisodeIfIdle(residentCount: modelCache.count)
         if didRemove {
             if let retiredCacheCounters {
                 await MLXBatchAdapter.Registry.shared.recordRetiredCacheCounters(
@@ -3696,6 +3699,11 @@ public actor ModelRuntime {
         }
 
         try Task.checkCancellation()
+        // Genuinely cold from here (cache hits and in-flight waits returned
+        // above): swap growth during this episode is what the swap-pressure
+        // banner reports as coinciding with the load. Warm reuse never
+        // resets the baseline; a second cold load extends the same episode.
+        SwapPressureMonitor.shared.beginResidencyEpisode(model: name)
         guard let localURL = Self.findLocalDirectory(forModelId: id) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -4069,6 +4077,11 @@ public actor ModelRuntime {
                 loadingTasks.removeValue(forKey: name)
             }
             supersededLoadingTaskIDs.remove(loadID)
+            // A failed/cancelled cold load must not leave a stale swap
+            // baseline behind (unless another model remains resident, whose
+            // episode continues).
+            SwapPressureMonitor.shared.endEpisodeOnLoadFailure(
+                model: name, residentCount: modelCache.count)
             throw error
         }
     }
@@ -4978,6 +4991,15 @@ public actor ModelRuntime {
                 // producer and releases this stream's ModelLease before a
                 // residency restore can evict the child model.
                 activeTask.cancel()
+            },
+            onFirstModelOutput: {
+                // The FIRST emitted output closes the cold load's
+                // swap-attribution window (issue #2501): swap growth during
+                // load, prefill, and TTFT is attributed to the model; growth
+                // after decode starts is not. Firing this before
+                // `MLXBatchAdapter.generate` would close the window before
+                // any prefill work happened. Later calls no-op.
+                SwapPressureMonitor.shared.noteFirstOutput(model: modelName)
             }
         )
     }
