@@ -3,6 +3,63 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.0</title>
+            <pubDate>Fri, 28 Aug 2026 09:12:14 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.0</sparkle:version>
+            <sparkle:shortVersionString>0.24.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.0/Osaurus-0.24.0.dmg" length="72394089" type="application/octet-stream" sparkle:edSignature="pRhZo5u1a80LAiQUKMMt4t3DYbosPmtD3OrUMETKXXNhW0KsAoBHp+fiQmBq03sSQ8QyxSKcSzo3xm9kiyPXDQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Swap-pressure warning banner + designer emulation controls (#2507) by @jjang-ai
+- Promote the Orchestrator to a primary documented feature; prune stale docs (#2500) by @tpae
+- Repin vmlx-swift to 447a6a2b: Qwen 3.8 Flash Next native runtime (#2504) by @jjang-ai
+- fix(chat): render display math with stable SwiftMath images (#2417) by @yxf206-a11y
+- fix leaked pacing timer on mid-stream processor dealloc (#2486) by @donmimo
+- Introduce the Orchestrator: dedicated settings tab, identity, and launch polish (#2493) by @tpae
+- Default-agent declarative config + delegation orchestrator (#2485) by @tpae
+- Redesign onboarding as a 3-screen (#2481) by @tpae
+
+## 🚀 Features
+
+- chat UX improvements (#2499) by @RaajeevChandran
+- Migrate credit system UI from dollars to credits (#2495) by @tpae
+- let agents write knowledge directly with call-time approval (#2480) by @RaajeevChandran
+- add bulk edit and on-device redaction tools for folder chats (#2474) by @RaajeevChandran
+- api (ollama): add capabilities to /show response (#2462) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- improved memory swap banner (#2512) by @RaajeevChandran
+- Single, surfaced greedy-while-MTP coercion site (corrective for #2506) (#2509) by @jjang-ai
+- Speculative Depth buttons enforce a real manual MTP activation; greedy only while MTP runs (#2506) by @jjang-ai
+- Delete the persisted global Disable Tools switch; tool availability is agent-scoped (#2505) by @jjang-ai
+- The Speculative Depth row rendered on models with no MTP head (#2489) by @jjang-ai
+- minor improvements in onboarding (#2487) by @RaajeevChandran
+- Show the drafted width, and stop an unusable one from killing turns (#2473) by @jjang-ai
+- fixed main thread hangs (#2475) by @RaajeevChandran
+- Say why speculative decoding is not running (#2472) by @jjang-ai
+- Adopt a bundle's declared presence/frequency penalties, and show them (#2470) by @jjang-ai
+- fix wasted warm ups and the jumping context tooltip on channel bound agents (#2468) by @RaajeevChandran
+- keep cross-chat prefill reusable by stabilizing the injected time block (#2467) by @RaajeevChandran
+- attach granted plugin tools to channel dispatches (#2466) by @RaajeevChandran
+- hardcode openai context windows as api never returns them (#2464) by @RaajeevChandran
+- fix xai oauth models reporting a stale catalog and fallback context window (#2463) by @RaajeevChandran
+
+## 🧰 Maintenance
+
+- Onboarding polish: motion system, Figma speech bubble, click-through fixes; Top Picks to Ornith 1.5 (#2503) by @tpae
+- Orchestrator-first delegation: default-on spawn pool, same-turn spawn activation, and delegated artifact pass-through (#2498) by @tpae
+- Repin vmlx: Ling 3.0 (BailingMoeV3/KDA) runtime (#2491) by @jjang-ai
+- Repin vmlx-swift to 1c17ce83 for the presence/frequency penalty fixes (#2469) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.23.1...0.23.2
+]]></description>
+        </item>
+        <item>
             <title>0.23.1</title>
             <pubDate>Sun, 23 Aug 2026 23:34:48 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
