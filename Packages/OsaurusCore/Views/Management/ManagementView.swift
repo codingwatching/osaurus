@@ -72,7 +72,7 @@ struct ManagementView: View {
 
     var body: some View {
         sidebarNavigation
-            .frame(minWidth: 900, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
+            .frame(minWidth: 940, maxWidth: .infinity, minHeight: 640, maxHeight: .infinity)
             .background(theme.primaryBackground)
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.accentColor)
@@ -228,8 +228,6 @@ private extension ManagementView {
             PrivacyView()
         case .identity:
             IdentityView()
-        case .storage:
-            StorageSettingsView()
         case .chat:
             ChatSettingsView()
         case .orchestrator:
@@ -256,7 +254,10 @@ private extension ManagementView {
                         badge: badgeCount(for: tab),
                         badgeHighlight: badgeHighlight(for: tab)
                     )
-                }
+                },
+                // Developer Tools hides its tabs behind the header toggle so
+                // the everyday sidebar stays lean.
+                isCollapsible: section == .developers
             )
         }
     }
