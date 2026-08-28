@@ -2587,8 +2587,8 @@ extension FloatingInputCard {
     private var visibleToggleChipCount: Int {
         var count = 0
         if autoSpeakAssistant { count += 1 }
-        if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable { count += 1 }
-        if !isRemoteAgentRun { count += 1 }  // folder or configuration chip
+        // Configuration chip, or the folder chip once a folder is active.
+        if !isRemoteAgentRun, isDefaultConfigAgent || folderState.hasActiveFolder { count += 1 }
         if AppConfiguration.shared.chatConfig.enableClipboardMonitoring
             && clipboardService.hasNewContent
         {
@@ -2612,19 +2612,14 @@ extension FloatingInputCard {
                 autoSpeakToggleChip(compact: compact)
             }
 
-            // Sandbox toggle: visible whenever the sandbox is available on
-            // this system. Hidden for the Default agent (configuration-only).
-            // Hidden in Mode 2: the remote agent runs its own tools server-side.
-            if !isRemoteAgentRun, !isDefaultConfigAgent, isSandboxAvailable {
-                sandboxToggleChip(compact: compact)
-            }
-
-            // Folder context selector: the Default (configuration) agent shows
-            // a quiet "Configuration" indicator instead. Hidden in Mode 2.
+            // Folder selection lives in the + attach menu now, so the chip
+            // only appears once a folder is active (it still carries the
+            // change/refresh/clear affordances). The Default (configuration)
+            // agent keeps its quiet indicator. Hidden in Mode 2.
             if !isRemoteAgentRun {
                 if isDefaultConfigAgent {
                     configurationOnlyChip(compact: compact)
-                } else {
+                } else if folderState.hasActiveFolder {
                     folderContextChip(compact: compact)
                 }
             }
@@ -2646,45 +2641,40 @@ extension FloatingInputCard {
         // Hide the balance/credits chip while a remote agent is connecting —
         // it's not actionable yet and competes with the connect affordance.
         let showCredits = showCreditsChip && !remoteConnectionPending
-        // Mode 2 hides the context-budget chip + popover entirely: a remote
-        // agent composes its own system prompt / tools server-side, so a local
-        // token breakdown (system prompt, tools, history) doesn't reflect what
-        // actually runs and would mislead about the remote agent's budget.
-        let showTokens = displayContextTokens > 0 && !isRemoteAgentRun && !metaUltraCompact
-        if showCredits || showTokens {
-            HStack(alignment: .center, spacing: 8) {
-                if showCredits {
-                    FloatingCreditsChip(
-                        isRouterBilledSession: isRouterBilledSession,
-                        sessionSpendMicro: sessionSpendMicro,
-                        metaCompact: metaCompact,
-                        metaUltraCompact: metaUltraCompact,
-                        onAddCredits: onAddCredits
-                    )
-                }
-                if showCredits && showTokens {
-                    Rectangle()
-                        .fill(theme.primaryBorder.opacity(0.25))
-                        .frame(width: 1, height: 12)
-                }
-                if showTokens {
-                    FloatingContextChip(
-                        displayTokens: displayContextTokens,
-                        usableTokens: usableContextTokens,
-                        modelMaxTokens: maxContextTokens,
-                        windowResolution: contextWindowResolution,
-                        isStreaming: isStreaming,
-                        isNearLimit: isContextNearLimit,
-                        isHardOverflow: isContextHardOverflow,
-                        metaCompact: metaCompact,
-                        formatTokenCount: formatTokenCount,
-                        breakdown: { displayContextBreakdown },
-                        compactionState: compactionState,
-                        canCompact: canCompactConversation && !isStreaming,
-                        onCompact: onCompactConversation
-                    )
-                }
-            }
+        if showCredits {
+            FloatingCreditsChip(
+                isRouterBilledSession: isRouterBilledSession,
+                sessionSpendMicro: sessionSpendMicro,
+                metaCompact: metaCompact,
+                metaUltraCompact: metaUltraCompact,
+                onAddCredits: onAddCredits
+            )
+        }
+    }
+
+    /// Context budget as a circular progress ring in the button bar, left of
+    /// the voice button. Mode 2 hides it entirely: a remote agent composes
+    /// its own system prompt / tools server-side, so a local token breakdown
+    /// doesn't reflect what actually runs and would mislead about the remote
+    /// agent's budget.
+    @ViewBuilder
+    private var contextBudgetRing: some View {
+        if displayContextTokens > 0 && !isRemoteAgentRun {
+            FloatingContextChip(
+                displayTokens: displayContextTokens,
+                usableTokens: usableContextTokens,
+                modelMaxTokens: maxContextTokens,
+                windowResolution: contextWindowResolution,
+                isStreaming: isStreaming,
+                isNearLimit: isContextNearLimit,
+                isHardOverflow: isContextHardOverflow,
+                usageRatio: contextUsageRatio,
+                formatTokenCount: formatTokenCount,
+                breakdown: { displayContextBreakdown },
+                compactionState: compactionState,
+                canCompact: canCompactConversation && !isStreaming,
+                onCompact: onCompactConversation
+            )
         }
     }
 
@@ -4243,16 +4233,6 @@ extension FloatingInputCard {
         )
     }
 
-    private var keyboardHint: some View {
-        HStack(spacing: 4) {
-            Text("⏎")
-                .font(theme.font(size: CGFloat(theme.captionSize) - 2, weight: .medium))
-            Text("to send", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1))
-        }
-        .foregroundColor(theme.tertiaryText.opacity(0.7))
-    }
-
     private func dismissModelPicker() {
         showModelPicker = false
     }
@@ -5293,17 +5273,17 @@ extension FloatingInputCard {
             HStack(spacing: 6) {
                 mediaButton
                 slashCommandButton
-                FloatingVoiceButton(
-                    voiceInputEnabled: voiceConfig.voiceInputEnabled,
-                    isStreaming: isStreaming,
-                    startVoiceInput: startVoiceInput
-                )
             }
 
             Spacer()
 
             HStack(spacing: 8) {
-                keyboardHint
+                contextBudgetRing
+                FloatingVoiceButton(
+                    voiceInputEnabled: voiceConfig.voiceInputEnabled,
+                    isStreaming: isStreaming,
+                    startVoiceInput: startVoiceInput
+                )
                 if isStreaming {
                     // While the Privacy Filter review sheet is on screen,
                     // suppress Stop — the sheet owns the cancel UX. The
@@ -5335,10 +5315,17 @@ extension FloatingInputCard {
     // MARK: - Action Buttons
 
     private var mediaButton: some View {
-        InputActionButton(
-            icon: "paperclip",
-            help: "Attach file (image, PDF, text, etc.)",
-            action: pickAttachment
+        InputActionMenuButton(
+            icon: "plus",
+            help: "Add folder or attach files",
+            items: [
+                .init(icon: "folder", title: Text("Add Folder", bundle: .module)) {
+                    selectFolder()
+                },
+                .init(icon: "paperclip", title: Text("Attach Files", bundle: .module)) {
+                    pickAttachment()
+                },
+            ]
         )
     }
 
@@ -7394,6 +7381,124 @@ private struct InputActionButton: View {
     }
 }
 
+/// `SlashCommandTriggerButton`'s circular footprint opening a themed popover
+/// of action rows — the same idiom as the model picker's sort menu
+/// (`ModelPickerView.sortPopoverView` / `SortOptionRow`) — instead of a
+/// native NSMenu, so the dropdown matches the app's visual language.
+private struct InputActionMenuButton: View {
+    struct Item {
+        let icon: String
+        let title: Text
+        let action: () -> Void
+    }
+
+    let icon: String
+    let help: String
+    let items: [Item]
+
+    @State private var isHovered = false
+    @State private var showPopover = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        Button(action: { showPopover.toggle() }) {
+            ZStack {
+                Circle()
+                    .fill(theme.tertiaryBackground.opacity(isHovered ? 0.95 : 0.8))
+
+                if isHovered {
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor.opacity(0.1), Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
+
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+            }
+            .frame(width: 32, height: 32)
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                theme.glassEdgeLight.opacity(isHovered ? 0.25 : 0.15),
+                                theme.primaryBorder.opacity(isHovered ? 0.2 : 0.1),
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.5
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .help(help)
+        .onHover { isHovered = $0 }
+        .popover(isPresented: $showPopover, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    MenuItemRow(icon: item.icon, title: item.title) {
+                        showPopover = false
+                        item.action()
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(width: 180)
+            .background(theme.primaryBackground)
+            .environment(\.theme, theme)
+        }
+    }
+
+    /// One popover action row, in the model picker's `SortOptionRow` idiom:
+    /// leading icon, 12pt title, hover-highlighted rounded background.
+    private struct MenuItemRow: View {
+        let icon: String
+        let title: Text
+        let action: () -> Void
+        @Environment(\.theme) private var theme
+        @State private var isHovering = false
+
+        var body: some View {
+            Button(action: action) {
+                HStack(spacing: 10) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .frame(width: 16)
+                        .foregroundColor(theme.secondaryText)
+                    title
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(theme.primaryText)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    // Match the popover's own corner radius so the hover
+                    // highlight reads as concentric with the menu chrome.
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(isHovering ? theme.tertiaryBackground.opacity(0.7) : Color.clear)
+                )
+                .padding(.horizontal, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovering = hovering
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Send Button
 
 /// Polished send button with hover glow effect
@@ -7775,7 +7880,7 @@ private struct FloatingCreditsChip: View {
         // quiet muted "Add credits" text instead of an amber call to action.
         guard isRouterBilledSession else {
             return CreditsChipStyle(
-                iconName: "creditcard",
+                iconName: "cloud",
                 iconColor: theme.tertiaryText,
                 textColor: theme.secondaryText,
                 weight: .medium,
@@ -7787,7 +7892,7 @@ private struct FloatingCreditsChip: View {
         switch level {
         case .healthy:
             return CreditsChipStyle(
-                iconName: "creditcard",
+                iconName: "cloud",
                 iconColor: theme.tertiaryText,
                 textColor: theme.secondaryText,
                 weight: .medium,
@@ -7800,7 +7905,7 @@ private struct FloatingCreditsChip: View {
             // chip itself to amber text (no pill) — a gentle nudge that stops
             // short of the empty-state "Add credits" call to action.
             return CreditsChipStyle(
-                iconName: "creditcard",
+                iconName: "cloud",
                 iconColor: amber,
                 textColor: amber,
                 weight: .semibold,
@@ -7848,68 +7953,50 @@ private struct FloatingCreditsChip: View {
         // hover/tap opens the wallet) so the row's toggle chips aren't clipped.
         let showLabel = !metaUltraCompact
 
-        Button {
-            // Click pins the wallet panel (rather than jumping straight to the
-            // top-up sheet) so its actions stay reachable; a second click while
-            // pinned closes it.
-            balanceHoverTask?.cancel()
-            walletDismissTask?.cancel()
-            if showWalletPanel && walletPanelPinned {
-                showWalletPanel = false
-                walletPanelPinned = false
+        Group {
+            if style.pill == nil {
+                // Balance states: the same pill chrome as the model selector
+                // chip (`SelectorChip`) so the meta cluster's interactive
+                // chips read as one family.
+                SelectorChip(isActive: showWalletPanel && walletPanelPinned) {
+                    handleChipTap(level: level)
+                } content: {
+                    chipLabel(style: style, caption: caption, showIcon: showIcon, showLabel: showLabel)
+                }
             } else {
-                walletPanelPinned = true
-                showWalletPanel = true
-            }
-        } label: {
-            HStack(spacing: 4) {
-                if showIcon {
-                    Image(systemName: style.iconName)
-                        .font(.system(size: caption - 2))
-                        .foregroundColor(style.iconColor)
-                        .contentTransition(.symbolEffect(.replace))
+                // Empty state keeps its own amber "Add credits" CTA pill.
+                Button {
+                    handleChipTap(level: level)
+                } label: {
+                    chipLabel(style: style, caption: caption, showIcon: showIcon, showLabel: showLabel)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background {
+                            if let pill = style.pill {
+                                Capsule()
+                                    .fill(pill.fill)
+                                    .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
+                            }
+                        }
+                        // Soft glow on the empty CTA draws the eye without a
+                        // repeating animation.
+                        .shadow(color: style.glow, radius: 5, x: 0, y: 1)
+                        .contentShape(Capsule())
                 }
-
-                if showLabel {
-                    if style.showsAmount {
-                        // Composer shows the overall router balance; this session's
-                        // spend is surfaced only in the hover popover. Abbreviated
-                        // ("212.1K credits") so six-figure balances don't crowd
-                        // the meta cluster.
-                        Text(verbatim: accountService.compactFormattedBalance)
-                            .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
-                            .foregroundColor(style.textColor)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    } else {
-                        Text("Add credits", bundle: .module)
-                            .font(theme.font(size: caption - 1, weight: style.weight))
-                            .foregroundColor(style.textColor)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
-                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
             }
-            // Chrome only appears in the low/empty attention states; the healthy
-            // chip stays plain text to match the token indicator's weight.
-            .padding(.horizontal, style.pill == nil ? 0 : 10)
-            .padding(.vertical, style.pill == nil ? 0 : 4)
-            .background {
-                if let pill = style.pill {
-                    Capsule()
-                        .fill(pill.fill)
-                        .overlay(Capsule().strokeBorder(pill.stroke, lineWidth: 1))
-                }
-            }
-            // Soft glow on the empty CTA draws the eye without a repeating animation.
-            .shadow(color: style.glow, radius: 5, x: 0, y: 1)
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
         .accessibilityLabel(creditsHelpText)
         .onHover { hovering in
             balanceHoverTask?.cancel()
+            // Empty state: the chip is a direct "Add credits" CTA (click opens
+            // the top-up sheet), so no hover preview — surfacing the wallet
+            // panel there just re-offers the same action with an extra hop.
+            guard level != .empty || onAddCredits == nil else {
+                if !hovering, !walletPanelPinned { scheduleWalletDismiss() }
+                return
+            }
             if hovering {
                 walletDismissTask?.cancel()
                 balanceHoverTask = Task { @MainActor in
@@ -7948,6 +8035,70 @@ private struct FloatingCreditsChip: View {
             // Outside-click dismissal flips the binding directly; unpin so the
             // next hover preview behaves normally.
             if !isShown { walletPanelPinned = false }
+        }
+    }
+
+    /// The chip's icon + amount/CTA line, shared by the `SelectorChip`
+    /// (balance states) and the amber CTA pill (empty state).
+    @ViewBuilder
+    private func chipLabel(
+        style: CreditsChipStyle,
+        caption: CGFloat,
+        showIcon: Bool,
+        showLabel: Bool
+    ) -> some View {
+        HStack(spacing: 4) {
+            if showIcon {
+                Image(systemName: style.iconName)
+                    .font(.system(size: caption - 2))
+                    .foregroundColor(style.iconColor)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+
+            if showLabel {
+                if style.showsAmount {
+                    // Composer shows the overall router balance; this session's
+                    // spend is surfaced only in the hover popover. Abbreviated
+                    // ("212.1K credits") so six-figure balances don't crowd
+                    // the meta cluster.
+                    Text(verbatim: accountService.compactFormattedBalance)
+                        .font(.system(size: caption - 1, weight: style.weight, design: .monospaced))
+                        .foregroundColor(style.textColor)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text("Add credits", bundle: .module)
+                        .font(theme.font(size: caption - 1, weight: style.weight))
+                        .foregroundColor(style.textColor)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+    }
+
+    private func handleChipTap(level: BalanceLevel) {
+        balanceHoverTask?.cancel()
+        walletDismissTask?.cancel()
+        // Empty state: the chip IS the "Add credits" call to action, so a
+        // click opens the top-up sheet directly — routing it through the
+        // wallet panel just to click a second "Add credits" there was an
+        // extra hop with no information gain.
+        if level == .empty, let onAddCredits {
+            showWalletPanel = false
+            walletPanelPinned = false
+            onAddCredits()
+            return
+        }
+        // Otherwise click pins the wallet panel (rather than jumping straight
+        // to the top-up sheet) so its actions stay reachable; a second click
+        // while pinned closes it.
+        if showWalletPanel && walletPanelPinned {
+            showWalletPanel = false
+            walletPanelPinned = false
+        } else {
+            walletPanelPinned = true
+            showWalletPanel = true
         }
     }
 
@@ -8068,7 +8219,9 @@ private struct FloatingContextChip: View {
     let isStreaming: Bool
     let isNearLimit: Bool
     let isHardOverflow: Bool
-    let metaCompact: Bool
+    /// Fraction of the effective budget the next send occupies, driving the
+    /// progress ring. nil when the model window is unknown (empty ring).
+    let usageRatio: Double?
     let formatTokenCount: (Int) -> String
     let breakdown: () -> ContextBreakdown
     /// LLM compaction state + manual trigger, rendered inside the popover.
@@ -8120,41 +8273,45 @@ private struct FloatingContextChip: View {
                 showContextBreakdown = true
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                // Budget-state tinting: amber at ≥85% of the window (soft
-                // warning — compaction will engage), red when the
-                // non-compactable prefix alone can't fit (send is gated).
-                if let warningColor {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: CGFloat(theme.captionSize) - 2))
-                        .foregroundColor(warningColor)
-                        .localizedHelp(
-                            isHardOverflow
-                                ? "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model."
-                                : "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality."
-                        )
-                }
-
-                Text(tokenText)
-                    .font(.system(size: CGFloat(theme.captionSize) - 1, weight: .medium, design: .monospaced))
-                    .foregroundColor(
-                        warningColor ?? (isStreaming ? theme.secondaryText : theme.tertiaryText)
+            // Circular budget gauge. Ring-state tinting: amber at ≥85% of
+            // the window (soft warning — compaction will engage), red when
+            // the non-compactable prefix alone can't fit (send is gated).
+            ZStack {
+                // Track color comes from a TEXT token, not a border token:
+                // borders are tuned to be faint against the background in
+                // many themes, while text tokens are guaranteed legible in
+                // every theme (custom themes must define them too), so the
+                // unused portion of the ring stays visible everywhere.
+                Circle()
+                    .stroke(theme.tertiaryText.opacity(0.45), lineWidth: 2.5)
+                Circle()
+                    .trim(from: 0, to: CGFloat(min(1, max(0, usageRatio ?? 0))))
+                    .stroke(
+                        warningColor ?? theme.accentColor,
+                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round)
                     )
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-
-                if !metaCompact {
-                    Text("tokens", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                        .foregroundColor(theme.tertiaryText.opacity(0.7))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
+                    .rotationEffect(.degrees(-90))
             }
-            .contentShape(Capsule())
+            .frame(width: 15, height: 15)
+            .frame(width: 24, height: 24)
+            .contentShape(Circle())
+            .animation(.easeOut(duration: 0.2), value: usageRatio)
         }
         .buttonStyle(.plain)
         .pointingHandCursor()
+        .help(
+            isHardOverflow
+                ? String(
+                    localized:
+                        "Context is full: the system prompt, tools, and input alone exceed this model's window. Shorten the input, disable tools, or pick a larger-context model.",
+                    bundle: .module)
+                : isNearLimit
+                    ? String(
+                        localized:
+                            "Context is nearly full (≥85% of the model window). Older messages will be compacted; consider starting a fresh chat for best quality.",
+                        bundle: .module)
+                    : String(localized: "Context used: \(tokenText) tokens", bundle: .module)
+        )
         .accessibilityLabel(
             Text("Context budget: \(tokenText) tokens", bundle: .module)
         )
