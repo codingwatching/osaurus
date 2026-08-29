@@ -240,7 +240,7 @@ let package = Package(
         // PLE table on SSD.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "b52ddf1829d0bb4ca01ced81bc7499743537a0ff"
+            revision: "aeb5e21c195d8519609488ef75a25ce7e48d8f88"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
