@@ -3,6 +3,38 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.2</title>
+            <pubDate>Sat, 29 Aug 2026 07:28:12 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.2</sparkle:version>
+            <sparkle:shortVersionString>0.24.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.2/Osaurus-0.24.2.dmg" length="74075982" type="application/octet-stream" sparkle:edSignature="BAx7bZlPExJsQGOWOUTohPUVeCekinVmE2FwIqQ7a2ffzwfoPidoZa1Qm5RSy+6iDO/bkvFIQo8geHqkkKkKDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Repin vmlx-swift to aeb5e21c19: QSA crash fix + end-of-output hang fix (#2532) by @jjang-ai
+- Agent loop: record which branch ended the run (telemetry only) (#2520) by @jjang-ai
+
+## 🚀 Features
+
+- simplify tools and plugins in settings (#2534) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Spawn admission: price a child by its bounded request, not the retention cap (#2533) by @jjang-ai
+- Evals: explicit fail-closed native-MTP controls (--mtp off|auto|d1|d2|d3) (#2531) by @jjang-ai
+- Agent loop: bound the truncated-read continuation steer (2 per file), keep the partial-read disclosure (#2528) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Enable sandboxing by default with hardened runtime (#2529) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.1...0.24.2
+]]></description>
+        </item>
+        <item>
             <title>0.24.1</title>
             <pubDate>Fri, 28 Aug 2026 16:57:27 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
