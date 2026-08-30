@@ -786,7 +786,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "787d5966a49cfa3c9a2d91a7bb2f7d353a292a3e"
+        let expectedRuntimeHardenedRevision = "aee2a8e0332400b09f31ee6b6723a48a980db336"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -3876,5 +3876,23 @@ struct RuntimePolicySourceTests {
         #expect(!crashReporting.contains("event.user = nil"))
         #expect(crashReporting.contains("event.serverName = nil"))
         #expect(crashReporting.contains("options.sendDefaultPii = false"))
+    }
+
+    @Test("manual MTP block stays visible and truthful in the model picker")
+    func manualMTPBlockPickerWiring() throws {
+        let picker = try Self.source("Views/Chat/FloatingInputCard.swift")
+
+        #expect(picker.contains("nativeMTPManuallyBlockedModels"))
+        #expect(picker.contains("manual=blocked"))
+        #expect(
+            picker.contains(
+                "nativeMTPManuallyBlockedModels.contains(identity) ? \"off\" : nativeMTPSelection"
+            ),
+            "A globally saved manual depth must render as Off for a bundle whose runtime blocks manual MTP."
+        )
+        #expect(
+            picker.contains("? [ModelOptionSegment(id: \"off\", label: L(\"Off\"))]"),
+            "Blocked bundles must not advertise selectable Auto or explicit-depth chips."
+        )
     }
 }
