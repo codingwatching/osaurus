@@ -36,6 +36,7 @@ import SwiftUI
 enum ConfigureScreen: Equatable {
     case home
     case byok
+    case claudeCode
 }
 
 /// Bring-your-own-key drill-in depth (inside `ConfigureScreen.byok`).
@@ -594,6 +595,17 @@ final class ConfigureAIState: ObservableObject {
         screen = .byok
     }
 
+    func enterClaudeCode() {
+        substateDirection = .forward
+        screen = .claudeCode
+    }
+
+    func chooseClaudeCodeAndContinue(onComplete: () -> Void) {
+        selectedBrainSource = .claudeCode
+        OnboardingTelemetry.brainSourceSelected(.claudeCode)
+        onComplete()
+    }
+
     /// Open the connect dialog for the current provider, pinning the auth
     /// method the tapped option row represents.
     func openConnectDialog(_ kind: ConnectDialogKind) {
@@ -861,6 +873,7 @@ struct ConfigureAIStepView: View {
         switch state.screen {
         case .home: return "home"
         case .byok: return "provider-\(state.currentAPIProvider?.rawValue ?? "none")"
+        case .claudeCode: return "claude-code"
         }
     }
 
@@ -880,6 +893,18 @@ struct ConfigureAIStepView: View {
             ConfigureAIHomePanel(state: state, onComplete: onComplete)
         case .byok:
             ConfigureAIProviderPanel(state: state)
+        case .claudeCode:
+            ClaudeCodeSetupStep(
+                onBack: {
+                    state.substateDirection = .backward
+                    state.screen = .home
+                },
+                onDone: {
+                    state.chooseClaudeCodeAndContinue(onComplete: onComplete)
+                },
+                completionTitle: "Use Claude Code",
+                requiresUsableCLI: true
+            )
         }
     }
 }
@@ -929,7 +954,7 @@ private struct ConfigureAILeftColumn: View {
 
             Spacer().frame(height: 24)
 
-            Text("A private brain that runs on your Mac", bundle: .module)
+            Text(title, bundle: .module)
                 .font(OnboardingTypography.heroTitle)
                 .tracking(0.4)
                 .foregroundColor(OnboardingPalette.labelPrimary)
@@ -938,10 +963,7 @@ private struct ConfigureAILeftColumn: View {
 
             Spacer().frame(height: 16)
 
-            Text(
-                "We've picked the best fit for your Mac and the specialty you chose, so your Dino can work locally — even offline.",
-                bundle: .module
-            )
+            Text(subtitle, bundle: .module)
             .font(OnboardingTypography.subtitle)
             .foregroundColor(OnboardingPalette.labelSecondary)
             .lineSpacing(1.5)
@@ -953,6 +975,18 @@ private struct ConfigureAILeftColumn: View {
             cta
                 .onboardingEntrance(3)
         }
+    }
+
+    private var title: LocalizedStringKey {
+        state.screen == .claudeCode
+            ? "Use your Claude Code account"
+            : "A private brain that runs on your Mac"
+    }
+
+    private var subtitle: LocalizedStringKey {
+        state.screen == .claudeCode
+            ? "Osaurus delegates sign-in and requests to Anthropic's Claude Code CLI. Credentials stay with the CLI; model requests run in the cloud."
+            : "We've picked the best fit for your Mac and the specialty you chose, so your Dino can work locally — even offline."
     }
 
     /// The design's white comic speech bubble: 196×64 text box, 12pt
@@ -1117,6 +1151,18 @@ private struct ConfigureAIHomePanel: View {
                 }
             }
 
+            OnboardingProviderChip(
+                logo: {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(OnboardingPalette.labelPrimary)
+                },
+                label: "Claude Code"
+            ) {
+                state.enterClaudeCode()
+            }
+            .onboardingEntrance(3 + Self.featuredPresets.count)
+
             if !state.showAllProviders {
                 OnboardingProviderChip(
                     logo: {
@@ -1133,7 +1179,7 @@ private struct ConfigureAIHomePanel: View {
                     }
                 }
                 .transition(.scale(scale: 0.85).combined(with: .opacity))
-                .onboardingEntrance(3 + Self.featuredPresets.count)
+                .onboardingEntrance(4 + Self.featuredPresets.count)
             }
         }
     }

@@ -160,6 +160,62 @@ struct MCPHTTPHandlerTests {
         }
     }
 
+    @Test func claude_bridge_grant_rejects_tools_outside_its_scope() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-tests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+            ToolConfigurationStore.overrideDirectory = tempDir
+            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+            ToolRegistry.shared.register(EchoTool())
+            ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
+            defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
+
+            let grant = await ClaudeCodeBridgeGrantStore.shared.mint(
+                agentId: UUID(),
+                allowsConfigWrites: false
+            )
+            defer { Task { await ClaudeCodeBridgeGrantStore.shared.revoke(grant) } }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            var request = URLRequest(
+                url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!
+            )
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(grant, forHTTPHeaderField: ClaudeCodeBridgeGrantStore.headerName)
+            request.authenticate()
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "name": EchoTool.nameStatic,
+                "arguments": ["text": "must not execute"],
+            ])
+
+            let (data, response) = try await URLSession.shared.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            let json = try #require(
+                try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            )
+            #expect(json["isError"] as? Bool == true)
+            let content = try #require(json["content"] as? [[String: Any]])
+            let envelopeText = try #require(content.first?["text"] as? String)
+            #expect(envelopeText.contains("outside this Claude Code turn's grant"))
+            #expect(envelopeText.contains(#""retryable":false"#))
+
+            request.setValue(
+                "\(grant)-tampered",
+                forHTTPHeaderField: ClaudeCodeBridgeGrantStore.headerName
+            )
+            let (invalidData, invalidResponse) = try await URLSession.shared.data(for: request)
+            #expect((invalidResponse as? HTTPURLResponse)?.statusCode == 200)
+            let invalidBody = String(decoding: invalidData, as: UTF8.self)
+            #expect(invalidBody.contains("invalid or expired"))
+        }
+    }
+
     @Test func mcp_call_refuses_externally_denied_tools() async throws {
         let server = try await startTestServer()
         defer { Task { await server.shutdown() } }

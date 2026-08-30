@@ -3870,6 +3870,29 @@ final class ChatSession: ObservableObject {
         agentId == Agent.defaultId ? nil : folderState.context
     }
 
+    /// Per-run options for the Claude Code subprocess backend.
+    ///
+    /// The working directory starts Claude Code in the folder the user picked
+    /// for this chat. It is not an Osaurus sandbox; enabled Claude Code tools
+    /// retain the macOS user's normal filesystem access. `agentId` travels
+    /// with the run because the
+    /// subprocess is out of process: the `@TaskLocal` chat identity cannot
+    /// follow it, so the MCP bridge mints a grant naming this agent instead.
+    private func claudeCodeRunOptions(for agentId: UUID) -> ClaudeCodeRunOptions {
+        let config = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
+        let root = activeFolderContext(for: agentId)?.rootPath
+        return ClaudeCodeRunOptions(
+            mode: config.mode,
+            allowWrites: config.allowWrites,
+            allowShell: config.allowShell,
+            allowOsaurusTools: config.allowOsaurusTools,
+            allowOsaurusConfigWrites: config.allowOsaurusConfigWrites,
+            osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
+            workingDirectory: root,
+            agentId: agentId
+        )
+    }
+
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
         let folder = activeFolderContext(for: agentId)
         let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
@@ -7141,6 +7164,7 @@ final class ChatSession: ObservableObject {
                                 session_id: self.sessionId?.uuidString
                             )
                             req.samplingParametersAreImplicit = true
+                            req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -7678,6 +7702,7 @@ final class ChatSession: ObservableObject {
                                     session_id: sessionId?.uuidString
                                 )
                                 finalReq.samplingParametersAreImplicit = true
+                                finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
                                 finalReq.runAsRemoteAgent = isRemoteAgentTarget
                                 finalReq.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix

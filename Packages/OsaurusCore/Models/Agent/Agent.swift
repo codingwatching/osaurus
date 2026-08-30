@@ -132,6 +132,9 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// sandbox backend is available; `enabled: false` is an explicit opt-out.
     /// The built-in Default agent is always hard-off at effective resolution.
     public var autonomousExec: AutonomousExecConfig?
+    /// Behavior of the Claude Code subprocess backend when this agent is on a
+    /// `claude-code/…` model. Nil = defaults (agent mode, read-only tools).
+    public var claudeCode: ClaudeCodeAgentConfig?
     /// Per-agent plugin instruction overrides keyed by plugin ID
     public var pluginInstructions: [String: String]?
     /// Whether this agent is advertised via Bonjour on the local network
@@ -195,6 +198,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         agentIndex: UInt32? = nil,
         agentAddress: String? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
+        claudeCode: ClaudeCodeAgentConfig? = nil,
         pluginInstructions: [String: String]? = nil,
         bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
@@ -227,6 +231,7 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
         self.autonomousExec = autonomousExec
+        self.claudeCode = claudeCode
         self.pluginInstructions = pluginInstructions
         self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
@@ -354,6 +359,8 @@ extension Agent {
         agentIndex = try c.decodeIfPresent(UInt32.self, forKey: .agentIndex)
         agentAddress = try c.decodeIfPresent(String.self, forKey: .agentAddress)
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
+        // Added after initial release; absent in older agent JSON.
+        claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
         bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
@@ -385,6 +392,75 @@ extension Agent {
         // Added after initial release; absent in older agent JSON.
         hostWorkspaceBookmark = try c.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
         hostWorkspacePath = try c.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
+    }
+}
+
+// MARK: - Claude Code Configuration
+
+/// Per-agent behavior for the Claude Code subprocess backend.
+///
+/// Only consulted when the agent is running a `claude-code/…` model; agents on
+/// any other model ignore it entirely.
+public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
+    /// Whether Claude Code runs its own agent loop and tools, or is reduced to
+    /// a plain text generator.
+    ///
+    /// Note that `.textOnly` means *no tools at all*, not "Osaurus's tools
+    /// instead": `claude -p` only accepts tool definitions over MCP, never as
+    /// OpenAI-style schemas, so Osaurus's tools cannot be forwarded to it.
+    public var mode: ClaudeCodeMode
+    /// Agent mode: auto-approve the file-writing built-ins (`Edit`, `Write`,
+    /// `NotebookEdit`). Defaults `false` — a run starts read-only and the user
+    /// opts into mutation explicitly.
+    public var allowWrites: Bool
+    /// Agent mode: auto-approve `Bash`. Defaults `false`. Note this is *not*
+    /// the Osaurus sandbox — Claude Code's shell runs unconfined on the host
+    /// under the user's own account.
+    public var allowShell: Bool
+    /// Agent mode: attach Osaurus's own config tools over MCP, so the run can
+    /// read this app's state. Defaults `false` — the tool definitions cost
+    /// context on every turn and only work while the Osaurus server is up.
+    public var allowOsaurusTools: Bool
+    /// Nested under `allowOsaurusTools`: also expose the Osaurus tools that
+    /// *change* configuration (agents, providers, models, plugins). Defaults
+    /// `false`, so the grant starts read-only like every other switch here.
+    public var allowOsaurusConfigWrites: Bool
+
+    public init(
+        mode: ClaudeCodeMode = .agent,
+        allowWrites: Bool = false,
+        allowShell: Bool = false,
+        allowOsaurusTools: Bool = false,
+        allowOsaurusConfigWrites: Bool = false
+    ) {
+        self.mode = mode
+        self.allowWrites = allowWrites
+        self.allowShell = allowShell
+        self.allowOsaurusTools = allowOsaurusTools
+        self.allowOsaurusConfigWrites = allowOsaurusConfigWrites
+    }
+
+    public static let `default` = ClaudeCodeAgentConfig()
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites
+    }
+
+    /// Custom decode so a missing key — or a `mode` written by a future build
+    /// that added a case — falls back to the safe defaults instead of failing
+    /// the whole agent decode and losing the user's agent.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let decoded = try? c.decodeIfPresent(ClaudeCodeMode.self, forKey: .mode) {
+            mode = decoded ?? .agent
+        } else {
+            mode = .agent
+        }
+        allowWrites = try c.decodeIfPresent(Bool.self, forKey: .allowWrites) ?? false
+        allowShell = try c.decodeIfPresent(Bool.self, forKey: .allowShell) ?? false
+        allowOsaurusTools = try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusTools) ?? false
+        allowOsaurusConfigWrites =
+            try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites) ?? false
     }
 }
 

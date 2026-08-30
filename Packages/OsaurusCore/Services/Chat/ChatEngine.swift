@@ -19,7 +19,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
     private var inferenceSource: InferenceSource = .httpAPI
 
     init(
-        services: [ModelService] = [FoundationModelService(), MLXService()],
+        services: [ModelService] = [FoundationModelService(), ClaudeCodeService(), MLXService()],
         installedModelsProvider: @escaping @Sendable () -> [String] = {
             MLXService.getAvailableModels()
         },
@@ -257,6 +257,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol {
             cacheStableSystemPrefix: request.cacheStableSystemPrefix,
             requestSource: inferenceSource,
             loadIntent: request.backgroundModelLoad ? .background : .interactive,
+            claudeCode: request.claudeCodeOptions,
             preserveExistingResidencyOwner: request.preserveExistingResidencyOwner
         )
 

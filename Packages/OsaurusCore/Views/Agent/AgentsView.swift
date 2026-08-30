@@ -1103,6 +1103,7 @@ struct AgentDetailView: View {
     @State private var systemPrompt: String = ""
     @State private var temperature: String = ""
     @State private var maxTokens: String = ""
+    @State private var claudeCodeConfig: ClaudeCodeAgentConfig = .default
     @State private var selectedThemeId: UUID?
     @State private var chatQuickActions: [AgentQuickAction]?
     @State private var editingQuickActionId: UUID?
@@ -2093,6 +2094,11 @@ struct AgentDetailView: View {
         voiceSection
         systemPromptSection
         defaultModelSection
+        if ClaudeCodeConfiguration.isAvailable()
+            || selectedModel?.hasPrefix(ClaudeCodeConfiguration.modelPrefix) == true
+        {
+            claudeCodeSection
+        }
         // Follow-up model override is a custom-agent lever; the Default agent
         // always uses the shared core model.
         if agent.id != Agent.defaultId {
@@ -2657,6 +2663,121 @@ struct AgentDetailView: View {
                 }
             }
         }
+    }
+
+    private var claudeCodeSection: some View {
+        AgentDetailSection(title: L("Claude Code"), icon: "terminal.fill") {
+            VStack(alignment: .leading, spacing: 14) {
+                Picker(
+                    L("Execution mode"),
+                    selection: Binding(
+                        get: { claudeCodeConfig.mode },
+                        set: { mode in updateClaudeCodeConfig { $0.mode = mode } }
+                    )
+                ) {
+                    Text("Agent", bundle: .module).tag(ClaudeCodeMode.agent)
+                    Text("Text only", bundle: .module).tag(ClaudeCodeMode.textOnly)
+                }
+                .pickerStyle(.segmented)
+
+                Text(
+                    claudeCodeConfig.mode == .agent
+                        ? "Claude Code runs its own agent loop under your macOS account. Read, Grep, and Glob are allowed by default; every wider capability is opt-in."
+                        : "Claude Code runs as a text generator with every built-in and MCP tool disabled.",
+                    bundle: .module
+                )
+                .font(.system(size: 11))
+                .foregroundColor(theme.tertiaryText)
+                .fixedSize(horizontal: false, vertical: true)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowWrites },
+                        set: { enabled in updateClaudeCodeConfig { $0.allowWrites = enabled } }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow file changes",
+                        detail: "Auto-approve Edit, Write, and NotebookEdit. These run with your macOS file access, starting in the chat folder."
+                    )
+                }
+                .disabled(claudeCodeConfig.mode != .agent)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowShell },
+                        set: { enabled in updateClaudeCodeConfig { $0.allowShell = enabled } }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow shell commands",
+                        detail: "Auto-approve Bash under your macOS account. This is not the Osaurus sandbox."
+                    )
+                }
+                .disabled(claudeCodeConfig.mode != .agent)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowOsaurusTools },
+                        set: { enabled in
+                            updateClaudeCodeConfig {
+                                $0.allowOsaurusTools = enabled
+                                if !enabled { $0.allowOsaurusConfigWrites = false }
+                            }
+                        }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow Osaurus read tools",
+                        detail: "Attach a scoped MCP bridge for status, list, describe, and search."
+                    )
+                }
+                .disabled(claudeCodeConfig.mode != .agent)
+
+                Toggle(
+                    isOn: Binding(
+                        get: { claudeCodeConfig.allowOsaurusConfigWrites },
+                        set: { enabled in
+                            updateClaudeCodeConfig { $0.allowOsaurusConfigWrites = enabled }
+                        }
+                    )
+                ) {
+                    claudeCodePermissionLabel(
+                        title: "Allow Osaurus configuration changes",
+                        detail: "Permit agent, provider, model, plugin, and MCP configuration writes."
+                    )
+                }
+                .disabled(
+                    claudeCodeConfig.mode != .agent
+                        || !claudeCodeConfig.allowOsaurusTools
+                )
+            }
+            .toggleStyle(.switch)
+        }
+    }
+
+    private func claudeCodePermissionLabel(
+        title: LocalizedStringKey,
+        detail: LocalizedStringKey
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title, bundle: .module)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(theme.primaryText)
+            Text(detail, bundle: .module)
+                .font(.system(size: 10))
+                .foregroundColor(theme.tertiaryText)
+        }
+    }
+
+    private func updateClaudeCodeConfig(
+        _ mutate: (inout ClaudeCodeAgentConfig) -> Void
+    ) {
+        var next = claudeCodeConfig
+        mutate(&next)
+        claudeCodeConfig = next
+        agentManager.updateClaudeCodeConfig(next, for: agent.id)
+        showSaveIndicator()
     }
 
     /// Per-agent model override for follow-up suggestion generation. Applies
@@ -6467,6 +6588,7 @@ struct AgentDetailView: View {
         systemPrompt = agent.systemPrompt
         temperature = agent.temperature.map { String($0) } ?? ""
         maxTokens = agent.maxTokens.map { String($0) } ?? ""
+        claudeCodeConfig = agentManager.effectiveClaudeCodeConfig(for: agent.id)
         selectedThemeId = agent.themeId
         chatQuickActions = agent.chatQuickActions
         chatGreetingDraft = agent.chatGreeting ?? ""
@@ -6682,6 +6804,7 @@ struct AgentDetailView: View {
             agentIndex: current.agentIndex,
             agentAddress: current.agentAddress,
             autonomousExec: current.autonomousExec,
+            claudeCode: current.claudeCode,
             pluginInstructions: effectivePluginInstructions,
             bonjourEnabled: current.bonjourEnabled,
             toolSelectionMode: current.toolSelectionMode,

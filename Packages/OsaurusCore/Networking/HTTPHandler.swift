@@ -10986,9 +10986,59 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
 
-                let result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
-                        try await ToolRegistry.shared.execute(name: toolName, argumentsJSON: argsJSON)
+                // Restore the chat identity the process boundary dropped.
+                //
+                // A bridged Claude Code turn reaches this handler as an ordinary
+                // loopback request, so the `@TaskLocal` agent id its in-process
+                // peers rely on is gone. A live grant — minted per turn, handed
+                // only to the child Osaurus spawned, revoked when the turn ends
+                // — is proof of which chat this call belongs to, so the agent it
+                // names is bound for the duration of this execution.
+                //
+                // `isExternalSurface` deliberately stays true: the caller is
+                // still out of process, so every other external restriction
+                // (the deny list above, unattended-prompt refusal) continues to
+                // apply. This grants attribution, not trust.
+                let bridgeGrantToken = head.headers.first(
+                    name: ClaudeCodeBridgeGrantStore.headerName
+                )
+                let bridgeGrant: ClaudeCodeBridgeGrant? = await {
+                    guard let bridgeGrantToken else { return nil }
+                    return await ClaudeCodeBridgeGrantStore.shared.resolve(bridgeGrantToken)
+                }()
+
+                let result: String
+                if bridgeGrantToken != nil, bridgeGrant == nil {
+                    // A caller that opts into bridge attribution must present a
+                    // live token. Falling back to ordinary loopback semantics
+                    // would let expired/revoked grants silently shed scope.
+                    result = ToolEnvelope.failure(
+                        kind: .rejected,
+                        message: "This Claude Code bridge grant is invalid or expired.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else if let bridgeGrant, !bridgeGrant.allowsTool(toolName) {
+                    // The stdio proxy also filters this surface, but it is not
+                    // the trust boundary: a child with Bash can make a direct
+                    // loopback request. Enforce the grant's immutable scope at
+                    // the receiving server before binding agent identity.
+                    result = ToolEnvelope.failure(
+                        kind: .rejected,
+                        message: "Tool '\(toolName)' is outside this Claude Code turn's grant.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else {
+                    result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                        try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                            try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
+                                try await ToolRegistry.shared.execute(
+                                    name: toolName,
+                                    argumentsJSON: argsJSON
+                                )
+                            }
+                        }
                     }
                 }
                 // MCP transport stays HTTP 200; tool-level failure is signaled

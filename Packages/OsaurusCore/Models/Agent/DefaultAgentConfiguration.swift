@@ -53,6 +53,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// Autonomous-exec policy for the Default agent's sandbox.
     /// `nil` keeps autonomous off.
     public var autonomousExec: AutonomousExecConfig?
+    /// Claude Code backend behavior for the Default agent.
+    public var claudeCode: ClaudeCodeAgentConfig?
 
     /// Tool selection mode (auto / manual). `nil` defaults to `.auto`.
     public var toolSelectionMode: ToolSelectionMode?
@@ -79,6 +81,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
+        claudeCode: ClaudeCodeAgentConfig? = nil,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil
     ) {
@@ -88,6 +91,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.autonomousExec = autonomousExec
+        self.claudeCode = claudeCode
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
     }
@@ -100,6 +104,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens)
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
+        // Added after initial release; absent in older config JSON.
+        claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
         // Legacy `manualSkillNames` keys are intentionally ignored: skills are

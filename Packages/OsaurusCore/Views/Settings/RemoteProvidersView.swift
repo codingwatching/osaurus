@@ -34,6 +34,8 @@ struct RemoteProvidersView: View {
         /// Open the add sheet directly on the grouped "Use an API key" sub-list
         /// (only meaningful when `preset` is nil).
         var startAtAPIKeyPicker: Bool = false
+        /// Open directly on Claude Code's CLI setup.
+        var startAtClaudeCode: Bool = false
     }
 
     var body: some View {
@@ -79,7 +81,8 @@ struct RemoteProvidersView: View {
             RemoteProviderEditSheet(
                 provider: nil,
                 initialPreset: config.preset,
-                startAtAPIKeyPicker: config.startAtAPIKeyPicker
+                startAtAPIKeyPicker: config.startAtAPIKeyPicker,
+                startAtClaudeCode: config.startAtClaudeCode
             ) { provider, apiKey, oauthTokens in
                 manager.addProvider(provider, apiKey: apiKey, oauthTokens: oauthTokens)
                 refreshCredentialPresence()
@@ -192,6 +195,10 @@ struct RemoteProvidersView: View {
         addSheetConfig = AddSheetConfig(preset: nil, startAtAPIKeyPicker: true)
     }
 
+    private func presentClaudeCodeSetup() {
+        addSheetConfig = AddSheetConfig(preset: nil, startAtClaudeCode: true)
+    }
+
     private var emptyStateView: some View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
@@ -224,6 +231,15 @@ struct RemoteProvidersView: View {
                     ProviderRowCard(entry: entry) {
                         presentAddSheet(for: entry.preset)
                     }
+                }
+
+                ProviderRowCard(
+                    icon: "terminal.fill",
+                    title: "Claude Code",
+                    subtitle: "Use a signed-in Claude Code CLI",
+                    gradient: ClaudeCodeConfiguration.brandGradient
+                ) {
+                    presentClaudeCodeSetup()
                 }
 
                 ProviderRowCard(

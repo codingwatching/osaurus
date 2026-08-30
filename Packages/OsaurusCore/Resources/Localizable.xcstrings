@@ -1,6 +1,26 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Claude Code": {
+    },
+    "Claude Code couldn't complete the turn: %@": {
+    },
+    "Claude Code exited with code %d.": {
+    },
+    "Claude Code exited with code %d: %@": {
+    },
+    "Claude Code hit a subscription rate limit: %@": {
+    },
+    "Claude Code isn't signed in. Open `claude` in a terminal, sign in, then try again.": {
+    },
+    "Couldn't start Claude Code: %@": {
+    },
+    "Execution mode": {
+    },
+    "Runs through your signed-in Claude Code CLI": {
+    },
+    "this agent runs Claude Code in text-only mode, which disables all tools": {
+    },
     "Cached context from the previous model cannot be reused, and the new model may interpret earlier turns differently. Start a new chat for the most consistent results.": {
       "localizations": {
         "de": { "stringUnit": { "state": "translated", "value": "Der zwischengespeicherte Kontext des vorherigen Modells kann nicht wiederverwendet werden, und das neue Modell kann frühere Nachrichten anders interpretieren. Starte für möglichst konsistente Ergebnisse einen neuen Chat." } },
