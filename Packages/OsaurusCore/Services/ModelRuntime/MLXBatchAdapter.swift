@@ -140,7 +140,7 @@ struct MLXBatchAdapter {
         /// display-lie this readout exists to prevent.
         forcesGreedyForNativeMTP: Bool = false,
         nativeMTPFallbackReason: String? = nil,
-        nativeMTPExplicitSamplingFallback: Bool = false,
+        nativeMTPRequestFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
@@ -200,7 +200,7 @@ struct MLXBatchAdapter {
             frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
             draftStrategy: draftStrategy?.kindName,
             mtpFallbackReason: nativeMTPFallbackReason,
-            compiledBatchDecode: nativeMTPExplicitSamplingFallback
+            compiledBatchDecode: nativeMTPRequestFallback
                 ? false
                 : shouldEnableCompiledBatchDecode(
                     modelName: modelName,
@@ -289,45 +289,32 @@ struct MLXBatchAdapter {
         return draftStrategy
     }
 
-    private static func nativeMTPFallbackReason(
-        generation: GenerationParameters,
-        draftStrategy: MLXLMCommon.DraftStrategy?,
+    static func nativeMTPFallbackReason(
+        requestedNativeMTP: Bool = false,
+        requestedDraftStrategy: MLXLMCommon.DraftStrategy?,
+        effectiveDraftStrategy: MLXLMCommon.DraftStrategy?,
         promptTokenCount: Int,
-        coldWarmup: Bool
+        coldWarmup: Bool,
+        loadResolutionReason: String? = nil
     ) -> String? {
-        guard draftStrategy?.usesNativeMTP == true else { return nil }
-        if coldWarmup { return "cold_warmup" }
-        if !requestSamplingIsExplicitGreedy(
-            generation: generation,
-            draftStrategy: draftStrategy
-        ) {
-            return "explicit_sampling"
+        guard requestedNativeMTP || requestedDraftStrategy?.usesNativeMTP == true else {
+            return nil
         }
-        if promptTokenCount < nativeMTPTinyPromptMinimumTokens {
+        // A fallback reason describes a strategy that was requested but did
+        // not run. Sampling no longer drops native MTP: the submit path keeps
+        // it active and resolves its running sampler separately. Reporting
+        // `explicit_sampling` while `native_mtp:dN` actually executes makes
+        // the eval/API telemetry internally contradictory.
+        guard effectiveDraftStrategy?.usesNativeMTP != true else { return nil }
+        if requestedDraftStrategy?.usesNativeMTP == true, coldWarmup {
+            return "cold_warmup"
+        }
+        if requestedDraftStrategy?.usesNativeMTP == true,
+            promptTokenCount < nativeMTPTinyPromptMinimumTokens
+        {
             return "tiny_prompt"
         }
-        return nil
-    }
-
-    private static func requestSamplingIsExplicitGreedy(
-        generation: GenerationParameters,
-        draftStrategy: MLXLMCommon.DraftStrategy?
-    ) -> Bool {
-        guard draftStrategy?.usesNativeMTP == true else { return false }
-        if generation.samplingParametersAreImplicit {
-            return false
-        }
-        guard generation.temperature == 0 else { return false }
-        if let topP = generation.topPOverride, topP < 1 { return false }
-        if let topK = generation.topKOverride, topK != 0 { return false }
-        if let minP = generation.minPOverride, minP != 0 { return false }
-        if let repetitionPenalty = generation.repetitionPenalty,
-            repetitionPenalty != 0,
-            repetitionPenalty != 1
-        {
-            return false
-        }
-        return true
+        return loadResolutionReason
     }
 
     private static func effectiveRepetitionPenalty(
@@ -1462,6 +1449,8 @@ struct MLXBatchAdapter {
         toolChoice: ToolChoiceOption?,
         stopSequences: [String],
         draftStrategy: MLXLMCommon.DraftStrategy?,
+        nativeMTPRequested: Bool = false,
+        nativeMTPLoadResolutionReason: String? = nil,
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async throws -> PreparedStream {
@@ -1584,12 +1573,14 @@ struct MLXBatchAdapter {
             disableNativeMTP: nativeMTPColdWarmup
         )
         let nativeMTPFallbackReason = Self.nativeMTPFallbackReason(
-            generation: generation,
-            draftStrategy: draftStrategy,
+            requestedNativeMTP: nativeMTPRequested,
+            requestedDraftStrategy: draftStrategy,
+            effectiveDraftStrategy: effectiveDraftStrategy,
             promptTokenCount: prepared.promptTokens.count,
-            coldWarmup: nativeMTPColdWarmup
+            coldWarmup: nativeMTPColdWarmup,
+            loadResolutionReason: nativeMTPLoadResolutionReason
         )
-        let nativeMTPExplicitSamplingFallback =
+        let nativeMTPRequestFallback =
             draftStrategy?.usesNativeMTP == true && effectiveDraftStrategy == nil
         // Fetched BEFORE the effective settings so compiled-decode
         // eligibility can key off the container's REAL per-layer cache
@@ -1605,7 +1596,7 @@ struct MLXBatchAdapter {
             draftStrategy: effectiveDraftStrategy,
             forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPFallbackReason: nativeMTPFallbackReason,
-            nativeMTPExplicitSamplingFallback: nativeMTPExplicitSamplingFallback,
+            nativeMTPRequestFallback: nativeMTPRequestFallback,
             cacheTopology: cacheTopology,
             stage: "submitted_to_batch_engine"
         )
