@@ -3,6 +3,55 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.24.3</title>
+            <pubDate>Mon, 31 Aug 2026 23:09:11 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.24.3</sparkle:version>
+            <sparkle:shortVersionString>0.24.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.24.3/Osaurus-0.24.3.dmg" length="74339113" type="application/octet-stream" sparkle:edSignature="U/e8NUbfj8EnqklrCk+M8xpYTWcmnQROfIL5AjtQ5uwLWGcryeR/SFlAN2k1YKqcKc2xt2BCuZlwtzvZb7tqBg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Advance the vmlx-swift pin to 1315fdcb (DeepseekV3 MoE f32 residual fix) (#2573) by @jjang-ai
+- Add Claude Code CLI integration (#2257) by @Yao920127
+- Warn when switching models mid-conversation (#2538) by @jjang-ai
+- Repin vMLX for 90+ tok/s Ornith 35B decode (#2553) by @jjang-ai
+- Repin vMLX for scoped Ornith 35B MTP safety (#2549) by @jjang-ai
+- evals(community): OsaurusAI/Muse-Glimmer-30B-JANG\_6M on Apple M5 Max (#2544) by @jax-0n-git
+- Repin vMLX with Qwen 3.8 legacy-parser correction (#2543) by @jjang-ai
+
+## 🐛 Bug Fixes
+
+- Stop the memory-safety profile default from clamping the MLX allocator pool (#2572) by @jjang-ai
+- Use Raptor for mainstream onboarding defaults (#2574) by @jjang-ai
+- Preserve reusable cache checkpoints across tool dispatch (#2571) by @jjang-ai
+- Fix embedding discovery in configured models directory (#2570) by @jjang-ai
+- Fix stale agent completion and heal misaligned model bundles (#2567) by @jjang-ai
+- Hide local memory warnings for cloud models (#2566) by @jjang-ai
+- Show and cancel exact live inference work (#2563) by @jjang-ai
+- Restore type tags on Responses Lite namespace tools (#2565) by @tpae
+- Preserve the admitted allocator ceiling for native MTP (#2561) by @jjang-ai
+- Recover media rejections and harden OpenAI Responses (#2562) by @tpae
+- Remove hidden HTTP reasoning-budget coercion (#2560) by @jjang-ai
+- Report native MTP fallback only when MTP did not run (#2554) by @jjang-ai
+- Give loaded skills a directory anchor for bundled resources (#2555) by @jjang-ai
+- Repin cancellable speculative prefill runtime (#2557) by @jjang-ai
+- Make denied chat tool outcomes visible and bounded (#2539) by @jjang-ai
+- Repin serialized MLX host reads for Qwen3.8 server crash (#2556) by @jjang-ai
+- Recognize bundle-declared local reasoning channels (#2545) by @jjang-ai
+- Evals: score grounded filesystem access across equivalent tools (#2548) by @jjang-ai
+- Make batch evals architecture-aware and truthful (#2536) by @jjang-ai
+- Evals: preserve agent-loop exit and architecture cache taxonomy (#2546) by @jjang-ai
+- Preserve explicit reasoning on the first cold send (#2537) by @jjang-ai
+- Remove the hidden Orchestrator tool kill switch (#2541) by @jjang-ai
+- Fix sequential spawn capacity after active file-cache growth (#2535) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.2...0.24.3
+]]></description>
+        </item>
+        <item>
             <title>0.24.2</title>
             <pubDate>Sat, 29 Aug 2026 07:28:12 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
