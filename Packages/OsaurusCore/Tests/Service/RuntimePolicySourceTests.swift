@@ -794,7 +794,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "95f22d5d4219e8ece043aa096c7205508ad64e7b"
+        let expectedRuntimeHardenedRevision = "e025cd77c4adf7f1813d157ea0fbb6514f4e86f4"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -1434,10 +1434,12 @@ struct RuntimePolicySourceTests {
         #expect(
             adapter.contains("post-generation disk-cache store")
                 && adapter.contains("for await event in upstream")
-                && adapter.contains(
-                    "if case .info = event {\n                        continuation.yield(event)\n                        continue\n                    }"
-                ),
-            "adapter must forward terminal info but keep draining vmlx until the upstream stream finishes, so the solo lease covers post-generation cache persistence"
+                && adapter.contains("terminalInfo = event")
+                && adapter.contains("await onEngineDrained()")
+                && adapter.contains("if let terminalInfo {")
+                && adapter.contains("continuation.yield(terminalInfo)")
+                && adapter.contains("continuation.finish()"),
+            "adapter must hold terminal info until vmlx, cache persistence, and allocator teardown have drained, so an immediate follow-up cannot overlap the prior allocator window"
         )
         #expect(
             adapter.contains("continuation.onTermination = { @Sendable _ in")
@@ -2743,7 +2745,8 @@ struct RuntimePolicySourceTests {
         #expect(runtime.contains("configuration: serverSettings.resolvedModelConfiguration("))
         #expect(runtime.contains("loadConfiguration: mtpPlan.loadConfiguration"))
         #expect(runtime.contains("draftStrategy: mtpPlan.draftStrategy"))
-        #expect(runtime.contains("draftStrategy: holder.draftStrategy"))
+        #expect(runtime.contains("let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)"))
+        #expect(runtime.contains("draftStrategy: requestStrategy"))
         #expect(runtime.contains("params.draftStrategy = draftStrategy"))
         #expect(adapter.contains("draftStrategy: MLXLMCommon.DraftStrategy?"))
         #expect(adapter.contains("draftStrategy: draftStrategy"))
