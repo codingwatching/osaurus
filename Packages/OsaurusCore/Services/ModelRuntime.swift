@@ -1930,6 +1930,19 @@ public actor ModelRuntime {
         let claim = UUID()
         residencyUnloadClaims[name] = claim
         defer { finishResidencyUnloadClaim(name: name, claim: claim) }
+        let unloadActivityID = UUID()
+        await InferenceActivityRegistry.shared.begin(
+            id: unloadActivityID,
+            modelName: name,
+            source: lastUseSource[name] ?? .chatUI,
+            sessionID: nil,
+            phase: .unloading
+        )
+        defer {
+            Task {
+                await InferenceActivityRegistry.shared.finish(id: unloadActivityID)
+            }
+        }
 
         if reason == .idlePolicy, let idleDecisionID {
             await ModelResidencyManager.shared.cancel(
@@ -4966,6 +4979,15 @@ public actor ModelRuntime {
         )
         defer { finishModelDeletionProtectedAccess(deletionAccess) }
 
+        let activityID = parameters.activityID
+        await InferenceActivityRegistry.shared.begin(
+            id: activityID,
+            modelName: modelName,
+            source: parameters.activitySource,
+            sessionID: parameters.sessionId,
+            phase: modelCache[modelName] == nil ? .loading : .queued
+        )
+
         genLog.info("generateEventStream: start model=\(modelName, privacy: .public)")
         await markModelActiveForResidency(modelName)
         // Ownership belongs only to the handoff that cold-published this
@@ -5022,6 +5044,7 @@ public actor ModelRuntime {
             if parameters.suppressProgressUI {
                 WarmupProgressHub.shared.finish(model: modelName)
             }
+            await InferenceActivityRegistry.shared.finish(id: activityID)
             throw error
         }
         if shouldReportModelLoad {
@@ -5036,6 +5059,7 @@ public actor ModelRuntime {
             } else {
                 await scheduleIdleResidency(for: modelName)
             }
+            await InferenceActivityRegistry.shared.finish(id: activityID)
             throw CancellationError()
         }
 
@@ -5051,6 +5075,8 @@ public actor ModelRuntime {
         let buildTools: @Sendable () -> [[String: any Sendable]]? = {
             ModelRuntime.makeTokenizerTools(tools: tools, toolChoice: toolChoice)
         }
+
+        await InferenceActivityRegistry.shared.update(id: activityID, phase: .prefilling)
 
         let prepared: MLXBatchAdapter.PreparedStream
         let requestStrategy = Self.requestDraftStrategy(holder.draftStrategy)
@@ -5088,6 +5114,7 @@ public actor ModelRuntime {
             await ModelLease.shared.release(modelName)
             await scheduleIdleResidency(for: modelName)
             finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
+            await InferenceActivityRegistry.shared.finish(id: activityID)
             throw error
         }
 
@@ -5107,11 +5134,16 @@ public actor ModelRuntime {
             } onCancel: {
                 innerProducer.cancel()
             }
+            finishGenerationAllocatorWindowIfNeeded(usesGenerationAllocatorWindow)
             await ModelLease.shared.release(modelName)
             await self.scheduleIdleResidency(for: modelName)
             self.clearGenerationTask(id: genID)
+            await InferenceActivityRegistry.shared.finish(id: activityID)
         }
         activeGenerationTasks[genID] = ActiveGenerationRecord(modelName: modelName, task: activeTask)
+        await InferenceActivityRegistry.shared.installCancellation(id: activityID) {
+            activeTask.cancel()
+        }
 
         return GenerationEventMapper.map(
             events: prepared.stream,
@@ -5133,6 +5165,20 @@ public actor ModelRuntime {
                 // `MLXBatchAdapter.generate` would close the window before
                 // any prefill work happened. Later calls no-op.
                 SwapPressureMonitor.shared.noteFirstOutput(model: modelName)
+                Task {
+                    await InferenceActivityRegistry.shared.update(
+                        id: activityID,
+                        phase: .generating
+                    )
+                }
+            },
+            onCompletionInfo: {
+                Task {
+                    await InferenceActivityRegistry.shared.update(
+                        id: activityID,
+                        phase: .finishing
+                    )
+                }
             }
         )
     }
