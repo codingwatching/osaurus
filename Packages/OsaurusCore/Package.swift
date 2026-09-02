@@ -276,9 +276,31 @@ let package = Package(
         // after an emitted tool call is a natural .stop (stores run), so the
         // adapter stops the engine at dispatch instead of draining the
         // model's post-tool prose to EOS (~110s of dead decode measured).
+        // vmlx-swift#401 fuses GDN decode input projections by quantization
+        // group (+2.2% 27B decode), runs MLA decode SDPA in the cache dtype
+        // instead of casting the full-context KV to fp32 every token (Raptor
+        // 2.4x at 26k ctx; DSV3/V4 + Bailing families), and caches the QSA
+        // indexer's processed pool blocks (append-only) so Flash Next stops
+        // re-pooling its whole index history per token. vmlx-swift#404
+        // reorders Qwen3VL vision rows to placeholder order so a video turn
+        // followed by an image turn no longer swaps the two feature blocks
+        // (same defect #298 fixed for qwen3_5; Qwen3VL also re-applies rows
+        // per deepstack layer, covered by the same permutation).
+        // vmlx-swift#405 completes the fp32 sweep: DSV4 dense indexer and
+        // GLM5-next sparse index score in the pool's native dtype instead of
+        // copying full-history pools to fp32 per decode token (selection
+        // logits only; env fallbacks; load-bearing fp32 sites documented).
+        // vmlx-swift#407 pins quantized-module outputs to the activation
+        // dtype: f16 JANG scales no longer silently promote bf16 models to
+        // an fp32 activation path (which doubled every KV/disk cache entry
+        // and disqualified compiled-decode regions); 21 MoE reducers get the
+        // DeepseekV3 score-cast pattern; repo-wide source guard added.
+        // vmlx-swift#408 pins quantized-embedding output to bf16 under the
+        // Gemma-4/DSV4 jang_affine mmap preserve branches (the last audited
+        // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "de82613a9afac92705fe80f9c5156fedd8a0fee9"
+            revision: "2422cfb8e6d499d865ba9546c0e1e2f0bb08c4e5"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
