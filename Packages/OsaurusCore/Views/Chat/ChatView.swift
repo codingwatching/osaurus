@@ -157,10 +157,19 @@ final class ChatSession: ObservableObject {
 
     @Published var turns: [ChatTurn] = []
 
+    /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
+    /// terminal info) even though the RUN has not ended: the adapter keeps the
+    /// stream open through vmlx's post-generation cache store (9.5–15 s on a
+    /// 96 GB bundle, measured 2026-09-04) to preserve allocator ordering. The
+    /// streaming cursor keys on this so it stops at the last letter; the send
+    /// gate keys on `isStreaming`, which still waits for the real end.
+    @Published var outputComplete: Bool = false
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
             if isStreaming {
+                outputComplete = false
                 ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
                 beginRunProgressMonitor()
             } else {
@@ -1791,7 +1800,7 @@ final class ChatSession: ObservableObject {
         // In Mode 2 the remote agent owns the conversation, so its name heads
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
-        var streamingTurnId = isStreaming ? turns.last?.id : nil
+        var streamingTurnId = (isStreaming && !outputComplete) ? turns.last?.id : nil
 
         // While a send waits on the pre-send warm-up handshake there is no
         // assistant turn yet; render a placeholder typing-indicator group so
@@ -4525,6 +4534,10 @@ final class ChatSession: ObservableObject {
         currentTurn.terminalStopReason = nil
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
+        currentTurn.lastOutputAt = nil
+        // Output-complete relay: the adapter announces the instant vmlx's
+        // terminal info arrives (before the cache-store tail it withholds the
+        // stream end for). Stop the cursor and stamp completion right then.
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
@@ -4579,6 +4592,41 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
+        // The relay fires when the ENGINE is done; the last deltas may still
+        // be in flight to this loop and the smooth-streaming pacer may still be
+        // painting them (live: "…247 248 249 2" shown as complete for the
+        // whole tail — the "50" was in the pacing buffer). So completion is
+        // settled, not stamped: wait for a quiet window with no new delta,
+        // drain the processor so every character is painted, THEN stop the
+        // cursor and stamp. No engine output can follow `.info`, so the quiet
+        // window only ever waits on delivery, never on generation.
+        var lastDeltaAt = Date()
+        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
+            .compactMap { $0 }
+            .filter { $0.at >= streamStartTime }
+            .first()
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak currentTurn] completion in
+                guard let self else { return }
+                Task { @MainActor [weak self, weak currentTurn] in
+                    let quiet: TimeInterval = 0.15
+                    var waited: TimeInterval = 0
+                    while Date().timeIntervalSince(lastDeltaAt) < quiet, waited < 3 {
+                        try? await Task.sleep(nanoseconds: 50_000_000); waited += 0.05
+                    }
+                    await processor.finalize()
+                    guard let self, self.activeRunId == runId else { return }
+                    let at = Date()
+                    if let turn = currentTurn {
+                        if turn.completedAt == nil { turn.completedAt = at }
+                        if turn.lastOutputAt == nil { turn.lastOutputAt = at }
+                    }
+                    self.outputComplete = true
+                    self.rebuildVisibleBlocks()
+                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail)")
+                }
+            }
+        defer { outputCompleteSub.cancel() }
 
         // The engine surfaces parsed tool calls by *throwing* a
         // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
@@ -4833,6 +4881,7 @@ final class ChatSession: ObservableObject {
                         now: now,
                         turn: currentTurn
                     )
+                    currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
                 } else if !delta.isEmpty {
                     let now = Date()
@@ -4844,6 +4893,7 @@ final class ChatSession: ObservableObject {
                         ttftTrace?.emit()
                     }
                     uiDeltaCount += 1
+                    lastDeltaAt = now
                     // Content delta — counted uniformly with reasoning.
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
@@ -4853,6 +4903,7 @@ final class ChatSession: ObservableObject {
                         now: now,
                         turn: currentTurn
                     )
+                    currentTurn.lastOutputAt = now
                     processor.receiveDelta(delta)
 
                     // The model has collapsed into a phrase-repetition loop.
@@ -4958,9 +5009,19 @@ final class ChatSession: ObservableObject {
         // unconditionally so cancelled and zero-token streams still get
         // a timestamp — the token count tells the consumer how much was
         // actually generated.
-        currentTurn.completedAt = Date()
+        let streamEndedAt = Date()
+        currentTurn.completedAt = streamEndedAt
 
-        let totalTime = Date().timeIntervalSince(streamStartTime)
+        let totalTime = streamEndedAt.timeIntervalSince(streamStartTime)
+        // Last visible delta → stream termination. For local models this is
+        // vmlx's post-generation cache store (the adapter holds the terminal
+        // stats until the upstream drains): measured 4.3 s AR / 10–13 s
+        // native-MTP on a 930-token JANG_4M answer. A tok/s derived from
+        // `completedAt` silently absorbs it; this makes it visible per turn.
+        let visibleTailMs =
+            currentTurn.lastOutputAt.map {
+                Int(max(0, streamEndedAt.timeIntervalSince($0)) * 1000)
+            } ?? -1
         let uiSentinelOnlyCount =
             uiToolSentinelCount + uiReasoningItemCount + uiStatsHintCount
             + uiBillingHintCount + uiPrefillHintCount
@@ -4969,7 +5030,7 @@ final class ChatSession: ObservableObject {
             ? (uiSentinelOnlyCount > 0 ? "sentinel-only" : "empty")
             : "non-empty"
         print(
-            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
+            "[Osaurus][UI] Stream consumption completed: contentDeltas=\(uiDeltaCount) reasoningDeltas=\(uiReasoningDeltaCount) classification=\(uiStreamClassification) in \(String(format: "%.2f", totalTime))s, lastOutput→completion tailMs=\(visibleTailMs), final contentLen=\(currentTurn.contentLength), toolSentinels=\(uiToolSentinelCount), reasoningItems=\(uiReasoningItemCount), stats=\(uiStatsHintCount), billing=\(uiBillingHintCount), prefill=\(uiPrefillHintCount), capturedTools=\(capturedInvocations.count)"
         )
 
         return (capturedInvocations, currentTurn)
