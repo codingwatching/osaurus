@@ -243,6 +243,11 @@ public final class ToolRegistry: ObservableObject {
             // editing: restating a long document is slow and truncates, and a
             // truncated restatement replaces the original.
             EditKnowledgeTool(),
+            // Skill self-improvement: find/replace on a user skill's
+            // instructions, behind the same `.ask` modal. Without it, skills
+            // are read-only text in the prompt and "update my skill" gets a
+            // fabricated "Done" with nothing saved.
+            SkillUpdateTool(),
             // Knowledge curation loop: staleness tickets (annotation only,
             // same gate as the retrieval tools). Tickets remain the right
             // shape for drift the agent NOTICES but is not being asked to fix
@@ -540,6 +545,9 @@ public final class ToolRegistry: ObservableObject {
         // modal, which an external caller cannot be shown, so there is no
         // safe way to honor these off-surface.
         "write_knowledge", "delete_knowledge", "edit_knowledge",
+        // Same class: mutates the user's skills on disk, and its only gate is
+        // the interactive approval modal.
+        "update_skill",
     ]
 
     /// Tool classes that must never be invocable from EXTERNAL surfaces
@@ -2392,7 +2400,8 @@ public final class ToolRegistry: ObservableObject {
             }
         }
 
-        if !runtimeManaged,
+        let onDemandBuiltIn = Self.onDemandBuiltInToolNames.contains(toolName)
+        if !runtimeManaged, !onDemandBuiltIn,
             let selectedPreflightNames,
             !selectedPreflightNames.contains(toolName)
         {
@@ -2401,7 +2410,9 @@ public final class ToolRegistry: ObservableObject {
         }
 
         if reasons.isEmpty {
-            if dynamic {
+            // On-demand built-ins read as loadable, not "already in the
+            // baseline": they are deliberately kept out of it.
+            if dynamic || onDemandBuiltIn {
                 appendReason(.loadableViaCapabilitiesLoad)
                 details.append(L("registered \(runtime) tool; load with capabilities_load"))
             } else {
@@ -2530,6 +2541,22 @@ public final class ToolRegistry: ObservableObject {
     /// strips them otherwise. Indexing them would let the model "discover" a
     /// capability it can never load (the per-agent gate re-strips it), so they
     /// are kept out of the search index entirely.
+    /// Built-in tools that are kept OUT of every turn-1 baseline and enter a
+    /// session only through `capabilities` load. The opposite contract from
+    /// `nonDiscoverableBuiltInToolNames`: discoverable, and loadable by any
+    /// agent that has the gateway.
+    ///
+    /// Exists for `update_skill`. Most users never edit a skill from chat, and
+    /// a spec in the baseline is a spec in every user's cached prompt prefix:
+    /// adding one costs a cold prefill per conversation after the update, on
+    /// every device. Loading it on demand appends the schema to the
+    /// conversation suffix instead, so the prefix stays byte-identical for
+    /// everyone who never asks. The `.ask` permission modal remains the gate;
+    /// this set only decides how the spec reaches the schema.
+    nonisolated static let onDemandBuiltInToolNames: Set<String> = [
+        "update_skill"
+    ]
+
     static let nonDiscoverableBuiltInToolNames: Set<String> = [
         ComputerUseTool.toolName,
         BrowserUseTool.toolName,
