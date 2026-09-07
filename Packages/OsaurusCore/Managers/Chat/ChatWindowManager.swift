@@ -648,7 +648,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
-        panel.contentViewController = hostingController
+        attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
 
@@ -675,19 +675,49 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
-        panel.contentViewController = hostingController
+        attach(hostingController, to: panel)
 
         applyWindowFramePersistence(panel: panel)
 
         return panel
     }
 
+    /// Default size for a brand-new chat window (before any frame autosave
+    /// exists): the whole visible area of the target screen, i.e. everything
+    /// but the menu bar and Dock. The chat is the app's main surface, so it
+    /// opens full-size and the user shrinks it if they want; their choice is
+    /// then remembered by frame autosave. `WindowConfiguration.chat` is only
+    /// the fallback when no screen is known.
+    static func defaultWindowSize(fitting screen: NSScreen?) -> NSSize {
+        guard let vf = screen?.visibleFrame else { return WindowConfiguration.chat.defaultSize }
+        return vf.size
+    }
+
+    /// Install the SwiftUI root without letting it dictate the window size.
+    ///
+    /// AppKit owns chat window size via the default size and frame autosave.
+    /// With the hosting controller's default `sizingOptions`, attaching it
+    /// pushes the root view's measured size onto the window, which resolved
+    /// to the view's *minimum* (680pt) and shrank every new window. The
+    /// management window disables this for the same reason. The SwiftUI
+    /// minimum is re-applied as the panel's `contentMinSize` so the user
+    /// still can't drag the window below what the layout supports.
+    private func attach(_ hostingController: NSHostingController<some View>, to panel: ChatPanel) {
+        if #available(macOS 13.0, *) {
+            hostingController.sizingOptions = []
+        }
+        let contentSize = panel.contentRect(forFrameRect: panel.frame).size
+        panel.contentViewController = hostingController
+        panel.contentMinSize = NSSize(width: 680, height: 575)
+        panel.setContentSize(contentSize)
+    }
+
     /// Shared logic for creating the basic ChatPanel with its toolbar and delegate.
     private func createChatPanel(windowId: UUID, windowState: ChatWindowState) -> ChatPanel {
         // Calculate centered position on active screen, with offset for multiple windows
-        let defaultSize = NSSize(width: 800, height: 610)
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let defaultSize = Self.defaultWindowSize(fitting: screen)
 
         // Cascade offset based on number of existing windows (25pt per window)
         // Use count - 1 so the first window starts at the base position
