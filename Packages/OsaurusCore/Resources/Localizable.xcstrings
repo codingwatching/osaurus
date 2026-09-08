@@ -123627,36 +123627,36 @@
         }
       }
     },
-    "New chats in this project open with this folder.": {
+    "New chats in this project open with this folder. Their agent's sandbox is turned off, since a chat uses either a folder or the sandbox.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner."
+            "value": "Neue Chats in diesem Projekt öffnen mit diesem Ordner. Die Sandbox ihres Agenten wird ausgeschaltet, da ein Chat entweder einen Ordner oder die Sandbox verwendet."
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다."
+            "value": "이 프로젝트의 새 채팅은 이 폴더로 시작합니다. 채팅은 폴더 또는 샌드박스 중 하나만 사용하므로 해당 에이전트의 샌드박스는 꺼집니다."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Новые чаты в этом проекте открываются с этой папкой."
+            "value": "Новые чаты в этом проекте открываются с этой папкой. Песочница их агента отключается, так как чат использует либо папку, либо песочницу."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "此项目中的新聊天将以此文件夹打开。"
+            "value": "此项目中的新聊天将以此文件夹打开。由于聊天只能使用文件夹或沙盒之一，其代理的沙盒将被关闭。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "此專案中的新聊天將以此資料夾開啟。"
+            "value": "此專案中的新聊天將以此資料夾開啟。由於聊天只能使用資料夾或沙盒之一，其代理的沙盒將被關閉。"
           }
         }
       }
@@ -237964,6 +237964,15 @@
         "ru": { "stringUnit": { "state": "translated", "value": "Эта настройка вступит в силу при запуске песочницы." } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "此设置将在沙盒启动时生效。" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "此設定將在沙箱啟動時生效。" } }
+      }
+    },
+    "While on, chats ignore their working folder. Picking a folder in a chat or project turns the sandbox off again.": {
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Solange aktiv, ignorieren Chats ihren Arbeitsordner. Die Auswahl eines Ordners in einem Chat oder Projekt schaltet die Sandbox wieder aus." } },
+        "ko": { "stringUnit": { "state": "translated", "value": "켜져 있는 동안 채팅은 작업 폴더를 무시합니다. 채팅이나 프로젝트에서 폴더를 선택하면 샌드박스가 다시 꺼집니다." } },
+        "ru": { "stringUnit": { "state": "translated", "value": "Пока включено, чаты игнорируют свою рабочую папку. Выбор папки в чате или проекте снова отключает песочницу." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "开启时，聊天会忽略其工作文件夹。在聊天或项目中选择文件夹会再次关闭沙盒。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "開啟時，聊天會忽略其工作資料夾。在聊天或專案中選擇資料夾會再次關閉沙箱。" } }
       }
     },
     "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with.": {
