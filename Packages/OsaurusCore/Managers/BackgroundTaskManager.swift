@@ -1554,7 +1554,8 @@ public final class BackgroundTaskManager: ObservableObject {
             sourcePluginId: request.sourcePluginId,
             externalSessionKey: request.externalSessionKey,
             loadIntent: request.loadIntent,
-            delegationBudget: request.delegationContract
+            delegationBudget: request.delegationContract,
+            delegationModel: request.delegationModel
         )
     }
 
