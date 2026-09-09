@@ -3,6 +3,75 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.0</title>
+            <pubDate>Wed, 09 Sep 2026 17:32:44 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.0</sparkle:version>
+            <sparkle:shortVersionString>0.25.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.0/Osaurus-0.25.0.dmg" length="76392362" type="application/octet-stream" sparkle:edSignature="KWIniiaDCIsEK9h/Yx/6XyvKC/XDz8kB5VJ6SRHvn4zbQTpgQrs0VOEOj8PFvA+u0QB7NcBzb6nhgdLUinAbBw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Workspace agents as orchestration and dispatch targets (#2692) by @tpae
+- workspace improvements (#2687) by @RaajeevChandran
+- Workspaces: shared agents, team-billed inference, single-plan trial billing (#2683) by @tpae
+- Distinguish memory predictions from loading and resident warnings (#2672) by @jjang-ai
+- Repin vmlx-swift and integrate native MiniCPM5 controls and tools (#2676) by @jjang-ai
+
+## 🚀 Features
+
+- added agent filter dropdown to the history dialog (#2662) by @RaajeevChandran
+- browser style chat tabs with agents sidebar and history dialog (#2630) by @RaajeevChandran
+- added update\_skill tool so agents can edit user skills on request (#2648) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix delegation model forwarding after workspace-target integration (#2695) by @jjang-ai
+- refuse binary document reads on the sandbox file route with a read\_knowledge hint (#2694) by @RaajeevChandran
+- Honor agent-target model overrides through delegated dispatch (#2688) by @jjang-ai
+- Keep one window owner for an open chat session (#2691) by @jjang-ai
+- fix mcp integer arguments 0 and 1 being sent as booleans (#2690) by @RaajeevChandran
+- Keep unavailable subagent token counts distinct from measured zero (#2686) by @jjang-ai
+- Settings: distinguish inherited sampling from explicit overrides (#2685) by @jjang-ai
+- Keep retired iMessage helper callbacks from invalidating replacement sessions (#2674) by @jjang-ai
+- Keep Settings menus responsive and preserve explicit idle residency on relaunch (#2679) by @jjang-ai
+- Avoid the unbounded Seatbelt post-exit wait and detach EOF readers (#2681) by @jjang-ai
+- allow markdown and other parsable text files in the attach file picker (#2678) by @RaajeevChandran
+- apply project working folder by turning the agent sandbox off (#2675) by @RaajeevChandran
+- fix theme editor color picker jitter and hex input (#2673) by @RaajeevChandran
+- persist memory consolidator last run and catch up on launch (#2671) by @RaajeevChandran
+- Model load: never rewrite a bundle's config.json for the Gemma-4 audio stamp (#2633) (#2670) by @jjang-ai
+- Chat: a run cancelled during its cold load must not roll back the retry that already owns the session (#2668) by @jjang-ai
+- Swap-pressure banner: Unload Model through the guarded unload lifecycle, refusal reported, emulated target and button accessibility fixed (#2667) by @jjang-ai
+- fix update\_skill never reaching slash invoked skills (#2665) by @RaajeevChandran
+- added x-opencode-session affinity header for opencode hosts (#2666) by @RaajeevChandran
+- open chat windows full size and start the layout tour after first run dialogs (#2664) by @RaajeevChandran
+- Lazy chat loading follow-up: residency-only chip tooltip, stale warm-up comment, activation semantics (#2663) by @jjang-ai
+- Lazy chat model loading: selecting a model records the choice; the first Send loads and prefills the real request (#2660) by @jjang-ai
+- fix history dialog row actions and keep the dialog open under nested alerts (#2661) by @RaajeevChandran
+- Folder chip: accessibility name, value and identifier (#2659) by @jjang-ai
+- Truthful termination: exhausted announcements and repeated retrieval failures end in one tool-free status step (#2657) by @jjang-ai
+- Reopened sessions: a window opened from a history row loads the stored transcript instead of erasing it on the next send (#2658) by @jjang-ai
+- Research completion: announce-only recovery names what the model can do; promised-work endings recovered; replayed retrieval failures escalate before stopping; window-close crash fixed (#2656) by @jjang-ai
+- Tool flow: no replay of transient knowledge replies, paging signals survive compression, manual mode holds across surfaces, capped results say so (#2647) by @jjang-ai
+- Folder and knowledge listings: paged file\_search/list\_knowledge with totals, truncated-tree prompt line, ungrounded-claim advisory (#2646) by @jjang-ai
+- Chat: a queued steer lands before the pending assistant placeholder, not after it (#2653) by @jjang-ai
+- recognize claude's export index and point users at the batch zips (#2650) by @RaajeevChandran
+- Session tool scope follows the agent chip; advisory after repeated tool\_not\_found; canonicalise decorated tool names (#2645) by @jjang-ai
+- Repetition penalty window: 64 tokens when a penalty is set (20 otherwise) (#2644) by @jjang-ai
+- Watcher: run against the chosen folder, not the agent sandbox workspace (#2643) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Pin Spark2.5 runtime and native template handling (#2684) by @jjang-ai
+- Repin vmlx-swift to 16379811: Ling 2.6 flash JANGTQ answers again (#2652), KDA fidelity, disk-cache integrity, awq sidecar skip, Bailing enable\_thinking pass-through (#2655) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.24.7...0.25.0
+]]></description>
+        </item>
+        <item>
             <title>0.24.7</title>
             <pubDate>Sat, 05 Sep 2026 00:01:34 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
