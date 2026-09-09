@@ -480,6 +480,17 @@ struct AgentsView: View {
     // MARK: - Actions
 
     private func deleteAgent(_ agent: Agent) {
+        // Belt and braces behind the card/detail gates: a shared agent must
+        // be unshared in its workspace before it can go, or teammates are
+        // left with a roster row nobody can reach.
+        if let address = agent.agentAddress,
+            !WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address).isEmpty
+        {
+            ToastManager.shared.errorLocalized(
+                "Agent is shared", message: "Unshare it from its workspace before deleting."
+            )
+            return
+        }
         Task { @MainActor in
             let result = await agentManager.delete(id: agent.id)
             guard result.deleted else {
@@ -536,6 +547,7 @@ struct AgentsView: View {
 private struct AgentCard: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
     private var scheduleManager = ScheduleManager.shared
     private var watcherManager = WatcherManager.shared
 
@@ -573,6 +585,7 @@ private struct AgentCard: View {
 
     @State private var isHovered = false
     @State private var showDeleteConfirm = false
+    @State private var showDeleteBlockedByShare = false
 
     private var agentColor: Color { agentColorFor(agent.name) }
 
@@ -666,7 +679,11 @@ private struct AgentCard: View {
                         }
                         Divider()
                         Button(role: .destructive) {
-                            showDeleteConfirm = true
+                            if sharedWorkspaces.isEmpty {
+                                showDeleteConfirm = true
+                            } else {
+                                showDeleteBlockedByShare = true
+                            }
                         } label: {
                             Label {
                                 Text("Delete", bundle: .module)
@@ -743,6 +760,30 @@ private struct AgentCard: View {
             primaryButton: .destructive(L("Delete"), action: onDelete),
             secondaryButton: .cancel(L("Cancel"))
         )
+        .themedAlert(
+            L("Agent is shared"),
+            isPresented: $showDeleteBlockedByShare,
+            message: String(
+                format: L(
+                    "\"%@\" is shared with %@. Unshare it from the workspace first, then delete it. Teammates lose access when it's unshared."
+                ),
+                agent.name,
+                ListFormatter.localizedString(byJoining: sharedWorkspaces.map(\.name))
+            ),
+            primaryButton: sharedWorkspaces.count == 1
+                ? .primary(L("Open workspace"), action: {
+                    if let workspace = sharedWorkspaces.first {
+                        RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
+                    }
+                })
+                : .primary(L("OK"), action: {}),
+            secondaryButton: sharedWorkspaces.count == 1 ? .cancel(L("OK")) : nil
+        )
+    }
+
+    /// Workspaces this agent is shared into; delete is refused while any.
+    private var sharedWorkspaces: [OsaurusRouterWorkspaceSummary] {
+        AgentSharedWithSection.sharedWorkspaces(for: agent, rosterStore: rosterStore)
     }
 
     // MARK: - Card Background
@@ -1361,10 +1402,17 @@ struct AgentDetailView: View {
     @State private var saveIndicator: String?
     @State private var saveDebounceTask: Task<Void, Never>?
     @State private var showDeleteConfirm = false
+    /// Delete was requested while the agent is shared with a workspace:
+    /// explains that it has to be unshared first instead of confirming.
+    @State private var showDeleteBlockedByShare = false
     @State private var showRelayConfirmation = false
     /// Confirms turning the relay OFF while the agent is shared with a
     /// workspace (teammates lose reach immediately).
     @State private var showRelayOffConfirmation = false
+    /// Observed so the header's Share to Workspace menu and the delete gate
+    /// follow roster changes (share / unshare from anywhere).
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
+    @ObservedObject private var workspacesService = WorkspacesService.shared
     @State private var copiedRelayURL = false
     @State private var copiedRouteURL: String?
     @State private var pickerItems: [ModelPickerItem] = []
@@ -1773,7 +1821,7 @@ struct AgentDetailView: View {
                 L("Delete Agent"),
                 isPresented: $showDeleteConfirm,
                 message: deleteAgentMessage,
-                primaryButton: .destructive(L("Delete")) { unshareEverywhereThenDelete() },
+                primaryButton: .destructive(L("Delete")) { onDelete(currentAgent) },
                 secondaryButton: .cancel(L("Cancel"))
             )
             .themedAlert(
@@ -1912,16 +1960,29 @@ struct AgentDetailView: View {
                         icon: "square.and.arrow.up",
                         tint: theme.accentColor,
                         help: "Share Agent",
-                        action: { showingShareSheet = true }
+                        action: { presentShareMenu() }
                     )
                     AgentDetailHeaderActionButton(
                         icon: "trash",
                         tint: theme.errorColor,
                         help: "Delete",
-                        action: { showDeleteConfirm = true }
+                        action: { requestDelete() }
                     )
                 }
             }
+        )
+        .themedAlert(
+            L("Agent is shared"),
+            isPresented: $showDeleteBlockedByShare,
+            message: deleteBlockedMessage,
+            primaryButton: sharedWorkspaces.count == 1
+                ? .primary(L("Open workspace"), action: {
+                    if let workspace = sharedWorkspaces.first {
+                        RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
+                    }
+                })
+                : .primary(L("OK"), action: {}),
+            secondaryButton: sharedWorkspaces.count == 1 ? .cancel(L("OK")) : nil
         )
         .sheet(isPresented: $showingShareSheet) {
             ShareAgentSheet(agent: currentAgent)
@@ -2109,21 +2170,23 @@ struct AgentDetailView: View {
     /// fields that DEFINE an agent and tucks the rarely-touched knobs behind
     /// the Advanced disclosure.
     ///
-    ///   PRIMARY: Identity, System Prompt, Model.
+    ///   PRIMARY: Identity, Model, System Prompt, Voice.
     ///   ADVANCED: Generation overrides (Temperature, Max Tokens) and the
     ///   Disable Tools / Disable Memory toggles.
     @ViewBuilder
     private var configureTabContent: some View {
         tabHelperText(DetailTab.configure.helperText)
+        // Ordered by how often each is touched from the chat menu: model
+        // right after identity, voice further down.
         identitySection
-        voiceSection
-        systemPromptSection
         defaultModelSection
         if ClaudeCodeConfiguration.isAvailable()
             || selectedModel?.hasPrefix(ClaudeCodeConfiguration.modelPrefix) == true
         {
             claudeCodeSection
         }
+        systemPromptSection
+        voiceSection
         // Follow-up model override is a custom-agent lever; the Default agent
         // always uses the shared core model.
         if agent.id != Agent.defaultId {
@@ -2495,46 +2558,93 @@ struct AgentDetailView: View {
     }
 
     /// Workspaces this agent is shared into right now (roster-derived).
-    private var sharedWorkspaceNames: [String] {
-        guard let address = currentAgent.agentAddress else { return [] }
-        return WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address).map(\.name)
+    /// Workspaces this agent is currently shared into.
+    private var sharedWorkspaces: [OsaurusRouterWorkspaceSummary] {
+        AgentSharedWithSection.sharedWorkspaces(for: currentAgent, rosterStore: rosterStore)
     }
 
-    /// Delete copy: warns when teammates would lose the agent.
+    private var sharedWorkspaceNames: [String] { sharedWorkspaces.map(\.name) }
+
+    /// Workspaces the user could still share this agent into (role allows
+    /// it, not already on that roster). Drives the header menu.
+    private var shareableWorkspaces: [OsaurusRouterWorkspaceSummary] {
+        guard OsaurusRouter.isEnabled, !currentAgent.isBuiltIn else { return [] }
+        return AgentSharedWithSection.shareableWorkspaces(
+            for: currentAgent,
+            workspaces: workspacesService.workspaces,
+            rosterStore: rosterStore
+        )
+    }
+
+    /// The header Share button: one entry point for both ways an agent
+    /// leaves this Mac. "Send Invite Link…" is the existing pairing sheet;
+    /// "Add to Workspace" lists the workspaces the agent can be shared into,
+    /// each opening that workspace's Share agent sheet with this agent
+    /// preselected. Popped as an AppKit menu so the button keeps the
+    /// header's exact styling.
+    private func presentShareMenu() {
+        let agentId = currentAgent.id
+        let menu = NSMenu()
+
+        let invite = NSMenuItem(
+            title: L("Send Invite Link…"), action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+        let inviteTarget = HeaderMenuTarget { showingShareSheet = true }
+        invite.target = inviteTarget
+        invite.representedObject = inviteTarget  // keeps the target alive with the item
+        menu.addItem(invite)
+
+        let workspaceItem = NSMenuItem(title: L("Add to Workspace"), action: nil, keyEquivalent: "")
+        let workspaces = shareableWorkspaces
+        if workspaces.isEmpty {
+            // Explains itself instead of hiding: Router off, built-in agent,
+            // no workspace with share rights, or already shared everywhere.
+            workspaceItem.isEnabled = false
+        } else {
+            let submenu = NSMenu()
+            for workspace in workspaces {
+                let item = NSMenuItem(
+                    title: workspace.name, action: #selector(HeaderMenuTarget.fire(_:)), keyEquivalent: "")
+                let target = HeaderMenuTarget {
+                    RemoteAgentWorkspaceAttribution.shareAgent(agentId, toWorkspace: workspace.id)
+                }
+                item.target = target
+                item.representedObject = target
+                submenu.addItem(item)
+            }
+            workspaceItem.submenu = submenu
+        }
+        menu.addItem(workspaceItem)
+
+        let origin = NSEvent.mouseLocation
+        menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
+    }
+
     private var deleteAgentMessage: String {
-        let base = L(
+        L(
             "Are you sure you want to delete \"\(currentAgent.name)\"? This action cannot be undone. Any sandbox resources provisioned for this agent will also be removed."
         )
-        let shared = sharedWorkspaceNames
-        guard !shared.isEmpty else { return base }
-        return base + " "
-            + String(
-                format: L("It's shared with %@ — it will be unshared first and teammates lose access immediately."),
-                ListFormatter.localizedString(byJoining: shared)
-            )
     }
 
-    /// Unshare from every workspace, then delete. Deleting first would leave
-    /// dangling roster rows teammates can't connect to.
-    private func unshareEverywhereThenDelete() {
-        let target = currentAgent
-        guard let address = target.agentAddress else {
-            onDelete(target)
-            return
-        }
-        let workspaces = WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address)
-        guard !workspaces.isEmpty else {
-            onDelete(target)
-            return
-        }
-        Task { @MainActor in
-            for workspace in workspaces {
-                _ = await WorkspacesService.shared.unshareAgent(
-                    workspaceId: workspace.id,
-                    agentAddress: address
-                )
-            }
-            onDelete(target)
+    /// Why delete is refused while shared: teammates would be cut off and
+    /// the roster would keep a row nobody can reach. Unsharing is a
+    /// deliberate step in the workspace, never a side effect of delete.
+    private var deleteBlockedMessage: String {
+        String(
+            format: L(
+                "\"%@\" is shared with %@. Unshare it from the workspace first, then delete it. Teammates lose access when it's unshared."
+            ),
+            currentAgent.name,
+            ListFormatter.localizedString(byJoining: sharedWorkspaceNames)
+        )
+    }
+
+    /// Trash button: a shared agent gets the explanation, anything else
+    /// the usual confirmation.
+    private func requestDelete() {
+        if sharedWorkspaces.isEmpty {
+            showDeleteConfirm = true
+        } else {
+            showDeleteBlockedByShare = true
         }
     }
 
@@ -8682,3 +8792,10 @@ fileprivate struct AgentSecretRow: View {
         AgentsView()
     }
 #endif
+
+/// Closure-backed `NSMenuItem` target for header popup menus.
+private final class HeaderMenuTarget: NSObject {
+    private let handler: () -> Void
+    init(_ handler: @escaping () -> Void) { self.handler = handler }
+    @objc func fire(_ sender: Any?) { handler() }
+}
