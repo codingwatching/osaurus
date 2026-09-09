@@ -808,7 +808,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "f7971dfb32e23faed98d6db595b07c76f0d0a2dd"
+        let expectedRuntimeHardenedRevision = "42269ff06a78854ccb14854846a514c55244e596"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -2944,7 +2944,7 @@ struct RuntimePolicySourceTests {
         let toolStreamStart = try #require(chatEngine.range(of: "let stream = try await toolSvc.streamWithTools("))
         let toolResponseStart = try #require(
             chatEngine.range(
-                of: "let outputTokens = TokenEstimator.estimate(text)",
+                of: "let outputTokens = toolStepTokenCount ?? TokenEstimator.estimate(text + reasoning)",
                 range: toolStreamStart.upperBound ..< chatEngine.endIndex
             )
         )
