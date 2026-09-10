@@ -724,6 +724,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     Task { @MainActor [weak self] in
                         try? await Task.sleep(for: .seconds(2))
                         self?.presentProductHuntLaunchDialogIfEligible()
+                        // One-time Workspaces introduction for existing
+                        // users. Its guard defers while any other alert
+                        // (including the one above) is on screen.
+                        self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 }
             }
@@ -1198,6 +1202,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 self?.maybePromptForTelemetryConsent()
             }
             self?.presentProductHuntLaunchDialogIfEligible()
+            self?.presentWorkspacesIntroDialogIfEligible()
         }
     }
 
@@ -1227,6 +1232,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                 NSMenuItem(
                     title: "Reset & Test Import History Prompt",
                     action: #selector(dockResetImportHistoryPrompt),
+                    keyEquivalent: ""
+                )
+            )
+            menu.addItem(
+                NSMenuItem(
+                    title: "Reset & Test Workspaces Intro",
+                    action: #selector(dockResetWorkspacesIntro),
                     keyEquivalent: ""
                 )
             )
@@ -1278,6 +1290,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         @objc private func dockResetImportHistoryPrompt() {
             ImportHistoryPromptGate.shared.resetForDebugTesting()
             presentImportHistoryPromptIfEligible()
+        }
+
+        /// Clear the Workspaces intro's seen flag and run the normal
+        /// eligibility/presentation path, including every modal/active-work
+        /// deferral, so the debug run exercises the production coordination.
+        /// Dismissing re-persists seen; pick this item again for another pass.
+        @objc private func dockResetWorkspacesIntro() {
+            WorkspacesIntroCampaign.shared.resetForDebugTesting()
+            presentWorkspacesIntroDialogIfEligible()
         }
     #endif
 
@@ -2436,6 +2457,10 @@ extension AppDelegate {
                         // now that the chat window is up to host it. Its guard
                         // defers again while the import prompt is on screen.
                         self?.presentProductHuntLaunchDialogIfEligible()
+                        // Fresh installs see the Workspaces intro here, right after
+                        // onboarding (the launch check deferred it behind the flow);
+                        // its guard defers again while the import prompt is up.
+                        self?.presentWorkspacesIntroDialogIfEligible()
                     }
                 }
             )
@@ -2799,6 +2824,113 @@ extension AppDelegate {
     }
 }
 
+// MARK: - Workspaces Intro Dialog
+extension AppDelegate {
+    /// Present the one-time Founding Workspaces introduction when the
+    /// campaign's own gate passes (never seen; fresh installs included, they
+    /// get it right after onboarding) AND nothing critical is in progress. A
+    /// blocked attempt does NOT consume eligibility: the next launch or
+    /// foreground activation simply rechecks. Same deferral set as the
+    /// Product Hunt dialog so the two announcement paths behave identically.
+    @MainActor
+    func presentWorkspacesIntroDialogIfEligible() {
+        guard !keychainDisabledTestMode else { return }
+
+        let campaign = WorkspacesIntroCampaign.shared
+        guard campaign.isEligible else { return }
+
+        guard !OnboardingService.shared.shouldShowOnboarding else { return }
+        guard !TelemetryService.shared.needsConsentDecision else { return }
+        guard NSApp.modalWindow == nil else { return }
+        guard !NSApp.windows.contains(where: { $0.attachedSheet != nil }) else { return }
+        guard !ThemedAlertCenter.shared.hasAnyActiveAlert else { return }
+        guard !ChatLayoutTour.shared.isActive else { return }
+        guard ComputerUsePromptQueue.shared.pending.isEmpty,
+            ComputerUsePromptQueue.shared.pendingConsent.isEmpty
+        else { return }
+        guard !ChatWindowManager.shared.isAnySessionStreaming else { return }
+        guard !ChatWindowManager.shared.hasAnyBlockingPromptOverlay else { return }
+        guard !BackgroundTaskManager.shared.backgroundTasks.values.contains(where: { $0.status.isActive })
+        else { return }
+
+        // Host in the user's landing window (same routing as the Product
+        // Hunt dialog) so it behaves like an app modal and recedes when
+        // Osaurus deactivates; the toast overlay is only a last resort.
+        let scope: ThemedAlertScope
+        if let chatId = ChatWindowManager.shared.lastFocusedWindowId,
+            ChatWindowManager.shared.windowExists(id: chatId) {
+            scope = .chat(chatId)
+        } else if WindowManager.shared.isVisible(.management) {
+            scope = .management
+        } else {
+            scope = .toastOverlay
+        }
+
+        // Seen is persisted at presentation time, so even a force-quit while
+        // the dialog is up can't make it reappear.
+        campaign.willPresent()
+        FeatureTelemetry.workspacesIntroDialogShown()
+
+        let requestId = UUID()
+        // The dialog is designed for 960pt but hosts as an overlay inside
+        // the landing window, so measure that window (the key window is the
+        // one `scope` resolves to) and shrink the whole dialog to fit; the
+        // screen is the fallback when no window is up (toast overlay).
+        let available: CGSize =
+            (NSApp.keyWindow ?? NSApp.mainWindow)?.contentView?.bounds.size
+            ?? (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.size
+            ?? CGSize(width: 1440, height: 900)
+        let scale = WorkspacesIntroModal.scale(fitting: available)
+        let content = WorkspacesIntroModal(
+            scale: scale,
+            onClaim: {
+                FeatureTelemetry.workspacesIntroDialogClicked(action: "start_trial")
+                // `dismiss` drops the request without running `onDismiss`,
+                // so the inline buttons release the presenting flag here.
+                campaign.didDismiss()
+                ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                // Same path as the Workspaces tab's own "Start free trial"
+                // button: land on the tab with the New Workspace sheet up
+                // (name, interval), which opens Stripe Checkout in the
+                // browser and lets the app's activation polling finish it.
+                ManagementStateManager.shared.pendingCreateWorkspace = true
+                AppDelegate.shared?.showManagementWindow(initialTab: .workspaces)
+            },
+            onLater: {
+                FeatureTelemetry.workspacesIntroDialogClicked(action: "later")
+                campaign.didDismiss()
+                ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+            }
+        )
+        ThemedAlertCenter.shared.present(
+            ThemedAlertRequest(
+                id: requestId,
+                title: L("Introducing Workspaces"),
+                message: nil,
+                showsHeaderIcon: false,
+                // "Maybe later" carries the cancel role so the corner X,
+                // Escape, and an outside click all follow the same
+                // permanent-dismiss path. The inline buttons live in the
+                // custom content, so this one only renders as the X.
+                buttons: [
+                    .cancel(L("Maybe later")) {
+                        FeatureTelemetry.workspacesIntroDialogClicked(action: "later")
+                    }
+                ],
+                showsCloseButton: true,
+                titleFontSize: 22,
+                customContent: AnyView(content),
+                width: WorkspacesIntroModal.dialogWidth(scale: scale),
+                onDismiss: {
+                    campaign.didDismiss()
+                    ThemedAlertCenter.shared.dismiss(scope: scope, id: requestId)
+                }
+            ),
+            scope: scope
+        )
+    }
+}
+
 // MARK: - Import History Prompt
 extension AppDelegate {
     /// Present the one-time post-onboarding "import your chat history"
@@ -2873,6 +3005,7 @@ extension AppDelegate {
                     // this one, so every modal is done before the deferred
                     // layout tour starts.
                     self?.presentProductHuntLaunchDialogIfEligible()
+                    self?.presentWorkspacesIntroDialogIfEligible()
                 }
             ),
             scope: scope
