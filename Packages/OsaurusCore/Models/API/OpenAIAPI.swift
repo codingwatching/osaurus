@@ -1216,6 +1216,29 @@ struct ToolFunction: Codable, Sendable {
     let name: String
     let description: String?
     let parameters: JSONValue?
+    /// Caller-declared strict-schema flag. Carried internally so a Responses
+    /// client's explicit `strict: false` (Codex) is not overridden by schema
+    /// inference when the request is re-encoded for a Responses upstream.
+    /// Never written to the chat-completions wire, so upstream bytes are
+    /// unchanged and strict third-party schemas never see the key. Decoded
+    /// leniently: a non-boolean value is ignored rather than failing the
+    /// request, matching the pre-existing behavior of unknown keys.
+    var strict: Bool? = nil
+
+    init(name: String, description: String?, parameters: JSONValue?, strict: Bool? = nil) {
+        self.name = name
+        self.description = description
+        self.parameters = parameters
+        self.strict = strict
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        parameters = try container.decodeIfPresent(JSONValue.self, forKey: .parameters)
+        strict = try? container.decodeIfPresent(Bool.self, forKey: .strict)
+    }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -1226,7 +1249,7 @@ struct ToolFunction: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, description, parameters
+        case name, description, parameters, strict
     }
 }
 

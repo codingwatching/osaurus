@@ -5554,9 +5554,14 @@ struct RemoteChatRequest: Encodable {
                     name: tool.function.name,
                     description: tool.function.description,
                     parameters: tool.function.parameters,
-                    strict: Self.isStrictResponsesToolSchema(
-                        tool.function.parameters
-                    )
+                    // An explicit caller opt-out wins; an explicit opt-in is
+                    // still gated on the schema so we never claim a strict
+                    // contract the provider would reject.
+                    strict: tool.function.strict == false
+                        ? false
+                        : Self.isStrictResponsesToolSchema(
+                            tool.function.parameters
+                        )
                 )
             }
         }
@@ -5828,7 +5833,8 @@ extension RemoteProviderService {
             function: ToolFunction(
                 name: tool.function.name,
                 description: tool.function.description,
-                parameters: .object(sanitized)
+                parameters: .object(sanitized),
+                strict: tool.function.strict
             )
         )
     }

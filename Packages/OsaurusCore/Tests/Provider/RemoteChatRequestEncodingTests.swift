@@ -811,6 +811,252 @@ struct RemoteChatRequestEncodingTests {
         #expect(object["content"] == .string("Hello!"))
     }
 
+    /// Issue #2704: the minimal function tool a Responses client sends must
+    /// decode and convert to a chat-completions function tool with its
+    /// `strict` flag intact.
+    @Test func openResponsesRequest_decodesMinimalFunctionTool() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "litellm/gpt-5.6-luna",
+              "input": "Reply only with OK",
+              "stream": false,
+              "tools": [
+                {
+                  "type": "function",
+                  "name": "echo",
+                  "description": "Echo a value",
+                  "strict": false,
+                  "parameters": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": { "value": { "type": "string" } },
+                    "required": ["value"]
+                  }
+                }
+              ],
+              "tool_choice": "auto"
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let chat = request.toChatCompletionRequest()
+        let tool = try #require(chat.tools?.first)
+
+        #expect(request.tools?.count == 1)
+        #expect(request.tools?.first?.isFunction == true)
+        #expect(request.tools?.first?.raw == nil)
+        #expect(tool.function.name == "echo")
+        #expect(tool.function.description == "Echo a value")
+        #expect(tool.function.strict == false)
+        #expect(chat.tool_choice == .auto)
+    }
+
+    /// Issue #2704: Codex sends hosted and custom tools alongside function
+    /// tools. Those must not fail the whole request; they are preserved raw
+    /// on the Responses request and dropped from the chat-completions form.
+    @Test func openResponsesRequest_toleratesNonFunctionTools() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "litellm/gpt-5.6-luna",
+              "input": "hi",
+              "tools": [
+                { "type": "web_search" },
+                { "type": "tool_search" },
+                {
+                  "type": "custom",
+                  "name": "apply_patch",
+                  "description": "Apply a patch",
+                  "format": { "type": "grammar", "syntax": "lark", "definition": "start: \"x\"" }
+                },
+                {
+                  "type": "function",
+                  "name": "shell",
+                  "parameters": { "type": "object", "properties": {} }
+                }
+              ]
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        let tools = try #require(request.tools)
+        #expect(tools.count == 4)
+        #expect(tools.map(\.type) == ["web_search", "tool_search", "custom", "function"])
+        #expect(tools[2].name == "apply_patch")
+        guard case .object(let customRaw) = tools[2].raw else {
+            Issue.record("custom tool was not preserved as raw JSON")
+            return
+        }
+        #expect(customRaw["format"] != nil)
+
+        // Raw tools re-encode verbatim so a Responses upstream sees them unchanged.
+        let payload = try Self.encodeAsDictionary(request)
+        let wireTools = try #require(payload["tools"] as? [[String: Any]])
+        #expect(wireTools[0]["type"] as? String == "web_search")
+        #expect((wireTools[2]["format"] as? [String: Any])?["syntax"] as? String == "lark")
+        #expect(wireTools[3]["type"] as? String == "function")
+
+        let chat = request.toChatCompletionRequest()
+        #expect(chat.tools?.map(\.function.name) == ["shell"])
+    }
+
+    /// A forced tool_choice naming a tool that was dropped in conversion
+    /// must not survive, or upstreams 400 on an unknown function name.
+    @Test func openResponsesRequest_downgradesToolChoiceForDroppedTool() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "gpt-5.2",
+              "input": "hi",
+              "tools": [
+                { "type": "custom", "name": "apply_patch" },
+                { "type": "function", "name": "shell", "parameters": { "type": "object" } }
+              ],
+              "tool_choice": { "type": "function", "name": "apply_patch" }
+            }
+            """#.utf8
+        )
+
+        let chat = try JSONDecoder().decode(OpenResponsesRequest.self, from: data).toChatCompletionRequest()
+        #expect(chat.tools?.map(\.function.name) == ["shell"])
+        #expect(chat.tool_choice == .auto)
+
+        let kept = Data(
+            #"""
+            {
+              "model": "gpt-5.2",
+              "input": "hi",
+              "tools": [{ "type": "function", "name": "shell", "parameters": { "type": "object" } }],
+              "tool_choice": { "type": "function", "name": "shell" }
+            }
+            """#.utf8
+        )
+        let keptChat = try JSONDecoder().decode(OpenResponsesRequest.self, from: kept).toChatCompletionRequest()
+        #expect(
+            keptChat.tool_choice
+                == .function(ToolChoiceOption.FunctionName(type: "function", function: ToolChoiceOption.Name(name: "shell")))
+        )
+    }
+
+    @Test func openResponsesRequest_onlyNonFunctionTools_yieldsNoChatTools() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "gpt-5.2",
+              "input": "hi",
+              "tools": [{ "type": "web_search" }]
+            }
+            """#.utf8
+        )
+
+        let request = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        #expect(request.toChatCompletionRequest().tools == nil)
+    }
+
+    @Test func openResponsesRequest_rejectsFunctionToolWithoutName() throws {
+        let data = Data(
+            #"""
+            {
+              "model": "gpt-5.2",
+              "input": "hi",
+              "tools": [{ "type": "function", "parameters": { "type": "object" } }]
+            }
+            """#.utf8
+        )
+
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        }
+    }
+
+    /// A caller's explicit `strict: false` wins over schema inference when
+    /// the chat request is re-encoded for a Responses upstream. An explicit
+    /// `strict: true` is still gated on the schema, and inference applies
+    /// when the caller said nothing.
+    @Test func openResponsesRequest_preservesCallerStrictOptOut() throws {
+        let strictSchema: JSONValue = .object([
+            "type": .string("object"),
+            "additionalProperties": .bool(false),
+            "properties": .object(["value": .object(["type": .string("string")])]),
+            "required": .array([.string("value")]),
+        ])
+        let looseSchema: JSONValue = .object([
+            "type": .string("object"),
+            "properties": .object(["value": .object(["type": .string("string")])]),
+        ])
+        let optOut = ToolFunction(name: "a", description: nil, parameters: strictSchema, strict: false)
+        let inferred = ToolFunction(name: "b", description: nil, parameters: strictSchema)
+        let optInLoose = ToolFunction(name: "c", description: nil, parameters: looseSchema, strict: true)
+        let optInStrict = ToolFunction(name: "d", description: nil, parameters: strictSchema, strict: true)
+
+        let request = Self.makeRequest(
+            model: "gpt-5.2",
+            maxTokens: 1024,
+            tools: [optOut, inferred, optInLoose, optInStrict].map { Tool(type: "function", function: $0) }
+        )
+        let responsesRequest = try request.toOpenResponsesRequest()
+
+        #expect(responsesRequest.tools?.map(\.strict) == [false, true, false, true])
+    }
+
+    /// `strict` rides along when a strict wire target has its top-level
+    /// schema keys stripped, otherwise the opt-out is lost on exactly the
+    /// providers where it matters.
+    @Test func strippingRestrictedTopLevelSchemaKeys_keepsStrict() throws {
+        let schema: JSONValue = .object([
+            "type": .string("object"),
+            "anyOf": .array([]),
+            "properties": .object([:]),
+        ])
+        let tool = Tool(
+            type: "function",
+            function: ToolFunction(name: "a", description: nil, parameters: schema, strict: false)
+        )
+        let stripped = RemoteProviderService.strippingRestrictedTopLevelSchemaKeys(tool)
+
+        #expect(stripped.function.strict == false)
+        if case .object(let object)? = stripped.function.parameters {
+            #expect(object["anyOf"] == nil)
+        } else {
+            Issue.record("parameters were not preserved as an object")
+        }
+    }
+
+    /// `strict` is internal only: never written to the chat-completions wire
+    /// (so third-party schemas never see the key), and a non-boolean value
+    /// from a chat client is ignored instead of failing the request.
+    @Test func chatToolFunction_strictIsNotEncodedAndDecodesLeniently() throws {
+        var flagged = Self.weatherTool.function
+        flagged.strict = true
+        let request = Self.makeRequest(
+            model: "gpt-5.2",
+            maxTokens: 1024,
+            tools: [Tool(type: "function", function: flagged)]
+        )
+        let wireTools = try #require(try Self.encodeAsDictionary(request)["tools"] as? [[String: Any]])
+        let wireFunction = try #require(wireTools.first?["function"] as? [String: Any])
+        #expect(wireFunction["strict"] == nil)
+
+        let lenient = Data(
+            #"""
+            {"type": "function", "function": {"name": "echo", "strict": "true", "parameters": {"type": "object"}}}
+            """#.utf8
+        )
+        let decoded = try JSONDecoder().decode(Tool.self, from: lenient)
+        #expect(decoded.function.name == "echo")
+        #expect(decoded.function.strict == nil)
+
+        let boolean = Data(
+            #"""
+            {"type": "function", "function": {"name": "echo", "strict": false, "parameters": {"type": "object"}}}
+            """#.utf8
+        )
+        #expect(try JSONDecoder().decode(Tool.self, from: boolean).function.strict == false)
+    }
+
     @Test func codexRequest_removesMaxOutputTokens() throws {
         let request = Self.makeRequest(model: "gpt-5.2", maxTokens: 1024)
         let payload = try Self.decodeAsDictionary(

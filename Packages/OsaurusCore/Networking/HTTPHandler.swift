@@ -12975,10 +12975,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Parse Open Responses request
-        guard let openResponsesReq = try? JSONDecoder().decode(OpenResponsesRequest.self, from: data) else {
-            let error = OpenResponsesErrorResponse(code: "invalid_request_error", message: "Invalid request format")
+        let openResponsesReq: OpenResponsesRequest
+        do {
+            openResponsesReq = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        } catch {
+            // Surface the decoding failure so clients can see which field was
+            // rejected instead of a bare "Invalid request format".
+            let message = "Invalid request format: \(SandboxPluginRegisterTool.decodeFailureDetail(error))"
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: message)
             let errorJson =
-                (try? JSONEncoder.osaurusCanonical().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(errorResponse)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":{"type":"error","code":"invalid_request_error","message":"Invalid request format"}}"#
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -12996,7 +13002,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBodyString,
                 responseStatus: 400,
                 startTime: startTime,
-                errorMessage: "Invalid request format"
+                errorMessage: message
             )
             return
         }
