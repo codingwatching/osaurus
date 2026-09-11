@@ -3092,7 +3092,7 @@ private struct SessionRow: View {
         case .imported:
             return Text("Imported", bundle: .module)
         case .delegation:
-            return Text("Delegated", bundle: .module)
+            return Text("Orchestrator", bundle: .module)
         case .workspace:
             if let caller = session.workspace?.callerLabel {
                 return Text(verbatim: "Workspace · \(caller)")
@@ -3423,6 +3423,25 @@ struct ChatHistoryList: View {
     var onStop: ((UUID) -> Void)? = nil
     var onOpenInNewWindow: ((ChatSessionData) -> Void)? = nil
     var onOpenInNewTab: ((ChatSessionData) -> Void)? = nil
+    /// Origin lens chosen in the dialog's Filter popover.
+    var sourceFilter: ChatHistorySourceFilter = .all
+    /// Archived lens: true lists only archived chats, false hides them.
+    var showArchived: Bool = false
+    /// Project lens chosen in the dialog's Filter popover (nil = any).
+    var projectFilter: UUID? = nil
+    /// Workspace lens chosen in the dialog's Filter popover (nil = any).
+    var workspaceFilter: String? = nil
+    /// Plugin lens chosen in the dialog's Filter popover (nil = any; "" =
+    /// plugin chats with no recorded plugin id).
+    var pluginFilter: String? = nil
+    /// Schedule / watcher lenses: the schedule or watcher id those runs
+    /// stamp as the session's external key (nil = any).
+    var scheduleFilter: String? = nil
+    var watcherFilter: String? = nil
+    /// Capability lenses; a chat must carry every selected badge.
+    var capabilityFilter: Set<SessionCapability> = []
+    /// Resets the dialog's source / archived lenses from the empty state.
+    var onClearFilters: (() -> Void)? = nil
 
     @Environment(\.theme) private var theme
     @ObservedObject private var agentManager = AgentManager.shared
@@ -3440,8 +3459,25 @@ struct ChatHistoryList: View {
     @State private var selectedIds: Set<UUID> = []
     @State private var selectionAnchorId: UUID?
 
+    private var hasActiveFilter: Bool {
+        showArchived || sourceFilter != .all || projectFilter != nil || workspaceFilter != nil
+            || pluginFilter != nil || scheduleFilter != nil || watcherFilter != nil
+            || !capabilityFilter.isEmpty
+    }
+
     private var filteredSessions: [ChatSessionData] {
-        let visible = sessions.filter { !$0.archived }
+        let visible = sessions.filter { session in
+            session.archived == showArchived && sourceFilter.matches(session)
+                && (projectFilter == nil || session.projectId == projectFilter)
+                && (workspaceFilter == nil || session.workspace?.workspaceId == workspaceFilter)
+                && (pluginFilter == nil
+                    || (session.source == .plugin && (session.sourcePluginId ?? "") == pluginFilter))
+                && (scheduleFilter == nil
+                    || (session.source == .schedule && session.externalSessionKey == scheduleFilter))
+                && (watcherFilter == nil
+                    || (session.source == .watcher && session.externalSessionKey == watcherFilter))
+                && capabilityFilter.isSubset(of: session.capabilities)
+        }
         let trimmed = searchQuery.trimmingCharacters(in: .whitespaces)
         let matched: [ChatSessionData]
         if trimmed.isEmpty {
@@ -3484,6 +3520,29 @@ struct ChatHistoryList: View {
                 placeholder(icon: "bubble.left.and.bubble.right", text: "No chats yet")
             } else if filteredSessions.isEmpty, isContentSearchInFlight {
                 placeholder(icon: nil, text: "Searching conversations…")
+            } else if filteredSessions.isEmpty, hasActiveFilter,
+                searchQuery.trimmingCharacters(in: .whitespaces).isEmpty
+            {
+                // Lens (not search) produced the empty list: offer a way
+                // back instead of the search-flavored no-results view.
+                VStack(spacing: 8) {
+                    placeholder(
+                        icon: showArchived ? "archivebox" : "line.3.horizontal.decrease.circle",
+                        text: showArchived ? "No archived chats" : "No chats match this filter"
+                    )
+                    if let onClearFilters {
+                        Button {
+                            withAnimation(theme.animationQuick()) { onClearFilters() }
+                        } label: {
+                            Text("Clear Filters", bundle: .module)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(theme.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .pointingHandCursor()
+                        .padding(.bottom, 16)
+                    }
+                }
             } else if filteredSessions.isEmpty {
                 SidebarNoResultsView(searchQuery: searchQuery) {
                     withAnimation(theme.animationQuick()) { searchQuery = "" }
