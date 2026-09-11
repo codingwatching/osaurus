@@ -325,6 +325,16 @@ final class ChatSession: ObservableObject {
     /// phase ends.
     private var streamingAutoExpandedThinkingBlockIds: Set<String> = []
     @Published var input: String = ""
+    /// Mirror of what the composer currently shows. The card keeps
+    /// keystrokes local and only writes `input` on send, so this is the
+    /// only place the unsent draft is visible to the session. Deliberately
+    /// not `@Published`: a keystroke must not re-render the chat.
+    private(set) var composerDraft: String = ""
+    /// True once the composer has reported a keystroke since `input` was
+    /// last assigned by the draft machinery. While set, `composerDraft` is
+    /// newer than `input` (which may still hold a restored draft the user
+    /// has since edited or deleted).
+    private var composerDraftIsAuthoritative = false
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
@@ -2863,6 +2873,7 @@ final class ChatSession: ObservableObject {
     }
 
     func reset() {
+        stashDraft()
         stop()
         turns.removeAll()
         input = ""
@@ -2942,6 +2953,7 @@ final class ChatSession: ObservableObject {
 
         applyEffectiveModel(for: agentId)
         rebuildVisibleBlocks()
+        restoreDraft()
     }
 
     /// Reset for a specific agent
@@ -2950,11 +2962,73 @@ final class ChatSession: ObservableObject {
         // stop() → completeRunCleanup() preserves the current session's
         // identity instead of stamping the new agent on it. See #1005.
         reset()
+        // reset() brought back the OLD agent's new-chat draft; put it back
+        // and pick up the one typed under the incoming agent instead.
+        stashDraft()
+        input = ""
         agentId = newAgentId
+        restoreDraft()
         // reset() picked a model for the OLD agent; re-resolve for the
         // new one now that turns/sessionId are cleared.
         applyEffectiveModel(for: newAgentId)
         Task { [weak self] in await self?.refreshContextEstimates() }
+    }
+
+    // MARK: - Composer Drafts
+
+    /// Key under which this session's unsent composer text is remembered
+    /// while another chat or agent is shown in its place.
+    var draftKey: ChatDraftStore.Key {
+        if let sessionId { return .session(sessionId) }
+        return .newChat(agentId: agentId)
+    }
+
+    /// Remember the current composer text for `draftKey` so it can come
+    /// back when the user returns to this chat (#2708).
+    func stashDraft() {
+        ChatDraftStore.shared.stash(unsentComposerText, for: draftKey)
+        composerDraft = ""
+        composerDraftIsAuthoritative = false
+    }
+
+    /// The text the composer currently shows, whichever of the two layers
+    /// is fresher: the keystroke mirror once the card has typed into it,
+    /// otherwise the published `input`. The mirror is only ever written by
+    /// a keystroke (authoritative) or alongside `input` (equal), so when it
+    /// is not authoritative `input` is the whole truth, including a
+    /// programmatic clear.
+    var unsentComposerText: String {
+        composerDraftIsAuthoritative ? composerDraft : input
+    }
+
+    /// Composer callback: record the card's current text without touching
+    /// `input`, so a keystroke never re-renders the chat.
+    func noteComposerDraft(_ text: String) {
+        composerDraft = text
+        composerDraftIsAuthoritative = true
+    }
+
+    /// Bring `input` up to date with the keystroke mirror so a composer
+    /// that remounts (tab switch, window re-layout) rehydrates from the
+    /// binding with the current unsent text, including an empty string
+    /// when the user deleted a previously restored draft.
+    func promoteComposerDraft() {
+        let text = unsentComposerText
+        guard input != text else { return }
+        input = text
+        composerDraft = text
+        composerDraftIsAuthoritative = false
+    }
+
+    /// Bring back the composer text remembered for `draftKey`, if any.
+    /// Never overwrites text the user has already typed.
+    func restoreDraft() {
+        guard unsentComposerText.isEmpty,
+            let draft = ChatDraftStore.shared.take(for: draftKey)
+        else { return }
+        input = draft
+        composerDraft = draft
+        composerDraftIsAuthoritative = false
     }
 
     // MARK: - LLM Context Compaction
@@ -3302,6 +3376,7 @@ final class ChatSession: ObservableObject {
 
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
+        stashDraft()
         // Switching sessions discards the current thread's UI, so suppress the
         // outgoing-session block rebuild that `stop()` would trigger. Cleared
         // before the single rebuild for the incoming session below.
@@ -3359,6 +3434,7 @@ final class ChatSession: ObservableObject {
         voiceInputState = .idle
         showVoiceOverlay = false
         input = ""
+        restoreDraft()
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
@@ -9533,6 +9609,8 @@ struct ChatView: View {
                                 isCompact: windowState.showSidebar,
                                 isEmptyChat: !observedSession.hasVisibleThreadMessages,
                                 onClearChat: { observedSession.reset() },
+                                onDraftChange: { observedSession.noteComposerDraft($0) },
+                                onWillRehydrate: { observedSession.promoteComposerDraft() },
                                 modelSwitchContinuityWarning:
                                     observedSession.modelSwitchContinuityWarning,
                                 onDismissModelSwitchContinuityWarning: {

@@ -75,6 +75,14 @@ struct FloatingInputCard: View {
     var isEmptyChat: Bool = false
     /// Callback to clear the current chat session (triggered by /clear command).
     var onClearChat: (() -> Void)? = nil
+    /// Fired on every keystroke with the composer's current text. Keystrokes
+    /// stay in the card-local model (never in `text`) so the chat does not
+    /// re-render per key; this lets the session keep a draft mirror for
+    /// stash/restore across chat and agent switches (#2708).
+    var onDraftChange: ((String) -> Void)? = nil
+    /// Called when the card (re)appears so the owner can surface any unsent
+    /// draft into `text` before the card rehydrates from it (#2708).
+    var onWillRehydrate: (() -> Void)? = nil
     /// Set after a manual model change in a non-empty conversation. The
     /// warning is advisory: the user may keep the selected model or start a
     /// clean chat whose first prefix is built for it.
@@ -182,6 +190,8 @@ struct FloatingInputCard: View {
         isCompact: Bool = false,
         isEmptyChat: Bool = false,
         onClearChat: (() -> Void)? = nil,
+        onDraftChange: ((String) -> Void)? = nil,
+        onWillRehydrate: (() -> Void)? = nil,
         modelSwitchContinuityWarning: ModelSwitchContinuityWarning? = nil,
         onDismissModelSwitchContinuityWarning: (() -> Void)? = nil,
         onCaptureScreenshot: (() -> Void)? = nil,
@@ -233,6 +243,8 @@ struct FloatingInputCard: View {
         self.isCompact = isCompact
         self.isEmptyChat = isEmptyChat
         self.onClearChat = onClearChat
+        self.onDraftChange = onDraftChange
+        self.onWillRehydrate = onWillRehydrate
         self.modelSwitchContinuityWarning = modelSwitchContinuityWarning
         self.onDismissModelSwitchContinuityWarning = onDismissModelSwitchContinuityWarning
         self.onCaptureScreenshot = onCaptureScreenshot
@@ -900,7 +912,8 @@ struct FloatingInputCard: View {
                         removal: .opacity.combined(with: .scale(scale: 0.98))
                     )
                 )
-                .onChange(of: composerText.text) { _, _ in
+                .onChange(of: composerText.text) { _, newValue in
+                    onDraftChange?(newValue)
                     // Reset popup selection whenever the typed query changes.
                     // Attached here (inside the text observation scope) so the
                     // change is detected on scope re-renders — the card itself
@@ -995,6 +1008,7 @@ struct FloatingInputCard: View {
                 }
                 refreshLoadFeasibility()
                 let isReappear = !localText.isEmpty || voiceInputState != .idle
+                if text.isEmpty { onWillRehydrate?() }
                 localText = text
                 print("[VoiceDebug] FloatingInputCard onAppear (reappear=\(isReappear))")
 
