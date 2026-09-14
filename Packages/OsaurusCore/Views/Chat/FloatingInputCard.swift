@@ -460,6 +460,8 @@ struct FloatingInputCard: View {
     /// showing the control there would advertise speculation it cannot do.
     /// Sourced from the engine's own per-model status, never from the name.
     @State private var nativeMTPCapableModels: Set<String> = []
+    /// Metadata-scoped default, independent of whether a real MTP head exists.
+    @State private var nativeMTPDefaultOffModels: Set<String> = []
     /// Resident models whose bundle metadata explicitly blocks manual MTP.
     /// Kept separate from capability: the head still exists, but presenting
     /// selectable depths would lie because the runtime must stay AR-only.
@@ -2582,6 +2584,8 @@ extension FloatingInputCard {
             // Depth controls speculation, not the user's sampling settings.
             help: manuallyBlocked
                 ? L("Speculative decoding is disabled for this bundle because its MTP head is not safe for production use.")
+                : nativeMTPDefaultOffModels.contains(identity)
+                ? L("Flash Next starts with speculative decoding Off. You can select Auto or a maximum depth of 1–3 explicitly. Your configured sampling stays in effect.")
                 : L(
                     "Auto activates from tuning or a supported family default and adapts up to depth 5. Depths 1–3 set a maximum; the runtime may lower the depth or use plain decoding when speculation stops paying. Your configured sampling stays in effect."
                 )
@@ -2663,20 +2667,23 @@ extension FloatingInputCard {
         }
     }
 
-    /// Both eligible Qwen27B and Flash-Next bundles start at D3. The layout
-    /// advisory remains Flash-Next-only; defaults use the activation contract.
+    /// Flash Next starts Off; eligible Qwen27B retains D3. Selectors remain
+    /// available for real heads, and an explicit choice always wins.
     /// Only a value owned by this default may be reverted on leaving the family.
-    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool) {
+    private func applyNativeMTPDefaultDepthIfNeeded(eligible: Bool, startsOff: Bool) {
         let defaults = UserDefaults.standard
         let mtp = ServerController.runtimeSettingsForConfigureTool().settings.mtp
         switch NativeMTPSelectionDefault.action(
             settings: mtp,
             eligible: eligible,
+            startsOff: startsOff,
             userHasChosen: defaults.bool(forKey: Self.mtpSegmentUserChoseKey),
             ownsCurrentValue: defaults.bool(forKey: Self.mtpSegmentFamilyDefaultKey)
         ) {
         case .keep:
             return
+        case .selectOff:
+            applyNativeMTPSegment("off", userInitiated: false)
         case .selectDepthThree:
             applyNativeMTPSegment("3", userInitiated: false)
         case .restoreAuto:
@@ -3367,7 +3374,9 @@ extension FloatingInputCard {
             values[Self.nativeMTPOptionID] = .string(
                 nativeMTPManuallyBlockedModels.contains(identity) ? "off" : nativeMTPSelection
             )
-            displayDefaults[Self.nativeMTPOptionID] = .string("auto")
+            displayDefaults[Self.nativeMTPOptionID] = .string(
+                nativeMTPDefaultOffModels.contains(identity) ? "off" : "auto"
+            )
         }
 
         return ModelPickerOptionsControl(
@@ -4830,10 +4839,16 @@ extension FloatingInputCard {
             let capability = ModelRuntime.inspectLoadingModelMTP(name: model)
             let defaultEligible = NativeMTPSelectionDefault.isEligible(
                 bundleDirectory: bundleDir)
+            let startsOff = NativeMTPSelectionDefault.startsOff(bundleDirectory: bundleDir)
             await MainActor.run {
                 // The selection may have moved while we were on disk.
                 guard selectedModel == model else { return }
                 let identity = Self.mtpIdentity(model)
+                if startsOff {
+                    nativeMTPDefaultOffModels.insert(identity)
+                } else {
+                    nativeMTPDefaultOffModels.remove(identity)
+                }
                 if let capability, capability.bundleHasMTP, capability.isTargetMTPFamily {
                     nativeMTPCapableModels.insert(identity)
                     if capability.isBlocked {
@@ -4845,7 +4860,7 @@ extension FloatingInputCard {
                     nativeMTPCapableModels.remove(identity)
                     nativeMTPManuallyBlockedModels.remove(identity)
                 }
-                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible)
+                applyNativeMTPDefaultDepthIfNeeded(eligible: defaultEligible, startsOff: startsOff)
                 // Shown once per bundle per improper-state fingerprint: a
                 // dismissed state stays quiet across relaunches, while a
                 // DIFFERENT improper state re-arms the notice.
