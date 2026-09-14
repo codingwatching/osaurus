@@ -267579,6 +267579,40 @@
           }
         }
       }
+    },
+    "Shared agents can't use folders on this Mac.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Geteilte Agenten können keine Ordner auf diesem Mac verwenden."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "공유 에이전트는 이 Mac의 폴더를 사용할 수 없습니다."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "Общие агенты не могут использовать папки на этом Mac."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "共享代理无法使用此 Mac 上的文件夹。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "needs_review",
+            "value": "共享代理程式無法使用此 Mac 上的資料夾。"
+          }
+        }
+      }
     }
   },
   "version": "1.1"
