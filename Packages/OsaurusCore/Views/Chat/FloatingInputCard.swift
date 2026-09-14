@@ -5244,7 +5244,8 @@ extension FloatingInputCard {
             modelId: selectedModel,
             fallbackSupportsImages: supportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
+            localCapabilities: localModel?.mediaCapabilities
         )
     }
 
