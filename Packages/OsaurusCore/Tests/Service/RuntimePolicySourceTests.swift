@@ -1805,7 +1805,7 @@ struct RuntimePolicySourceTests {
         #expect(!enrichment.contains("specs(forTools: Array(visibleDelegation))"))
     }
 
-    @Test("Capability controls show readiness and expose Default Image and AppleScript")
+    @Test("Capability controls show readiness; the Orchestrator has no Image/AppleScript toggles")
     func capabilityControlsExposeReadiness() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
         let mainChat = try Self.source("Views/Settings/SubagentSettingsSection.swift")
@@ -1814,8 +1814,11 @@ struct RuntimePolicySourceTests {
         #expect(agents.contains("private func subagentReadiness("))
         #expect(agents.contains(#"\(callableSubagentCount) \(L("callable"))"#))
         #expect(agents.contains("readiness.statusMessage"))
-        #expect(mainChat.contains("$configuration.imageDelegationEnabled"))
-        #expect(mainChat.contains("$configuration.appleScriptDelegationEnabled"))
+        // Image / AppleScript are custom-agent abilities only: the
+        // Orchestrator's Subagents section offers the allow-list and its
+        // readiness, never a media or AppleScript switch.
+        #expect(!mainChat.contains("imageDelegationEnabled"))
+        #expect(!mainChat.contains("appleScriptDelegationEnabled"))
         #expect(mainChat.contains("mainSpawnReadiness"))
         #expect(browser.contains("can only be enabled per custom agent"))
     }
