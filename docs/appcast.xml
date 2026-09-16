@@ -3,6 +3,35 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.5</title>
+            <pubDate>Wed, 16 Sep 2026 21:37:04 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.5</sparkle:version>
+            <sparkle:shortVersionString>0.25.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.5/Osaurus-0.25.5.dmg" length="77395928" type="application/octet-stream" sparkle:edSignature="L8ZXDixcBAsfoAgGRj4f6ah3PLFeDe2/wbWwigAR41AM7yXfsN7s6BHqSxO/ZCW8IWm0oybjZPyVZ8F9cJCiCA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Orchestrator polish and simplification (#2787) by @tpae
+- Default onboarding to Raptor 0.6 (#2782) by @tpae
+
+## 🐛 Bug Fixes
+
+- Make model repair verify files and report download progress (#2788) by @jjang-ai
+- Preserve local usage accounting and complete image chats cleanly (#2786) by @jjang-ai
+- Keep MTP opt-in and enforce runtime settings across Chat and API (#2785) by @jjang-ai
+- Fix resident child RAM admission and external model residency tracking (#2784) by @jjang-ai
+- Validate vision processors and preserve complete image/cache input (#2774) by @jjang-ai
+- Fix RAM admission measurement, capacity and token-budget contracts (#2752) by @jjang-ai
+- Bound idle model residency and preserve utility ownership (#2771) by @jjang-ai
+- Notify when SSD cache reaches its quota and clear indexed cache safely (#2783) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.4...0.25.5
+]]></description>
+        </item>
+        <item>
             <title>0.25.4</title>
             <pubDate>Tue, 15 Sep 2026 19:18:52 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
