@@ -475,6 +475,14 @@ struct FloatingInputCard: View {
     /// that is actually saved rather than a local guess.
     @State private var nativeMTPSelection: String = "auto"
 
+    // MARK: - SSD Cache Quota Notice
+
+    @State private var ssdWarningSnapshot: DiskCacheQuotaSnapshot?
+    @State private var ssdClearInProgress = false
+    @State private var ssdClearResult: String?
+    @State private var ssdCacheSettings = ServerRuntimeSettingsStore.snapshot().cache
+
+
     // MARK: - RAM Tight-Fit State
 
     /// Latest candidate-load RAM projection for the selected local model.
@@ -838,6 +846,7 @@ struct FloatingInputCard: View {
                 ramPressureRow
                 swapPressureRow
                 mtpLayoutAdvisoryRow
+                ssdQuotaWarningRow
                 modelSwitchContinuityRow
             }
 
@@ -986,6 +995,32 @@ struct FloatingInputCard: View {
             // fully above it via the `.top` alignment guide.
             .overlay(alignment: .top) {
                 configContextErrorOverlay
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(for: ServerRuntimeSettingsStore.didSaveNotification)
+                    .receive(on: DispatchQueue.main)
+            ) { _ in
+                let latest = ServerRuntimeSettingsStore.snapshot().cache
+                if ssdCacheSettings != latest {
+                    ssdCacheSettings = latest
+                    ssdWarningSnapshot = nil
+                    ssdClearResult = nil
+                }
+            }
+            .task(id: ssdQuotaNoticePollContext) {
+                while !Task.isCancelled {
+                    if canPresentSSDQuotaNotice, ssdWarningSnapshot == nil {
+                        let snapshots = await ModelRuntime.shared.diskCacheQuotaSnapshots(matching: ssdCacheSettings)
+                        guard !Task.isCancelled else { return }
+                        if canPresentSSDQuotaNotice,
+                            let snapshot = snapshots.first(where: { DiskCacheQuotaNotices.shared.claim($0) })
+                        {
+                            ssdWarningSnapshot = snapshot
+                            ssdClearResult = nil
+                        }
+                    }
+                    try? await Task.sleep(for: .seconds(3))
+                }
             }
             .overlay(alignment: .top) {
                 // Cache-only lookup: this is a view body, and the blocking
@@ -4887,6 +4922,95 @@ extension FloatingInputCard {
     private func rearmMTPLayoutAdvisory() {
         mtpAdvisoryEvaluatedForModel = nil
         refreshMTPLayoutAdvisory()
+    }
+
+    /// SwiftUI tasks retain the view values from their launch. Restart when a
+    /// same-model chat or presentation gate changes, not just the model name.
+    private var ssdQuotaNoticePollContext: SSDQuotaNoticePollContext {
+        SSDQuotaNoticePollContext(
+            model: selectedModel,
+            session: inputHistoryKey,
+            eligible: canPresentSSDQuotaNotice,
+            cacheSettings: ssdCacheSettings
+        )
+    }
+
+    private var canPresentSSDQuotaNotice: Bool {
+        guard ModelRuntime.cacheDiskDirectoryOverride(for: ssdCacheSettings) != nil,
+            isSelectedModelLocal, !isRemoteAgentRun, !isStreaming,
+            !configContextTooSmall, modelSwitchContinuityWarning == nil,
+            mtpLayoutAdvisory == nil, !ThemedAlertCenter.shared.hasAnyActiveAlert,
+            let windowId, ChatWindowManager.shared.isChatWindowActive(id: windowId),
+            ChatWindowManager.shared.windowState(id: windowId)?.session.sessionId == inputHistoryKey
+        else { return false }
+        // On main the RAM/swap notices still exist; don't compete with them.
+        if localMemoryWarningsApplyToSelectedModel {
+            if case .predicted = resolvedMemoryWarning { return false }
+            if showMeasuredMemoryWarning, let swap = swapPressure, swap.severity != .none { return false }
+        }
+        return alignmentPreparation.progress(
+            modelID: selectedModel.flatMap { ModelManager.findInstalledModelFromCache(named: $0)?.id },
+            sessionID: inputHistoryKey
+        ) == nil
+    }
+
+    @ViewBuilder
+    private var ssdQuotaWarningRow: some View {
+        if canPresentSSDQuotaNotice, let snapshot = ssdWarningSnapshot {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SSD cache limit reached", bundle: .module)
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
+                if ssdClearResult == nil {
+                    Text(
+                        verbatim: String(
+                            format: L(
+                                "The SSD cache reached its %@ limit. Removing older cached data to make room can make replies slower to start. Clearing frees cache space, but the next reply may need to rebuild it."
+                            ),
+                            snapshot.usage.maxLabel
+                        )
+                    )
+                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                if let ssdClearResult {
+                    Text(verbatim: ssdClearResult).font(.caption)
+                }
+                swapPrimaryButton(
+                    String(localized: "Clear SSD Cache", bundle: .module),
+                    tint: .orange
+                ) {
+                    ssdClearInProgress = true
+                    ssdClearResult = nil
+                    Task {
+                        let result = await ModelRuntime.shared.clearDiskCaches(directory: snapshot.directory)
+                        if ssdWarningSnapshot?.key == snapshot.key {
+                            ssdClearResult =
+                                result.error
+                                ?? String(
+                                    format: L("Cleared %@"),
+                                    DiskCacheUsage.format(bytes: result.reclaimedBytes)
+                                )
+                        }
+                        ssdClearInProgress = false
+                    }
+                }
+                .disabled(ssdClearInProgress || isStreaming)
+                if ssdClearInProgress { ProgressView().controlSize(.small) }
+                swapTextButton(String(localized: "Dismiss", bundle: .module)) {
+                    ssdWarningSnapshot = nil
+                    ssdClearResult = nil
+                }
+                .disabled(ssdClearInProgress)
+            }
+            .padding(14)
+            .background(RAMBannerShape(pointerCenterX: 28).fill(.regularMaterial))
+            .overlay(RAMBannerShape(pointerCenterX: 28).stroke(Color.orange.opacity(0.45), lineWidth: 1))
+            .frame(width: Self.ramBannerWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, 20)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("ssd-quota-warning")
+        }
     }
 
     /// In-flow wrapper mirroring `swapPressureRow`. One banner at a time:
