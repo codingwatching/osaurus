@@ -1124,7 +1124,6 @@ public actor ModelRuntime {
             modelName: trimmed
         )
         defer { finishModelDeletionProtectedAccess(deletionAccess) }
-        if modelCache[trimmed] != nil { return }
         guard let found = ModelManager.findInstalledModel(named: trimmed) else {
             throw NSError(
                 domain: "ModelRuntime",
@@ -1132,7 +1131,6 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
             )
         }
-        if modelCache[found.name] != nil { return }
         _ = try await loadContainer(
             id: found.id,
             name: found.name,
@@ -3947,6 +3945,10 @@ public actor ModelRuntime {
         alignmentRepairSession: String? = nil
     ) async throws -> SessionHolder {
         try Task.checkCancellation()
+        // Admission applies to warm reuse too, before eviction or MLX allocation.
+        if let directory = Self.findLocalDirectory(forModelId: id) {
+            try ModelManifest.validateLoad(at: directory)
+        }
         let policy = await ServerConfigurationStore.load()?.modelEvictionPolicy ?? .strictSingleModel
         let loadStartedAt = CFAbsoluteTimeGetCurrent()
         genLog.info(
@@ -4249,6 +4251,10 @@ public actor ModelRuntime {
             )
         }
         try Task.checkCancellation()
+
+        // Recheck after asynchronous preparation in case the bundle changed.
+        // Automatic top-up never stamps a revision onto unverified weights.
+        try ModelManifest.validateLoad(at: localURL)
 
         // Manifest-verify ALL weight shards. `MLXModel.isDownloaded` only
         // requires *one* `*.safetensors` file, so a partially-downloaded

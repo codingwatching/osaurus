@@ -222,6 +222,7 @@ final class ModelDownloadService: ObservableObject {
     /// outlive the process. Coarse per-file resume (skip files whose on-disk
     /// size matches the expected size) covers the cross-launch case.
     private var pausedDownloads: [String: PausedSnapshot] = [:]
+    private var downloadRevisions: [String: String] = [:]
     private var hasRunTopUp = false
 
     /// Snapshot captured at the moment the user paused, used by `resume(_:)`
@@ -230,6 +231,7 @@ final class ModelDownloadService: ObservableObject {
     /// from the same byte offset.
     private struct PausedSnapshot {
         let resumeDataByFile: [String: Data]
+        let revision: String?
     }
 
     /// Result of one file's transfer inside the download task group.
@@ -273,6 +275,13 @@ final class ModelDownloadService: ObservableObject {
 
     func download(_ model: MLXModel, route: DownloadRoute = .direct) {
         guard !isActiveDownload(model.id) else { return }
+        if FileManager.default.fileExists(
+            atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
+        ) {
+            repair(model)
+            return
+        }
+        downloadRevisions[model.id] = nil
         repairingModels.remove(model.id)
         repairMessages[model.id] = nil
         downloadRoutes[model.id] = route
@@ -287,6 +296,7 @@ final class ModelDownloadService: ObservableObject {
             repairMessages[model.id] = L("External models are managed by their original application.")
             return
         }
+        downloadRevisions[model.id] = nil
         repairingModels.insert(model.id)
         repairMessages[model.id] = L("Checking model files…")
         downloadRoutes[model.id] = .direct
@@ -299,6 +309,11 @@ final class ModelDownloadService: ObservableObject {
     /// otherwise.
     func resume(_ model: MLXModel) {
         let snapshot = pausedDownloads.removeValue(forKey: model.id)
+        if FileManager.default.fileExists(
+            atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
+        ) {
+            repairingModels.insert(model.id)
+        }
         startOrchestration(model: model, resuming: snapshot)
     }
 
@@ -416,17 +431,42 @@ final class ModelDownloadService: ObservableObject {
             let files = try await HuggingFaceService.shared.fetchDownloadFiles(
                 repoId: model.id,
                 patterns: Self.downloadFilePatterns,
-                excludedFiles: Self.downloadExcludedFiles
+                excludedFiles: Self.downloadExcludedFiles,
+                revision: resuming?.revision
             )
+            downloadRevisions[model.id] = files.first?.revision
 
+            // Inspect the same immutable revision as the weights, before transfer.
+            if let manifestFile = files.first(where: { $0.path == ModelManifest.filename }) {
+                guard manifestFile.size <= ModelManifest.maximumBytes else {
+                    throw ModelManifest.invalid("The file exceeds 64 KiB.")
+                }
+                let snapshot = try await HuggingFaceService.shared.fetchModelManifest(
+                    repoId: model.id,
+                    revision: manifestFile.revision
+                )
+                guard let manifest = snapshot.manifest else {
+                    throw ModelManifest.invalid("The pinned repository lists osaurus.json but it could not be fetched.")
+                }
+                if let failure = manifest.compatibilityFailure(hostVersion: ModelManifest.hostVersion) { throw failure }
+            }
+
+            let verifiesPublisherRevision = files.contains { $0.path == ModelManifest.filename }
             let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
             let directory = model.localDirectory
+            let hasObsoleteManifest =
+                isRepair && !verifiesPublisherRevision
+                && ModelManifest.read(at: directory) != .absent
             // Hashing an installed multi-GB bundle must remain cancellable
             // and must never run on MainActor.
             if isRepair { repairCheckingTokens.insert(token) }
             let service = self
             let scan = Task.detached(priority: .utility) {
-                try Self.filesNeedingDownload(files, under: directory, verifyContents: isRepair) { path, index in
+                try Self.filesNeedingDownload(
+                    files,
+                    under: directory,
+                    verifyContents: isRepair || verifiesPublisherRevision
+                ) { path, index in
                     guard isRepair else { return }
                     Task { @MainActor in
                         guard service.downloadTokens[model.id] == token,
@@ -492,6 +532,15 @@ final class ModelDownloadService: ObservableObject {
                 )
             }
 
+            // A partial update must never advertise the new revision or load a
+            // mixture of old and new files. Keep a persistent marker on failure,
+            // pause or cancellation; Repair verifies all files before clearing it.
+            let pendingUpdate = directory.appendingPathComponent(ModelManifest.pendingUpdateFilename)
+            if !filesToDownload.isEmpty || hasObsoleteManifest {
+                try Data((files.first?.revision ?? "").utf8).write(to: pendingUpdate, options: .atomic)
+            }
+            let transferFiles = filesToDownload.filter { $0.path != ModelManifest.filename }
+
             // Transfer up to three files at once. Per-connection
             // throughput to the Hugging Face CDN is the bottleneck on
             // most links, and the multi-shard repos are the ones users
@@ -505,8 +554,8 @@ final class ModelDownloadService: ObservableObject {
                 var nextIndex = 0
                 var stopScheduling = false
 
-                while nextIndex < min(maxConcurrentFiles, filesToDownload.count) {
-                    let file = filesToDownload[nextIndex]
+                while nextIndex < min(maxConcurrentFiles, transferFiles.count) {
+                    let file = transferFiles[nextIndex]
                     nextIndex += 1
                     let resumeData = resuming?.resumeDataByFile[file.path]
                     group.addTask {
@@ -539,8 +588,8 @@ final class ModelDownloadService: ObservableObject {
                             }
                         }
                     }
-                    if !stopScheduling, nextIndex < filesToDownload.count {
-                        let file = filesToDownload[nextIndex]
+                    if !stopScheduling, nextIndex < transferFiles.count {
+                        let file = transferFiles[nextIndex]
                         nextIndex += 1
                         let resumeData = resuming?.resumeDataByFile[file.path]
                         group.addTask {
@@ -589,6 +638,23 @@ final class ModelDownloadService: ObservableObject {
                 return
             }
 
+            // Commit the publisher manifest only after every other file succeeds.
+            if let manifestFile = filesToDownload.first(where: { $0.path == ModelManifest.filename }) {
+                switch await transferFile(
+                    manifestFile,
+                    model: model,
+                    token: token,
+                    resumeData: resuming?.resumeDataByFile[manifestFile.path]
+                ) {
+                case .completed: break
+                case .failed(_, let error): throw error
+                case .paused(let path, let data):
+                    commitPause(modelId: model.id, token: token, resumeDataByFile: data.map { [path: $0] } ?? [:])
+                    return
+                }
+            }
+            try Task.checkCancellation()
+
             // Manifest driven completion check. `model.isDownloaded` only
             // looks for config + tokenizer + ≥1 shard on disc so a
             // multi shard download with a silently skipped file would
@@ -615,9 +681,22 @@ final class ModelDownloadService: ObservableObject {
                     return size == file.size ? nil : file.path
                 }
             }.value
+            try Task.checkCancellation()
+            guard downloadTokens[model.id] == token else { return }
             let isComplete = missing.isEmpty
+            let removedObsoleteManifest =
+                isComplete
+                ? try ModelManifest.removeObsoleteManifest(
+                    at: directory,
+                    advertised: verifiesPublisherRevision,
+                    explicitRepair: isRepair
+                )
+                : false
             let finalState: DownloadState
             if isComplete {
+                if FileManager.default.fileExists(atPath: pendingUpdate.path) {
+                    try FileManager.default.removeItem(at: pendingUpdate)
+                }
                 finalState = .completed
             } else if missing.count == 1 {
                 finalState = .failed(
@@ -652,7 +731,9 @@ final class ModelDownloadService: ObservableObject {
                     failureFilePath: missing.first
                 )
                 if didFinalize && isComplete {
-                    if isRepair {
+                    if isRepair, removedObsoleteManifest {
+                        self.repairMessages[model.id] = L("Repair complete. Removed obsolete osaurus.json.")
+                    } else if isRepair {
                         self.repairMessages[model.id] =
                             filesToDownload.isEmpty
                             ? L("All model files match Hugging Face. No repair was needed.")
@@ -950,7 +1031,10 @@ final class ModelDownloadService: ObservableObject {
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
         pauseRequestedModels.remove(modelId)
-        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: resumeDataByFile)
+        pausedDownloads[modelId] = PausedSnapshot(
+            resumeDataByFile: resumeDataByFile,
+            revision: downloadRevisions[modelId]
+        )
         invalidateDownloaders(for: modelId)
         activeDownloadTasks[modelId] = nil
     }
@@ -995,11 +1079,12 @@ final class ModelDownloadService: ObservableObject {
                 etaSeconds: nil
             )
         }
-        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:])
+        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:], revision: downloadRevisions[modelId])
         downloadStates[modelId] = .paused(progress: progress)
     }
 
     func cancel(_ modelId: String) {
+        downloadRevisions[modelId] = nil
         releaseOrchestrationResources(for: modelId)
         pausedDownloads[modelId] = nil
         clearDownloadTracking(for: modelId)
@@ -1516,6 +1601,9 @@ final class ModelDownloadService: ObservableObject {
             let exists = fm.fileExists(atPath: local.path)
 
             if intent == .automatic {
+                // Never attach the latest publisher revision to unverified old
+                // weights. Only a complete explicit download/repair may stamp it.
+                if file.path == ModelManifest.filename { return false }
                 // Two things an automatic pass must never do, because both
                 // undo deliberate work:
                 //

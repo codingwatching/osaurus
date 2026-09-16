@@ -130,20 +130,19 @@ actor HuggingFaceService {
     func fetchDownloadFiles(
         repoId: String,
         patterns: [String],
-        excludedFiles: Set<String> = []
+        excludedFiles: Set<String> = [],
+        revision requestedRevision: String? = nil
     ) async throws -> [MatchedFile] {
+        let revision: String
+        if let requestedRevision {
+            revision = requestedRevision
+        } else {
+            revision = try await resolveRevision(repoId: repoId)
+        }
+        guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else { throw URLError(.badURL) }
         var components = URLComponents()
         components.scheme = "https"
         components.host = "huggingface.co"
-        components.path = "/api/models/\(repoId)/revision/main"
-        components.queryItems = [URLQueryItem(name: "expand[]", value: "sha")]
-        guard let infoURL = components.url else { throw URLError(.badURL) }
-        struct Revision: Decodable { let sha: String }
-        let (info, _) = try await downloadMetadata(infoURL)
-        let revision = try JSONDecoder().decode(Revision.self, from: info).sha
-        guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else {
-            throw URLError(.cannotParseResponse)
-        }
         components.path = "/api/models/\(repoId)/tree/\(revision)"
         components.queryItems = [URLQueryItem(name: "recursive", value: "1")]
         guard let treeURL = components.url else { throw URLError(.badURL) }
@@ -177,6 +176,46 @@ actor HuggingFaceService {
         return files
     }
 
+    private func resolveRevision(repoId: String) async throws -> String {
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "huggingface.co"
+        components.path = "/api/models/\(repoId)/revision/main"
+        components.queryItems = [URLQueryItem(name: "expand[]", value: "sha")]
+        guard let infoURL = components.url else { throw URLError(.badURL) }
+        struct Revision: Decodable { let sha: String }
+        let (info, _) = try await downloadMetadata(infoURL)
+        let revision = try JSONDecoder().decode(Revision.self, from: info).sha
+        guard revision.count == 40, revision.allSatisfy(\.isHexDigit) else {
+            throw URLError(.cannotParseResponse)
+        }
+        return revision
+    }
+
+    struct ManifestSnapshot: Sendable {
+        let revision: String
+        let manifest: ModelManifest?
+    }
+
+    /// A missing sidecar is a legacy repo. Authentication, transport and parsing
+    /// failures stay errors, so the UI never misreports a failed check as current.
+    func fetchModelManifest(repoId: String, revision: String? = nil) async throws -> ManifestSnapshot {
+        let pinned: String
+        if let revision { pinned = revision } else { pinned = try await resolveRevision(repoId: repoId) }
+        guard pinned.count == 40, pinned.allSatisfy(\.isHexDigit) else { throw URLError(.badURL) }
+        var components = URLComponents()
+        components.scheme = "https"
+        components.host = "huggingface.co"
+        components.path = "/\(repoId)/resolve/\(pinned)/osaurus.json"
+        guard let url = components.url else { throw URLError(.badURL) }
+        do {
+            let (data, _) = try await downloadMetadata(url, maximumBytes: ModelManifest.maximumBytes)
+            return ManifestSnapshot(revision: pinned, manifest: try ModelManifest.decode(data))
+        } catch let error as DirectDownloader.HTTPStatusError where error.statusCode == 404 {
+            return ManifestSnapshot(revision: pinned, manifest: nil)
+        }
+    }
+
     nonisolated static func nextTreePage(_ link: String?, under treeURL: URL) throws -> URL? {
         guard let link else { return nil }
         for entry in link.split(separator: ",") where entry.contains("rel=\"next\"") || entry.contains("rel=next") {
@@ -191,7 +230,7 @@ actor HuggingFaceService {
         return nil
     }
 
-    private func downloadMetadata(_ url: URL) async throws -> (Data, HTTPURLResponse) {
+    private func downloadMetadata(_ url: URL, maximumBytes: Int? = nil) async throws -> (Data, HTTPURLResponse) {
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         HuggingFaceAuth.authorize(&request)
@@ -201,8 +240,22 @@ actor HuggingFaceService {
                 let (data, response): (Data, URLResponse)
                 if let metadataRequest {
                     (data, response) = try await metadataRequest(request)
+                } else if let maximumBytes {
+                    let (bytes, result) = try await GlobalProxySettings.sharedSession().bytes(for: request)
+                    response = result
+                    var bounded = Data()
+                    for try await byte in bytes {
+                        guard bounded.count < maximumBytes else {
+                            throw ModelManifest.invalid("The file exceeds 64 KiB.")
+                        }
+                        bounded.append(byte)
+                    }
+                    data = bounded
                 } else {
                     (data, response) = try await GlobalProxySettings.sharedSession().data(for: request)
+                }
+                if let maximumBytes, data.count > maximumBytes {
+                    throw ModelManifest.invalid("The file exceeds 64 KiB.")
                 }
                 guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
                 guard (200 ..< 300).contains(http.statusCode) else {
