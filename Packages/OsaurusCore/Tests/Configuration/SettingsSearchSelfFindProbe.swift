@@ -12,6 +12,15 @@ import Testing
 @Suite("settings search self-findability")
 struct SettingsSearchSelfFindProbe {
 
+    @Test("delegation RAM safety is shared config, not a UI-only control")
+    func ramSafetyCatalogNamesWritableSection() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first {
+            $0.id == "settings.orchestrator.delegation.ramSafety"
+        })
+        #expect(entry.declarativeSection == "delegation")
+        #expect(!entry.isSettingsUIOnly)
+    }
+
     @Test("every entry is findable by its own title")
     func everyEntryFindsItselfByTitle() {
         let unfindable = SettingsSearchIndex.entries
@@ -130,6 +139,8 @@ struct SettingsSearchSelfFindProbe {
             ("agent-target model override", "settings.orchestrator.delegation.advanced"),
             ("swap local models", "settings.orchestrator.delegation.handoff"),
             ("check memory before delegating", "settings.orchestrator.delegation.handoff"),
+            ("check memory before delegating", "settings.orchestrator.delegation.ramSafety"),
+            ("stable_memory_refusal", "settings.orchestrator.delegation.ramSafety"),
             ("delegations", "settings.orchestrator.delegations"),
             // Workspaces → Shared agents: the per-workspace auto-join switch.
             ("let the orchestrator delegate to shared agents", "workspaces.agents.orchestratorAutoJoin"),
