@@ -325,9 +325,13 @@ enum PrivacyFilterPipeline {
         // layer (built-ins / presets / custom rules) runs standalone,
         // so the filter is fully usable without the ~2.8 GB download.
         let useModel = config.aiDetectionEnabled
-        let backend = config.aiDetectionBackend
+        // Run whichever backend is actually on disk: the user's default
+        // if installed, else the other one. Only fail-closed when
+        // nothing is installed at all.
+        let backend = config.resolvedAIBackend(isInstalled: PrivacyAIBackend.isBundleInstalled)
+            ?? config.aiDetectionBackend
         if useModel {
-            // Warm the configured backend, bounded to a single lazy-load
+            // Warm the resolved backend, bounded to a single lazy-load
             // attempt per call so a corrupt bundle can't trap every
             // outbound request in a load loop.
             var ready = false
@@ -347,7 +351,7 @@ enum PrivacyFilterPipeline {
                             loadError = error.localizedDescription
                         }
                     } else {
-                        loadError = "model bundle missing at \(bundleDir.path)"
+                        loadError = "no privacy model installed (looked for OpenAI Privacy Filter at \(bundleDir.path) and Rampart)"
                     }
                 }
                 ready = isLoaded
@@ -360,7 +364,7 @@ enum PrivacyFilterPipeline {
                         loadError = error.localizedDescription
                     }
                 } else {
-                    loadError = "rampart model bundle missing"
+                    loadError = "no privacy model installed (looked for Rampart and OpenAI Privacy Filter)"
                 }
             }
             // Fail-CLOSED: the user enabled AI detection expecting their
@@ -373,8 +377,11 @@ enum PrivacyFilterPipeline {
                 print("[PrivacyFilter] BLOCKING send: \(detail).")
                 throw PrivacyFilterPipelineError.engineUnavailable(detail)
             }
+            let fallbackNote =
+                backend == config.aiDetectionBackend
+                ? "" : "; default [\(config.aiDetectionBackend.rawValue)] not installed, using installed model"
             print(
-                "[PrivacyFilter] Outbound: filter ENABLED (AI [\(backend.rawValue)] + regex) for provider \(providerId.uuidString); running detection."
+                "[PrivacyFilter] Outbound: filter ENABLED (AI [\(backend.rawValue)] + regex) for provider \(providerId.uuidString)\(fallbackNote); running detection."
             )
         } else {
             print(
@@ -417,6 +424,7 @@ enum PrivacyFilterPipeline {
         let preExistingSnapshot = await map.snapshot()
         let preExistingOriginals: Set<String> = Set(preExistingSnapshot.map(\.1))
         let preDetectionCounters = await map.counterSnapshot
+        let sessionSkipped = await map.skippedOriginals
 
         var detections: [DetectedEntity] = []
         for segment in segments {
@@ -454,6 +462,18 @@ enum PrivacyFilterPipeline {
         var seen: Set<String> = []
         detections = detections.filter { entity in
             seen.insert(entity.original).inserted
+        }
+
+        // Originals the user already skipped this session stay skipped:
+        // no second review prompt and no substitution. Detection re-
+        // interned them, so un-intern here too (counters untouched; a
+        // gap in indices is harmless, reusing a shipped one is not).
+        if !sessionSkipped.isEmpty {
+            let reSkipped = Set(detections.map(\.original)).intersection(sessionSkipped)
+            if !reSkipped.isEmpty {
+                await map.removeOriginals(reSkipped)
+                detections.removeAll { reSkipped.contains($0.original) }
+            }
         }
 
         // Partition: originals already minted on a prior turn (the
@@ -614,11 +634,17 @@ enum PrivacyFilterPipeline {
         // by definition (they were in the detection list), and
         // counting them again would block the send right after the
         // user told us to let them through.
-        let skippedOriginals: Set<String> = Set(
+        let skippedThisTurn: Set<String> = Set(
             approvedFromReview
                 .filter { !$0.approved }
                 .map(\.original)
         )
+        // Make the skip final for the rest of the session (see
+        // `RedactionMap.markSkipped`). Earlier skips are exempt from
+        // the leak scan too, or a skipped phone number would block
+        // the next agent-loop iteration as a "leak".
+        await map.markSkipped(skippedThisTurn)
+        let skippedOriginals = skippedThisTurn.union(sessionSkipped)
         // Scope the regex re-scan to the message range detection
         // actually classified (the latest user turn onward). Carry-
         // over substitution can dirty EARLIER history messages (a
@@ -768,8 +794,12 @@ enum PrivacyFilterPipeline {
         for text in scoped.scrubbableTexts() {
             if text.isEmpty { continue }
             let scanText = skipCodeBlocks ? CodeBlockMasker.mask(text).masked : text
+            // Mirror detection's injected-block skip for the same reason
+            // as the code masking above.
+            let injected = InjectedContextSpans.ranges(in: scanText)
             let matches = RegexEntityDetector.detect(in: scanText, ruleset: ruleset)
             for match in matches {
+                if InjectedContextSpans.overlaps(match.range, injected) { continue }
                 if ignoreOriginals.contains(match.original) { continue }
                 counts[match.category, default: 0] += 1
             }
