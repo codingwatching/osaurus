@@ -307,9 +307,11 @@ let package = Package(
         // vmlx-swift#481 fuses exact packed-ternary expansion on Metal;
         // #482 bounds Qwen3.5/Bonsai2 media language prefill while retaining
         // full-prompt M-RoPE positions and complete KV/GDN companion state.
+        // vmlx-swift#484 uses FP16 Bonsai2 attention K/V after norms/RoPE,
+        // retaining FP32 GDN recurrence and isolating old cache precision.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "125f961272908697f87a983f972ccf50e0810a05"
+            revision: "6026359408f02c5867643d84300b0ca2225a2e88"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
