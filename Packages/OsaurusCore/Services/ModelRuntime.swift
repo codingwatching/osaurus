@@ -1174,7 +1174,8 @@ public actor ModelRuntime {
     func preload(
         name: String,
         intent: ModelLoadIntent = .interactive,
-        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil
+        restoreOwnershipToken: ModelResidencyOwnershipToken? = nil,
+        restoreSource: RequestSource? = nil
     ) async throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1196,12 +1197,22 @@ public actor ModelRuntime {
                 userInfo: [NSLocalizedDescriptionKey: "Installed model not found for preload: \(trimmed)"]
             )
         }
-        _ = try await loadContainer(
+        let loadedHolder = try await loadContainer(
             id: found.id,
             name: found.name,
             intent: intent,
             restoreOwnershipToken: restoreOwnershipToken
         )
+        // A restore normally publishes an unowned cold preload. Retain the
+        // exact invoking surface from its lease, but never steal a resident
+        // that another request has already used while this load suspended.
+        if intent == .handoffRestore, let restoreSource,
+            modelCache[found.name] === loadedHolder,
+            residentMetadata[found.name]?.childOwnershipToken == nil,
+            lastUseSource[found.name] == nil
+        {
+            lastUseSource[found.name] = restoreSource
+        }
         // A preload never acquires a generation lease, so without arming the
         // idle timer here the model would stay resident FOREVER if no
         // generation ever follows (the timer is otherwise only scheduled on
@@ -4091,11 +4102,16 @@ public actor ModelRuntime {
             if let existingRecord = loadingTasks[name] {
                 do {
                     let holder = try await existingRecord.task.value
-                    return try await finishLoadedContainer(
+                    let published = try await finishLoadedContainer(
                         name: name,
                         holder: holder,
                         loadID: existingRecord.id
                     )
+                    // A coalesced load validates its original owner, not this
+                    // waiter. Explicit parent unload may revoke our permit
+                    // while the foreign load (or its warm-up) is awaited.
+                    try validateParentRetention(parentRetention, target: name)
+                    return published
                 } catch is CancellationError {
                     if loadingTasks[name]?.id == existingRecord.id {
                         loadingTasks.removeValue(forKey: name)
@@ -4188,11 +4204,13 @@ public actor ModelRuntime {
             if let existingRecord = loadingTasks[name] {
                 do {
                     let holder = try await existingRecord.task.value
-                    return try await finishLoadedContainer(
+                    let published = try await finishLoadedContainer(
                         name: name,
                         holder: holder,
                         loadID: existingRecord.id
                     )
+                    try validateParentRetention(parentRetention, target: name)
+                    return published
                 } catch is CancellationError {
                     if loadingTasks[name]?.id == existingRecord.id {
                         loadingTasks.removeValue(forKey: name)
@@ -4718,11 +4736,13 @@ public actor ModelRuntime {
                 category: "model.load",
                 message: "loaded model=\(name) elapsedMs=\(elapsedMs)"
             )
-            return try await finishLoadedContainer(
+            let published = try await finishLoadedContainer(
                 name: name,
                 holder: holder,
                 loadID: loadID
             )
+            try validateParentRetention(parentRetention, target: name)
+            return published
         } catch {
             if loadingTasks[name]?.id == loadID {
                 loadingTasks.removeValue(forKey: name)
