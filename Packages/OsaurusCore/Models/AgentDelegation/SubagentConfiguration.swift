@@ -35,17 +35,13 @@ enum SubagentImageLoadPolicy: String, Codable, CaseIterable, Sendable {
     }
 }
 
-/// How the AppleScript subagent's model is kept resident across calls. The
-/// AppleScript bundle is always a DIFFERENT model than the chat model, so a
-/// run must unload chat, load the AppleScript model, run, and reload chat
-/// (single-GPU residency). Back-to-back `applescript` / `mac_query` calls pay
-/// that whole round-trip each time under `.singleResidency`. `.keepWarmAfterJob`
-/// instead keeps the AppleScript model resident for a short window after a run
-/// (deferring the chat reload), so a follow-up call reuses it and skips the
-/// swap — the biggest everyday latency win. Modeled on `SubagentImageLoadPolicy`.
+/// When local model swapping is enabled for a different-model AppleScript
+/// run, controls when its owned lease restores the invoking chat model.
+/// Keep-warm can reuse the dedicated model for the same parent/session; it
+/// cannot enable swapping when the global setting is off. A resident-parent
+/// `mac_query` does not acquire a dedicated-model warm lease.
 public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
-    /// Restore the chat model immediately after every AppleScript run (the
-    /// original behavior; one resident model at all times).
+    /// Restore the chat model immediately after an authorized swap.
     case singleResidency = "single_residency"
     /// Keep the AppleScript model resident for `keepWarmSeconds` after a run so
     /// a follow-up AppleScript call reuses it. The chat model reload is deferred
@@ -62,10 +58,10 @@ public enum AppleScriptLoadPolicy: String, Codable, CaseIterable, Sendable {
     public var caption: String {
         switch self {
         case .singleResidency:
-            return L("The chat model reloads right after each AppleScript run.")
+            return L("With local model swapping on, the chat model reloads right after each AppleScript run.")
         case .keepWarmAfterJob:
             return L(
-                "The AppleScript model stays loaded briefly after a run so back-to-back automations are faster."
+                "With local model swapping on, the AppleScript model stays loaded briefly for same-session follow-up calls. Turning swapping off disables this warm hold."
             )
         }
     }
@@ -511,14 +507,9 @@ struct SubagentConfiguration: Codable, Equatable, Sendable {
     /// is freed, the job is rejected instead of unloading the orchestrator and
     /// failing to load the spawn model. See `ChatResidencyHandoff.memoryPreflight`.
     var ramSafetyPreflightEnabled: Bool
-    /// When true, a local spawn model may load ALONGSIDE the resident chat
-    /// model instead of the unload→run→reload handoff — but only when the
-    /// server eviction policy is Flexible (Multi Model) AND the live RAM
-    /// projection says both fit (see `SubagentResidency.decidePlan`'s
-    /// coexistence gate). Default OFF: two resident MLX graphs is the
-    /// historical BUG G concurrent-GPU crash class, so single residency stays
-    /// the default until the direction-matrix crash lane proves a machine's
-    /// configuration safe. Strict eviction policy ignores this flag entirely.
+    /// Legacy persisted key, retained for config round-trip compatibility only.
+    /// OFF on the shared swap switch now retains the parent; no second opt-in
+    /// or Flexible server policy is required. This field has no runtime effect.
     var subagentCoexistenceEnabled: Bool
     /// Per-capability model override for the DEFAULT / main-chat agent's subagent
     /// kinds, keyed by capability id (`"spawn"`, `"computer_use"`). An entry
