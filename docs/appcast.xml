@@ -3,6 +3,31 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.9</title>
+            <pubDate>Sat, 19 Sep 2026 16:12:47 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.9</sparkle:version>
+            <sparkle:shortVersionString>0.25.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.9/Osaurus-0.25.9.dmg" length="77814825" type="application/octet-stream" sparkle:edSignature="i+cawltTmfdb7Af7CsX55tgPd2XXI/H+d9J6xGPtYnerJnB1bJEyVdACW3FnQMLGjKDry+e6i3XKqCGudedOBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Recognize GPT-6 Astra and other new remote-provider models (#2826) by @tpae
+- Hide dispatch envelopes behind a compact source badge row (#2824) by @tpae
+
+## 🐛 Bug Fixes
+
+- Fix app hang in SelectableNSTextView.hitTest (#2827) by @[sentry[bot]](https://github.com/apps/sentry)
+- Show n8n pending approval card with preset allowlists (#2829) by @tpae
+- fix app hang from localization lookups in liveStatusLine (#2812) by @[sentry[bot]](https://github.com/apps/sentry)
+- Preserve reasoning choices on cold sends and delegated steps (#2822) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.8...0.25.9
+]]></description>
+        </item>
+        <item>
             <title>0.25.8</title>
             <pubDate>Fri, 18 Sep 2026 21:18:44 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
