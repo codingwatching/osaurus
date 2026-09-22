@@ -3,6 +3,28 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.11</title>
+            <pubDate>Tue, 22 Sep 2026 21:30:13 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.11</sparkle:version>
+            <sparkle:shortVersionString>0.25.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.11/Osaurus-0.25.11.dmg" length="78602541" type="application/octet-stream" sparkle:edSignature="tO+OZ0rvxCzsllXkPcxlZL6ll5w0GPTwEIoL23E6DTvWeEX8ruSQFNxTjDE0oyWGCWcRWyaOlQoIHTW5d8iNDg=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Add two-phase Product Hunt dialogs for the Raptor launch (Sept 2026) (#2855) by @tpae
+
+## 🐛 Bug Fixes
+
+- resolve canonical MCP tool names within the originating provider (#2857) by @RaajeevChandran
+- Preserve null tool calls and prevent primitive JSON serialization crashes (#2854) by @jjang-ai
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.10...0.25.11
+]]></description>
+        </item>
+        <item>
             <title>0.25.10</title>
             <pubDate>Tue, 22 Sep 2026 13:55:25 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
