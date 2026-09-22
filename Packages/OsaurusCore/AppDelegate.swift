@@ -2217,7 +2217,15 @@ extension AppDelegate {
     /// `osaurus://settings?tab=<tab>` — open the management window on a tab
     /// (used by the in-chat osaurus_config result card's "Open in Settings"
     /// links for rows the user must finish by hand).
+    /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — the link
+    /// Hugging Face's "Use this model" menu generates for Osaurus; same
+    /// handling as `huggingface://?model=…` (see `HuggingFaceModelDeepLink`).
     fileprivate func handleOsaurusDeepLink(_ url: URL) {
+        if HuggingFaceModelDeepLink.matches(url) {
+            handleHuggingFaceDeepLink(url)
+            return
+        }
+
         Task { @MainActor in
             NSApp.activate(ignoringOtherApps: true)
 
@@ -2262,41 +2270,43 @@ extension AppDelegate {
         showManagementWindow(initialTab: .tools)
     }
 
+    /// `huggingface://?model=<org/repo>[&file=<path>]` and
+    /// `osaurus://open_from_hf?model=<org/repo>[&file=<path>]` — open the
+    /// Model Manager on that repository after checking it is MLX-compatible.
     fileprivate func handleHuggingFaceDeepLink(_ url: URL) {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let items = components.queryItems ?? []
-        let modelId = items.first(where: { $0.name.lowercased() == "model" })?.value?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let file = items.first(where: { $0.name.lowercased() == "file" })?.value?.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-
-        guard let modelId, !modelId.isEmpty else {
+        guard let link = HuggingFaceModelDeepLink.parse(url) else {
             // No model id provided; ignore silently
             return
         }
+        let modelId = link.modelId
+        let file = link.file
 
         // Resolve to ensure it appears in the UI; enforce MLX-only via metadata
         Task { @MainActor in
-            if await ModelManager.shared.resolveModelIfMLXCompatible(byRepoId: modelId) == nil {
-                let alert = NSAlert()
-                alert.messageText = L("Unsupported model")
-                alert.informativeText = L(
-                    "Osaurus supports MLX-compatible Hugging Face repositories, including MLX, MXFP, JANG, JANGTQ, and TurboQuant artifacts when required files are present."
-                )
-                alert.alertStyle = .warning
-                alert.addButton(withTitle: "OK")
-                // `runModal` intentionally blocks the main run loop until the
-                // user dismisses the alert; pause the hang watchdog so the
-                // wait isn't reported as an app hang (Sentry APPLE-MACOS-VE).
-                CrashReportingService.shared.withAppHangTrackingPaused {
-                    _ = alert.runModal()
-                }
+            let resolution = await ModelManager.shared.resolveModelForDeepLink(byRepoId: modelId)
+            // The Models tab is reached through shared state, never through
+            // `showManagementWindow(deeplinkModelId:)`: that path rebuilds the
+            // window's hosting controller when the window already exists, and
+            // a SwiftUI sheet left up by the previous link (its detail sheet)
+            // then traps on the next resize (Sentry APPLE-MACOS-EF; reproduced
+            // live with two links in a row). The requests are set after the
+            // window call so a freshly created view replays them and an
+            // existing view receives them as changes.
+            if case .model = resolution {
+                showManagementWindow(initialTab: .models)
+                let state = ManagementStateManager.shared
+                state.pendingModelDeepLink = .init(modelId: modelId, file: file)
+                // Linked model's detail sheet (and its Download button) up.
+                state.pendingModelDetailId = modelId
                 return
             }
 
-            // Open Model Manager in its own window for deeplinks
-            showManagementWindow(initialTab: .models, deeplinkModelId: modelId, deeplinkFile: file)
+            guard HuggingFaceDeepLinkAlert.present(resolution, modelId: modelId) == .addToken else { return }
+            showManagementWindow(initialTab: .models)
+            let state = ManagementStateManager.shared
+            state.pendingModelDeepLink = .init(modelId: modelId, file: file)
+            state.pendingDeepLinkRetryModelId = modelId
+            state.pendingHuggingFaceTokenPrompt = true
         }
     }
 }
