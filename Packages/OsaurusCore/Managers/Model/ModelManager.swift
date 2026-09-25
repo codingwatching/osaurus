@@ -1967,6 +1967,7 @@ extension ModelManager {
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
     nonisolated(unsafe) static var localModelsScanFinishedForTests: (@Sendable () -> Void)?
+    nonisolated(unsafe) static var localModelsDispatchWaitingForTests: (@Sendable () -> Void)?
 
     public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -2015,6 +2016,7 @@ extension ModelManager {
                     if !localModelsScanInFlight {
                         startLocalModelsScanLocked()
                     }
+                    localModelsDispatchWaitingForTests?()
                     localModelsCacheCondition.wait()
                 }
                 localModelsCacheCondition.unlock()

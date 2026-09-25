@@ -480,6 +480,7 @@ struct ModelManagerTests {
         try await StoragePathsTestLock.shared.run {
             let previousOverride = ModelManager.scanLocalModelsOverrideForTests
             let previousFinished = ModelManager.localModelsScanFinishedForTests
+            let previousDispatchWaiting = ModelManager.localModelsDispatchWaitingForTests
             let previousExternal = ExternalModelLocator.testRootsOverride
             let previousRoot = OsaurusPaths.overrideRoot
             let root = FileManager.default.temporaryDirectory
@@ -492,6 +493,7 @@ struct ModelManagerTests {
 
             let oldStarted = DispatchSemaphore(value: 0)
             let newStarted = DispatchSemaphore(value: 0)
+            let dispatchWaiting = DispatchSemaphore(value: 0)
             let releaseOld = DispatchSemaphore(value: 0)
             let releaseNew = DispatchSemaphore(value: 0)
             let finished = LocalModelsScanNotificationProbe()
@@ -501,6 +503,7 @@ struct ModelManagerTests {
                 releaseNew.signal()
                 ModelManager.scanLocalModelsOverrideForTests = previousOverride
                 ModelManager.localModelsScanFinishedForTests = previousFinished
+                ModelManager.localModelsDispatchWaitingForTests = previousDispatchWaiting
                 ExternalModelLocator.testRootsOverride = previousExternal
                 OsaurusPaths.overrideRoot = previousRoot
                 ExternalModelLocator.invalidateInMemory()
@@ -508,6 +511,7 @@ struct ModelManagerTests {
                 try? FileManager.default.removeItem(at: root)
             }
             ModelManager.localModelsScanFinishedForTests = { finished.record() }
+            ModelManager.localModelsDispatchWaitingForTests = { dispatchWaiting.signal() }
             ModelManager.scanLocalModelsOverrideForTests = { _ in
                 oldStarted.signal()
                 releaseOld.wait()
@@ -515,6 +519,10 @@ struct ModelManagerTests {
                 return []
             }
             ModelManager.invalidateLocalModelsCache()
+            // Start the old scan before scheduling the dispatch waiter. The
+            // regression is about invalidating an in-flight scan, not whether
+            // the cooperative executor starts a new Task before this barrier.
+            _ = ModelManager.localModelsSnapshotNonBlocking()
             let waiter = Task {
                 await ModelManager.awaitLocalModelsCacheReadyForDispatch()
                 dispatched.record()
@@ -533,6 +541,8 @@ struct ModelManagerTests {
             }
             let beganOld = try await waitForSignal(oldStarted)
             try #require(beganOld)
+            let attachedToOldScan = try await waitForSignal(dispatchWaiting)
+            try #require(attachedToOldScan)
             ModelManager.scanLocalModelsOverrideForTests = { _ in
                 newStarted.signal()
                 releaseNew.wait()
