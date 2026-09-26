@@ -619,7 +619,24 @@ public final class ToolRegistry: ObservableObject {
     /// The structured refusal handed to external callers for denied
     /// tool classes.
     nonisolated static func externalSurfaceDenialEnvelope(tool: String) -> String {
-        ToolEnvelope.failure(
+        if ChatExecutionContext.hasRemoteReviewer {
+            // The owner's own phone: say why in terms they can act on, so the
+            // model's reply tells them to pick this up on the Mac instead of
+            // just reporting a failure. `requires_mac` lets the phone label
+            // the tool row "Needs your Mac" rather than "Failed"
+            // (MOBILE_PROTOCOL §16).
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "'\(tool)' can't run from the Osaurus phone app: it writes files, runs commands "
+                    + "or uses the user's personal apps on their Mac, which only the Mac itself may do. "
+                    + "Tell the user this step needs their Mac and they can continue this chat there.",
+                tool: tool,
+                retryable: false,
+                metadata: ["requires_mac": true]
+            )
+        }
+        return ToolEnvelope.failure(
             kind: .rejected,
             message:
                 "'\(tool)' is not available to external callers. This tool can only run from the Osaurus app.",
@@ -891,8 +908,12 @@ public final class ToolRegistry: ObservableObject {
                     // Headless eval / external MCP with no UI: deny instead of
                     // hanging on an approval card nobody can click.
                     approved = false
-                } else if ChatExecutionContext.isExternalSurface {
+                } else if ChatExecutionContext.isExternalSurface, !ChatExecutionContext.hasRemoteReviewer {
                     // External MCP/HTTP callers cannot interact with GUI prompts.
+                    // The owner's paired phone can: its run falls through to
+                    // the card below, which `GET /approvals` relays to it
+                    // (MOBILE_PROTOCOL §16). The external deny list still
+                    // applies to it, checked before this switch.
                     approved = false
                 } else if ChatExecutionContext.isUnattendedDispatch
                     && Self.unattendedAutoApprovableToolNames.contains(name)
@@ -953,9 +974,11 @@ public final class ToolRegistry: ObservableObject {
                     }
                 }
                 if !approved {
+                    let unanswerable =
+                        (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasRemoteReviewer)
+                        || ChatExecutionContext.denyUnapprovedToolPrompts
                     let message =
-                        ChatExecutionContext.isExternalSurface
-                            || ChatExecutionContext.denyUnapprovedToolPrompts
+                        unanswerable
                         ? "Tool '\(name)' requires interactive approval in the Osaurus app. Enable auto-approve or change the tool policy to auto before calling it from an external MCP client."
                         : "User denied execution for tool: \(name)"
                     throw NSError(

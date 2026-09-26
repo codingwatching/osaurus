@@ -1439,6 +1439,14 @@ enum ConfigApplier {
         }
     }
 
+    /// What a phone run is told for an existing provider whose key only the
+    /// Mac can take: the model relays it, so it names where to go.
+    static func credentialsNeedTheMac(providerName: String) -> String {
+        "The API key for '\(providerName)' has to be entered on the Mac: Osaurus → Settings → "
+            + "Providers. It was not requested from the phone and nothing was stored; tell the user "
+            + "to add it there, then this provider will work."
+    }
+
     /// Existing provider whose secret is missing: open the credential sheet
     /// in rotate mode (same preset card and fields Settings' "rotate key"
     /// shows) and persist the outcome through the manager. Secrets never
@@ -1449,6 +1457,14 @@ enum ConfigApplier {
         let request = ProviderCredentialRequest(
             provider: provider, providerName: provider.name,
             mode: .rotate(existingId: provider.id))
+        // From the paired phone there is nobody at this Mac to type the key:
+        // the panel would hold the run with nothing on the phone saying why.
+        // Leave it for the Mac and say so.
+        if ChatExecutionContext.hasRemoteReviewer {
+            return ConfigApplyResult(
+                section: "providers", target: entryName, status: .needsUserAction,
+                message: Self.credentialsNeedTheMac(providerName: provider.name))
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
         if Task.isCancelled {
             return ConfigApplyResult(
@@ -1556,6 +1572,38 @@ enum ConfigApplier {
                 providerType: .osaurus, providerName: entry.name, mode: .addNew)
         }
 
+        // See `requestCredentials(forExisting:)`: no Mac panel for a phone run.
+        // A preset that takes no key (e.g. Ollama) needs nothing from the
+        // panel, so it is created here as the panel path would with a blank
+        // key. Everything else names the step the Mac has to do.
+        if ChatExecutionContext.hasRemoteReviewer {
+            if case .preset = resolution, request.instructions.storageAuthType == .none {
+                let id = await MainActor.run {
+                    buildAndAddProvider(
+                        entry: entry,
+                        resolution: resolution,
+                        storageAuthType: .none,
+                        extraFields: nil,
+                        apiKey: nil,
+                        oauthTokens: nil)
+                }
+                return ProviderAddOutcome(
+                    result: ConfigApplyResult(section: "providers", target: entry.name, status: .done),
+                    createdProviderId: id)
+            }
+            let step: String
+            switch resolution {
+            case .preset: step = "its API key has to be entered"
+            case .codexOAuth: step = "it needs a sign-in"
+            case .osaurusAgent: step = "it needs pairing"
+            }
+            return ProviderAddOutcome(
+                result: ConfigApplyResult(
+                    section: "providers", target: entry.name, status: .needsUserAction,
+                    message: "'\(entry.name)' was not added: \(step) on the Mac, which can't be done "
+                        + "from the phone. Tell the user to add it in Osaurus → Settings → Providers "
+                        + "on their Mac, or to run this setup from the Mac."))
+        }
         let outcome = await ProviderCredentialPromptService.requestCredentials(request)
         if Task.isCancelled {
             return ProviderAddOutcome(

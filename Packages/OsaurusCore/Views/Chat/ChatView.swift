@@ -787,6 +787,9 @@ final class ChatSession: ObservableObject {
     private var lastManualModelSelection: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
+    /// Observer for `.modelOptionsChanged`: the paired phone stored a model
+    /// option, so reload the options when it's this window's model.
+    nonisolated(unsafe) private var modelOptionsObserver: NSObjectProtocol?
     /// Observer for `.privacyFilterRedactionsApproved`. Folds every
     /// approved (original, placeholder) pair into this window's
     /// `sessionRedactions` dict so user + assistant bubbles can
@@ -955,6 +958,18 @@ final class ChatSession: ObservableObject {
                 // Capability discovery can finish without changing the model
                 // list. Rehydrate explicit controls even in that case.
                 self.loadActiveModelOptions(for: self.selectedModel)
+            }
+        }
+
+        modelOptionsObserver = NotificationCenter.default.addObserver(
+            forName: .modelOptionsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let model = notification.object as? String
+            Task { @MainActor in
+                guard let self, model == self.selectedModel else { return }
+                self.loadActiveModelOptions(for: model)
             }
         }
 
@@ -1269,6 +1284,9 @@ final class ChatSession: ObservableObject {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = localModelsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = modelOptionsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = agentTodoObserver {
@@ -2764,6 +2782,18 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
     }
 
+    /// Drop `turnId` and every turn after it, for a paired phone retrying a
+    /// reply (`POST /sessions/{id}/truncate`). Returns how many turns went,
+    /// or nil when the turn is not in this transcript. The caller saves.
+    func truncateHostedTurns(fromTurnId turnId: UUID) -> Int? {
+        guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return nil }
+        let removed = turns.count - index
+        turns = Array(turns.prefix(index))
+        isDirty = true
+        rebuildVisibleBlocks()
+        return removed
+    }
+
     /// Append the clarify question as a visible assistant turn when the
     /// user dismisses the prompt card without answering. The card was
     /// the only readable surface for the question (the recorded tool
@@ -3488,7 +3518,10 @@ final class ChatSession: ObservableObject {
         // the user just picked a model.
         restorePersistedModelSelection(data.selectedModel)
 
-        turns = data.turns.map { ChatTurn(from: $0) }
+        // Folded so a chat written from raw messages before its tool results
+        // were recorded on the call (a phone or HTTP run) doesn't draw those
+        // calls as still running; a no-op for the Mac's own chats.
+        turns = ChatHistoryWriter.foldingToolResults(data.turns).map { ChatTurn(from: $0) }
         // Restore the LLM compaction summary and drop it immediately when it
         // no longer lines up with the restored transcript.
         conversationSummary = data.conversationSummary
@@ -9080,6 +9113,14 @@ struct ChatView: View {
         return windowState.composerLock
     }
 
+    /// A conversation this Mac hosted for someone else (a teammate, or its
+    /// own paired iPhone): read here, continued where it started, so there
+    /// is no input card to show.
+    private var isReadOnlyConversation: Bool {
+        if case .teammateConversation = composerLock { return true }
+        return false
+    }
+
     /// One-line explanation of the composer lock with its action (Retry /
     /// Open Workspaces), in the style of `remoteAgentConnectionNotice`. Auto-
     /// clears when the lock lifts (presence flips online, connect lands).
@@ -9099,7 +9140,9 @@ struct ChatView: View {
                     sessionId: observedSession.sessionId,
                     callerName: callerName,
                     agentName: agentName,
-                    isWorkspace: isWorkspace
+                    isWorkspace: isWorkspace,
+                    isFromPairedPhone: observedSession.workspaceContext
+                        .map(RemoteSessionContinuation.isFromPairedPhone) ?? false
                 )
             } else {
                 sharedAgentStatusNotice(status, identity: identity)
@@ -9831,11 +9874,18 @@ struct ChatView: View {
                                 .frame(maxWidth: 1100)
                                 .frame(maxWidth: .infinity)
 
-                            composerLockNotice
-                                .padding(.horizontal, Self.composerHorizontalInset)
-                                .frame(maxWidth: 1100)
-                                .frame(maxWidth: .infinity)
-                                .animation(theme.springAnimation(), value: composerLock)
+                            // Spaced from the notice above (the repair banner),
+                            // and from the window edge when there is no input
+                            // card below it to do that.
+                            if composerLock != nil {
+                                composerLockNotice
+                                    .padding(.horizontal, Self.composerHorizontalInset)
+                                    .padding(.top, 8)
+                                    .padding(.bottom, isReadOnlyConversation ? 12 : 0)
+                                    .frame(maxWidth: 1100)
+                                    .frame(maxWidth: .infinity)
+                                    .animation(theme.springAnimation(), value: composerLock)
+                            }
 
                             // Run-liveness notice (slow / stalled) so a run
                             // with no visible progress reads as a knowable
@@ -9859,109 +9909,114 @@ struct ChatView: View {
                             // input is the obvious place to type, and
                             // accidental sends here can't race the
                             // prompt resolution.
-                            FloatingInputCard(
-                                text: $observedSession.input,
-                                selectedModel: $observedSession.selectedModel,
-                                pendingAttachments: $observedSession.pendingAttachments,
-                                isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
-                                voiceInputState: $observedSession.voiceInputState,
-                                showVoiceOverlay: $observedSession.showVoiceOverlay,
-                                pickerItems: filteredPickerItems,
-                                activeModelOptions: $observedSession.activeModelOptions,
-                                isStreaming: observedSession.isSendActiveForComposer,
-                                // Hide Stop ONLY while the redaction review
-                                // sheet is actually on screen (the sheet owns
-                                // its own Cancel and the streaming Task is
-                                // suspended in its continuation). Crucially
-                                // this is NOT gated on the broader
-                                // "before first token" window, so Stop stays
-                                // available during model load / prefill — the
-                                // long pause a big model spends loading from
-                                // disk while the typing-indicator shimmer is up.
-                                isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
-                                supportsImages: observedSession.selectedModelSupportsImages,
-                                estimatedContextTokens: observedSession.estimatedContextTokens,
-                                appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
-                                contextBreakdown: observedSession.estimatedContextBreakdown,
-                                sessionSpendMicro: observedSession.sessionRouterSpendMicro,
-                                sessionCachedInputLabel: {
-                                    let stats = observedSession.sessionRouterCacheStats
-                                    return OsaurusRouter.formatCachedInputLabel(
-                                        cachedTokens: stats.cachedInputTokens,
-                                        inputTokens: stats.inputTokens
-                                    )
-                                }(),
-                                isRouterBilledSession: observedSession.isOsaurusRouterSession,
-                                workspacePoolLabel: workspacePoolLabel,
-                                workspacePoolId: activeWorkspaceId,
-                                imageComposerSettings: $observedSession.imageComposerSettings,
-                                onSend: { manualText in
-                                    if let manualText = manualText {
-                                        observedSession.input = manualText
-                                    }
-                                    if observedSession.isSendActiveForComposer {
-                                        observedSession.enqueueSend(
-                                            observedSession.input,
-                                            attachments: observedSession.pendingAttachments
+                            // Hidden on a read-only conversation (a teammate's, or one
+                            // from the paired iPhone): nothing can be sent there, and the
+                            // notice above says where it continues.
+                            if !isReadOnlyConversation {
+                                FloatingInputCard(
+                                    text: $observedSession.input,
+                                    selectedModel: $observedSession.selectedModel,
+                                    pendingAttachments: $observedSession.pendingAttachments,
+                                    isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
+                                    voiceInputState: $observedSession.voiceInputState,
+                                    showVoiceOverlay: $observedSession.showVoiceOverlay,
+                                    pickerItems: filteredPickerItems,
+                                    activeModelOptions: $observedSession.activeModelOptions,
+                                    isStreaming: observedSession.isSendActiveForComposer,
+                                    // Hide Stop ONLY while the redaction review
+                                    // sheet is actually on screen (the sheet owns
+                                    // its own Cancel and the streaming Task is
+                                    // suspended in its continuation). Crucially
+                                    // this is NOT gated on the broader
+                                    // "before first token" window, so Stop stays
+                                    // available during model load / prefill — the
+                                    // long pause a big model spends loading from
+                                    // disk while the typing-indicator shimmer is up.
+                                    isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
+                                    supportsImages: observedSession.selectedModelSupportsImages,
+                                    estimatedContextTokens: observedSession.estimatedContextTokens,
+                                    appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
+                                    contextBreakdown: observedSession.estimatedContextBreakdown,
+                                    sessionSpendMicro: observedSession.sessionRouterSpendMicro,
+                                    sessionCachedInputLabel: {
+                                        let stats = observedSession.sessionRouterCacheStats
+                                        return OsaurusRouter.formatCachedInputLabel(
+                                            cachedTokens: stats.cachedInputTokens,
+                                            inputTokens: stats.inputTokens
                                         )
-                                    } else {
-                                        observedSession.sendCurrent(directUserSend: true)
-                                    }
-                                },
-                                onStop: { observedSession.stop() },
-                                focusTrigger: focusTrigger,
-                                agentId: windowState.agentId,
-                                windowId: windowState.windowId,
-                                isCompact: windowState.showSidebar,
-                                isEmptyChat: !observedSession.hasVisibleThreadMessages,
-                                onClearChat: { observedSession.reset() },
-                                onDraftChange: { observedSession.noteComposerDraft($0) },
-                                onWillRehydrate: { observedSession.promoteComposerDraft() },
-                                modelSwitchContinuityWarning:
-                                    observedSession.modelSwitchContinuityWarning,
-                                onDismissModelSwitchContinuityWarning: {
-                                    observedSession.modelSwitchContinuityWarning = nil
-                                },
-                                onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
-                                onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
-                                onSkillSelected: { skillId in
-                                    observedSession.pendingOneOffSkillId = skillId
-                                },
-                                pendingSkillId: $observedSession.pendingOneOffSkillId,
-                                autoSpeakAssistant: $observedSession.autoSpeakAssistant,
-                                queuedSend: $observedSession.queuedSend,
-                                onSendNow: { observedSession.sendNowInterrupting() },
-                                onCancelQueued: { observedSession.cancelQueuedSend() },
-                                onAddCredits: { showTopUpSheet = true },
-                                isModelPinned: isRemoteAgentChrome,
-                                pinnedModelLabel: pinnedModelChipLabel,
-                                remoteConnectionPending: windowState.remoteAgentConnectionPhase
-                                    == .connecting,
-                                composerLock: composerLock,
-                                isRemoteAgentRun: isRemoteAgentChrome,
-                                inputHistoryProvider: { [weak observedSession] in
-                                    guard let observedSession else { return [] }
-                                    return ChatInputHistory.entries(from: observedSession.turns)
-                                },
-                                inputHistoryKey: observedSession.sessionId,
-                                compactionState: observedSession.compactionState,
-                                canCompactConversation: observedSession
-                                    .canManuallyCompactConversation,
-                                onCompactConversation: {
-                                    observedSession.requestManualCompaction()
-                                },
-                                warmupController: observedSession.warmupController,
-                                folderState: observedSession.folderState
-                            )
-                            // Passed through the environment rather than as
-                            // an init argument: the initializer above is at
-                            // the type-checker's limit already.
-                            .environment(\.composerGeneration, observedSession.composerGeneration)
-                            .frame(maxWidth: 1100)
-                            .frame(maxWidth: .infinity)
-                            .opacity(isPromptOverlayActive ? 0.55 : 1.0)
-                            .allowsHitTesting(!isPromptOverlayActive)
-                            .animation(theme.springAnimation(), value: isPromptOverlayActive)
+                                    }(),
+                                    isRouterBilledSession: observedSession.isOsaurusRouterSession,
+                                    workspacePoolLabel: workspacePoolLabel,
+                                    workspacePoolId: activeWorkspaceId,
+                                    imageComposerSettings: $observedSession.imageComposerSettings,
+                                    onSend: { manualText in
+                                        if let manualText = manualText {
+                                            observedSession.input = manualText
+                                        }
+                                        if observedSession.isSendActiveForComposer {
+                                            observedSession.enqueueSend(
+                                                observedSession.input,
+                                                attachments: observedSession.pendingAttachments
+                                            )
+                                        } else {
+                                            observedSession.sendCurrent(directUserSend: true)
+                                        }
+                                    },
+                                    onStop: { observedSession.stop() },
+                                    focusTrigger: focusTrigger,
+                                    agentId: windowState.agentId,
+                                    windowId: windowState.windowId,
+                                    isCompact: windowState.showSidebar,
+                                    isEmptyChat: !observedSession.hasVisibleThreadMessages,
+                                    onClearChat: { observedSession.reset() },
+                                    onDraftChange: { observedSession.noteComposerDraft($0) },
+                                    onWillRehydrate: { observedSession.promoteComposerDraft() },
+                                    modelSwitchContinuityWarning:
+                                        observedSession.modelSwitchContinuityWarning,
+                                    onDismissModelSwitchContinuityWarning: {
+                                        observedSession.modelSwitchContinuityWarning = nil
+                                    },
+                                    onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
+                                    onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
+                                    onSkillSelected: { skillId in
+                                        observedSession.pendingOneOffSkillId = skillId
+                                    },
+                                    pendingSkillId: $observedSession.pendingOneOffSkillId,
+                                    autoSpeakAssistant: $observedSession.autoSpeakAssistant,
+                                    queuedSend: $observedSession.queuedSend,
+                                    onSendNow: { observedSession.sendNowInterrupting() },
+                                    onCancelQueued: { observedSession.cancelQueuedSend() },
+                                    onAddCredits: { showTopUpSheet = true },
+                                    isModelPinned: isRemoteAgentChrome,
+                                    pinnedModelLabel: pinnedModelChipLabel,
+                                    remoteConnectionPending: windowState.remoteAgentConnectionPhase
+                                        == .connecting,
+                                    composerLock: composerLock,
+                                    isRemoteAgentRun: isRemoteAgentChrome,
+                                    inputHistoryProvider: { [weak observedSession] in
+                                        guard let observedSession else { return [] }
+                                        return ChatInputHistory.entries(from: observedSession.turns)
+                                    },
+                                    inputHistoryKey: observedSession.sessionId,
+                                    compactionState: observedSession.compactionState,
+                                    canCompactConversation: observedSession
+                                        .canManuallyCompactConversation,
+                                    onCompactConversation: {
+                                        observedSession.requestManualCompaction()
+                                    },
+                                    warmupController: observedSession.warmupController,
+                                    folderState: observedSession.folderState
+                                )
+                                // Passed through the environment rather than as
+                                // an init argument: the initializer above is at
+                                // the type-checker's limit already.
+                                .environment(\.composerGeneration, observedSession.composerGeneration)
+                                .frame(maxWidth: 1100)
+                                .frame(maxWidth: .infinity)
+                                .opacity(isPromptOverlayActive ? 0.55 : 1.0)
+                                .allowsHitTesting(!isPromptOverlayActive)
+                                .animation(theme.springAnimation(), value: isPromptOverlayActive)
+                            }
                         } else {
                             // No models empty state
                             ChatEmptyState(

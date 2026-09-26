@@ -372,6 +372,17 @@ public enum ChatExecutionContext {
     /// it.
     @TaskLocal static var isUnattendedDispatch: Bool = false
 
+    /// True when the run was started by the user's own paired phone, which
+    /// polls for and answers the cards this Mac would otherwise have no way
+    /// to show: the Privacy Filter's redaction review (§19) and `.ask` tool
+    /// approvals, which then queue for `GET /approvals` instead of being
+    /// refused as an external surface (§16). The external deny list still
+    /// applies. Bound by `handleAgentRunEndpoint` only for an owner caller on
+    /// the Secure Channel — a workspace peer, a plain HTTP client or a bare
+    /// loopback script still fails closed. Module-internal so
+    /// out-of-module callers cannot bind it.
+    @TaskLocal static var hasRemoteReviewer: Bool = false
+
     /// Identity a spawned subagent's KNOWLEDGE tools resolve grants and the
     /// curator role against. A spawned worker keeps `currentAgentId` inherited
     /// from its launcher for the surrounding model run, admission, handoff, and

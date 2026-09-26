@@ -967,7 +967,9 @@ struct OsaurusConfigToolHighRiskGateTests {
                 try await OsaurusConfigTool().execute(argumentsJSON: Self.applyArgs())
             }
         }
-        #expect(result.contains("user_denied") || result.contains("declined"))
+        // Refused as unanswerable, never reported as the user saying no.
+        #expect(result.contains("permission_denied"))
+        #expect(!result.contains("declined"))
         #expect(!result.contains("\"status\":\"applied\""))
         // And the tool policy must be unchanged afterwards.
         let policy = await MainActor.run {
@@ -1084,7 +1086,9 @@ struct OsaurusConfigToolHighRiskGateTests {
                 try await OsaurusConfigTool().execute(argumentsJSON: Self.applyArgs())
             }
         }
-        #expect(result.contains("user_denied") || result.contains("declined"))
+        // Refused as unanswerable, never reported as the user saying no.
+        #expect(result.contains("permission_denied"))
+        #expect(!result.contains("declined"))
         let policy = await MainActor.run {
             ConfigExporter.export().tools?.policies?["web_search"]
         }

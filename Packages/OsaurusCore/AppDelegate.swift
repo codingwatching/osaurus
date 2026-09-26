@@ -55,6 +55,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
     /// AppKit gets one or more frames where a stale/auto-presented window
     /// can flash before our real window is up.
     public func applicationWillFinishLaunching(_ notification: Notification) {
+        // First, so the launch itself lands in tmp/osaurus.log (debug only).
+        ConsoleLogFile.start()
+        #if DEBUG
+            // Per-token label trace for the OpenAI privacy model, into the same
+            // log: shows whether the model predicts nothing or the decoder drops
+            // it. Prints the first 80 chars of each scanned segment, so debug
+            // only; set OSAURUS_PRIVACY_TRACE=0 in the scheme to silence it.
+            PrivacyFilterKitDiagnostics.traceInference =
+                ProcessInfo.processInfo.environment["OSAURUS_PRIVACY_TRACE"] != "0"
+        #endif
         UncaughtExceptionLogger.install()
 
         AppDelegate.shared = self
@@ -215,6 +225,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // pruned). Installed here rather than in the store so unit tests
         // that replay roster fixtures never write the delegation config.
         WorkspaceRosterStore.installSpawnPoolAutoJoin()
+
+        // A phone paired before this launch: take the keep-awake assertion
+        // and keep agents created from now on reachable over the relay. The
+        // service does both in its init, which otherwise waited for Settings
+        // → Osaurus Connect or the first pairing request to touch it.
+        _ = MobilePairingService.shared
+        // Phone chats from before they were titled by content, once.
+        ChatSessionsManager.shared.retitleLegacyPhoneChats()
 
         // Warm the GitHub API token cache off the main thread so the first
         // plugin browse/import/update doesn't pay a synchronous keychain read

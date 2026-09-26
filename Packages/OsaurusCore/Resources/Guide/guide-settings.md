@@ -35,6 +35,7 @@ When the description is blank and the agent has a system prompt, Osaurus generat
 - Themes: theme gallery, custom theme editor, import/export.
 - Computer Use / Browser / Sandbox: autonomy presets, app allowlists, resources.
 - Permissions: macOS TCC grants (Accessibility, Screen Recording, …). Tool Auto/Ask/Deny policies live on the Tools tab.
+- Osaurus Connect: **Generate Pairing Code** (a 6-digit code the Osaurus iPhone app redeems on the same network; one iPhone per Mac, pairing a new one unpairs the old), the **Paired iPhone** with **Unpair**, **Reach From Anywhere** (on by default; turns on the relay tunnel for every agent while a phone is paired, so the iPhone works away from this network, still end-to-end encrypted), and **Keep Mac Awake for Paired iPhone** (on by default; prevents idle system sleep only while a phone is paired).
 - Identity, Privacy → Storage (encryption/backup), Channels credentials.
 - Secrets of any kind (API keys, tokens) are always entered in native secure fields, never chat.
 
@@ -146,7 +147,7 @@ macOS manages swap. Osaurus no longer shows swap warnings or requires a
 
 ## Management sidebar
 
-General, Chat, Voice, Themes, Credits, Workspaces, Identity, Permissions, Privacy, Local Models, Providers, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
+General, Chat, Voice, Themes, Credits, Workspaces, Osaurus Connect, Identity, Permissions, Privacy, Local Models, Providers, Media, Orchestrator, Agents, Channels, Web Search, Knowledge, Memory, Tools, Skills, Commands, Schedules, Watchers, Computer Use, Browser Use, Server, Sandbox, Insights.
 
 ## Where settings are stored
 
