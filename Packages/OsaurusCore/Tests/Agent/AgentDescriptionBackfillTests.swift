@@ -80,13 +80,23 @@ struct AgentDescriptionBackfillTests {
             defer { SubagentStoreTestLock.shared.release() }
             let recorder = Recorder()
             let backfill = makeBackfill(recorder)
+            let manualPrompt = "Manual prompt \(UUID())"
+            let generatedPrompt = "Companion prompt \(UUID())"
             let agent = AgentManager.shared.create(
-                name: "Manual \(UUID())", description: "Mine.", systemPrompt: "Review Swift code.")
+                name: "Manual \(UUID())", description: "Mine.", systemPrompt: manualPrompt)
+            let companion = AgentManager.shared.create(name: "Automatic \(UUID())", systemPrompt: generatedPrompt)
             backfill.scheduleIfNeeded(agent.id)
             backfill.scheduleAll()
             await backfill.drain()
-            #expect(recorder.prompts.isEmpty)
+            // scheduleAll also services unrelated eligible agents (including
+            // starter fixtures). Assert this agent is excluded, not that the
+            // entire manager had no work; prove eligible work still ran.
+            #expect(!recorder.prompts.contains(manualPrompt))
+            #expect(recorder.prompts.filter { $0 == generatedPrompt }.count == 1)
+            #expect(AgentManager.shared.agent(for: agent.id)?.generatedDescription == nil)
             #expect(AgentManager.shared.agent(for: agent.id)?.routingDescription == "Mine.")
+            #expect(AgentManager.shared.agent(for: companion.id)?.generatedDescription == "Generated purpose.")
+            _ = await AgentManager.shared.delete(id: companion.id)
             _ = await AgentManager.shared.delete(id: agent.id)
         }
     }
@@ -144,6 +154,63 @@ struct AgentDescriptionBackfillTests {
             await fresh.drain()
             #expect(recorder.prompts.count == 3)
             #expect(AgentManager.shared.agent(for: agent.id)?.generatedDescription == "Recovered.")
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test func promptEditDuringGenerationQueuesLatestPrompt() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            let agent = AgentManager.shared.create(name: "Prompt race \(UUID())", systemPrompt: "Review Swift code.")
+            var prompts: [String] = []
+            var backfill: AgentDescriptionBackfill!
+            backfill = AgentDescriptionBackfill(isEnabled: true) { prompt, _ in
+                prompts.append(prompt)
+                if prompts.count == 1 {
+                    var current = try #require(AgentManager.shared.agent(for: agent.id))
+                    current.systemPrompt = "Review release notes."
+                    AgentManager.shared.update(current)
+                    // Mirror the save trigger on this injected instance while
+                    // the old prompt is still in flight.
+                    backfill.scheduleIfNeeded(agent.id)
+                    backfill.scheduleIfNeeded(agent.id)
+                    return "Stale code review summary."
+                }
+                return "Reviews release notes."
+            }
+            backfill.scheduleIfNeeded(agent.id)
+            await backfill.drain()
+            #expect(prompts == ["Review Swift code.", "Review release notes."])
+            let saved = try #require(AgentManager.shared.agent(for: agent.id))
+            #expect(saved.description.isEmpty)
+            #expect(saved.generatedDescription == "Reviews release notes.")
+            #expect(saved.generatedDescriptionPromptHash == AgentDescriptionPolicy.promptHash(saved.systemPrompt))
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test func changedPromptDoesNotInheritFailedPromptCooldown() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            await SubagentStoreTestLock.shared.acquire()
+            defer { SubagentStoreTestLock.shared.release() }
+            let recorder = Recorder()
+            recorder.result = .failure(CoreModelError.unresponsive("old prompt failed"))
+            let backfill = makeBackfill(recorder)
+            let agent = AgentManager.shared.create(name: "Retry edit \(UUID())", systemPrompt: "Old prompt")
+            backfill.scheduleIfNeeded(agent.id)
+            await backfill.drain()
+            backfill.scheduleIfNeeded(agent.id)
+            await backfill.drain()
+            #expect(recorder.prompts == ["Old prompt"])
+            var updated = try #require(AgentManager.shared.agent(for: agent.id))
+            updated.systemPrompt = "New prompt"
+            AgentManager.shared.update(updated)
+            recorder.result = .success("New purpose.")
+            backfill.scheduleIfNeeded(agent.id)
+            await backfill.drain()
+            #expect(recorder.prompts == ["Old prompt", "New prompt"])
+            #expect(AgentManager.shared.agent(for: agent.id)?.generatedDescription == "New purpose.")
             _ = await AgentManager.shared.delete(id: agent.id)
         }
     }
