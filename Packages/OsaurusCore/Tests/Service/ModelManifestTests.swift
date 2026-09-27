@@ -4,6 +4,32 @@ import Testing
 @testable import OsaurusCore
 
 struct ModelManifestTests {
+    /// The SwiftPM test/eval process has no Info.plist. Without an explicit
+    /// stand-in version the gate must stay closed (`unknownOsaurusVersion`);
+    /// with `OSAURUS_HOST_VERSION` set it compares against that version; a
+    /// real bundle version always wins over the environment.
+    @Test func hostVersionFallsBackToExplicitEnvironmentOnlyOutsideABundle() throws {
+        let manifest = try ModelManifest.decode(
+            Data(#"{"required_osaurus_version":"0.25.0","model_version":"1"}"#.utf8))
+
+        let none = ModelManifest.resolveHostVersion(bundled: nil, environment: [:])
+        #expect(none == "")
+        #expect(manifest.compatibilityFailure(hostVersion: none)?.reason == .unknownOsaurusVersion)
+        #expect(ModelManifest.resolveHostVersion(bundled: "", environment: [:]) == "")
+
+        let standIn = ModelManifest.resolveHostVersion(bundled: nil, environment: ["OSAURUS_HOST_VERSION": "0.25.13"])
+        #expect(standIn == "0.25.13")
+        #expect(manifest.compatibilityFailure(hostVersion: standIn) == nil)
+
+        let older = ModelManifest.resolveHostVersion(bundled: "", environment: ["OSAURUS_HOST_VERSION": "0.24.9"])
+        #expect(manifest.compatibilityFailure(hostVersion: older)?.reason == .requiresOsaurusUpdate)
+
+        // Inside the app the bundle's version is authoritative.
+        #expect(
+            ModelManifest.resolveHostVersion(bundled: "0.26.0", environment: ["OSAURUS_HOST_VERSION": "0.24.9"])
+                == "0.26.0")
+    }
+
     @Test func legacyAutomaticChecksRequireRegisteredOfficialRepository() {
         let registered: Set<String> = ["osaurusai/model", "other/model", "osaurusai.evil/model", "osaurusai/model/extra"]
         #expect(ModelManager.isRegisteredOfficialUpdateRepository("OsaurusAI/model", registered: registered))
