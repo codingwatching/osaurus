@@ -3,6 +3,38 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>0.25.14</title>
+            <pubDate>Sun, 27 Sep 2026 07:10:28 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>0.25.14</sparkle:version>
+            <sparkle:shortVersionString>0.25.14</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/0.25.14/Osaurus-0.25.14.dmg" length="79256834" type="application/octet-stream" sparkle:edSignature="H+sC9KHzEDiE5wY55YKKLo8wz84pLenOH2QQCwIJXoXMajUmdEtHh9KVX+Rf1ZYDi4SKMXuorKezHwDQyZgQAA=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+
+- Clarify background model admission for description backfill (#2901) by @jjang-ai
+- added iOS app integrations (#2875) by @RaajeevChandran
+
+## 🐛 Bug Fixes
+
+- Fix covariant Self default argument in ProductHuntLaunchCampaign init (#2906) by @tpae
+- Fix timing export choices for restored chats (#2902) by @jjang-ai
+- Preserve generation metrics across chat history reloads (#2900) by @jjang-ai
+- fix right-click copy dropping the chat drag selection (#2899) by @RaajeevChandran
+- Show generated agent purposes consistently in local pickers (#2898) by @jjang-ai
+- Fix description backfill after in-flight prompt edits (#2897) by @jjang-ai
+- Pin runtime with composite and recurrent disk-cache fixes (#2896) by @jjang-ai
+
+## 🧰 Maintenance
+
+- Postpone the Raptor Product Hunt dialogs (#2905) by @tpae
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/0.25.13...0.25.14
+]]></description>
+        </item>
+        <item>
             <title>0.25.13</title>
             <pubDate>Sat, 26 Sep 2026 01:26:07 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>
